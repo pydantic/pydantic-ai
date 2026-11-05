@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, cast
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from typing_extensions import get_type_hints
 
 from pydantic_ai import Agent
@@ -304,42 +305,26 @@ def test_value_openrouter_adds_later_is_forwarded(option: str) -> None:
     assert _openrouter_request_parameters(tool)[option] == 'added-later'
 
 
-@pytest.mark.parametrize(
-    'settings',
-    [
-        pytest.param({'madeup': {}}, id='unknown-key'),
-        pytest.param({'openrouter': {'typo': 1}}, id='unknown-option'),
-        pytest.param({'openrouter': {'response_inclusion': 'full'}}, id='another-providers-option'),
-    ],
-)
-def test_unknown_keys_are_rejected(settings: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        WebSearchTool(provider_settings=settings)  # pyright: ignore[reportArgumentType]
+UNKNOWN_SETTINGS: Any = {
+    'madeup': {},
+    'anthropic': {'typo': 1},
+    'openrouter': {'typo': 1, 'allowed_domains': ['example.com']},
+    'openai': {'typo': 1},
+    'xai': {'typo': 1},
+}
 
 
 @pytest.mark.parametrize(
-    'settings',
+    ('read_request', 'make_tool'),
     [
-        pytest.param({'anthropic': {'response_inclusion': 'nonsense'}}, id='bad-literal'),
-        pytest.param({'openrouter': {'engine': 1}}, id='wrong-type'),
-        pytest.param({'openrouter': {'max_results': '3'}}, id='not-coerced'),
-        pytest.param({'openrouter': {'engine': None}}, id='none-is-not-unset'),
+        (_anthropic_request_tool, WebSearchTool),
+        (_anthropic_request_tool, WebFetchTool),
+        (_openrouter_request_parameters, WebSearchTool),
+        (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
+        (_openai_request_tool, ImageGenerationTool),
+        (_xai_request_search, partial(FileSearchTool, file_store_ids=['store'])),
     ],
 )
-def test_invalid_values_are_rejected(settings: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError):
-        WebSearchTool(provider_settings=settings)  # pyright: ignore[reportArgumentType]
-
-
-@pytest.mark.parametrize(
-    ('tool_type', 'required'),
-    [
-        (WebFetchTool, {}),
-        (AdvisorTool, {'model': 'advisor'}),
-        (ImageGenerationTool, {}),
-        (FileSearchTool, {'file_store_ids': ['store']}),
-    ],
-)
-def test_every_tool_rejects_unknown_keys(tool_type: Any, required: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        tool_type(**required, provider_settings={'madeup': {}})
+def test_unknown_settings_are_ignored(read_request: Any, make_tool: Any) -> None:
+    """Like model settings, an unknown option is never sent, so it can't override a field like `allowed_domains`."""
+    assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())

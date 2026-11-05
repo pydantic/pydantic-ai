@@ -740,7 +740,7 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'AdvisorProviderSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'anthropic': {'$ref': '#/$defs/AnthropicAdvisorToolSettings'},
                         'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'},
@@ -809,13 +809,13 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'AnthropicAdvisorToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'}},
                     'title': 'AnthropicAdvisorToolSettings',
                     'type': 'object',
                 },
                 'AnthropicWebFetchToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
                         'response_inclusion': {
@@ -828,7 +828,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'AnthropicWebSearchToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'response_inclusion': {
                             'enum': ['full', 'excluded'],
@@ -862,7 +862,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'FileSearchProviderSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
                     'title': 'FileSearchProviderSettings',
                     'type': 'object',
@@ -897,7 +897,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'ImageGenerationProviderSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {'openai': {'$ref': '#/$defs/OpenAIImageGenerationToolSettings'}},
                     'title': 'ImageGenerationProviderSettings',
                     'type': 'object',
@@ -1873,7 +1873,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'OpenAIImageGenerationToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'action': {'enum': ['generate', 'edit', 'auto'], 'title': 'Action', 'type': 'string'},
                         'background': {
@@ -1900,13 +1900,13 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'OpenRouterAdvisorToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {'forward_transcript': {'title': 'Forward Transcript', 'type': 'boolean'}},
                     'title': 'OpenRouterAdvisorToolSettings',
                     'type': 'object',
                 },
                 'OpenRouterWebSearchToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'engine': {
                             'anyOf': [
@@ -2010,7 +2010,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'WebFetchProviderSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {'anthropic': {'$ref': '#/$defs/AnthropicWebFetchToolSettings'}},
                     'title': 'WebFetchProviderSettings',
                     'type': 'object',
@@ -2049,7 +2049,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'WebSearchProviderSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'anthropic': {'$ref': '#/$defs/AnthropicWebSearchToolSettings'},
                         'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'},
@@ -2154,7 +2154,7 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'XaiFileSearchToolSettings': {
-                    'additionalProperties': False,
+                    'additionalProperties': True,
                     'properties': {
                         'instructions': {'title': 'Instructions', 'type': 'string'},
                         'retrieval_mode': {

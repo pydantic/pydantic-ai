@@ -34,14 +34,13 @@ The calls and results show up in the model's response as [`NativeToolCallPart`][
 
 Provider-independent options are fields on the native tool. When a provider has extra options,
 pass them to the tool's `provider_settings` field under the key for the model class. The outer dictionary
-has a closed set of known keys, and each value has its own `TypedDict`, so type checkers and IDEs
-can validate and complete both levels. Each model reads only its own entry; other entries are
-ignored.
+and each provider's entry are `TypedDict`s, so type checkers and IDEs can validate and complete both
+levels. Each model reads only the options it knows from its own entry; like
+[model settings](agent.md#model-run-settings), anything else is ignored rather than rejected.
 
 The key follows the model class you use, not who makes the underlying model: Claude through
 `OpenRouterModel` reads the `openrouter` entry, not `anthropic`, and `OpenAIChatModel` pointed at OpenRouter's
-API reads neither. Unknown keys and values of the wrong type raise an error when the tool is built, so a typo
-can't silently do nothing, and the provider's API judges whether a value is one it accepts. Settings that restrict what a
+API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
 tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
 must not run the tool without them.
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),

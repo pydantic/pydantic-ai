@@ -2467,7 +2467,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool: WebSearchTool, supports_dynamic_filtering: bool
     ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-        if settings := (tool.provider_settings or {}).get('anthropic'):
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if 'response_inclusion' in settings:
             web_search_tool = BetaWebSearchTool20260318Param(
                 name='web_search',
                 type='web_search_20260318',
@@ -2475,7 +2476,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 user_location=user_location,
-                **settings,
+                response_inclusion=settings['response_inclusion'],
             )
             if not supports_dynamic_filtering:
                 web_search_tool['allowed_callers'] = ['direct']
@@ -2507,7 +2508,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ]:
         enable_citations = tool.enable_citations or include_citations
         citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
-        if settings := (tool.provider_settings or {}).get('anthropic'):
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if 'use_cache' in settings or 'response_inclusion' in settings:
             web_fetch_tool = BetaWebFetchTool20260318Param(
                 name='web_fetch',
                 type='web_fetch_20260318',
@@ -2516,8 +2518,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 blocked_domains=tool.blocked_domains,
                 citations=citations,
                 max_content_tokens=tool.max_content_tokens,
-                **settings,
             )
+            if 'use_cache' in settings:
+                web_fetch_tool['use_cache'] = settings['use_cache']
+            if 'response_inclusion' in settings:
+                web_fetch_tool['response_inclusion'] = settings['response_inclusion']
             if not supports_dynamic_filtering:
                 web_fetch_tool['allowed_callers'] = ['direct']
             return web_fetch_tool, None

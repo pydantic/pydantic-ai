@@ -26,7 +26,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, OpenRouterWebSearchToolSettings, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -830,7 +830,10 @@ def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
         parameters['excluded_domains'] = blocked_domains
     if (max_uses := tool.max_uses) is not None:
         parameters['max_uses'] = max_uses
-    return {**parameters, **(tool.provider_settings or {}).get('openrouter', {})}
+    settings = (tool.provider_settings or {}).get('openrouter', {})
+    # Like model settings, options this version doesn't know are ignored rather than sent.
+    known_options = OpenRouterWebSearchToolSettings.__optional_keys__
+    return {**parameters, **{option: value for option, value in settings.items() if option in known_options}}
 
 
 class OpenRouterModel(OpenAIChatModel):
