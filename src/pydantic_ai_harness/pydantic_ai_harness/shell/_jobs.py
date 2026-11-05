@@ -217,20 +217,14 @@ class Job:
         job_id: str | None = None,
     ) -> Job:
         directory = posixpath.join(base, job_id or uuid.uuid4().hex)
-        mode = 'combined' if combined else 'separate'
-        assignments = ' '.join(
-            f'{name}={shlex.quote(value)}'
-            for name, value in (
-                ('dir', directory),
-                ('exclusive', '1' if job_id is not None else '0'),
-                ('mode', mode),
-                ('limit', '' if file_limit is None else str(file_limit)),
-                ('log_limit', '' if log_limit is None else str(log_limit)),
-                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
-                ('wrapper', _WRAPPER),
-            )
+        script = cls._launch_script(
+            directory,
+            cwd,
+            exclusive=job_id is not None,
+            combined=combined,
+            file_limit=file_limit,
+            log_limit=log_limit,
         )
-        script = f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
         result = await run_model_command(
             workspace, lambda cmd: ['sh', '-c', script, 'sh', cmd], command, env=env, timeout=CONTROL_TIMEOUT
         )
@@ -252,6 +246,26 @@ class Job:
             raise ModelRetry(f'Shell supervisor exited with {result.exit_code}: {detail}')
         pgid = int(fields[1]) if fields[1].isdigit() else None
         return cls(workspace=workspace, directory=directory, pid=int(fields[0]), pgid=pgid, combined=combined)
+
+    @staticmethod
+    def _launch_script(
+        directory: str, cwd: str, *, exclusive: bool, combined: bool, file_limit: int | None, log_limit: int | None
+    ) -> str:
+        """The `sh` script that runs `_LAUNCHER` in `cwd`, its variables set for a job in `directory`."""
+        mode = 'combined' if combined else 'separate'
+        assignments = ' '.join(
+            f'{name}={shlex.quote(value)}'
+            for name, value in (
+                ('dir', directory),
+                ('exclusive', '1' if exclusive else '0'),
+                ('mode', mode),
+                ('limit', '' if file_limit is None else str(file_limit)),
+                ('log_limit', '' if log_limit is None else str(log_limit)),
+                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
+                ('wrapper', _WRAPPER),
+            )
+        )
+        return f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
 
     @classmethod
     async def attach(cls, workspace: Workspace, directory: str, *, combined: bool) -> Job | None:

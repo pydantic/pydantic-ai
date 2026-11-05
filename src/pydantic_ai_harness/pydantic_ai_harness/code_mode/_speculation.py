@@ -367,36 +367,46 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
     out: list[_ExtractedCall] = []
     walked = 0
     for name in eligible:
-        for match in re.finditer(rf'\b{re.escape(name)}\s*\(', code):
-            before = code[: match.start()]
-            if before.rstrip().endswith('.') or re.search(r'\bdef\s*$', before):
-                continue
-            end = _close_paren(code, match.end() - 1)
-            if end is None:
-                # Every later occurrence sits inside this still-open call, so none of them is a
-                # launchable top-level call yet; stopping here keeps one scan linear.
-                walked += len(code) - match.start()
-                break
-            walked += end - match.start()
-            try:
-                expression = parse_code(code[match.start() : end], mode='eval')
-            except (SyntaxError, ValueError, RecursionError, MemoryError):
-                # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
-                # a `SyntaxError`, and adversarial nesting can exhaust the parser.
-                continue
-            if not isinstance(expression.body, ast.Call):
-                continue  # pragma: no cover - a `name(...)` span that parses is always a Call
-            kwargs = _literal_kwargs(expression.body, name)
-            if kwargs is None:
-                continue
-            out.append(
-                _ExtractedCall(
-                    sandbox_name=name,
-                    kwargs=kwargs,
-                    line_start=before.count('\n') + 1,
-                    line_end=code[:end].count('\n') + 1,
-                )
+        calls, name_walked = _text_literal_calls_to(code, name)
+        out.extend(calls)
+        walked += name_walked
+    return out, walked
+
+
+def _text_literal_calls_to(code: str, name: str) -> tuple[list[_ExtractedCall], int]:
+    """`_text_literal_calls` for the calls to one function `name`."""
+    out: list[_ExtractedCall] = []
+    walked = 0
+    for match in re.finditer(rf'\b{re.escape(name)}\s*\(', code):
+        before = code[: match.start()]
+        if before.rstrip().endswith('.') or re.search(r'\bdef\s*$', before):
+            continue
+        end = _close_paren(code, match.end() - 1)
+        if end is None:
+            # Every later occurrence sits inside this still-open call, so none of them is a
+            # launchable top-level call yet; stopping here keeps one scan linear.
+            walked += len(code) - match.start()
+            break
+        walked += end - match.start()
+        try:
+            expression = parse_code(code[match.start() : end], mode='eval')
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
+            # a `SyntaxError`, and adversarial nesting can exhaust the parser.
+            continue
+        if not isinstance(expression.body, ast.Call):
+            continue  # pragma: no cover - a `name(...)` span that parses is always a Call
+        kwargs = _literal_kwargs(expression.body, name)
+        if kwargs is None:
+            continue
+        out.append(
+            _ExtractedCall(
+                sandbox_name=name,
+                kwargs=kwargs,
+                line_start=before.count('\n') + 1,
+                line_end=code[:end].count('\n') + 1,
             )
+        )
     return out, walked
 
 
@@ -494,23 +504,13 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                 return
         match event:
             case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == RUN_CODE_TOOL_NAME:
-                watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=ctx.run_step)
-                if isinstance(part.args, str):
-                    watch.args_text = part.args
-                elif isinstance(part.args, dict):
-                    watch.args_dict = dict(part.args)
-                self._parts[part.tool_call_id] = watch
-                self._index_to_part[event.index] = part.tool_call_id
-                await self._scan(watch, ctx)
+                await self._scan(self._open_watch(part, event.index, ctx.run_step), ctx)
             case PartStartEvent():
                 self._index_to_part.pop(event.index, None)
             case PartDeltaEvent(delta=ToolCallPartDelta() as delta):
                 watch = self._watch_at(event.index, delta.tool_call_id)
                 if watch is not None:
-                    if isinstance(delta.args_delta, str):
-                        watch.args_text += delta.args_delta
-                    elif isinstance(delta.args_delta, dict):
-                        watch.args_dict = {**(watch.args_dict or {}), **delta.args_delta}
+                    self._extend_args(watch, delta)
                     await self._scan(watch, ctx)
             case PartEndEvent():
                 watch = self._watch_at(event.index, None)
@@ -523,6 +523,24 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             case _:
                 pass
         await self._emit_settles(ctx)
+
+    def _open_watch(self, part: ToolCallPart, part_index: int, run_step: int) -> _PartWatch:
+        """Start watching a streamed `run_code` part, seeded with the arguments it started with."""
+        watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=run_step)
+        if isinstance(part.args, str):
+            watch.args_text = part.args
+        elif isinstance(part.args, dict):
+            watch.args_dict = dict(part.args)
+        self._parts[part.tool_call_id] = watch
+        self._index_to_part[part_index] = part.tool_call_id
+        return watch
+
+    @staticmethod
+    def _extend_args(watch: _PartWatch, delta: ToolCallPartDelta) -> None:
+        if isinstance(delta.args_delta, str):
+            watch.args_text += delta.args_delta
+        elif isinstance(delta.args_delta, dict):
+            watch.args_dict = {**(watch.args_dict or {}), **delta.args_delta}
 
     async def _retire_stale(self, ctx: RunContext[AgentDepsT]) -> None:
         """Evict launches no snippet can legitimately claim any more.

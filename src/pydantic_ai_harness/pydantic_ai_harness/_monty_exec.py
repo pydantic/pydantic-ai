@@ -123,6 +123,12 @@ _REMOTE_TURN_SLACK_SECS = 10.0
 _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
 
 
+def _remote_turn_timeout(limits: ResourceLimits) -> float | None:
+    """The WebSocket transport's per-turn deadline: no deadline when the feed duration is unlimited."""
+    max_feed_duration_secs = limits.get('max_feed_duration_secs')
+    return None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
+
+
 @dataclass
 class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
@@ -163,11 +169,7 @@ class MontyRunState:
                 elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:
-                    max_feed_duration_secs = limits.get('max_feed_duration_secs')
-                    timeout = (
-                        None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
-                    )
-                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=timeout)
+                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=_remote_turn_timeout(limits))
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
@@ -316,20 +318,18 @@ class MontyExecutor:
 
     async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
         """Dispatch (or defer) a single external function call."""
-        if snapshot.is_os_function and snapshot.function_name in ('time.sleep', 'asyncio.sleep'):
-            return await self._sleep(snapshot)
         if snapshot.is_os_function:
-            if self.portal is not None and self.os_handler is not None:
-                match snapshot.function_name:
-                    case (
-                        'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
-                    ):
-                        return await self._answer_os_call(snapshot, self.os_handler, name)
-                    case _:  # file calls: Monty answers them from the mounts first
-                        pass
-            # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
-            # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
-            return await call_monty(self.portal, snapshot.resume_auto)
+            match snapshot.function_name:
+                case 'time.sleep' | 'asyncio.sleep':
+                    return await self._sleep(snapshot)
+                case (
+                    'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
+                ) if self.portal is not None and self.os_handler is not None:
+                    return await self._answer_os_call(snapshot, self.os_handler, name)
+                case _:  # file calls: Monty answers them from the mounts first
+                    # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
+                    # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
+                    return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
         if name not in self.valid_names:

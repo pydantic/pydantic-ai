@@ -52,6 +52,7 @@ it runs on asyncio only.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import math
@@ -366,6 +367,22 @@ async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None
             pass
 
 
+def _create_refused(error: Exception) -> bool:
+    """Whether a failed create's `error` is an API answer that rules out a committed Sprite.
+
+    A transport failure, a timeout, or a 409 conflict leaves the create possibly committed.
+    """
+    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or '(status 409)' in str(error))
+
+
+async def _recover_create(client: AsyncSpritesClient, name: str, error: Exception) -> AsyncSprite:
+    """Look up a Sprite whose failed create may have committed, re-raising the create's `error` if it is not visible."""
+    try:
+        return await client.get_sprite(name)
+    except (NotFoundError, NetworkError, TimeoutError):
+        raise error from None
+
+
 class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """A Fly.io Sprite behind the Pydantic AI `WorkspaceBackend` protocol.
 
@@ -498,59 +515,14 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._unfetched = True
             return sandbox
 
-        async def acquire() -> AsyncSprite:
-            with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-                if ref is not None:
-                    try:
-                        sandbox = await client.get_sprite(ref.id)
-                    except NotFoundError as error:
-                        if self._uncertain_create:
-                            # A 404 during eventual visibility is not proof that creation failed.
-                            raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-                        raise
-                else:
-                    try:
-                        sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                    except (NetworkError, TimeoutError, SpriteError) as error:
-                        if isinstance(error, SpriteError) and not (
-                            isinstance(error, NetworkError) or '(status 409)' in str(error)
-                        ):
-                            raise
-                        # The create may have committed even if lookup is not yet visible. Keep its
-                        # preallocated name for failure hooks and use lookup only on future attempts.
-                        self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                        self._uncertain_create = True
-                        try:
-                            sandbox = await client.get_sprite(self._new_sprite_name)
-                        except (NotFoundError, NetworkError, TimeoutError):
-                            raise error from None
-                    # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
-                    logger.info('Created Sprite %s', sandbox.name)
-                # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
-                self._sandbox = sandbox
-                self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
-                self._uncertain_create = False
-                self._attached_name = sandbox.name
-                self._unfetched = False
-                _lookups.record(_LookupCache.key(client, sandbox.name))
-                return sandbox
-            # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
-            # control plane is a transport failure, which propagates for a retry;
-            # `WorkspaceTimeoutError` is reserved for command deadlines.
-            if ref is None:
-                # A timed-out create may have committed; a subsequent call must only look it up.
-                self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                self._uncertain_create = True
-            action = 'creation' if ref is None else 'connection'
-            raise TimeoutError(
-                f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
-                'the Sprites control plane may be unreachable.'
-            )
-
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
-            return await (acquire() if ref is not None else run_to_completion(acquire))
+            return await (
+                self._acquire(client, ref)
+                if ref is not None
+                else run_to_completion(functools.partial(self._acquire, client, ref))
+            )
         except SpriteError as error:
             if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
                 raise
@@ -558,6 +530,51 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # A lookup `get_sandbox()` made outside an operation also clears what later backends trust.
                 _lookups.forget(ref.id)
             raise mapped from error
+
+    async def _acquire(self, client: AsyncSpritesClient, ref: WorkspaceRef | None) -> AsyncSprite:
+        """Attach to the Sprite `ref` names, or create one, within `_ACQUIRE_TIMEOUT`, and record it."""
+        with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+            if ref is not None:
+                try:
+                    sandbox = await client.get_sprite(ref.id)
+                except NotFoundError as error:
+                    if self._uncertain_create:
+                        # A 404 during eventual visibility is not proof that creation failed.
+                        raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+                    raise
+            else:
+                try:
+                    sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+                except (NetworkError, TimeoutError, SpriteError) as error:
+                    if _create_refused(error):
+                        raise
+                    # The create may have committed even if lookup is not yet visible. Keep its
+                    # preallocated name for failure hooks and use lookup only on future attempts.
+                    self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                    self._uncertain_create = True
+                    sandbox = await _recover_create(client, self._new_sprite_name, error)
+                # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+                logger.info('Created Sprite %s', sandbox.name)
+            # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
+            self._sandbox = sandbox
+            self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
+            self._uncertain_create = False
+            self._attached_name = sandbox.name
+            self._unfetched = False
+            _lookups.record(_LookupCache.key(client, sandbox.name))
+            return sandbox
+        # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
+        # control plane is a transport failure, which propagates for a retry;
+        # `WorkspaceTimeoutError` is reserved for command deadlines.
+        if ref is None:
+            # A timed-out create may have committed; a subsequent call must only look it up.
+            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+            self._uncertain_create = True
+        action = 'creation' if ref is None else 'connection'
+        raise TimeoutError(
+            f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
+            'the Sprites control plane may be unreachable.'
+        )
 
     async def aclose(self) -> None:
         """Close the `AsyncSpritesClient` this backend created, if it created one.

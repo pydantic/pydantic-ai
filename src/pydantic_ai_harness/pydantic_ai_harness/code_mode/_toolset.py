@@ -333,17 +333,17 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
         return {}
-    if limits is not None:
-        unknown = set(limits) - set(CodeModeResourceLimits.__annotations__)
-        if unknown:
-            raise UserError(
-                f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
-                f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
-            )
+    overrides: CodeModeResourceLimits = {} if limits is None else limits
+    unknown = set(overrides) - set(CodeModeResourceLimits.__annotations__)
+    if unknown:
+        raise UserError(
+            f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
+            f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
+        )
     # Read as `object` so values from untyped code are checked rather than trusted.
-    max_duration_secs: object = 30 if limits is None else limits.get('max_duration_secs', 30)
-    max_memory: object = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
-    max_suspensions: object = 1000 if limits is None else limits.get('max_suspensions', 1000)
+    max_duration_secs: object = overrides.get('max_duration_secs', 30)
+    max_memory: object = overrides.get('max_memory', 256 * 1024 * 1024)
+    max_suspensions: object = overrides.get('max_suspensions', 1000)
     # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
     # every snippet. An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
     if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
@@ -407,6 +407,18 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
     native = {name for name in corpus if placements[name] == 'native'}
     sandboxes_corpus = any(placements[name] != 'native' for name in corpus)
     return native if sandboxes_corpus else set()
+
+
+def _split_by_placement(
+    placements: Mapping[str, _Placement], tools: Mapping[str, ToolsetTool[AgentDepsT]], searched_locally: set[str]
+) -> tuple[dict[str, ToolsetTool[AgentDepsT]], dict[str, ToolsetTool[AgentDepsT]]]:
+    """The sandboxed and the native tools, taking the `searched_locally` ones out of the native search's corpus."""
+    sandboxed = {name: tools[name] for name, where in placements.items() if where == 'sandboxed'}
+    native = {
+        name: replace(tool, tool_def=replace(tool.tool_def, with_native=None)) if name in searched_locally else tool
+        for name, tool in ((name, tools[name]) for name, where in placements.items() if where == 'native')
+    }
+    return sandboxed, native
 
 
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
@@ -723,6 +735,21 @@ class RunCodeExecution:
         )
 
 
+def _started_calls_note(execution: RunCodeExecution) -> str:
+    """The nested calls `execution` started, for a retry message, or `''` when none did."""
+    # A failure that resets the session has no traceback saying what already ran, so the
+    # model would otherwise repeat the side effects of calls that started.
+    if not execution.nested_calls:
+        return ''
+    return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
+
+
+def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
+    """Re-raise the usage limit a nested call hit, which the snippet may have caught at its call site."""
+    if execution.usage_limit_exceeded is not None:
+        raise execution.usage_limit_exceeded
+
+
 @dataclass
 class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """Implementation toolset for the `CodeMode` capability.
@@ -983,26 +1010,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
-            tool_def = tool.tool_def
-            if not can_be_sandboxed(tool_def):
-                placements[name] = 'native'
-            elif not ctx.is_tool_available(tool_def):
-                # Use the run's public availability predicate so Tool Search and deferred
-                # capability reveals share the same wire-side semantics. A hidden tool stays
-                # native until revealed and is sandboxed from then on, unless
-                # `_place_hidden_tools` keeps it off the wire altogether.
-                hidden = self.dynamic_catalog and await matches_tool_selector(self.tool_selector, ctx, tool_def)
-                placements[name] = 'hidden' if hidden else 'native'
-            elif await matches_tool_selector(self.tool_selector, ctx, tool_def):
-                placements[name] = 'sandboxed'
-            else:
-                placements[name] = 'native'
+            placements[name] = await self._place_tool(ctx, tool.tool_def)
         searched_locally = _place_hidden_tools(placements, wrapped_tools) if self.dynamic_catalog else set[str]()
-        sandboxed_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'sandboxed'}
-        native_tools = {
-            name: replace(tool, tool_def=replace(tool.tool_def, with_native=None)) if name in searched_locally else tool
-            for name, tool in ((name, wrapped_tools[name]) for name, where in placements.items() if where == 'native')
-        }
+        sandboxed_tools, native_tools = _split_by_placement(placements, wrapped_tools, searched_locally)
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
@@ -1069,6 +1079,21 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             wrapped_tools=wrapped_tools,
         )
         return result
+
+    async def _place_tool(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> _Placement:
+        """Where `get_tools` puts one wrapped tool, before `_place_hidden_tools` settles the hidden ones."""
+        if not can_be_sandboxed(tool_def):
+            return 'native'
+        if not ctx.is_tool_available(tool_def):
+            # Use the run's public availability predicate so Tool Search and deferred
+            # capability reveals share the same wire-side semantics. A hidden tool stays
+            # native until revealed and is sandboxed from then on, unless
+            # `_place_hidden_tools` keeps it off the wire altogether.
+            hidden = self.dynamic_catalog and await matches_tool_selector(self.tool_selector, ctx, tool_def)
+            return 'hidden' if hidden else 'native'
+        if await matches_tool_selector(self.tool_selector, ctx, tool_def):
+            return 'sandboxed'
+        return 'native'
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -1174,41 +1199,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # already running instead of blocking one another.
             await speculation.prelaunch_for_execution(ctx, execution, code)
 
-        def dispatch_tool_call(sandbox_name: str, kwargs: dict[str, Any]) -> Coroutine[Any, Any, Any]:
-            """Reserve nested-call budget, then build the coroutine that runs the call.
-
-            The reservation is synchronous because the executor turns each deferred call into an
-            `asyncio.Task` as soon as this returns, without yielding to the event loop in between.
-            Counting inside the coroutine would let one `asyncio.gather` over many calls allocate a
-            host task per call before the first check ran, which is the cost the budget bounds.
-            Refusing here means no task is created; the executor hands the error to the sandbox at
-            the call site, so calls that already completed keep their recorded results.
-            """
-            original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
-            tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-            call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
-            if speculation is not None:
-                claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
-                if claimed is not None:
-                    return speculation.adopt(ctx, execution, claimed, call_part)
-            return run_tool_call(sandbox_name, call_part)
-
-        async def run_tool_call(sandbox_name: str, call_part: ToolCallPart) -> Any:
-            """Run a single tool call dispatched from inside the sandbox.
-
-            Returns the serialized tool result on success. On failure, the exception propagates:
-            the execution loop passes it back into Monty via `ExternalException` so the sandbox
-            sees it at the `await` site.
-            """
-            execution.nested_calls[call_part.tool_call_id] = call_part
-            guard: AbstractContextManager[None] = nullcontext()
-            if speculation is not None and speculation.eligible(sandbox_name):
-                await speculation.report_miss(ctx, execution, sandbox_name, call_part)
-            elif speculation is not None:
-                guard = speculation.unsafe_call()
-            with guard:
-                return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
-
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
         type_check = fresh_repl and bool(callable_defs)
@@ -1217,13 +1207,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # One collector is reused across eager feeds. This keeps the same output cap and error
         # behavior as a normal call while presenting one combined result to the model.
         capture = execution.capture
-
-        def started_calls() -> str:
-            # A failure that resets the session has no traceback saying what already ran, so the
-            # model would otherwise repeat the side effects of calls that started.
-            if not execution.nested_calls:
-                return ''
-            return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
 
         in_workflow = in_temporal_workflow()
         configured = _resolve_resource_limits(self.resource_limits)
@@ -1244,7 +1227,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # Already converted in `__post_init__`; this narrows the field's type.
                 os_handler = as_os_handler(self.os_access)
                 completed = await MontyExecutor(
-                    dispatch=dispatch_tool_call,
+                    dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, sanitized_to_original),
                     valid_names=callable_defs,
                     sequential_names=sequential_tools,
                     global_sequential=global_sequential,
@@ -1291,7 +1274,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # is what keeps a newly added limit from quietly losing this. It matters most on
                 # the duration path, which resets the session and with it the REPL state the model
                 # would otherwise reconstruct from.
-                message += started_calls()
+                message += _started_calls_note(execution)
             if duration_spent:
                 # The limit stops the sandbox mid-operation, and Monty makes no promise about the
                 # heap it leaves behind, so the session is discarded rather than fed again.
@@ -1316,8 +1299,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     'Check the calls already started before continuing, and do not replay '
                     'completed side effects.'
                 )
-            if execution.usage_limit_exceeded is not None:
-                raise execution.usage_limit_exceeded
+            _raise_usage_limit_exceeded(execution)
             raise ModelRetry(message) from e
         except MontyCrashedError as e:
             # The worker died mid-feed (e.g. the code exhausted its memory or hit the
@@ -1325,11 +1307,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # worker transparently. Reset so the retry starts from a fresh,
             # type-checked session.
             await run_state.reset()
-            if execution.usage_limit_exceeded is not None:
-                raise execution.usage_limit_exceeded
+            _raise_usage_limit_exceeded(execution)
             raise ModelRetry(
                 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
-                f'{started_calls()}'
+                f'{_started_calls_note(execution)}'
             ) from e
         except Exception as e:
             # The session may have been invalidated by a host-side binding or protocol failure.
@@ -1338,8 +1319,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # chain is dropped once the retry becomes a prompt part, so this message is the only
             # record of what failed for both the model and the transcript.
             await run_state.reset()
-            if execution.usage_limit_exceeded is not None:
-                raise execution.usage_limit_exceeded
+            _raise_usage_limit_exceeded(execution)
             error_text = f'{type(e).__name__}: {e}'
             if isinstance(self.monty_sandbox, str):
                 # A dial failure quotes the configured URL, which may carry credentials in its
@@ -1347,7 +1327,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 error_text = error_text.replace(self.monty_sandbox, '<monty_sandbox>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
-                f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'
+                f'any state you need, and try again.\n{capture.prepend_to(error_text)}{_started_calls_note(execution)}'
             ) from e
         except BaseException as e:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
@@ -1358,15 +1338,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # The panic aborts the VM mid-execution, so the REPL's accumulated state cannot
             # be trusted; drop it so the retry starts from a fresh, type-checked session.
             await run_state.reset()
-            if execution.usage_limit_exceeded is not None:
-                raise execution.usage_limit_exceeded
+            _raise_usage_limit_exceeded(execution)
             raise ModelRetry(
                 'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
-                f'{started_calls()}'
+                f'{_started_calls_note(execution)}'
             ) from e
 
-        if execution.usage_limit_exceeded is not None:
-            raise execution.usage_limit_exceeded
+        _raise_usage_limit_exceeded(execution)
         result = completed.output
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
@@ -1374,6 +1352,58 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             result = _model_safe_result(_TOOL_RETURN_CONTENT_TA.validate_python(result))
 
         return result
+
+    def _dispatch_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        execution: RunCodeExecution,
+        tool_manager: ToolManager[AgentDepsT],
+        sanitized_to_original: dict[str, str],
+        sandbox_name: str,
+        kwargs: dict[str, Any],
+    ) -> Coroutine[Any, Any, Any]:
+        """Reserve nested-call budget, then build the coroutine that runs the call.
+
+        The reservation is synchronous because the executor turns each deferred call into an
+        `asyncio.Task` as soon as this returns, without yielding to the event loop in between.
+        Counting inside the coroutine would let one `asyncio.gather` over many calls allocate a
+        host task per call before the first check ran, which is the cost the budget bounds.
+        Refusing here means no task is created; the executor hands the error to the sandbox at
+        the call site, so calls that already completed keep their recorded results.
+        """
+        original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
+        tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
+        call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+        speculation = self.speculation
+        if speculation is not None:
+            claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
+            if claimed is not None:
+                return speculation.adopt(ctx, execution, claimed, call_part)
+        return self._run_tool_call(ctx, execution, tool_manager, sandbox_name, call_part)
+
+    async def _run_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        execution: RunCodeExecution,
+        tool_manager: ToolManager[AgentDepsT],
+        sandbox_name: str,
+        call_part: ToolCallPart,
+    ) -> Any:
+        """Run a single tool call dispatched from inside the sandbox.
+
+        Returns the serialized tool result on success. On failure, the exception propagates:
+        the execution loop passes it back into Monty via `ExternalException` so the sandbox
+        sees it at the `await` site.
+        """
+        execution.nested_calls[call_part.tool_call_id] = call_part
+        speculation = self.speculation
+        guard: AbstractContextManager[None] = nullcontext()
+        if speculation is not None and speculation.eligible(sandbox_name):
+            await speculation.report_miss(ctx, execution, sandbox_name, call_part)
+        elif speculation is not None:
+            guard = speculation.unsafe_call()
+        with guard:
+            return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
@@ -1464,16 +1494,19 @@ def _model_safe_result(value: object) -> object:
     if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
         return value
     if is_mapping(value):
-        rendered = {
-            key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()
-        }
-        # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
-        # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
-        return rendered if len(rendered) == len(value) else repr(value)
+        return _model_safe_mapping(value)
     if _is_list_or_tuple(value):
         items = [_model_safe_result(item) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
     return value if _serializes(value) else repr(value)
+
+
+def _model_safe_mapping(value: Mapping[object, object]) -> object:
+    """`_model_safe_result` for a mapping, rendering each key that has no JSON form as its `repr`."""
+    rendered = {key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()}
+    # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
+    # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
+    return rendered if len(rendered) == len(value) else repr(value)
 
 
 def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
