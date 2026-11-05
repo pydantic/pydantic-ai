@@ -324,7 +324,8 @@ class TestKeenableSearchToolset:
         assert [source['url'] for source in returned.metadata['sources']] == ['https://example.com/one']
 
     async def test_web_search_drops_url_less_results_before_applying_the_limit(self):
-        # A URL-less entry ahead of good ones must not cost a result slot.
+        # A server that returns more than `max_results` must not let a URL-less
+        # entry ahead of good ones cost a result slot.
         client = FakeClient(results=[{'title': 'No URL'}, *(_result(f'https://example.com/{i}') for i in range(3))])
 
         returned = await _toolset(client, num_results=2).web_search('cats')

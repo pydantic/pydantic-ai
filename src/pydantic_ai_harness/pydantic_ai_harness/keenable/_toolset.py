@@ -337,9 +337,9 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return raise_retry(await self._operations.web_search(query))
-        # A result without a usable URL is dropped before the limit is applied
-        # rather than after; otherwise one malformed entry would cost a slot and
-        # `web_search` would return fewer results than asked for.
+        # Keenable is asked for `num_results`, so a result without a usable URL
+        # still costs a slot. Filtering before the slice matters only when a
+        # server returns more than `max_results`.
         found = await self._client.search(query, max_results=self._num_results)
         results = [
             (url, result)
