@@ -47,7 +47,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, known_model_names
 from pydantic_ai.models.batch import BatchRequest, BatchResult
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, FunctionModel
@@ -68,6 +68,7 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
     from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
@@ -584,6 +585,13 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
 ]
 
 
+def test_every_known_closed_model_keeps_the_flag_off():
+    """A first-party model whose name the denylist misses would get joiners on an API that doesn't need them."""
+    names = [name.split(':', 1)[1] for name in known_model_names() if name.startswith(('openai:', 'openai-chat:'))]
+    assert names
+    assert [name for name in names if (OpenAIProvider.model_profile(name) or {}).get(FLAG, False)] == []
+
+
 @pytest.mark.parametrize(('module', 'provider', 'model_name', 'expected'), ROUTE_CASES)
 def test_route_table(module: str, provider: str, model_name: str, expected: bool):
     provider_class: type[Provider[Any]] = getattr(
@@ -788,6 +796,16 @@ async def test_streamed_tool_args_split_anywhere(size: int):
     )
     assert isinstance(start.args, str | None)
     assert (start.args or '') + streamed == '{"query": "<|im_start|> <|end|>"}'
+
+
+def test_a_joiner_is_released_where_its_json_string_closes():
+    """Otherwise a held tail would leave `PartEndEvent` with truncated arguments, when another part follows."""
+    restorer = StreamRestorer()
+    restorer.restore(PartStartEvent(index=0, part=ToolCallPart('t', f'{{"q": "<{Z}|x')))
+    event = restorer.restore(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='", "n": 1}')))
+    assert isinstance(event, PartDeltaEvent)
+    assert event.delta == ToolCallPartDelta(args_delta=f'{Z}|x", "n": 1}}')
+    assert restorer.flush() == []
 
 
 async def test_held_text_is_sent_before_the_next_part_starts():

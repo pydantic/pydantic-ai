@@ -77,8 +77,9 @@ _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 )
 """The fixed tokens, as their first character and the rest."""
 
-_NAME: Final = r'[^\s<>|\u200b-\u200d\u2060\ufeff]'
-_FULL_WIDTH_NAME: Final = r'[^\s<>｜\u200b-\u200d\u2060\ufeff]'
+# No template names a token with a `"`, and leaving it out ends a held match where a JSON string closes.
+_NAME: Final = r'[^\s<>|"\u200b-\u200d\u2060\ufeff]'
+_FULL_WIDTH_NAME: Final = r'[^\s<>｜"\u200b-\u200d\u2060\ufeff]'
 
 _ZERO_WIDTH_CHARACTER: Final = '[\u200b\u200c\u200d\u2060\ufeff]'
 """What a model writes for the joiner when it copies it: some families reach for another invisible character instead."""

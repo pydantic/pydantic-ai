@@ -65,7 +65,8 @@ _CLOSED_MODEL_PREFIXES: Final = (
     'muse-',
     'nova-',
     'sonar',
-    # OpenAI's own names. `gpt-oss` is the exception below.
+    # OpenAI's own names. `gpt-oss` is the exception below. A new naming scheme needs a line here, or `OpenAIProvider`
+    # breaks tokens on OpenAI's own API: `test_every_known_closed_model_keeps_the_flag_off` checks the ones we list.
     'chatgpt',
     'codex',
     'computer-use',
