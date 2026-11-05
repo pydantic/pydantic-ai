@@ -2,8 +2,9 @@
 
 Capabilities that structure long or multi-part work: `Planning` (a model-owned task list),
 `SubAgents` (one `delegate_task` tool over named child agents), `DynamicWorkflow` (the model
-scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
-`BackgroundTools` (slow tools run while the agent keeps going). All import from
+scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run),
+`BackgroundTools` (slow tools run while the agent keeps going), and `Team` (gates that check a
+lead's and its members' work). All import from
 `pydantic_ai_harness`; only `DynamicWorkflow` needs an extra.
 
 ## Which one to use
@@ -16,6 +17,7 @@ scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
 | A slow tool should not block the agent | `BackgroundTools` |
+| A lead and its member agents should follow the same rules before going idle, adding a board task, or completing one | `Team` |
 
 Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` catalog unchanged.
 
@@ -406,6 +408,51 @@ Gotchas:
 - Sequential tools and realtime sessions run normally. Do not call `ctx.enqueue()` inside a durable
   activity.
 
+## Team
+
+`Team(gates=[...])` installs gate listeners on the lead's run; `team.member_capability(name)` returns
+the capability for a member's run, holding the same gates plus the idle gate. Gates are capabilities
+(typically `Hooks`) listening to three immediately dispatched events from `pydantic_ai_harness.teams`:
+
+- `TeammateIdleEvent(member, final_output, truncated)`: `keep_working(feedback)` enqueues the feedback
+  `asap` as the member's next user message, so the run continues instead of ending.
+- `TeamTaskCreatingEvent(item)`: `reject(feedback)` makes the board tool raise `ModelRetry`.
+- `TeamTaskCompletingEvent(item, owner)`: `reject(feedback)` makes the board tool raise `ModelRetry`.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+
+from pydantic_ai_harness import Team
+from pydantic_ai_harness.teams import TeammateIdleEvent
+
+gates = Hooks()
+
+
+@gates.on.event(TeammateIdleEvent)
+async def require_summary(ctx: RunContext[None], event: TeammateIdleEvent) -> None:
+    if 'Summary:' not in event.final_output:
+        event.keep_working('End with a "Summary:" line.')
+
+
+team = Team(gates=[gates])
+lead = Agent('test', capabilities=[team])
+member = Agent('test')
+# await member.run(prompt, capabilities=[team.member_capability('alice')])
+```
+
+Board tools call `check_task_creating(ctx, item)` / `check_task_completing(ctx, item, owner=...)`
+before storing the change; the tool must be contributed by a capability (`Capability(tools=[...])`).
+
+Gotchas:
+
+- Board changes made outside a run (the user or the application) are not gated.
+- The idle gate skips runs with queued messages, deferred-tool pauses and `PendingModelResponse`.
+- `run_stream()` skips the final `after_node_run`, so the idle gate needs `run()`, `iter()` or
+  `run_stream_events()`.
+- A gate that always rejects keeps a member running until its `UsageLimits` stop it.
+- Stream consumers do not receive the `TeammateIdleEvent` of a member that does go idle; listeners do.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/planning/
@@ -413,5 +460,6 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/dynamic-workflow/
 - https://pydantic.dev/docs/ai/harness/advisor/
 - https://pydantic.dev/docs/ai/harness/background-tools/
+- https://pydantic.dev/docs/ai/harness/teams/
 - https://pydantic.dev/docs/ai/guides/multi-agent-applications/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/

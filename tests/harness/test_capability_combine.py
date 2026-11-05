@@ -328,6 +328,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
+    'Team': Anonymous('a bundle of gate listeners; two install both sets of gates'),
+    '_IdleGate': Anonymous("one per member run, added by `Team.member_capability` with the member's name"),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'DelegationReports': Anonymous(
         'one per task owner and conversation; each delivers only its own reports, so several coexist'
