@@ -73,6 +73,20 @@ def _record_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return pids
 
 
+def _record_spawned_processes(monkeypatch: pytest.MonkeyPatch) -> list[anyio.abc.Process]:
+    """Record every process the backend spawns, for tests that must clean up an unkillable child."""
+    processes: list[anyio.abc.Process] = []
+    real_open_process = anyio.open_process
+
+    async def recording_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        process = await real_open_process(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(anyio, 'open_process', recording_spawn)
+    return processes
+
+
 async def _wait_for_pid_file(pid_file: Path) -> None:
     with anyio.fail_after(30):
         while not (pid_file.exists() and pid_file.read_text(encoding='ascii').strip()):
@@ -562,6 +576,93 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
     assert isinstance(exc_info.value.__cause__, PermissionError)
     [pid] = pids
     await _assert_process_gone(pid)
+
+
+async def test_timeout_with_denied_group_and_child_kill_child_exits_within_reap_grace_raises_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The timeout contract holds when both signals are denied but the child exits on its own
+    within the grace: the denial rides along as the cause, with the output collected."""
+    monkeypatch.setattr(local_module, '_REAP_GRACE', 5.0)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    pids = _record_spawned_pids(monkeypatch)
+
+    def deny_every_signal(pid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    monkeypatch.setattr(os, 'killpg', deny_every_signal)
+    monkeypatch.setattr(os, 'kill', deny_every_signal)
+    with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
+        # The child outlives the deadline but exits before the grace ends, so teardown proceeds.
+        await workspace.run('echo partial; exec sleep 0.55', shell=True, timeout=0.5)
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+    assert exc_info.value.stdout == 'partial\n'
+    [pid] = pids
+    await _assert_process_gone(pid)
+
+
+async def test_timeout_with_denied_group_and_child_kill_child_never_exits_returns_within_reap_grace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The grace bounds the wait for a child that never exits: `run` still raises the
+    `WorkspaceTimeoutError` with the denial as its cause, instead of hanging."""
+    monkeypatch.setattr(local_module, '_REAP_GRACE', 0.3)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    processes = _record_spawned_processes(monkeypatch)
+
+    def deny_every_signal(pid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    monkeypatch.setattr(os, 'killpg', deny_every_signal)
+    monkeypatch.setattr(os, 'kill', deny_every_signal)
+    start = anyio.current_time()
+    try:
+        with pytest.raises(WorkspaceTimeoutError, match='denied') as exc_info:
+            # `exec` makes the shell's own PID the sleeping direct child.
+            await workspace.run('exec sleep 3600', shell=True, timeout=0.5)
+    finally:
+        monkeypatch.undo()
+        # The workspace cannot kill or reap this child, so the test cleans it up itself.
+        with suppress(ProcessLookupError):
+            os.kill(processes[0].pid, signal.SIGKILL)
+        await processes[0].aclose()
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+    assert anyio.current_time() - start < 10  # bounded by the reap grace, not by the child
+
+
+async def test_timeout_does_not_swallow_cancellation_during_denied_kill_reap_grace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Native cancellation arriving during the grace is delivered once the grace ends."""
+    monkeypatch.setattr(local_module, '_REAP_GRACE', 3.0)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    processes = _record_spawned_processes(monkeypatch)
+
+    def deny_every_signal(pid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    monkeypatch.setattr(os, 'killpg', deny_every_signal)
+    monkeypatch.setattr(os, 'kill', deny_every_signal)
+    task = asyncio.create_task(workspace.run('exec sleep 3600', shell=True, timeout=0.5))
+    try:
+        await asyncio.sleep(1.0)  # the deadline has fired and both kills were denied
+
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()  # the shield owns the grace: the cancellation is not delivered yet
+
+        # `asyncio.wait` never re-raises the task's outcome into the test task.
+        with anyio.move_on_after(30):
+            await asyncio.wait([task])
+        assert task.cancelled()  # the caller's cancellation won; the grace did not swallow it
+    finally:
+        monkeypatch.undo()
+        # The workspace cannot kill or reap this child, so the test cleans it up itself.
+        with suppress(ProcessLookupError):
+            os.kill(processes[0].pid, signal.SIGKILL)
+        await processes[0].aclose()
 
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
