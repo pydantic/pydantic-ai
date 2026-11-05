@@ -2628,6 +2628,7 @@ details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
 Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
 keeps it and saves the preference in your settings database for this checkout.
+There is no command to undo this choice for the same checkout.
 A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
 with an explanation. You can register a user-only removal command for an exact
