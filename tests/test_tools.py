@@ -2167,32 +2167,31 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
     }
 
 
-def test_function_toolset_defaults_apply_to_tool():
+@pytest.mark.parametrize('added_with', ['constructor', 'add_tool'])
+def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructor', 'add_tool']):
     """All four toolset defaults reach a `Tool` added directly, whether via the constructor or `add_tool`."""
 
-    def my_tool() -> str:
+    def my_tool() -> str:  # pragma: no cover
         return 'hello'
 
-    for path in ('constructor', 'add_tool'):
-        tool = Tool(my_tool)
-        if path == 'constructor':
-            toolset = FunctionToolset(
-                [tool], strict=True, sequential=True, defer_loading=True, include_return_schema=True
-            )
-        else:
-            toolset = FunctionToolset(strict=True, sequential=True, defer_loading=True, include_return_schema=True)
-            toolset.add_tool(tool)
+    if added_with == 'constructor':
+        toolset = FunctionToolset(
+            [Tool(my_tool)], strict=True, sequential=True, defer_loading=True, include_return_schema=True
+        )
+    else:
+        toolset = FunctionToolset(strict=True, sequential=True, defer_loading=True, include_return_schema=True)
+        toolset.add_tool(Tool(my_tool))
 
-        test_model = TestModel()
-        agent = Agent(test_model, toolsets=[toolset])
-        agent.run_sync('Hello')
-        assert test_model.last_model_request_parameters is not None
-        tool_def = test_model.last_model_request_parameters.function_tools[0]
-        assert tool_def.name == 'my_tool'
-        assert tool_def.strict is True
-        assert tool_def.sequential is True
-        assert tool_def.defer_loading is True
-        assert tool_def.include_return_schema is True
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert tool_def.name == 'my_tool'
+    assert tool_def.strict is True
+    assert tool_def.sequential is True
+    assert tool_def.defer_loading is True
+    assert tool_def.include_return_schema is True
 
 
 def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
@@ -2201,7 +2200,7 @@ def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
     An explicit `False` passed to `add_function` survives the toolset default.
     """
 
-    def plain_tool() -> str:
+    def plain_tool() -> str:  # pragma: no cover
         return 'plain'
 
     def flagged_tool() -> str:

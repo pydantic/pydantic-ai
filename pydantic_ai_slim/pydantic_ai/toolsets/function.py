@@ -113,6 +113,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `sequential=False` still gets `True`.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
@@ -122,6 +123,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 `load_capability`, or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `defer_loading=False` still gets `True`.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
                 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
