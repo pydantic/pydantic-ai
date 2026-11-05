@@ -18,7 +18,8 @@ from typing import Any
 import anyio
 
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
@@ -448,7 +449,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             ctx,
             command,
             base=await self._jobs_base(ctx),
-            job_id=_job_id(ctx),
+            job_id=_job_id(ctx, command),
             cwd=await ctx.workspace.working_dir(),
             env=self._resolve_env(),
             mode=mode,
@@ -481,7 +482,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             combined=False,
             file_limit=self._max_file_bytes,
             log_limit=self._max_log_bytes,
-            job_id=_job_id(ctx),
+            job_id=_job_id(ctx, command),
         )
         return f'Started background command: {command!r}\nID: {posixpath.basename(job.directory)}'
 
@@ -551,16 +552,39 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         return '\n'.join(parts)
 
 
-def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:
+def _job_id(ctx: RunContext[AgentDepsT], command: str) -> str | None:
     """The job directory name for this tool call, or `None` to have `Job.launch` pick a random one.
 
-    Derived from the run and tool call, not the run alone, so separate launches in one run get distinct
-    directories while a retried activity or a replayed workflow (where `Job.launch` is called again but its
-    workspace call returns the recorded result) names the job it launched the first time.
+    The name stands for the call, so running it again finds the job it launched the first time instead of
+    running its command twice: a retried activity, a replayed workflow (where `Job.launch` is called again but
+    its workspace call returns the recorded result), or a conversation continued after a crash, which is a new
+    run. A call is its tool call ID and command within the model response that made it (see `_response_key`),
+    so the same ID in another response, even an empty one, is another call. The command is needed too: core
+    lets an ID repeat within one response, across the batches an output call splits it into.
     """
-    if ctx.run_id is None or ctx.tool_call_id is None:
+    if ctx.tool_call_id is None or (response := _response_key(ctx, ctx.tool_call_id)) is None:
         return None
-    return hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
+    return hashlib.sha256(f'{response}:{ctx.tool_call_id}:{command}'.encode()).hexdigest()[:32]
+
+
+def _response_key(ctx: RunContext[AgentDepsT], tool_call_id: str) -> str | None:
+    """What names the model response holding call `tool_call_id`, the same each time the call runs.
+
+    That is the run ID and timestamp the agent gave the history's last response, the one whose calls are running,
+    which a continued conversation keeps as they were. Where that response doesn't hold the call, as for a call a
+    tool makes itself, or there is no history, as inside a Temporal activity, which doesn't carry it, the run's
+    ID and step stand in, the same for a retried activity.
+    """
+    try:
+        messages = ctx.messages
+    except UserError:  # a run context rebuilt in a durable unit carries no history
+        messages = []
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    if response is not None and any(
+        isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in response.parts
+    ):
+        return f'{response.run_id}:{response.timestamp.isoformat()}'
+    return None if ctx.run_id is None else f'{ctx.run_id}:{ctx.run_step}'
 
 
 def _labelled(stdout: str, stderr: str, *, empty: str | None, trailer: str | None = None) -> str:
