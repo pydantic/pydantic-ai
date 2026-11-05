@@ -18803,7 +18803,8 @@ async def test_agent_resume_digestless_background_response_after_history_edit_us
         ],
         retrieve_responses=[_text_response('You said secret.', background=True)],
     )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
     parameters = ModelRequestParameters()
 
@@ -18854,7 +18855,8 @@ async def test_agent_resume_digestless_background_response_without_edit_uses_ful
         ],
         retrieve_responses=[_text_response('The answer is 42.', background=True)],
     )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
     parameters = ModelRequestParameters()
 

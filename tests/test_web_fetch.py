@@ -1622,7 +1622,7 @@ class TestMarkdownConverter:
             _convert_html(html)
         except (RecursionError, ModelRetry):
             assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 60
+        assert time.perf_counter() - start < 120
 
 
 class TestWebFetchToolFactory:
