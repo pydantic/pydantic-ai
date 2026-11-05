@@ -738,9 +738,7 @@ class StructuredContent(TextContent):
             ):
                 raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
-                raise ValueError(
-                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
-                )
+                raise ValueError(f'`StructuredContent.tag` cannot be {self.tag!r}, a built-in framing tag.')
         if format is None:
             content = self.render()
         elif callable(format):
@@ -3494,7 +3492,10 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
-_SUPERSESSION_SENTENCE = f'A later <{CONTEXT_TAG}> element with the same id replaces the earlier one and stays in effect until replaced again.'
+_SUPERSESSION_SENTENCE = (
+    f'A later <{CONTEXT_TAG}> element with the same id replaces the earlier one '
+    'and stays in effect until replaced again.'
+)
 
 
 def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
@@ -3514,7 +3515,7 @@ def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
-    """Render the prefix's append-mode blocks as tagged `<pyai:context>` elements, followed once by how later ones apply.
+    """Render the prefix's append-mode blocks as `<pyai:context>` elements, followed once by how later ones apply.
 
     Each addressable append-mode part is wrapped in a `<pyai:context id>` element. The last of them is followed by
     one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]

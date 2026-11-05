@@ -817,7 +817,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
     """
     _announces_lookalike_notes: ClassVar[bool] = True
-    """Whether the model is told what the notes on text that resembles a framework frame mean (`lookalike_note_announcement`).
+    """Whether the model is told what the notes on text that resembles a framework frame mean.
+
+    See `lookalike_note_announcement`.
 
     Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the start of the
     instructions; elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a frame or a
@@ -1978,7 +1980,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def _seals_system_blocks(self) -> bool:
-        """Whether this model's `<system>` blocks carry `verified`: no mid-conversation system role, and the profile's `needs_sealed_system_blocks`."""
+        """Whether this model's `<system>` blocks carry `verified`.
+
+        That's when it has no mid-conversation system role and its profile sets `needs_sealed_system_blocks`.
+        """
         return not self.profile.get('supports_inline_system_prompts', False) and self.profile.get(
             'needs_sealed_system_blocks', False
         )
@@ -1997,8 +2002,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
         An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
-        system-voice tag opener (`<system`, `<pyai:context`, `<pyai:context_diff`) gets a `SystemPromptPart` next to it, which on a
-        model without inline system messages becomes a `<system>` block later on, saying the text is the
+        system-voice tag opener (`<system`, `<pyai:context`, `<pyai:context_diff`) gets a `SystemPromptPart` next to it,
+        which on a model without inline system messages becomes a `<system>` block later on, saying the text is the
         user's, the tool's or the file author's (`lookalike_frame_note`). Nothing in the item itself changes. The
         note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
         say its API needs it, and is worded "following" or "preceding" to match.
@@ -4464,7 +4469,8 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
     result is checked whole, its text files included. Retry feedback is checked for the text it quotes, and a
-    compaction summary for the summarizer's text, not for the frame core puts around either. Text files are read as UTF-8; other files have no text to check.
+    compaction summary for the summarizer's text, not for the frame core puts around either. Text files are read as
+    UTF-8; other files have no text to check.
     """
     # TODO(v3): remove `RetryPromptPart`
     if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
@@ -4762,7 +4768,9 @@ def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMe
 def _render_system_prompt_contexts(
     messages: list[ModelMessage], *, inline_system: bool, prefix_states_rule: bool
 ) -> list[ModelMessage]:
-    """Send each `SystemPromptPart` with a `context_id` as its `<pyai:context>` element, which history holds only the content of.
+    """Send each `SystemPromptPart` with a `context_id` as its `<pyai:context>` element.
+
+    History holds only the content.
 
     The first statement of an id in `messages` opens it, and later ones replace or withdraw it. A statement that
     would open an id without content has nothing to state and is left out.

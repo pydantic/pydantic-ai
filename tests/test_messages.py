@@ -284,8 +284,8 @@ def test_structured_content_takes_a_legacy_tag_with_a_deprecation_warning(tag: s
 
 @pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
 def test_structured_content_rejects_a_framing_tag(tag: str):
-    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
-    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+    """User content can't wear a built-in framing tag, such as the `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a built-in framing tag"):
         StructuredContent({}, tag=tag)
 
 
