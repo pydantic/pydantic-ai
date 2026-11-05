@@ -515,7 +515,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
             case ToolFailedError():
                 message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_failed.content)
                 return None if message is None else ToolFailedError(replace(error.tool_failed, content=message))
-            case _:  # pragma: no cover - assert_never exhaustiveness guard
+            case _:  # pragma: no cover
                 assert_never(error)
 
     async def on_tool_execute_error(
