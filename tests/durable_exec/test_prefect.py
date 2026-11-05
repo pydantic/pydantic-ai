@@ -2244,6 +2244,39 @@ def test_cache_policy_hashes_non_utf8_bytes_by_value():
     assert key_for(b'abc') == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': b'abc'}, flow_parameters={})
 
 
+@pytest.mark.parametrize('binary', [b'\xff\xfe', bytearray(b'\xff\xfe')], ids=['bytes', 'bytearray'])
+@pytest.mark.parametrize('position', ['input', 'deps', 'validation_context'])
+def test_cache_policy_distinguishes_binary_from_descriptor(binary: bytes | bytearray, position: str):
+    """A caller's dict must not replay a binary input's task, even after repeated projection."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        payload = {'items': ([value],)}
+        if position == 'input':
+            inputs = payload
+        else:
+            ctx = RunContext(
+                deps=payload if position == 'deps' else None,
+                validation_context=payload if position == 'validation_context' else None,
+                model=TestModel(),
+                usage=RunUsage(),
+            )
+            inputs = {'args': (ctx,)}
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+
+    # Copy the descriptor to an ordinary dict, as a caller could supply in the same cache scope.
+    descriptor = dict(_cacheable_value(binary))
+    binary_key, dict_key = key_for(binary), key_for(descriptor)
+    assert binary_key is not None
+    assert dict_key is not None
+    assert binary_key != dict_key
+    for value, expected in [(binary, binary_key), (descriptor, dict_key)]:
+        for _ in range(3):
+            value = _cacheable_value(value)
+            assert key_for(value) == expected
+
+
 def test_cacheable_value_hashes_non_utf8_bytes_by_value():
     """`_cacheable_value` projects bytes like the task keys do, and leaves a model on the `cloudpickle` fallback."""
 
@@ -2276,6 +2309,62 @@ def test_cacheable_value_hashes_non_utf8_bytes_by_value():
     assert digest_of(Uploads(lock=lock, first=[data], second=[data])) == digest_of(
         Uploads(lock=lock, first=[data], second=[bytes(bytearray(data))])
     )
+
+
+def test_cache_policy_escapes_reserved_keys_once():
+    """Escaping a caller's descriptor must not collide with another caller's already-prefixed key."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    class Deps(BaseModel):
+        payload: Any
+        lock: Any
+
+    @dataclass
+    class ReservedField:
+        __pydantic_ai_binary__: Any
+
+    descriptor = dict(_cacheable_value(b'\xff\xfe'))
+    prefix, payload = next(iter(descriptor.items()))
+    values = [b'\xff\xfe', descriptor, {prefix * 2: payload}, {prefix * 3: payload}]
+    assert len({key_for(value) for value in values}) == len(values)
+    assert key_for(ReservedField(payload)) == key_for(descriptor)
+    for value in values:
+        deps = Deps(payload=value, lock=threading.Lock())
+        projected = _cacheable_value(deps)
+        assert key_for(projected) == key_for(_cacheable_value(projected))
+        assert key_for(projected) == key_for(_cacheable_value(deps))
+
+    # Unrelated dictionary inputs retain their existing keys, including non-string keys.
+    for value in [{'text': 'hello', 'data': b'abc'}, {1: 'hello'}]:
+        assert key_for(value) == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+
+async def test_prefect_task_cache_does_not_replay_binary_for_dict():
+    """Exercise Prefect's result store, including the repeat projection used by context inputs."""
+    executed: list[str] = []
+
+    @task(cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY, persist_result=True)
+    async def identify(ctx: RunContext[Any]) -> str:
+        result = 'binary' if isinstance(ctx.deps, bytes) else 'dictionary'
+        executed.append(result)
+        return result
+
+    @flow
+    async def compare() -> list[str]:
+        binary = b'\xff\xfe'
+        descriptor = dict(_cacheable_value(binary))
+        results: list[str] = []
+        for value in [binary, descriptor, binary, descriptor]:
+            ctx = RunContext(deps=value, model=TestModel(), usage=RunUsage())
+            results.append(await identify(ctx))
+        return results
+
+    assert await compare() == ['binary', 'dictionary', 'binary', 'dictionary']
+    assert executed == ['binary', 'dictionary']
 
 
 @pytest.mark.parametrize('content', ['hello', b'hello'])
