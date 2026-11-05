@@ -150,24 +150,34 @@ class RepetitionDetector(LoopDetector[AgentDepsT]):
             if period < self.min_period:
                 continue
             unit = text[length - period :]
-            count = 1
-            while (count + 1) * period <= length and text[
-                length - (count + 1) * period : length - count * period
-            ] == unit:
-                count += 1
+            count = _tail_repeats(text, unit)
             if count < self.min_repeats or count * period < self.min_chars:
                 continue
             shorter = (unit + unit).find(unit, 1)
             if shorter < period or len(set(unit)) < self.min_distinct_chars:
                 # The text ends in a run of a unit that is too short or too plain to be a loop, like a divider, a row
                 # of zeros or a table rule. A longer passage can still repeat around it, so look on from before the run.
-                run = count * period
-                while run < length and text[length - run - 1] == text[length - run - 1 + shorter]:
-                    run += 1
-                end = length - run + probe - 1
+                end = length - _run_length(text, count * period, shorter) + probe - 1
                 continue
             return Repetition(text=unit, count=count)
         return None
+
+
+def _tail_repeats(text: str, unit: str) -> int:
+    """How many times in a row `text` ends in `unit`."""
+    length, period = len(text), len(unit)
+    count = 1
+    while (count + 1) * period <= length and text[length - (count + 1) * period : length - count * period] == unit:
+        count += 1
+    return count
+
+
+def _run_length(text: str, run: int, period: int) -> int:
+    """How far back from the end `text` keeps repeating with `period`, given that its last `run` characters do."""
+    length = len(text)
+    while run < length and text[length - run - 1] == text[length - run - 1 + period]:
+        run += 1
+    return run
 
 
 class _Verdict(BaseModel):
