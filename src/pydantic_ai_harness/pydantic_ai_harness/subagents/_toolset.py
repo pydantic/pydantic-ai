@@ -18,7 +18,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
-from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -694,7 +694,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""
-        if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context):
+        # Temporal runs a restored context in workflow code, and DBOS a restored context at all, only in a child workflow.
+        if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context and ctx.agent is not None):
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent)
+        if durability is None or durability.engine_spec.engine_name not in ('Temporal', 'DBOS'):
             return
         if (
             self._include_self
