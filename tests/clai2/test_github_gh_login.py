@@ -274,7 +274,7 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
     await shell.loader.enable('github')
     await cancel_once_gh_starts(shell, fake_gh)
     with anyio.fail_after(10):
-        while not started or started[0].process.poll() is None:
+        while not started or started[0].process.poll() is None:  # pragma: no branch - `gh` may have stopped already
             await anyio.sleep(0.02)
     assert shell.login() == 'key'
 
