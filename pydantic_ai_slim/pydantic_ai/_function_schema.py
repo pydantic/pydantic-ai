@@ -107,7 +107,7 @@ class FunctionSchema:
         return args, args_dict
 
 
-def function_schema(  # noqa: C901
+def function_schema(
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
     *,
@@ -144,84 +144,26 @@ def function_schema(  # noqa: C901
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    var_kwargs_schema: core_schema.CoreSchema | None = None
-    fields: dict[str, core_schema.TypedDictField] = {}
-    positional_fields: list[str] = []
-    var_positional_field: str | None = None
-    decorators = _decorators.DecoratorInfos()
-
     description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
-    missing_param_descriptions: set[str] = set()
-
-    # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
-    # time; passing it as a keyword would double-bind with the values unpacked into `*args`. When
-    # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
-    has_var_positional = any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values())
+    schema_context = _FunctionSchemaContext(
+        gen_schema=gen_schema,
+        type_hints=type_hints,
+        field_descriptions=field_descriptions,
+        require_parameter_descriptions=require_parameter_descriptions,
+        # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
+        # time; passing it as a keyword would double-bind with the values unpacked into `*args`. When
+        # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
+        has_var_positional=any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values()),
+        errors=errors,
+    )
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if index == 0 and takes_ctx is None:
             takes_ctx = p.annotation is not sig.empty and is_call_ctx(type_hints[name])
+        _add_parameter(schema_context, index, name, p, takes_ctx=takes_ctx)
 
-        if p.annotation is sig.empty:
-            if takes_ctx and index == 0:
-                # should be the `context` argument, skip
-                continue
-            # TODO warn?
-            annotation = Any
-        else:
-            annotation = type_hints[name]
-
-            if index == 0 and takes_ctx:
-                if not is_call_ctx(annotation):
-                    errors.append('First parameter of tools that take context must be annotated with RunContext[...]')
-                continue
-            elif not takes_ctx and is_call_ctx(annotation):
-                errors.append('RunContext annotations can only be used with tools that take context')
-                continue
-            elif index != 0 and is_call_ctx(annotation):
-                errors.append('RunContext annotations can only be used as the first argument')
-                continue
-
-        field_name = p.name
-
-        if require_parameter_descriptions and field_name not in field_descriptions:
-            missing_param_descriptions.add(field_name)
-
-        if p.kind == Parameter.VAR_KEYWORD:
-            var_kwargs_schema = gen_schema.generate_schema(annotation)
-        else:
-            if p.kind == Parameter.VAR_POSITIONAL:
-                annotation = list[annotation]
-
-            required = p.default is Parameter.empty
-            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
-            annotation = cast(type[Any], annotation)
-            if required:
-                field_info = FieldInfo.from_annotation(annotation)
-            else:
-                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
-            if field_info.description is None:
-                field_info.description = field_descriptions.get(field_name)
-
-            fields[field_name] = td_schema = gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
-                field_name,
-                field_info,
-                decorators,
-                required=required,
-            )
-            # noinspection PyTypeChecker
-            metadata = td_schema.setdefault('metadata', {})
-            metadata['is_model_like'] = is_model_like(annotation)
-
-            if p.kind == Parameter.POSITIONAL_ONLY or (
-                has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
-            ):
-                positional_fields.append(field_name)
-            elif p.kind == Parameter.VAR_POSITIONAL:
-                var_positional_field = field_name
-
-    if missing_param_descriptions:
-        errors.append(f'Missing parameter descriptions for {", ".join(missing_param_descriptions)}')
+    if schema_context.missing_param_descriptions:
+        errors.append(f'Missing parameter descriptions for {", ".join(schema_context.missing_param_descriptions)}')
 
     if errors:
         from .exceptions import UserError
@@ -231,7 +173,9 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name, single_arg_keys = _build_schema(fields, var_kwargs_schema, core_config)
+    schema, single_arg_name, single_arg_keys = _build_schema(
+        schema_context.fields, schema_context.var_kwargs_schema, core_config
+    )
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -286,13 +230,103 @@ def function_schema(  # noqa: C901
         validator=schema_validator,
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
-        positional_fields=positional_fields,
-        var_positional_field=var_positional_field,
+        positional_fields=schema_context.positional_fields,
+        var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,
     )
+
+
+@dataclass(kw_only=True)
+class _FunctionSchemaContext:
+    """The validator fields `function_schema` builds from a tool function's parameters, one parameter at a time."""
+
+    gen_schema: _generate_schema.GenerateSchema
+    type_hints: dict[str, Any]
+    field_descriptions: dict[str, str]
+    require_parameter_descriptions: bool
+    has_var_positional: bool
+    errors: list[str]
+    """Where each parameter that can't be a tool argument is reported, shared with `function_schema`."""
+    fields: dict[str, core_schema.TypedDictField] = field(default_factory=dict[str, core_schema.TypedDictField])
+    positional_fields: list[str] = field(default_factory=list[str])
+    var_positional_field: str | None = None
+    var_kwargs_schema: core_schema.CoreSchema | None = None
+    missing_param_descriptions: set[str] = field(default_factory=set[str])
+    decorators: _decorators.DecoratorInfos = field(default_factory=_decorators.DecoratorInfos)
+
+
+def _add_parameter(
+    schema_context: _FunctionSchemaContext, index: int, name: str, p: Parameter, *, takes_ctx: bool | None
+) -> None:
+    """Add the parameter `p` at `index`, unless it is the `RunContext` argument or misuses `RunContext`."""
+    if p.annotation is Parameter.empty:
+        if takes_ctx and index == 0:
+            # should be the `context` argument, skip
+            return
+        # TODO warn?
+        annotation = Any
+    else:
+        annotation = schema_context.type_hints[name]
+
+        if index == 0 and takes_ctx:
+            if not is_call_ctx(annotation):
+                schema_context.errors.append(
+                    'First parameter of tools that take context must be annotated with RunContext[...]'
+                )
+            return
+        elif not takes_ctx and is_call_ctx(annotation):
+            schema_context.errors.append('RunContext annotations can only be used with tools that take context')
+            return
+        elif index != 0 and is_call_ctx(annotation):
+            schema_context.errors.append('RunContext annotations can only be used as the first argument')
+            return
+
+    _add_field(schema_context, p, annotation)
+
+
+def _add_field(schema_context: _FunctionSchemaContext, p: Parameter, annotation: Any) -> None:
+    field_name = p.name
+
+    if schema_context.require_parameter_descriptions and field_name not in schema_context.field_descriptions:
+        schema_context.missing_param_descriptions.add(field_name)
+
+    if p.kind == Parameter.VAR_KEYWORD:
+        schema_context.var_kwargs_schema = schema_context.gen_schema.generate_schema(annotation)
+        return
+
+    if p.kind == Parameter.VAR_POSITIONAL:
+        annotation = list[annotation]
+
+    required = p.default is Parameter.empty
+    # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
+    annotation = cast(type[Any], annotation)
+    if required:
+        field_info = FieldInfo.from_annotation(annotation)
+    else:
+        field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
+    if field_info.description is None:
+        field_info.description = schema_context.field_descriptions.get(field_name)
+
+    td_schema = schema_context.gen_schema._generate_td_field_schema(  # pyright: ignore[reportPrivateUsage]
+        field_name,
+        field_info,
+        schema_context.decorators,
+        required=required,
+    )
+    schema_context.fields[field_name] = td_schema
+    # noinspection PyTypeChecker
+    metadata = td_schema.setdefault('metadata', {})
+    metadata['is_model_like'] = is_model_like(annotation)
+
+    if p.kind == Parameter.POSITIONAL_ONLY or (
+        schema_context.has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
+    ):
+        schema_context.positional_fields.append(field_name)
+    elif p.kind == Parameter.VAR_POSITIONAL:
+        schema_context.var_positional_field = field_name
 
 
 P = ParamSpec('P')

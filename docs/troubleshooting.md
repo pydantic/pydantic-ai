@@ -41,6 +41,7 @@ These conditions do not raise an exception. Each appears in a different place: a
 - **History processors drop messages.** A processor or compaction step that removes too much leaves the model without context, with no error. Mutating messages in place instead of building new ones emits a best-effort [`MessageHistoryMutatedWarning`][pydantic_ai.exceptions.MessageHistoryMutatedWarning].
 - **Deferred and approval-required tools pause the run.** The run ends normally with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead of the output you expected; see [Deferred Tools](deferred-tools.md).
 - **Cost isn't priced.** [`cost`][pydantic_ai.usage.RunUsage.cost] is `None` for models that [genai-prices](https://github.com/pydantic/genai-prices) has no price for, including models newer than your install. A run with a `cost_limit` emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] instead of failing, and [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when responses omit usage under a token or cost limit. See [Usage Limits](agent.md#usage-limits).
+- **Text output is cut off.** A text answer that reached the `max_tokens` limit is returned as the output, with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'` on `result.response`. See [Output cut off by the token limit](output.md#truncated-output).
 - **Fallback switches models.** A failed model is skipped without an error as long as a later one answers, so you may be running on your second choice. Check `failed_attempts`.
 
 ## Jupyter Notebook Errors
@@ -160,6 +161,10 @@ Ordinary exceptions from a tool propagate and end the run. Raise [`ModelRetry`][
 The model's final answer failed validation against your `output_type`, or an [output validator](output.md#output-validator-functions) raised `ModelRetry`, more often than the output retry budget allows. A response with no usable output, such as empty text or plain text when the output type needs structured data, also uses up this budget. The default is `1`: raise it with `Agent(retries={'output': N})`, or per run with `agent.run(..., retries={'output': N})`.
 
 Smaller and local models often answer in text instead of calling the output tool. For those, try [`NativeOutput`](output.md#native-output) where the model supports it, or [`PromptedOutput`](output.md#prompted-output). If an empty answer is acceptable, make the output type optional (`output_type=str | None`) so that an empty response ends the run with `None`; see [Optional output](output.md#optional-output). Use [`capture_run_messages()`][pydantic_ai.capture_run_messages] to inspect the response that failed, and see [Output retries](retries.md#output-retries).
+
+### [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]: `Model token limit (...) exceeded ...`
+
+The response reached the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] limit, shown in parentheses (or `provider default` when you didn't set one), before the model finished its output. The rest of the message says where it was cut off: before any output was generated, often while the model was thinking; while generating structured output, leaving incomplete JSON; or, as [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall], while generating a tool call's arguments. For the first two, re-prompting the model with the same limit would run into it again, so the run ends right away; `IncompleteToolCall` is raised once the tool call's retries are used up. Raise `max_tokens`, or ask for a shorter answer. See [Output cut off by the token limit](output.md#truncated-output).
 
 ## Message History
 

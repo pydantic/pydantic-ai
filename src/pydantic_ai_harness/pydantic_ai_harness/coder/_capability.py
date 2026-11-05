@@ -188,7 +188,10 @@ class Coder(CombinedCapability[AgentDepsT]):
         unrestricted_filesystem: Let the file tools reach the whole workspace
             filesystem rather than only the working directory.
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
-            own, so the instruction files are not loaded twice.
+            own, so the instruction files are not loaded twice. Pass a
+            `RepoContext` to use it in place of the bundled
+            `RepoContext(walk_up='repo_root')`, keeping the project-directory note;
+            e.g. `RepoContext()` loads only the working directory's instruction files.
         sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
             fresh run of the same agent `Coder` is bound to, including capabilities
             bound next to `Coder`. This requires binding `Coder` with
@@ -216,7 +219,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         instructions: str | None = None,
         agency: Agency = 'high',
         unrestricted_filesystem: bool = False,
-        repo_context: bool = True,
+        repo_context: bool | RepoContext[AgentDepsT] = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
         task_control: TaskControl | None = None,
@@ -235,6 +238,13 @@ class Coder(CombinedCapability[AgentDepsT]):
                 f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
                 stacklevel=3,
             )
+        bundled_repo_context = (
+            repo_context
+            if isinstance(repo_context, RepoContext)
+            else RepoContext[AgentDepsT](walk_up='repo_root')
+            if repo_context
+            else None
+        )
         delegation = (
             SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
             if sub_agents
@@ -247,7 +257,9 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         # Naming the directory creates a lazily created sandbox, so it comes only with
         # `RepoContext`, which reads the workspace at run start anyway.
-        project = [project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []
+        project = (
+            [project_instructions(unrestricted=unrestricted_filesystem)] if bundled_repo_context is not None else []
+        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             # The id also names its (empty) function toolset, which durable execution requires.
@@ -261,8 +273,8 @@ class Coder(CombinedCapability[AgentDepsT]):
                 tools=['shell'],
             ),
         ]
-        if repo_context:
-            capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
+        if bundled_repo_context is not None:
+            capabilities.append(bundled_repo_context)
         tool_names = {*FILE_TOOL_NAMES, 'shell'}
         if delegation is not None:
             capabilities.append(delegation)

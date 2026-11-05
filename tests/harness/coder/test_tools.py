@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Agency, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
@@ -88,6 +89,7 @@ class TestCoder:
 
     @pytest.mark.parametrize('extra_limits', [False, True])
     async def test_durable_binding(self, tmp_path: Path, extra_limits: bool) -> None:
+        (tmp_path / '.git').mkdir()
         durability = RecordingDurability()
         capabilities: list[AbstractCapability[object]] = [
             LocalWorkspace(tmp_path),
@@ -101,8 +103,8 @@ class TestCoder:
         assert result.output == 'done'
         assert [(name, getattr(args[0], 'method', None)) for name, args in durability.calls] == [
             ('coder__capability__workspace.call', 'ensure'),
-            ('coder__capability__workspace.call', 'stat'),
-            ('coder__capability__workspace.call', 'stat'),
+            ('coder__capability__workspace.call', 'exists'),
+            *[('coder__capability__workspace.call', 'stat')] * 4,
             ('coder__model.request_stream', None),
         ]
 
@@ -382,6 +384,14 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
         assert not any('Your project is' in part.content for part in parts)
+
+    async def test_a_given_repo_context_keeps_the_project_note(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert sum('Your project is' in part.content for part in parts) == 1
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
