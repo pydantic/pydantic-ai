@@ -3982,18 +3982,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
         The server created it from the history the suspended response recorded, so if that, or the suspended response,
-        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
-        matches, so it isn't continued from.
+        has changed since, none is returned. Without the suspended response's digest there's no telling whether the
+        history changed either, so none is returned then too: the merged response keeps no digest, and the next request
+        sends the full history instead of continuing from the old response.
         """
-        if self._history_changed(suspended, history):
+        if not self._history_known_unchanged(suspended, history):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
         """Whether `response`, or `history`, the messages before it, changed since the response was created.
 
-        A response with no recorded digest has nothing to compare, so it doesn't count as changed: that's for a
-        background response being retrieved. Continuing from a response needs `_history_known_unchanged`.
+        A response with no recorded digest has nothing to compare, so it doesn't count as changed here. Whether to
+        continue from a response needs `_history_known_unchanged`, which gates that case.
         """
         if response.history_digest is None:
             return False

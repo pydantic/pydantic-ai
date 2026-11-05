@@ -5916,28 +5916,6 @@ async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block
     ]
 
 
-async def test_background_response_without_a_digest_records_one_when_retrieved(allow_model_requests: None):
-    """A retrieved response continues the suspended one, so that having no digest doesn't count as a changed history."""
-    mock_client = MockOpenAIResponses(
-        response=_text_response('', status='queued', background=True),
-        retrieve_responses=[_text_response('The answer is 42.', background=True)],
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
-    parameters = ModelRequestParameters()
-    request = ModelRequest.user_text_prompt('What is the meaning of life?')
-
-    suspended = await model.request([request], OpenAIResponsesModelSettings(openai_background=True), parameters)
-    assert suspended.state == 'suspended'
-    assert suspended.history_digest is None
-
-    resumed = await model.request(
-        [request, suspended],
-        OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto'),
-        parameters,
-    )
-    assert resumed.history_digest is not None
-
-
 @pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])
 async def test_openai_previous_response_id_resends_a_response_without_a_digest(
     allow_model_requests: None, previous_response_id: str
@@ -18811,6 +18789,109 @@ async def test_background_response_resumed_after_its_history_changed_is_not_cont
     previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
+
+
+async def test_agent_resume_digestless_background_response_after_history_edit_uses_full_history(
+    allow_model_requests: None,
+):
+    """A digest-less suspended response resumed after a history edit: the next create sends the full history."""
+    mock_client = MockOpenAIResponses(
+        response=[
+            _text_response('', status='queued', background=True),
+            _text_reply('resp_new', 'Nothing to say.'),
+            _text_reply('resp_newer', 'Anything else?'),
+        ],
+        retrieve_responses=[_text_response('You said secret.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    parameters = ModelRequestParameters()
+
+    suspended = await model.request(
+        [ModelRequest.user_text_prompt('secret')],
+        OpenAIResponsesModelSettings(openai_background=True),
+        parameters,
+    )
+    assert suspended.state == 'suspended'
+    assert suspended.history_digest is None
+
+    redacting_agent = Agent(model, model_settings=settings, capabilities=[ProcessHistory(_redact_secret)])
+    resumed_result = await redacting_agent.run(message_history=[ModelRequest.user_text_prompt('secret'), suspended])
+    resumed = resumed_result.all_messages()[-1]
+    assert isinstance(resumed, ModelResponse)
+    assert resumed.history_digest is None
+
+    next_result = await Agent(model, model_settings=settings).run(
+        'Why?',
+        message_history=resumed_result.all_messages(),
+    )
+    first_create = get_mock_responses_kwargs(mock_client)[1]
+    assert first_create.get('previous_response_id') is None
+    assert first_create['input'] == [
+        {'role': 'user', 'content': '[redacted]'},
+        {'role': 'assistant', 'content': 'You said secret.'},
+        {'role': 'user', 'content': 'Why?'},
+    ]
+    fresh = next_result.all_messages()[-1]
+    assert isinstance(fresh, ModelResponse)
+    assert fresh.history_digest is not None
+
+    await Agent(model, model_settings=settings).run('Thanks.', message_history=next_result.all_messages())
+    second_create = get_mock_responses_kwargs(mock_client)[2]
+    assert second_create['previous_response_id'] == 'resp_new'
+    assert second_create['input'] == [{'role': 'user', 'content': 'Thanks.'}]
+
+
+async def test_agent_resume_digestless_background_response_without_edit_uses_full_history(
+    allow_model_requests: None,
+):
+    """A digest-less suspended response resumed without edits: the next create still sends the full history."""
+    mock_client = MockOpenAIResponses(
+        response=[
+            _text_response('', status='queued', background=True),
+            _text_reply('resp_new', 'Nothing more to add.'),
+            _text_reply('resp_newer', 'Okay.'),
+        ],
+        retrieve_responses=[_text_response('The answer is 42.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    parameters = ModelRequestParameters()
+
+    suspended = await model.request(
+        [ModelRequest.user_text_prompt('What is the meaning of life?')],
+        OpenAIResponsesModelSettings(openai_background=True),
+        parameters,
+    )
+    assert suspended.state == 'suspended'
+    assert suspended.history_digest is None
+
+    resumed_result = await Agent(model, model_settings=settings).run(
+        message_history=[ModelRequest.user_text_prompt('What is the meaning of life?'), suspended]
+    )
+    resumed = resumed_result.all_messages()[-1]
+    assert isinstance(resumed, ModelResponse)
+    assert resumed.history_digest is None
+
+    next_result = await Agent(model, model_settings=settings).run(
+        'Why?',
+        message_history=resumed_result.all_messages(),
+    )
+    first_create = get_mock_responses_kwargs(mock_client)[1]
+    assert first_create.get('previous_response_id') is None
+    assert first_create['input'] == [
+        {'role': 'user', 'content': 'What is the meaning of life?'},
+        {'role': 'assistant', 'content': 'The answer is 42.'},
+        {'role': 'user', 'content': 'Why?'},
+    ]
+    fresh = next_result.all_messages()[-1]
+    assert isinstance(fresh, ModelResponse)
+    assert fresh.history_digest is not None
+
+    await Agent(model, model_settings=settings).run('Thanks.', message_history=next_result.all_messages())
+    second_create = get_mock_responses_kwargs(mock_client)[2]
+    assert second_create['previous_response_id'] == 'resp_new'
+    assert second_create['input'] == [{'role': 'user', 'content': 'Thanks.'}]
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
