@@ -419,7 +419,7 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert ("already in your context; don't search for them" in text) is loaded
+        assert ("if any, are already in your context; don't search for them" in text) is loaded
         assert ("A subdirectory's instruction files are added to your context" in text) is nested
 
     async def test_instructions_name_the_configured_instruction_files(self, tmp_path: Path) -> None:
@@ -428,7 +428,7 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert 'Instruction files (RULES.md) for the project are already in your context' in text
+        assert 'Instruction files (RULES.md) for the project, if any, are already in your context' in text
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:

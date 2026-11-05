@@ -28,7 +28,7 @@ _READING = (
     "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
 )
 
-_REPO_FILES = "Instruction files ({names}) for the project are already in your context; don't search for them."
+_REPO_FILES = "Instruction files ({names}) for the project, if any, are already in your context; don't search for them."
 """Only when the bundled `RepoContext` autoloads instruction files."""
 
 _NESTED_REPO_FILES = (
