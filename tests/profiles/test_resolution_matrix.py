@@ -3081,6 +3081,26 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
+def _route_provider(provider_name: str) -> Any:
+    """The provider class behind a route name in the forced-tool-choice route tests below."""
+    return {
+        'anthropic': AnthropicProvider,
+        'bedrock': BedrockProvider,
+        'cerebras': CerebrasProvider,
+        'deepseek': DeepSeekProvider,
+        'github-copilot': GitHubCopilotProvider,
+        'groq': GroqProvider,
+        'heroku': HerokuProvider,
+        'litellm': LiteLLMProvider,
+        'nebius': NebiusProvider,
+        'ollama': OllamaProvider,
+        'openrouter': OpenRouterProvider,
+        'snowflake': SnowflakeProvider,
+        'together': TogetherProvider,
+        'vercel': VercelProvider,
+    }[provider_name]
+
+
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
 @pytest.mark.parametrize(
     ('provider_name', 'model_name'),
@@ -3098,19 +3118,38 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
 def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
     """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
     Anthropic profile carries `supports_forced_tool_choice=False` over."""
-    provider_classes = {
-        'anthropic': AnthropicProvider,
-        'bedrock': BedrockProvider,
-        'openrouter': OpenRouterProvider,
-        'vercel': VercelProvider,
-        'github-copilot': GitHubCopilotProvider,
-        'heroku': HerokuProvider,
-        'litellm': LiteLLMProvider,
-        'snowflake': SnowflakeProvider,
-    }
-    profile = provider_classes[provider_name].model_profile(model_name)
+    profile = _route_provider(provider_name).model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice') is False
+
+
+def _forcing_allowed_while_thinking(provider_name: str, model_name: str) -> bool:
+    """Whether a route lets a forced tool choice through while the model thinks.
+
+    This is the AND of `supports_forced_tool_choice` and `supports_forced_tool_choice_with_thinking`, with an absent
+    flag counting as allowed. Routes are compared on this derived value rather than the raw flags, because a route may
+    restrict forcing unconditionally (Together on DeepSeek V4) where another restricts it only while thinking
+    (`DeepSeekProvider`).
+    """
+    profile = _route_provider(provider_name).model_profile(model_name)
+    assert profile is not None
+    return (
+        profile.get('supports_forced_tool_choice', True) is not False
+        and profile.get('supports_forced_tool_choice_with_thinking', True) is not False
+    )
+
+
+def _diverges(owner: str, why: str) -> pytest.MarkDecorator:
+    """Mark a route that disagrees with its family today; the PR that fixes it has to remove the marker."""
+    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f'{owner}: {why}')
+
+
+_CLAUDE_OPUS_5_5 = ('anthropic', 'claude-opus-5-5')
+_DEEPSEEK_V4 = ('deepseek', 'deepseek-v4-pro')
+_DEEPSEEK_V4_1 = ('deepseek', 'deepseek-flash')
+"""DeepSeek's API serves V4.1 Flash as `deepseek-flash`."""
+_GPT_OSS = ('cerebras', 'gpt-oss-120b')
+"""gpt-oss follows the Harmony format, whose profile restricts forced tool choice."""
 
 
 @pytest.mark.skipif(
@@ -3118,106 +3157,84 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     reason='extras not installed',
 )
 @pytest.mark.parametrize(
-    'family',
+    ('reference', 'route'),
     [
-        pytest.param('claude-opus-5.5', id='claude-opus-5.5'),
+        pytest.param(_CLAUDE_OPUS_5_5, ('bedrock', 'us.anthropic.claude-opus-5-5'), id='claude-opus-5.5-bedrock'),
+        # OpenRouter also restricts forcing while thinking, which the derived value absorbs.
+        pytest.param(_CLAUDE_OPUS_5_5, ('openrouter', 'anthropic/claude-opus-5.5'), id='claude-opus-5.5-openrouter'),
+        pytest.param(_CLAUDE_OPUS_5_5, ('vercel', 'anthropic/claude-opus-5-5'), id='claude-opus-5.5-vercel'),
+        pytest.param(_DEEPSEEK_V4, ('deepseek', 'deepseek-v4-flash'), id='deepseek-v4-deepseek-flash'),
+        # Together restricts forcing outright, as whether it honors DeepSeek's thinking toggle is unverified.
+        pytest.param(_DEEPSEEK_V4, ('together', 'deepseek-ai/DeepSeek-V4-Pro'), id='deepseek-v4-together'),
         pytest.param(
-            'deepseek-v4',
-            id='deepseek-v4',
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason='#12069: DeepSeekProvider and TogetherProvider restrict forced tool choice for DeepSeek V4; #12104: OpenRouter, Nebius and Vercel do not',
-            ),
+            _DEEPSEEK_V4,
+            ('openrouter', 'deepseek/deepseek-v4-pro'),
+            id='deepseek-v4-openrouter',
+            marks=_diverges('#12104', 'OpenRouter allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
-            'deepseek-v4.1',
-            id='deepseek-v4.1',
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason='#12069: DeepSeekProvider restricts forced tool choice for `deepseek-flash`; #12104: Together, Nebius and Vercel do not',
-            ),
+            _DEEPSEEK_V4,
+            ('nebius', 'deepseek-ai/DeepSeek-V4-Pro'),
+            id='deepseek-v4-nebius',
+            marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
-            'gpt-oss',
-            id='gpt-oss',
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason='#12101: harmony-served routes restrict forced tool choice, plain-OpenAI routes do not',
-            ),
+            _DEEPSEEK_V4,
+            ('vercel', 'deepseek/deepseek-v4-pro'),
+            id='deepseek-v4-vercel',
+            marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
+            id='deepseek-v4.1-together',
+            marks=_diverges('#12069', "Together's DeepSeek V4 guard keys on `deepseek-v4-`, which V4.1 ids miss"),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('openrouter', 'deepseek/deepseek-v4.1-flash-1017'),
+            id='deepseek-v4.1-openrouter',
+            marks=_diverges('#12104', 'OpenRouter allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('nebius', 'deepseek-ai/DeepSeek-V4.1-Flash'),
+            id='deepseek-v4.1-nebius',
+            marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('vercel', 'deepseek/deepseek-v4.1-flash-1017'),
+            id='deepseek-v4.1-vercel',
+            marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(_GPT_OSS, ('ollama', 'gpt-oss:20b'), id='gpt-oss-ollama'),
+        pytest.param(_GPT_OSS, ('nebius', 'openai/gpt-oss-120b'), id='gpt-oss-nebius'),
+        pytest.param(
+            _GPT_OSS,
+            ('groq', 'openai/gpt-oss-120b'),
+            id='gpt-oss-groq',
+            marks=_diverges('#12101', 'Groq resolves `openai/gpt-oss-*` to the OpenAI profile, not Harmony'),
+        ),
+        pytest.param(
+            _GPT_OSS,
+            ('openrouter', 'openai/gpt-oss-120b'),
+            id='gpt-oss-openrouter',
+            marks=_diverges('#12101', 'OpenRouter resolves `openai/gpt-oss-*` to the OpenAI profile, not Harmony'),
+        ),
+        pytest.param(
+            _GPT_OSS,
+            ('together', 'openai/gpt-oss-120b'),
+            id='gpt-oss-together',
+            marks=_diverges('#12101', 'Together has no family profile for `openai/gpt-oss-*`'),
         ),
     ],
 )
-def test_forced_tool_choice_guard_agrees_across_routes(family: str):
-    """Every route serving a model family agrees on the effective forced-tool-choice guard.
+def test_forced_tool_choice_guard_agrees_across_routes(reference: tuple[str, str], route: tuple[str, str]):
+    """Whether a model can be forced to call a tool is a property of the model, so every route serving it agrees.
 
-    The guard is the AND of `supports_forced_tool_choice` and `supports_forced_tool_choice_with_thinking`
-    (absent or `None` counts as allowed): a model accepts a forced tool choice on a route iff it accepts
-    one in every thinking mode that route can run. Raw flags may legitimately differ between routes, so
-    routes are compared on the derived value, not the raw flags.
-
-    `claude-opus-5.5` is the passing control. The `deepseek-v4`, `deepseek-v4.1` and `gpt-oss` rows
-    currently disagree across routes; they are strict xfail so the suite turns red the moment the
-    owning issues land and the markers must come off.
+    Each route is compared with its family's first route. A route that disagrees today is a strict expected failure
+    naming the issue that owns it, so the PR fixing it has to remove its marker, and a route that agrees today fails
+    as soon as it regresses.
     """
-    provider_classes = {
-        'anthropic': AnthropicProvider,
-        'bedrock': BedrockProvider,
-        'cerebras': CerebrasProvider,
-        'deepseek': DeepSeekProvider,
-        'groq': GroqProvider,
-        'nebius': NebiusProvider,
-        'ollama': OllamaProvider,
-        'openrouter': OpenRouterProvider,
-        'together': TogetherProvider,
-        'vercel': VercelProvider,
-    }
-    routes_by_family: dict[str, list[tuple[str, str]]] = {
-        'claude-opus-5.5': [
-            ('anthropic', 'claude-opus-5-5'),
-            ('bedrock', 'us.anthropic.claude-opus-5-5'),
-            # OpenRouter's Anthropic overlay additionally disables forced choice while thinking
-            # (`supports_forced_tool_choice_with_thinking=False`), a documented host-specific
-            # raw-flag delta the derived guard absorbs: every route still derives False.
-            ('openrouter', 'anthropic/claude-opus-5.5'),
-            ('vercel', 'anthropic/claude-opus-5-5'),
-        ],
-        'deepseek-v4': [
-            ('deepseek', 'deepseek-v4-pro'),
-            ('deepseek', 'deepseek-v4-flash'),
-            # Together routes `deepseek-ai/DeepSeek-V4-*` to the DeepSeek profile, then disables
-            # forced tool choice outright because thinking is DeepSeek V4's default.
-            ('together', 'deepseek-ai/DeepSeek-V4-Pro'),
-            ('openrouter', 'deepseek/deepseek-v4-pro'),
-            ('nebius', 'deepseek-ai/DeepSeek-V4-Pro'),
-            ('vercel', 'deepseek/deepseek-v4-pro'),
-        ],
-        'deepseek-v4.1': [
-            ('deepseek', 'deepseek-flash'),
-            # Together's DeepSeek V4 restriction keys on the `deepseek-v4-` prefix, which
-            # `deepseek-v4.1-*` misses, so Together serves V4.1 unrestricted.
-            ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
-            ('nebius', 'deepseek-ai/DeepSeek-V4.1-Flash'),
-            ('vercel', 'deepseek/deepseek-v4.1-flash-1017'),
-        ],
-        'gpt-oss': [
-            # Harmony-served routes restrict forced tool choice.
-            ('cerebras', 'gpt-oss-120b'),
-            ('ollama', 'gpt-oss:20b'),
-            ('nebius', 'openai/gpt-oss-120b'),
-            # Plain OpenAI-profile routes do not.
-            ('groq', 'openai/gpt-oss-120b'),
-            ('openrouter', 'openai/gpt-oss-120b'),
-            ('together', 'openai/gpt-oss-120b'),
-        ],
-    }
-
-    derived_by_route: dict[str, bool] = {}
-    for provider_name, model_name in routes_by_family[family]:
-        profile = provider_classes[provider_name].model_profile(model_name)
-        assert profile is not None
-        derived_by_route[f'{provider_name}/{model_name}'] = (
-            profile.get('supports_forced_tool_choice', True) is not False
-            and profile.get('supports_forced_tool_choice_with_thinking', True) is not False
-        )
-
-    assert len(set(derived_by_route.values())) == 1, derived_by_route
+    assert _forcing_allowed_while_thinking(*route) == _forcing_allowed_while_thinking(*reference)
