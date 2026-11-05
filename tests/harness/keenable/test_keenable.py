@@ -544,11 +544,17 @@ class TestHttpKeenableClient:
         ],
     )
     def test_base_url_rejects_plaintext_hostless_and_query_bearing_urls(self, base_url: str):
-        with pytest.raises(UserError, match='must be an https:// URL'):
+        with pytest.raises(UserError, match=r'^`base_url` must be an https:// URL, or http:// on loopback'):
             HttpKeenableClient(api_key='', base_url=base_url)
 
+    def test_base_url_errors_name_the_environment_variable_it_came_from(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('KEENABLE_API_URL', 'http://example.com')
+
+        with pytest.raises(UserError, match=r'^`KEENABLE_API_URL` must be an https:// URL'):
+            HttpKeenableClient(api_key='')
+
     def test_base_url_rejects_credentials_without_echoing_them(self):
-        with pytest.raises(UserError, match='must not contain credentials') as excinfo:
+        with pytest.raises(UserError, match=r'^`base_url` must not contain credentials') as excinfo:
             HttpKeenableClient(api_key='', base_url='https://user:secret@proxy.example')
 
         assert 'secret' not in str(excinfo.value)

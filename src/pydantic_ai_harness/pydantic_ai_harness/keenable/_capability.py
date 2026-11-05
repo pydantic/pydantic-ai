@@ -82,7 +82,7 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
 
     Longer pages are truncated and marked, so the model can tell that the page
     continued past what it was shown. The marker counts against this budget,
-    and a budget too small to hold it cuts the page without one.
+    and a budget too small to hold it ends the page with `…` instead.
     """
 
     guidance: str | None = None

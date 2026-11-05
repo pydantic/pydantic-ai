@@ -85,19 +85,21 @@ class HttpKeenableClient:
         self._api_key = (api_key if api_key is not None else os.environ.get(self._API_KEY_ENV, '')).strip()
         base = (base_url if base_url is not None else os.environ.get(self._BASE_URL_ENV)) or self._DEFAULT_BASE_URL
         base = base.rstrip('/')
+        source = '`base_url`' if base_url is not None else f'`{self._BASE_URL_ENV}`'
         parsed = httpx.URL(base)
         # The base URL is developer-controlled, but a typo should fail here
         # rather than produce a plaintext request. Credentials are rejected
         # without echoing the URL: httpx puts the request URL in its error
         # messages, so they would otherwise reach logs and retry prompts.
         if parsed.userinfo:
-            raise UserError(f'`{self._BASE_URL_ENV}` must not contain credentials; pass the API key separately')
+            raise UserError(f'{source} must not contain credentials; pass the API key separately')
         loopback_http = parsed.scheme == 'http' and parsed.host in {'localhost', '127.0.0.1', '::1'}
         # The endpoint path is appended to the base URL, so a query or fragment,
         # even an empty one that parses as none at all, would land before it.
         if not parsed.host or '?' in base or '#' in base or not (parsed.scheme == 'https' or loopback_http):
             raise UserError(
-                f'`{self._BASE_URL_ENV}` must be an https:// URL with a host and no query or fragment, got {base!r}'
+                f'{source} must be an https:// URL, or http:// on loopback, with a host and no query or fragment, '
+                f'got {base!r}'
             )
         self._base_url = base
 
