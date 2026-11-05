@@ -36,6 +36,7 @@ from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
@@ -228,18 +229,7 @@ def _compile(
     `only` has dropped that built-in -- would otherwise be judged by a check
     written for different text and silently never match.
     """
-    if only is None:
-        selected = dict(patterns)
-    else:
-        # `only` filters, it does not reorder. Both mappings document an application order
-        # that other patterns depend on -- `iban` before `credit_card` is what stops a spaced
-        # account number being labelled a card -- and building the dict by iterating `only`
-        # handed that order to the caller's argument order instead.
-        requested = set(only)
-        for name in requested:
-            if name not in patterns:
-                raise UserError(f'Unknown pattern {name!r}; available: {sorted(patterns)}.')
-        selected = {name: pattern for name, pattern in patterns.items() if name in requested}
+    selected = dict(patterns) if only is None else _select_only(patterns, only)
     if extra:
         clashes = sorted(set(extra) & set(selected))
         if clashes:
@@ -255,6 +245,19 @@ def _compile(
         (name, re.compile(pattern), None if name in overridden else _VALIDATORS.get(name))
         for name, pattern in selected.items()
     )
+
+
+def _select_only(patterns: Mapping[str, str], only: Iterable[str]) -> dict[str, str]:
+    """The `patterns` named in `only`, in the order of `patterns`; raises on a name it does not have."""
+    # `only` filters, it does not reorder. Both mappings document an application order
+    # that other patterns depend on -- `iban` before `credit_card` is what stops a spaced
+    # account number being labelled a card -- and building the dict by iterating `only`
+    # handed that order to the caller's argument order instead.
+    requested = set(only)
+    for name in requested:
+        if name not in patterns:
+            raise UserError(f'Unknown pattern {name!r}; available: {sorted(patterns)}.')
+    return {name: pattern for name, pattern in patterns.items() if name in requested}
 
 
 def _require_text(value: object) -> str:
@@ -449,30 +452,7 @@ def for_tool_result_text(
                 )
             return verdict
         if _is_text_tool_return(result):
-            # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-            assert isinstance(result.return_value, str)
-            verdict = detector(result.return_value)
-            if verdict.action not in ('allow', 'replace'):
-                return verdict
-            return_value = verdict.replacement if verdict.action == 'replace' else result.return_value
-            if not isinstance(return_value, str):
-                raise UserError(
-                    'A text detector used with for_tool_result_text() must replace a tool result with text.'
-                )
-
-            content_verdict, content = _detect_tool_return_content(detector, result.content)
-            if content_verdict is not None:
-                return content_verdict
-
-            if verdict.action == 'replace' or content is not None:
-                return GuardrailResult.replace(
-                    replace(
-                        result,
-                        return_value=return_value,
-                        content=result.content if content is None else content,
-                    )
-                )
-            return GuardrailResult.allow()
+            return _tool_return_verdict(detector, result)
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(
@@ -481,3 +461,29 @@ def for_tool_result_text(
         )
 
     return guard
+
+
+def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`, rebuilding it when either changed."""
+    # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
+    assert isinstance(result.return_value, str)
+    verdict = detector(result.return_value)
+    if verdict.action not in ('allow', 'replace'):
+        return verdict
+    return_value = verdict.replacement if verdict.action == 'replace' else result.return_value
+    if not isinstance(return_value, str):
+        raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
+
+    content_verdict, content = _detect_tool_return_content(detector, result.content)
+    if content_verdict is not None:
+        return content_verdict
+
+    if verdict.action == 'replace' or content is not None:
+        return GuardrailResult.replace(
+            replace(
+                result,
+                return_value=return_value,
+                content=result.content if content is None else content,
+            )
+        )
+    return GuardrailResult.allow()

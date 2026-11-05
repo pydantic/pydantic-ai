@@ -478,32 +478,42 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
             return await handler(args)
         try:
             return await handler(args)
-        except ModelRetry as error:
-            if _is_verdict_retry(error) or id(call) not in self._running:
+        except (ModelRetry, ToolFailed, ToolRetryError, ToolFailedError) as error:
+            screened = await self._screen_error(ctx, call=call, args=args, error=error)
+            if screened is None:
                 raise
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
-            if message is None:
-                raise
-            raise ModelRetry(message) from error
-        except ToolFailed as error:
-            if id(call) not in self._running:
-                raise
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
-            if message is None:
-                raise
-            raise ToolFailed(message) from error
-        except ToolRetryError as error:
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_retry.content)
-            if message is None:
-                raise
-            raise ToolRetryError(replace(error.tool_retry, content=message)) from error
-        except ToolFailedError as error:
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_failed.content)
-            if message is None:
-                raise
-            raise ToolFailedError(replace(error.tool_failed, content=message)) from error
+            raise screened from error
         finally:
             self._running.discard(id(call))
+
+    async def _screen_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: dict[str, Any],
+        error: ModelRetry | ToolFailed | ToolRetryError | ToolFailedError,
+    ) -> Exception | None:
+        """The error a failed tool should raise instead, carrying its screened message, or `None` to re-raise `error`."""
+        match error:
+            case ModelRetry():
+                if _is_verdict_retry(error) or id(call) not in self._running:
+                    return None
+                message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+                return None if message is None else ModelRetry(message)
+            case ToolFailed():
+                if id(call) not in self._running:
+                    return None
+                message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+                return None if message is None else ToolFailed(message)
+            case ToolRetryError():
+                message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_retry.content)
+                return None if message is None else ToolRetryError(replace(error.tool_retry, content=message))
+            case ToolFailedError():
+                message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_failed.content)
+                return None if message is None else ToolFailedError(replace(error.tool_failed, content=message))
+            case _:  # pragma: no cover - assert_never exhaustiveness guard
+                assert_never(error)
 
     async def on_tool_execute_error(
         self,
