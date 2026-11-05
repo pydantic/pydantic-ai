@@ -32,8 +32,7 @@ previous label-as-switch design left a window in which a push got *neither* revi
 It never owns the merge-gate verdict.
 
 A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
-variable skips this review. It gets neither the review nor the `ui-security-review`
-Environment approval, and the skipped check reports as success. Separate branch names with
+variable skips this review, and the skipped check reports as success. Separate branch names with
 commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
 left in the list also exempts any later branch with that name, compared case-insensitively.
 
@@ -426,9 +425,7 @@ the agent and model.
 
 For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
 Manual dispatch does not provide `github.event.pull_request.number`, which this
-workflow requires to run its agent and publish results. After the corrected workflow
-is deployed, complete the existing UI Security review Environment approval for the
-fresh PR run.
+workflow requires to run its agent and publish results.
 
 For workflow incidents, and task incidents the hourly run does not retire, inspect the
 affected host stage and output, link that evidence to the incident, and close it manually.
