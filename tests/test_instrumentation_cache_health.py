@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 
+import anyio
 import pytest
 from pytest_mock import MockerFixture
 
@@ -36,6 +37,31 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
+
+with try_import() as anthropic_imports:
+    from anthropic.types.beta import (
+        BetaInputJSONDelta,
+        BetaMessage,
+        BetaMessageDeltaUsage,
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockStopEvent,
+        BetaRawMessageDeltaEvent,
+        BetaRawMessageStartEvent,
+        BetaRawMessageStopEvent,
+        BetaRawMessageStreamEvent,
+        BetaTextBlock,
+        BetaTextDelta,
+        BetaToolUseBlock,
+        BetaUsage,
+    )
+    from anthropic.types.beta.beta_raw_message_delta_event import Delta
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
 
 with try_import() as openai_imports:
     from pydantic_ai.models.openrouter import OpenRouterModel
@@ -563,6 +589,259 @@ def test_unreported_usage_without_established_prefix_is_ignored() -> None:
         'pydantic_ai.cache.hit_ratio': 0.7,
         'pydantic_ai.cache.established_tokens': 14000,
     }
+
+
+# ---- Streamed requests stopped before they finish -----------------------------------------
+
+
+def instrumented_exporter() -> tuple[Instrumentation, InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return Instrumentation(
+        settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+    ), exporter
+
+
+def run_span_cache_attributes(exporter: InMemorySpanExporter) -> dict[str, object]:
+    (run_span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('invoke_agent ')]
+    return cache_attributes(run_span)
+
+
+@pytest.mark.parametrize('stop', ['cancel', 'raise', 'break'])
+async def test_stream_cut_off_before_usage_is_not_a_collapse(stop: Literal['cancel', 'raise', 'break']) -> None:
+    """A stream cut off before the provider reported usage, as providers that report it only at the end of the
+    stream are, says nothing about the cache, so it isn't recorded as an `unreported` collapse, whether the run
+    is cancelled from outside (`asyncio.timeout`), or the stream's consumer raises or stops reading."""
+    instrumentation, exporter = instrumented_exporter()
+    first_chunk_sent = anyio.Event()
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        first = len(messages) == 1
+        return ModelResponse(
+            parts=[ToolCallPart('continue_run', {}, tool_call_id=f'call-{len(messages)}')],
+            usage=RequestUsage(
+                input_tokens=20000, cache_read_tokens=0 if first else 14000, cache_write_tokens=14000 if first else 0
+            ),
+        )
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'Partial'
+        first_chunk_sent.set()
+        await anyio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_function, stream_function=stream_function), capabilities=[instrumentation])
+
+    @agent.tool_plain
+    def continue_run() -> str:
+        return 'continue'
+
+    async def run_agent() -> None:
+        requests = 0
+        async with agent.iter('prompt') as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    requests += 1
+                    if requests == 3:
+                        async with node.stream(run.ctx) as stream:
+                            async for _ in stream:  # pragma: no branch
+                                if stop == 'raise':
+                                    raise RuntimeError('stop')
+                                if stop == 'break':
+                                    break
+                        return
+
+    if stop == 'raise':
+        with pytest.raises(RuntimeError, match='stop'):
+            await run_agent()
+    elif stop == 'break':
+        await run_agent()
+    else:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run_agent)
+            await first_chunk_sent.wait()
+            tg.cancel_scope.cancel()
+
+    assert [cache_attributes(span) for span in exporter.get_finished_spans() if span.name.startswith('chat ')] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 14000},
+        {'pydantic_ai.cache.hit_ratio': 0.7, 'pydantic_ai.cache.established_tokens': 14000},
+        {},
+    ]
+    assert run_span_cache_attributes(exporter) == {}
+
+
+async def test_stream_detached_from_a_pending_job_is_not_a_collapse() -> None:
+    """A stream the consumer walks away from while its background job is still running ends `'suspended'`,
+    before the provider reported usage (OpenAI background mode reports it on completion), so it isn't
+    recorded as an `unreported` collapse either."""
+    instrumentation, exporter = instrumented_exporter()
+
+    def served(call: int, read: int, write: int) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart('continue_run', {}, tool_call_id=f'call-{call}')],
+            usage=RequestUsage(input_tokens=20000, cache_read_tokens=read, cache_write_tokens=write),
+            model_name='scripted',
+            provider_name='scripted',
+            provider_url='scripted',
+        )
+
+    model = ScriptedContinuationModel(
+        responses=[served(1, 0, 14000), served(2, 14000, 0)],
+        segments=[
+            StreamSegment(
+                texts=['Partial'], state='suspended', provider_response_id='job-1', input_tokens=0, output_tokens=0
+            )
+        ],
+    )
+    agent = Agent(model, capabilities=[instrumentation])
+
+    @agent.tool_plain
+    def continue_run() -> str:
+        return 'continue'
+
+    requests = 0
+    async with agent.iter('prompt') as run:
+        async for node in run:  # pragma: no branch
+            if Agent.is_model_request_node(node):
+                requests += 1
+                if requests == 3:
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:  # pragma: no branch
+                            break
+                    break
+
+    assert [cache_attributes(span) for span in exporter.get_finished_spans() if span.name.startswith('chat ')] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 14000},
+        {'pydantic_ai.cache.hit_ratio': 0.7, 'pydantic_ai.cache.established_tokens': 14000},
+        {},
+    ]
+    assert run_span_cache_attributes(exporter) == {}
+
+
+def anthropic_stream(
+    call: int, read: int, write: int, *, usage_reported_at: Literal['start', 'end']
+) -> list[BetaRawMessageStreamEvent]:
+    """A streamed Anthropic Messages response calling `continue_run` after a text delta.
+
+    Anthropic reports usage in `message_start`; Anthropic-compatible APIs such as Z.ai's report it only in
+    the final `message_delta`.
+    """
+    usage = BetaUsage(
+        input_tokens=20000 - read - write,
+        output_tokens=5,
+        cache_read_input_tokens=read,
+        cache_creation_input_tokens=write,
+    )
+    start_usage = usage if usage_reported_at == 'start' else BetaUsage(input_tokens=0, output_tokens=0)
+    return [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id=f'msg_{call}',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=start_usage,
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='')
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta', index=0, delta=BetaTextDelta(type='text_delta', text='Partial')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=1,
+            content_block=BetaToolUseBlock(type='tool_use', id=f'toolu_{call}', name='continue_run', input={}),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta', index=1, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='{}')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='tool_use'),
+            usage=BetaMessageDeltaUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_input_tokens=read,
+                cache_creation_input_tokens=write,
+            ),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize('stop', ['raise', 'break'])
+@pytest.mark.parametrize(
+    ('usage_reported_at', 'expected'),
+    [
+        ('start', {'pydantic_ai.cache.hit_ratio': 0.71, 'pydantic_ai.cache.established_tokens': 14300}),
+        ('end', {}),
+    ],
+)
+async def test_stream_stopped_by_its_consumer_is_judged_on_its_request_span(
+    allow_model_requests: None,
+    usage_reported_at: Literal['start', 'end'],
+    expected: dict[str, object],
+    stop: Literal['raise', 'break'],
+) -> None:
+    """A stream its consumer stops, by raising or by no longer reading it, is judged on its own `chat` span,
+    never the run span.
+
+    Anthropic has reported this request's cache usage by the time the consumer stops, so it is judged as
+    usual; a provider that reports usage only at the end of the stream hasn't, so nothing is recorded.
+    """
+    instrumentation, exporter = instrumented_exporter()
+    client = MockAnthropic.create_stream_mock(
+        [
+            anthropic_stream(1, 0, 14000, usage_reported_at=usage_reported_at),
+            anthropic_stream(2, 14000, 200, usage_reported_at=usage_reported_at),
+            anthropic_stream(3, 14200, 100, usage_reported_at=usage_reported_at),
+        ]
+    )
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)),
+        capabilities=[instrumentation],
+    )
+
+    @agent.tool_plain
+    def continue_run() -> str:
+        return 'continue'
+
+    async def run_agent() -> None:
+        requests = 0
+        async with agent.iter('prompt') as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    requests += 1
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:
+                            if requests == 3:
+                                if stop == 'raise':
+                                    raise RuntimeError('stop')
+                                break
+                    if requests == 3:
+                        return
+
+    if stop == 'raise':
+        with pytest.raises(RuntimeError, match='stop'):
+            await run_agent()
+    else:
+        await run_agent()
+
+    assert [cache_attributes(span) for span in exporter.get_finished_spans() if span.name.startswith('chat ')] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 14000},
+        {'pydantic_ai.cache.hit_ratio': 0.7, 'pydantic_ai.cache.established_tokens': 14200},
+        expected,
+    ]
+    assert run_span_cache_attributes(exporter) == {}
 
 
 def test_fallback_model_collapse_is_classified_not_raised() -> None:
