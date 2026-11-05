@@ -561,7 +561,7 @@ def book(*, trip: Trip, travellers: int) -> str:
         self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # A cell that has not stopped within the real-clock interrupt grace gets its kernel replaced, and a loaded
-        # runner can take longer than that to stop one. Without the grace, only the cell stopping ends the wait, and
+        # runner can take longer than that to stop one. With the grace unbounded, only the cell stopping ends the wait, and
         # `slept` shows whether the interrupt stopped it before its sleep ran out.
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', math.inf)
         started = asyncio.Event()
