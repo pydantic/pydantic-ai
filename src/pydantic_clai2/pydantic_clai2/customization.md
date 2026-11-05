@@ -67,6 +67,9 @@ Use the user-only `worktrees.remove_commands` setting to replace confirmed
 exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
 worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for repository-scoped argv configuration, placeholders, and shell functions.
+The exit picker defaults to keeping the checkout. **No, don't ask again for this
+worktree** saves that choice for this checkout in the settings database; a new
+checkout reusing the same path is asked again.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
