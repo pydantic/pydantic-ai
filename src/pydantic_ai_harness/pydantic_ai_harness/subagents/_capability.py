@@ -796,11 +796,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         model: str | None,
         spec: DynamicAgentSpec | None,
         level: int,
+        managed: bool = False,
     ) -> RecordedDelegation:
         """Run a delegation in a durable unit of its own, so recovery reuses its result."""
         toolset = self._run_toolset if self._per_run else self._toolset
         assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
-        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level)  # pyright: ignore[reportPrivateUsage]
+        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level, managed)  # pyright: ignore[reportPrivateUsage]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

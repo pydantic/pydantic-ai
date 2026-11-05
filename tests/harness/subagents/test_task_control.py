@@ -27,7 +27,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
     FinalResultEvent,
@@ -2629,6 +2629,40 @@ class TestTaskControlBoundaries:
         assert result.output == 'Done.'
         assert len(task_texts(result.all_messages())) == 1
         assert task_texts(result.all_messages()[-2:-1])
+
+    async def test_a_durable_task_keeps_the_owners_usage_rules(self) -> None:
+        ticks: list[str] = []
+
+        def busy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return call('tick')
+
+        async def stream_busy(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            yield {0: DeltaToolCall(name='tick', json_args='{}')}
+
+        def tick() -> str:
+            """Do a bit of work."""
+            ticks.append('tick')
+            return 'ticked'
+
+        def parent(*capabilities: AbstractCapability[Any]) -> Agent[Any, str]:
+            worker = Agent(FunctionModel(busy, stream_function=stream_busy), tools=[tick])
+            return Agent(
+                scripted(call('delegate_task', agent_name='researcher', task='Go.'), echo_last_return),
+                name='durable',
+                capabilities=[
+                    controlled(researcher(worker, usage_limits=UsageLimits(request_limit=50))),
+                    *capabilities,
+                ],
+            )
+
+        counts: list[int] = []
+        for capabilities in ([], [RecordingDurability()]):
+            ticks.clear()
+            with anyio.fail_after(WAIT), pytest.raises(UsageLimitExceeded):
+                await parent(*capabilities).run('Go.', usage_limits=UsageLimits(request_limit=4))
+            counts.append(len(ticks))
+        # The parent's limit caps the task's own, with or without durability.
+        assert counts == [3, 3]
 
     async def test_a_durable_task_keeps_its_outcome(self) -> None:
         def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
