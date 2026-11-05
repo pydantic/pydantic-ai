@@ -920,32 +920,6 @@ def _map_usage(usage: genai_types.UsageMetadata, *, provider_name: str, provider
     )
 
 
-@contextmanager
-def _single_ws_user_agent(client: Client) -> Generator[None]:
-    """Drop a duplicate `User-Agent` header for the duration of a Gemini Live WebSocket handshake.
-
-    `google-genai` forwards the client's HTTP headers verbatim as the Live WebSocket's
-    `additional_headers`. The `GoogleProvider` adds a capitalized `User-Agent` (for HTTP, where `httpx`
-    folds it together with the SDK's own lowercase `user-agent`), but the `websockets` library stores
-    headers case-insensitively and rejects the two as a duplicate, failing the handshake. We remove our
-    capitalized variant just for the connect and restore it after, so a single user-agent reaches the
-    socket while HTTP requests keep pydantic-ai's user-agent.
-    """
-    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
-    assert headers is not None
-    duplicates = [key for key in headers if key.lower() == 'user-agent']
-    if len(duplicates) < 2:
-        yield
-        return
-    # Keep the SDK's own lowercase `user-agent` if present, otherwise the first seen; drop the rest.
-    keep = 'user-agent' if 'user-agent' in duplicates else duplicates[0]
-    removed = {key: headers.pop(key) for key in duplicates if key != keep}
-    try:
-        yield
-    finally:
-        headers.update(removed)
-
-
 _PROACTIVITY_API_VERSION = 'v1alpha'
 """The Gemini Developer API version that serves `proactivity` on the Live setup message."""
 
@@ -965,7 +939,7 @@ def _ws_trace_context(client: Client) -> Generator[None]:
     inject_trace_context(carrier)
     # Compared case-insensitively: header names are, and `websockets` stores them that way, so adding a
     # lowercase `traceparent` next to a `Traceparent` the client already carries is a duplicate header
-    # the handshake can be rejected for (the same hazard `_single_ws_user_agent` above reconciles).
+    # the handshake can be rejected for.
     existing = {key.lower() for key in headers}
     added = {key: value for key, value in carrier.items() if key.lower() not in existing}
     headers.update(added)
@@ -1465,7 +1439,6 @@ class GoogleRealtimeModel(RealtimeModel):
             opening = client.aio.live.connect(model=self.model, config=config)
             async with _ws_connect_lock():
                 with ExitStack() as stack:
-                    stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
                     # A gateway route needs nothing extra here: the relay routes the SDK's native
                     # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a

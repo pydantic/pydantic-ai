@@ -709,19 +709,6 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
     assert empty == RequestUsage()
 
 
-def test_single_ws_user_agent_noop_without_duplicate() -> None:
-    # A client whose headers hold fewer than two `user-agent` entries needs no reconciliation: the
-    # context manager yields without touching them. A real `GoogleProvider` always adds a capitalized
-    # duplicate, so this defensive branch can't be reached through `connect` — hence a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
-    with rt_google._single_ws_user_agent(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
 def test_ws_trace_context_injects_and_restores_headers() -> None:
     # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so trace context
     # is injected into them for the connect only, then removed so the shared client's later HTTP
@@ -745,7 +732,7 @@ def test_ws_trace_context_injects_and_restores_headers() -> None:
 def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> None:
     # Header names are case-insensitive and `websockets` stores them that way, so a client already
     # carrying `Traceparent` must not gain a second, lowercase one — the handshake can be rejected for
-    # the duplicate (the same hazard `_single_ws_user_agent` reconciles for `User-Agent`).
+    # the duplicate.
     pytest.importorskip('opentelemetry.sdk')
     from types import SimpleNamespace
 
@@ -886,7 +873,7 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
-    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    # The handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     # The bearer lives permanently on the client's static http options (that's what carries it onto the
     # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook
