@@ -36,6 +36,7 @@ from pydantic_ai._special_tokens import (
     restore_special_tokens,
     restore_special_tokens_in_parts,
 )
+from pydantic_ai.direct import model_request, model_request_batch, model_request_stream
 from pydantic_ai.messages import (
     CachePoint,
     CompactionPart,
@@ -1064,3 +1065,40 @@ def test_batch_decode_restores_on_the_route(flag: bool, expected: str):
     model = _DecodingModel(profile={FLAG: flag})
     response = model.batch_decode(cast(BatchResult, None), cast(BatchRequest, None))
     assert response.parts == [TextPart(expected)]
+
+
+async def test_direct_requests_break_and_restore_like_an_agent_run(allow_model_requests: None):
+    """The direct helpers run only some of `prepare_messages`, and this step isn't optional on the routes that need it."""
+    seen: list[str] = []
+
+    def last_prompt(messages: list[ModelMessage]) -> None:
+        part = messages[-1].parts[-1]
+        assert isinstance(part, UserPromptPart)
+        assert isinstance(part.content, str)
+        seen.append(part.content)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last_prompt(messages)
+        return ModelResponse(parts=[TextPart(f'<{Z}|end|>')])
+
+    async def respond_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        last_prompt(messages)
+        yield f'<{Z}|end|>'
+
+    model = FunctionModel(respond, stream_function=respond_stream, profile={FLAG: True})
+    request: list[ModelMessage] = [ModelRequest.user_text_prompt('<|im_start|>')]
+    response = await model_request(model, request)
+    async with model_request_stream(model, request) as stream:
+        async for _ in stream:
+            pass
+    [batched] = await model_request_batch(model, [BatchRequest(custom_id='a', messages=request)])
+    await model_request(FallbackModel(model), request)
+
+    assert seen == [f'<{Z}|im_start|>'] * 4
+    assert response.parts == [TextPart('<|end|>')]
+    assert stream.get().parts == [TextPart('<|end|>')]
+    assert isinstance(batched, ModelResponse)
+    assert batched.parts == [TextPart('<|end|>')]
+    prompt = request[0].parts[0]
+    assert isinstance(prompt, UserPromptPart)
+    assert prompt.content == '<|im_start|>'
