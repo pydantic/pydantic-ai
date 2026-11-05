@@ -110,6 +110,11 @@ def _detect_text_run(
             return verdict, run, False
         if joined is not None and joined != ''.join(texts):
             return None, _merge_span(run, text_indexes, text_parts[0], joined), True
+    return None, _with_texts(run, texts), replaced
+
+
+def _with_texts(run: Sequence[UserContent], texts: Sequence[str]) -> list[UserContent]:
+    """`run` with its text parts, in order, carrying `texts`."""
     rewritten: list[UserContent] = []
     replacements = iter(texts)
     for part in run:
@@ -117,7 +122,7 @@ def _detect_text_run(
             rewritten.append(with_text(part, next(replacements)))
         else:
             rewritten.append(part)
-    return None, rewritten, replaced
+    return rewritten
 
 
 def detect_tool_return_content(
