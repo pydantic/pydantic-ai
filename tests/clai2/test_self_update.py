@@ -1021,6 +1021,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
         assert ran == []
 
 
+@pytest.mark.parametrize('update', ['--update', 'update'])
 @pytest.mark.parametrize(
     ('code', 'exit_code', 'printed'),
     [
@@ -1029,6 +1030,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     ],
 )
 def test_update_flag_installs_and_exits_without_restarting(
+    update: str,
     code: int,
     exit_code: int,
     printed: str,
@@ -1036,7 +1038,10 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch."""
+    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch.
+
+    `clai2 update` is the same command, and takes `--database` after it.
+    """
     context, _ = make_context(tmp_path)
     context.set_setting(['updates.channel', 'main'])
     ran: list[list[Sequence[str]]] = []
@@ -1051,7 +1056,7 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch.setattr(self_update, 'Updates', build)
 
     monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == exit_code
@@ -1114,12 +1119,18 @@ def test_update_flag_reports_a_failed_check(
         (['--fork-session'], '`fork_session` (`--fork-session`) requires `resume` (`--resume`)'),
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_session_options_before_installing(
-    argv: list[str], error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str,
+    argv: list[str],
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     install = AsyncMock(return_value=0)
     monkeypatch.setattr(cli_module, '_update', install)
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db'), *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(tmp_path / 'c.db'), *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1142,11 +1153,34 @@ def test_update_flag_rejects_session_options_before_installing(
         ['plugins'],
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_other_modes(
-    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
     assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('argv', [['-m', 'test', 'update'], ['update', 'update', '-m', 'test']])
+def test_update_command_rejects_options_given_before_it(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Options before `update`, and after a repeated `update`, are checked as they are with `--update`."""
+    monkeypatch.setattr('sys.argv', ['clai2', *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert '--update cannot be combined' in capsys.readouterr().err
+
+
+def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr('sys.argv', ['clai2', '--help'])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 0
+    text = capsys.readouterr().out
+    assert '{config,plugins,update}' in text
+    assert '--update' in text
