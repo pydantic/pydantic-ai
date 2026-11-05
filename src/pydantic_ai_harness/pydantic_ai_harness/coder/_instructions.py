@@ -62,7 +62,8 @@ _DELIVER_MAX = (
 
 _EXACT_SHORT = "Write checks from the task's stated behavior, not your code."
 _EXACT_MAX = (
-    'When the task specifies exact behavior, write your checks directly from the task text, not from your own implementation, '
+    'When the task specifies exact behavior, write your checks directly from the task text, '
+    'not from your own implementation, '
     'and make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 )
 """The 0.65.0 wording. At `'max'` only: the short form dropped 'use every field'."""
