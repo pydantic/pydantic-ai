@@ -277,6 +277,7 @@ async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict
         'ref': result.workspace.ref.id,
         'working_dir': await result.workspace.working_dir(),
         'note': await result.workspace.read_text('note.txt'),
+        'cwd': (await result.workspace.run(['pwd'], cwd='.')).stdout,
     }
 
 
@@ -378,6 +379,7 @@ async def check_local(run: Runner, agents: ScenarioAgents) -> None:
             'ref': agents.local_dir,
             'working_dir': os.path.realpath(agents.local_dir),
             'note': 'on disk',
+            'cwd': f'{os.path.realpath(agents.local_dir)}\n',
         }
         with open(os.path.join(agents.local_dir, 'note.txt'), encoding='utf-8') as note:
             assert note.read() == 'on disk'
