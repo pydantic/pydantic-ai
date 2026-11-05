@@ -244,6 +244,9 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 ## `FallbackCompaction`: recover when a strategy fails
 
+> [!WARNING]
+> **Compatibility impact:** `FallbackCompaction` now tries the next strategy on `UnexpectedModelBehavior` by default, including exhausted summary retries, instead of propagating it immediately. This is a maintainer-approved Harness 0.x behavior change. Pass `fallback_on=(ModelAPIError, FallbackExceptionGroup)` to retain the previous exception selection.
+
 `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`.
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError`, `FallbackExceptionGroup`, and `UnexpectedModelBehavior`. A `FallbackExceptionGroup` is raised when every model in a `FallbackModel` fails. When its trigger runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't smaller](#a-summary-that-isnt-smaller) than the history, and leaves the history unchanged if no strategy shrinks it. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.

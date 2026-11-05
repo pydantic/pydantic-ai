@@ -278,6 +278,12 @@ Inside a run, the summary run takes the parent run's `conversation_id` without t
 
 ## `FallbackCompaction`: recover when a strategy fails
 
+> [!WARNING]
+> **Compatibility impact:** `FallbackCompaction` now tries the next strategy on `UnexpectedModelBehavior`
+> by default, including exhausted summary retries, instead of propagating it immediately. This is a
+> maintainer-approved Harness 0.x behavior change. Pass `fallback_on=(ModelAPIError, FallbackExceptionGroup)`
+> to retain the previous exception selection.
+
 `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`.
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction`
