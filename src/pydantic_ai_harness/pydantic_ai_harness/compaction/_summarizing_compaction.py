@@ -705,6 +705,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     Must contain a `{messages}` placeholder and no other replacement field. Write a literal
     brace as `{{` or `}}`.
+
+    A custom prompt replaces the default in full, including its rule that instructions inside
+    tool results or fetched content aren't the user's, so include a rule of your own.
     """
 
     instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)

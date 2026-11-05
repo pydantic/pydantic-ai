@@ -3597,8 +3597,9 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     try:
+        schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+        # Walking can also raise, e.g. for a malformed node only reachable through a `$ref`.
         parameters_json_schema = schema_transformer.walk()
     except InlinedSchemaTooLargeError:
         raise InlinedSchemaTooLargeError(
@@ -3606,6 +3607,8 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
             'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
             'or a `FilteredToolset`.',
         ) from None
+    except UserError as e:
+        raise UserError(f'Tool {tool_def.name!r}: {e}') from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
