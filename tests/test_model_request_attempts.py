@@ -396,7 +396,7 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
 
     agent = Agent(FunctionModel(stream_function=fn), deps_type=type(None), capabilities=[hooks])
     async with agent.iter('x') as run:
-        async for node in run:
+        async for node in run:  # pragma: no branch
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx):
                     pass

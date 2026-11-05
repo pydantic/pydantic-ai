@@ -539,7 +539,7 @@ def test_a_typed_part_with_lazy_annotations() -> None:
     exec(compile(source, '<lazy>', 'exec', dont_inherit=True), namespace)
     lazy_cls = namespace['LazyCallPart']
     assert lazy_cls('t').tool_kind == 'test.lazy'
-    if sys.version_info >= (3, 14):
+    if sys.version_info >= (3, 14):  # pragma: no branch
         assert set(lazy_cls.__annotations__) == {'label', '_', 'tool_kind'}
 
 

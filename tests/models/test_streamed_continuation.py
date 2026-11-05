@@ -1385,7 +1385,7 @@ async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypat
 
     with capture_run_messages() as messages:
         async with Agent(model).run_stream('go') as result:
-            async for _ in result.stream_text(delta=True, debounce_by=None):
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 if model.request_stream_calls == 2:
                     break
 

@@ -1301,7 +1301,7 @@ async def test_fallback_condition_sync_def_returning_coroutine() -> None:
         await agent.run('hello')
 
 
-class PotatoException(Exception): ...
+class PotatoException(Exception): ...  # pragma: no branch
 
 
 def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:

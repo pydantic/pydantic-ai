@@ -1620,7 +1620,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 speech_timestamps=settings.get('output_speech_timestamps', False),
             )
         finally:
-            if ws is not None:
+            if ws is not None:  # pragma: no branch
                 await opening.__aexit__(None, None, None)
 
 

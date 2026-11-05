@@ -3133,6 +3133,19 @@ def test_baseline_elevenlabs_agents_conversation() -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
+def test_elevenlabs_agents_reply_spoken_in_two_bursts_stays_one_reply() -> None:
+    """Audio that resumes before the reply finishes continues the reply being spoken instead of starting another."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
 def test_elevenlabs_agents_barge_in_keeps_the_truncated_reply_with_the_reply_it_cut() -> None:
     """Recorded: the reply still being generated is cut to what was heard, and that `agent_response` ends it."""
 

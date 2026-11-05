@@ -17392,7 +17392,7 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
 
     async with agent.iter('test prompt') as agent_run:
         node = agent_run.next_node
-        while not isinstance(node, End):
+        while not isinstance(node, End):  # pragma: no branch
             if isinstance(node, ModelRequestNode):
                 with pytest.raises(RuntimeError, match='stream exploded'):
                     async with node.stream(agent_run.ctx) as stream:

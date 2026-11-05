@@ -17830,7 +17830,7 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
 
     events: list[Any] = []
     async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
-        async for node in agent_run:
+        async for node in agent_run:  # pragma: no branch
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:

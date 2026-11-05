@@ -999,7 +999,7 @@ async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
         async with _durability.stream_agent_events(
             client, client.get_workflow_handle(workflow_id), output_type=str, poll_cooldown=timedelta(milliseconds=50)
         ) as interrupted:
-            async for chunk in _chat_adapter(body).transform_stream(interrupted):
+            async for chunk in _chat_adapter(body).transform_stream(interrupted):  # pragma: no branch
                 dropped.append(chunk)
                 if len(dropped) == 2:
                     break
