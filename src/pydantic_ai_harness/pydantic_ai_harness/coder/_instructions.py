@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.subagents._toolset import delegation_depth
 
 Agency = Literal['low', 'medium', 'high', 'max']
 """How far `Coder` works on its own before it checks in with the user."""
@@ -45,14 +44,13 @@ _FINISHING = (
 )
 
 
-def coder_instructions(
-    *, agency: Agency, delegate_tool: str | None, extra: str | None = None
-) -> Callable[[RunContext[AgentDepsT]], str]:
-    """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate.
+def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str | None = None) -> tuple[str, str]:
+    """Top-level and delegate guidance, each a literal string.
 
-    A delegate (delegation depth above 1) is told to finish on its own: `include_self` starts a fresh
-    run of this agent, and a plan-and-wait level would propose a plan to nobody. Non-empty `extra` is
-    appended after a blank line.
+    A function would be a dynamic instruction, and the static prompt-cache prefix ends at the first
+    dynamic part. `Coder.for_run` installs the second string when the run's delegation depth is above
+    1: a delegate was handed its task and a plan-and-wait level would propose a plan to nobody.
+    Non-empty `extra` is appended after a blank line.
     """
     autonomous = agency in ('high', 'max')
     checks = ' '.join(
@@ -69,8 +67,8 @@ def coder_instructions(
     )
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     suffix = '\n' + extra if extra else ''
-    texts = {
-        delegated: '\n\n'.join(
+    texts = [
+        '\n\n'.join(
             [
                 _INTRO,
                 _DELEGATED if delegated else _AGENCY[agency],
@@ -83,12 +81,8 @@ def coder_instructions(
         + '\n'
         + suffix
         for delegated in (False, True)
-    }
-
-    def instructions(_ctx: RunContext[AgentDepsT]) -> str:
-        return texts[delegation_depth() > 1]
-
-    return instructions
+    ]
+    return texts[0], texts[1]
 
 
 def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:

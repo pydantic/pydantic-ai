@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import copy
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, get_args
@@ -22,7 +23,7 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
-from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES
+from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES, delegation_depth
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
@@ -117,6 +118,34 @@ and discards its work.
 """
 
 
+class _CoderGuidance(Capability[AgentDepsT]):
+    """Literal coding guidance, with the delegate text installed when this run is a delegate.
+
+    `Coder` is flattened into the agent's capability list, so this leaf is what `for_run` reaches.
+    Both texts are strings: a function would be dynamic, and the static prompt-cache prefix ends at
+    the first dynamic part.
+    """
+
+    def __init__(
+        self,
+        guidance: str,
+        delegated: str,
+        project: Sequence[Callable[[RunContext[AgentDepsT]], Awaitable[str]]],
+    ) -> None:
+        super().__init__(id='coder_instructions', instructions=[guidance, *project])
+        self._delegated_guidance = delegated
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Capability[AgentDepsT]:
+        if delegation_depth() <= 1:
+            return self
+        # Share the construction-time toolset. A new `Capability` would bring a new function
+        # toolset, which durable execution rejects as added at runtime.
+        serving = copy.copy(self)
+        first, *rest = self._instructions
+        serving._instructions = [replace(first, instruction=self._delegated_guidance), *rest]
+        return serving
+
+
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
@@ -203,22 +232,18 @@ class Coder(CombinedCapability[AgentDepsT]):
             if sub_agents
             else None
         )
+        guidance, delegated_guidance = coder_instructions(
+            agency=agency,
+            delegate_tool=delegation.tool_name if delegation is not None else None,
+            extra=instructions,
+        )
+        # Naming the directory creates a lazily created sandbox, so it comes only with
+        # `RepoContext`, which reads the workspace at run start anyway.
+        project = [project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             # The id also names its (empty) function toolset, which durable execution requires.
-            Capability[AgentDepsT](
-                id='coder_instructions',
-                instructions=[
-                    coder_instructions(
-                        agency=agency,
-                        delegate_tool=delegation.tool_name if delegation is not None else None,
-                        extra=instructions,
-                    ),
-                    # Naming the directory creates a lazily created sandbox, so it comes only with
-                    # `RepoContext`, which reads the workspace at run start anyway.
-                    *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
-                ],
-            ),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, project),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],

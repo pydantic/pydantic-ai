@@ -1,6 +1,6 @@
 """Coder's tool surface as the model sees it; the tools themselves are tested with `FileSystem` and `Shell`."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,7 +19,6 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Wor
 from pydantic_ai_harness.coder import Agency, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.subagents import TaskControl
-from pydantic_ai_harness.subagents._toolset import delegation_level
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -41,6 +40,19 @@ class _ToolLog(AbstractCapability[object]):
     ) -> ValidatedToolArgs:
         self.seen.append(call.tool_name)
         return args
+
+
+def _finish_or_delegate(seen: dict[str, str], messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Record the guidance the run was given, and require it to be a static instruction."""
+    first = messages[0].parts[-1]
+    seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+    guidance = next(
+        part
+        for part in info.model_request_parameters.instruction_parts or []
+        if 'software engineering agent' in part.content
+    )
+    assert guidance.dynamic is False
+    return _delegate_a_command(messages, info)
 
 
 def _delegate_a_command(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -206,7 +218,9 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
-        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
+        guidance_part = next(part for part in parts if 'software engineering agent' in part.content)
+        assert guidance_part.dynamic is False
+        guidance = guidance_part.content
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
         assert len(default.split()) < 150
         assert "Match the surrounding code's style, structure, and imports." in default
@@ -246,9 +260,7 @@ class TestCoder:
         seen: dict[str, str] = {}
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            first = messages[0].parts[-1]
-            seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
-            return _delegate_a_command(messages, info)
+            return _finish_or_delegate(seen, messages, info)
 
         agent = Agent(
             FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder(agency='low', repo_context=False)]
@@ -258,14 +270,29 @@ class TestCoder:
         assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
 
     async def test_a_delegate_with_task_control_is_also_told_to_finish(self, tmp_path: Path) -> None:
-        """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone."""
-        model = TestModel(call_tools=[])
-        coder = Coder(agency='low', repo_context=False, task_control=TaskControl())
-        with delegation_level(2):
-            await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert _FINISH in text and _PLAN not in text
+        """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone.
+
+        Task control streams the child, so the child's guidance is read from the stream function.
+        """
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            _finish_or_delegate(seen, messages, info)
+            yield 'done'
+
+        agent = Agent(
+            FunctionModel(respond, stream_function=stream),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Coder(agency='low', repo_context=False, task_control=TaskControl()),
+            ],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
 
     def test_unknown_agency_is_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"`agency` must be one of 'low', 'medium', 'high', 'max', not 'full'"):

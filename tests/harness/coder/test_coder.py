@@ -106,7 +106,7 @@ def test_coder_members_and_parameters() -> None:
     coder = Coder(instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
         'RequireWorkspace',
-        'Capability',
+        '_CoderGuidance',
         'FileSystem',
         'Shell',
         'RepoContext',
