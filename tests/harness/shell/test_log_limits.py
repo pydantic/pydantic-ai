@@ -212,6 +212,31 @@ class _TermIgnored(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
+class _WatcherTrapsLate(LocalWorkspaceBackend):
+    """Launches jobs whose log watcher sets its `TERM` trap only once the wrapper has started to stop it.
+
+    So the wrapper's `TERM` reaches the watcher before its trap, as when a loaded machine is slow to start it.
+    """
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if not isinstance(command, str) and 'wrapper=' in _script(command):
+            sh, flag, script, *arguments = command
+            late = script.replace(
+                'watch_logs() {\n  trap',
+                'watch_logs() {\n  until [ -e "$dir/watch.stop" ]; do sleep 0.01; done\n  trap',
+            )
+            assert late != script
+            command = [sh, flag, late, *arguments]
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class _ClearedWhileCounted(_FirstReadMarked):
     """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
 
@@ -399,6 +424,17 @@ class TestShellLogLimits:
                 workspace=_TermIgnored(tmp_path),
             )
         assert '"exit_code": 0' in output
+
+    async def test_log_is_cleared_when_the_watcher_is_stopped_before_its_trap(self, tmp_path: Path) -> None:
+        # The wrapper's `TERM` must not end the watcher before its last check.
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)],
+            'shell',
+            {'command': "printf '%03000d' 0", 'timeout': 30},
+            workspace=_WatcherTrapsLate(tmp_path),
+        )
+        assert '"exit_code": 0' in output
+        assert _handle(output, 'Output').read_text() == f'{NOTICE}\n'
 
     async def test_watcher_exits_once_the_wrapper_is_killed(self, tmp_path: Path) -> None:
         output = await shell(tmp_path, {'command': 'sleep 0.5', 'mode': 'background'}, max_log_bytes=2000)
