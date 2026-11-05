@@ -12,9 +12,8 @@ replaying it sends the same bytes.
 The model reads the joiner as part of the text and copies it into what it writes, or writes another invisible character
 for it, which would silently corrupt a file it edits. So the inverse runs on each response, at the `Model` boundary:
 text and tool call arguments lose a zero-width character inside a token before anything else sees them, whether the
-response was streamed or not. Tools, output validation,
-users and stored history get the literal token. When that text is sent back, the break restores the bytes the model
-wrote.
+response was streamed or not. Tools, output validation, users and stored history get the literal token. When that text
+is sent back, the break restores the bytes the model wrote.
 """
 
 from __future__ import annotations as _annotations
