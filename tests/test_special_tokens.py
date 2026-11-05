@@ -735,9 +735,7 @@ def test_streamed_json_with_escaped_angle_brackets_split_anywhere(size: int):
         assert isinstance(event, PartDeltaEvent)
         assert isinstance(event.delta, ToolCallPartDelta)
         streamed += str(event.delta.args_delta)
-    for event in restorer.flush():
-        assert isinstance(event.delta, ToolCallPartDelta)
-        streamed += str(event.delta.args_delta)
+    assert restorer.flush() == []
     assert streamed == expected
     assert restore_special_tokens_in_parts([ToolCallPart('t', args)])[0].args == expected
 
