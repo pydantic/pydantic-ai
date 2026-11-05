@@ -119,27 +119,7 @@ class Contains(Evaluator[object, object, object]):
                 else:
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
-
-                if isinstance(self.value, dict):
-                    # Cast to Any to avoid type checking issues
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
-                    for k in expected_dict:
-                        if k not in output_dict:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output does not contain expected key {k_trunc}'
-                            break
-                        elif output_dict[k] != expected_dict[k]:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
-                            expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = (
-                                f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
-                            )
-                            break
-                else:
-                    if self.value not in output_dict:
-                        output_trunc = _truncated_repr(output_dict, max_length=200)
-                        failure_reason = f'Output {output_trunc} does not contain provided value as a key'
+                failure_reason = self._dict_failure_reason(output_dict)
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
                 failure_reason = f'Output {output_trunc} does not contain provided value'
@@ -147,6 +127,24 @@ class Contains(Evaluator[object, object, object]):
             failure_reason = f'Containment check failed: {e}'
 
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+    def _dict_failure_reason(self, output_dict: dict[Any, Any]) -> str | None:
+        if isinstance(self.value, dict):
+            # Cast to Any to avoid type checking issues
+            expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
+            for k in expected_dict:
+                if k not in output_dict:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    return f'Output does not contain expected key {k_trunc}'
+                elif output_dict[k] != expected_dict[k]:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
+                    expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
+                    return f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+        elif self.value not in output_dict:
+            output_trunc = _truncated_repr(output_dict, max_length=200)
+            return f'Output {output_trunc} does not contain provided value as a key'
+        return None
 
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
@@ -227,6 +225,9 @@ class LLMJudge(Evaluator[object, object, object]):
 
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns only the typed pass/fail verdict. Its reason is
+    unavailable, and its score is `1.0` for pass or `0.0` for fail.
     """
 
     rubric: str
@@ -243,28 +244,46 @@ class LLMJudge(Evaluator[object, object, object]):
     ) -> EvaluatorOutput:
         if self.include_input:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_input_output_expected
+                from .llm_as_a_judge import _judge_input_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output_expected(
-                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output_expected(
+                    ctx.inputs,
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_input_output
+                from .llm_as_a_judge import _judge_input_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output(
-                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output(
+                    ctx.inputs,
+                    ctx.output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
         else:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_output_expected
+                from .llm_as_a_judge import _judge_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output_expected(
-                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_output_expected(
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_output
+                from .llm_as_a_judge import _judge_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await _judge_output(
+                    ctx.output, self.rubric, self.model, self.model_settings, allow_reasonless=True
+                )
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
@@ -297,6 +316,9 @@ class GEval(Evaluator[object, object, object]):
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
 
+    A judge whose profile has `supports_text_output=False` returns the same integer score scale without a reason;
+    its `score_range` may contain at most 20 levels.
+
     !!! note "Simplified G-Eval"
         The paper computes a probability-weighted expectation over score tokens using log-probs.
         We ask the model for a direct integer score instead, trading some correlation with human
@@ -318,9 +340,9 @@ class GEval(Evaluator[object, object, object]):
             raise ValueError('`evaluation_steps` must contain at least one step')
 
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-        from .llm_as_a_judge import judge_g_eval
+        from .llm_as_a_judge import _judge_g_eval  # pyright: ignore[reportPrivateUsage]
 
-        g_eval_output = await judge_g_eval(
+        g_eval_output = await _judge_g_eval(
             ctx.output,
             self.criteria,
             self.evaluation_steps,
@@ -328,6 +350,7 @@ class GEval(Evaluator[object, object, object]):
             inputs=ctx.inputs if self.include_input else None,
             model=self.model,
             model_settings=self.model_settings,
+            allow_reasonless=True,
         )
         return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
 

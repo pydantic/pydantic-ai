@@ -20,7 +20,7 @@ with try_import() as imports_successful:
         ReportCaseAggregate,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 class TaskInput(BaseModel):

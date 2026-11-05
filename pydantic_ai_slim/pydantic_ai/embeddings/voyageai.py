@@ -4,7 +4,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai import _model_errors
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
@@ -15,7 +16,7 @@ from .settings import EmbeddingSettings
 
 try:
     from voyageai.client_async import AsyncClient
-    from voyageai.error import VoyageError
+    from voyageai.error import APIConnectionError, Timeout, VoyageError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `voyageai` to use the VoyageAI embeddings model, '
@@ -170,7 +171,22 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
                 truncation=settings.get('truncate', False),
                 output_dimension=settings.get('dimensions'),
             )
+        except (Timeout, APIConnectionError) as e:
+            timeout = isinstance(e, Timeout)
+            raise _model_errors.connection_error(self.model_name, str(e), e, timeout=timeout) from e
         except VoyageError as e:
+            # The SDK's message for a 5xx is its own, like `The server is overloaded or not ready yet.` for any 502,
+            # 503 or 504, so only the response body can say whether the provider is overloaded.
+            if isinstance(status_code := e.http_status, int) and (
+                category := _model_errors.http_status_category(status_code, e.http_body)
+            ):
+                raise ModelHTTPError.for_category(
+                    category,
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.json_body if e.json_body is not None else e.http_body,
+                    headers=dict(e.headers),
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return EmbeddingResult(

@@ -475,6 +475,13 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
+# Names of the non-object defs currently being resolved inline. A non-object def has no
+# TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
+# recurse forever; `_build_and_register_type` solves the same problem for object defs by
+# registering a placeholder before it walks the fields.
+_resolving_refs: ContextVar[frozenset[str]] = ContextVar('_resolving_refs', default=frozenset())
+
+
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
     """Convert a JSON type string to a SimpleTypeExpr."""
     return SimpleTypeExpr(_JSON_SIMPLE_TYPE_TO_PYTHON.get(json_type, 'Any'))
@@ -601,17 +608,7 @@ def _schema_to_type_expr(
 
     # Handle $ref
     if '$ref' in schema:
-        ref = schema['$ref']
-        ref_name = ref.split('/')[-1]
-        # Ensure referenced def generates TypeSignature if needed
-        if ref_name in defs and ref_name not in referenced_types:
-            ref_schema = _normalize_schema_node(defs[ref_name])
-            if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
-        # Return the TypeSignature object if available, otherwise the name
-        if ref_name in referenced_types:
-            return referenced_types[ref_name]
-        return TypeSignature(name=ref_name)
+        return _ref_to_expr(schema['$ref'], defs, referenced_types, tool_name, path)
 
     # Handle anyOf/oneOf (union types)
     if 'anyOf' in schema:
@@ -638,6 +635,41 @@ def _schema_to_type_expr(
     return _type_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
 
 
+def _ref_to_expr(
+    ref: str,
+    defs: dict[str, dict[str, Any]],
+    referenced_types: dict[str, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> TypeExpr:
+    """Convert a `$ref` to a TypeExpr."""
+    ref_name = ref.split('/')[-1]
+    # Ensure referenced def generates TypeSignature if needed
+    if ref_name in defs and ref_name not in referenced_types:
+        ref_schema = _normalize_schema_node(defs[ref_name])
+        if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
+            _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
+        elif '$ref' not in ref_schema:
+            # Only object defs become TypedDicts. Pydantic emits enums, constrained
+            # aliases, list aliases and unions as non-object defs, which would render as
+            # a bare class name that is never defined, so resolve them inline instead:
+            # `Literal[...]`, `int`, `list[str]`, `int | None`.
+            resolving = _resolving_refs.get()
+            if ref_name in resolving:
+                # A self-referential non-object def has no finite inline expression and no
+                # TypedDict to name, so `Any` keeps the rendered signature self-contained.
+                return _ANY
+            token = _resolving_refs.set(resolving | {ref_name})
+            try:
+                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+            finally:
+                _resolving_refs.reset(token)
+    # Return the TypeSignature object if available, otherwise the name
+    if ref_name in referenced_types:
+        return referenced_types[ref_name]
+    return TypeSignature(name=ref_name)
+
+
 def _type_to_expr(
     schema_type: str | list[str] | None,
     schema: dict[str, Any],
@@ -653,47 +685,67 @@ def _type_to_expr(
 
     # Array type
     if schema_type == 'array':
-        items = schema.get('items', {})
-        if items:
-            # Handle tuple schemas (items as list)
-            if isinstance(items, list):
-                items_list = cast(list[dict[str, Any]], items)
-                item_exprs = [
-                    _schema_to_type_expr(item, defs, referenced_types, tool_name, f'{path}.{i}')
-                    for i, item in enumerate(items_list)
-                ]
-                return GenericTypeExpr(base='tuple', args=item_exprs)
-            item_expr = _schema_to_type_expr(
-                cast(dict[str, Any], items), defs, referenced_types, tool_name, f'{path}Item'
-            )
-            return GenericTypeExpr(base='list', args=[item_expr])
-        return GenericTypeExpr(base='list', args=[_ANY])
+        return _array_to_expr(schema, defs, referenced_types, tool_name, path)
 
     # Object type
     if schema_type == 'object':
-        if 'properties' in schema:
-            # Use `title` from the schema if available and is a valid Python identifier
-            # (preserves real class names like `User`), otherwise fall back to a path-based name
-            title = schema.get('title')
-            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
-            if td_name not in referenced_types:
-                _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
-            return referenced_types[td_name]
-        if 'additionalProperties' in schema:
-            additional = schema['additionalProperties']
-            if additional is True:
-                return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
-            if isinstance(additional, dict):
-                additional_schema = cast(dict[str, Any], additional)
-                value_expr = _schema_to_type_expr(additional_schema, defs, referenced_types, tool_name, f'{path}Value')
-                return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), value_expr])
-        return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
+        return _object_to_expr(schema, defs, referenced_types, tool_name, path)
 
     # Type list (e.g., ['string', 'null'])
     if isinstance(schema_type, list):
         return _type_list_to_expr(schema_type, schema, defs, referenced_types, tool_name, path)
 
     return _ANY
+
+
+def _array_to_expr(
+    schema: dict[str, Any],
+    defs: dict[str, dict[str, Any]],
+    referenced_types: dict[str, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> TypeExpr:
+    """Convert an array schema to a TypeExpr."""
+    items = schema.get('items', {})
+    if items:
+        # Handle tuple schemas (items as list)
+        if isinstance(items, list):
+            items_list = cast(list[dict[str, Any]], items)
+            item_exprs = [
+                _schema_to_type_expr(item, defs, referenced_types, tool_name, f'{path}.{i}')
+                for i, item in enumerate(items_list)
+            ]
+            return GenericTypeExpr(base='tuple', args=item_exprs)
+        item_expr = _schema_to_type_expr(cast(dict[str, Any], items), defs, referenced_types, tool_name, f'{path}Item')
+        return GenericTypeExpr(base='list', args=[item_expr])
+    return GenericTypeExpr(base='list', args=[_ANY])
+
+
+def _object_to_expr(
+    schema: dict[str, Any],
+    defs: dict[str, dict[str, Any]],
+    referenced_types: dict[str, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> TypeExpr:
+    """Convert an object schema to a TypeExpr."""
+    if 'properties' in schema:
+        # Use `title` from the schema if available and is a valid Python identifier
+        # (preserves real class names like `User`), otherwise fall back to a path-based name
+        title = schema.get('title')
+        td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
+        if td_name not in referenced_types:
+            _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
+        return referenced_types[td_name]
+    if 'additionalProperties' in schema:
+        additional = schema['additionalProperties']
+        if additional is True:
+            return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
+        if isinstance(additional, dict):
+            additional_schema = cast(dict[str, Any], additional)
+            value_expr = _schema_to_type_expr(additional_schema, defs, referenced_types, tool_name, f'{path}Value')
+            return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), value_expr])
+    return GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), _ANY])
 
 
 def _type_list_to_expr(
@@ -819,28 +871,32 @@ def _build_type_signature(
 
 def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical: TypeSignature) -> None:
     """Replace all references to old_ref with canonical in a signature's TypeExpr trees."""
-
-    def _replace_in_expr(expr: TypeExpr) -> TypeExpr:
-        if expr is old_ref:
-            return canonical
-        if isinstance(expr, GenericTypeExpr):
-            new_args = [_replace_in_expr(a) for a in expr.args]
-            if any(new is not orig for new, orig in zip(new_args, expr.args)):
-                expr.args = new_args
-        elif isinstance(expr, UnionTypeExpr):
-            new_members = [_replace_in_expr(m) for m in expr.members]
-            if any(new is not orig for new, orig in zip(new_members, expr.members)):
-                expr.members = new_members
-        return expr
-
     # Replace in params
     for param in sig.params.values():
-        param.type = _replace_in_expr(param.type)
+        param.type = _replace_in_expr(param.type, old_ref, canonical)
 
     # Replace in return type
-    sig.return_type = _replace_in_expr(sig.return_type)
+    sig.return_type = _replace_in_expr(sig.return_type, old_ref, canonical)
 
     # Replace in field types of referenced types
     for type_sig in sig.referenced_types:
         for f in type_sig.fields.values():
-            f.type = _replace_in_expr(f.type)
+            f.type = _replace_in_expr(f.type, old_ref, canonical)
+
+
+def _replace_in_expr(expr: TypeExpr, old_ref: TypeSignature, canonical: TypeSignature) -> TypeExpr:
+    """`expr` with every reference to old_ref in its tree replaced with canonical, in place where it is nested."""
+    if expr is old_ref:
+        return canonical
+    match expr:
+        case GenericTypeExpr():
+            new_args = [_replace_in_expr(a, old_ref, canonical) for a in expr.args]
+            if any(new is not orig for new, orig in zip(new_args, expr.args)):
+                expr.args = new_args
+        case UnionTypeExpr():
+            new_members = [_replace_in_expr(m, old_ref, canonical) for m in expr.members]
+            if any(new is not orig for new, orig in zip(new_members, expr.members)):
+                expr.members = new_members
+        case _:
+            pass
+    return expr

@@ -10,7 +10,7 @@ from typing import Literal, TypeVar
 
 import anyio
 import anyio.to_thread
-import httpx
+import httpx2
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -153,7 +153,7 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     if content := await anyio.to_thread.run_sync(_read_cached_file, cache_file):
         return content
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         response = await client.get(url)
         response.raise_for_status()
         content = response.content

@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -14,8 +12,10 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -25,10 +25,13 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class VercelProvider(_OpenAICompatibleProvider):
+class VercelProvider(_OpenAISDKProvider):
     """Provider for Vercel AI Gateway API."""
 
     @property
@@ -50,10 +53,12 @@ class VercelProvider(_OpenAICompatibleProvider):
             'bedrock': amazon_model_profile,
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
+            'groq': groq_model_profile,
             'mistral': mistral_model_profile,
             'openai': openai_model_profile,
             'vertex': google_model_profile,
             'xai': grok_model_profile,
+            'zai': _glm_5_3_schema_profile,
         }
 
         profile = None
@@ -76,7 +81,7 @@ class VercelProvider(_OpenAICompatibleProvider):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -86,7 +91,7 @@ class VercelProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         # Support Vercel AI Gateway's standard environment variables
         api_key = api_key or os.getenv('VERCEL_AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')
@@ -97,7 +102,7 @@ class VercelProvider(_OpenAICompatibleProvider):
                 'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel provider.'
             )
 
-        default_headers = {'http-referer': 'https://ai.pydantic.dev/', 'x-title': 'pydantic-ai'}
+        default_headers = {'http-referer': 'https://pydantic.dev/docs/ai/', 'x-title': 'pydantic-ai'}
 
         if openai_client is not None:
             self._client = openai_client

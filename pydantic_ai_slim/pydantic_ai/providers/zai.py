@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -19,10 +17,13 @@ except ImportError as _import_error:
         'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class ZaiProvider(_OpenAICompatibleProvider):
+class ZaiProvider(_OpenAISDKProvider):
     """Provider for Z.AI (Zhipu AI) API.
 
     Z.AI provides GLM models with support for thinking/reasoning mode
@@ -35,7 +36,7 @@ class ZaiProvider(_OpenAICompatibleProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.z.ai/api/paas/v4'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -56,16 +57,16 @@ class ZaiProvider(_OpenAICompatibleProvider):
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
-    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -74,16 +75,21 @@ class ZaiProvider(_OpenAICompatibleProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Z.AI provider.
 
         Args:
             api_key: The API key to use for authentication, if not provided, the `ZAI_API_KEY` environment variable
                 will be used if available.
-            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            base_url: The base URL to use for requests, if not provided, the general API endpoint
+                `https://api.z.ai/api/paas/v4` will be used. Set this to use a different Z.AI endpoint,
+                such as `https://api.z.ai/api/coding/paas/v4` for the GLM Coding Plan.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url` and
+                `http_client` must be `None`.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         api_key = api_key or os.getenv('ZAI_API_KEY')
         if not api_key and openai_client is None:
@@ -92,7 +98,12 @@ class ZaiProvider(_OpenAICompatibleProvider):
                 'to use the Z.AI provider.'
             )
 
+        if openai_client is not None and base_url is not None:
+            raise UserError('Cannot provide both `openai_client` and `base_url`')
+
         if openai_client is not None:
             self._client = openai_client
+            self._base_url = str(openai_client.base_url)
         else:
-            self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._base_url = base_url or 'https://api.z.ai/api/paas/v4'
+            self._client = self._create_openai_client(base_url=self._base_url, api_key=api_key, http_client=http_client)

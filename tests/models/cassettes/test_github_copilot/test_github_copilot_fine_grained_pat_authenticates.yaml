@@ -1,0 +1,50 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '169'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the capital of France?
+        role: user
+      model: claude-haiku-4.5
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |
+        unauthorized: AuthenticateToken authentication failed
+    headers:
+      content-length:
+      - '54'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000
+    status:
+      code: 401
+      message: Unauthorized
+version: 1

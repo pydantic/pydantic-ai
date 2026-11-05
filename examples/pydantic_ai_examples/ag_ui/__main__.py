@@ -1,6 +1,6 @@
 """Very simply CLI to run the AG-UI example.
 
-See https://ai.pydantic.dev/examples/ag-ui/ for more information.
+See https://pydantic.dev/docs/ai/examples/ag-ui/ for more information.
 """
 
 if __name__ == '__main__':

@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -14,6 +12,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -23,10 +22,13 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class TogetherProvider(_OpenAICompatibleProvider):
+class TogetherProvider(_OpenAISDKProvider):
     """Provider for Together AI API."""
 
     @property
@@ -49,6 +51,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
             'qwen': qwen_model_profile,
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
+            'zai-org': _glm_5_3_schema_profile,
         }
 
         profile = None
@@ -58,6 +61,12 @@ class TogetherProvider(_OpenAICompatibleProvider):
             provider, model_name = model_name.split('/', 1)
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
+
+            if provider == 'deepseek-ai' and model_name.startswith('deepseek-v4-'):
+                # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
+                # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
+                # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
+                profile = merge_profile(profile, OpenAIModelProfile(supports_forced_tool_choice=False))
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
@@ -70,7 +79,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -80,7 +89,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('TOGETHER_API_KEY')
         if not api_key and openai_client is None:

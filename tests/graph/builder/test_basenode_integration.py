@@ -5,14 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-import pytest
-
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, StepNode
 from pydantic_graph.join import JoinNode, reduce_list_append
 
 from ..._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass
@@ -50,7 +46,7 @@ async def test_basenode_in_builder_graph():
             self, ctx: GraphRunContext[IntegrationState, object]
         ) -> Annotated[StepNode[IntegrationState, object], process_result]:
             ctx.state.log.append(f'V1MiddleNode: {self.value}')
-            return process_result.as_node(f'Result: {self.value}')  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder deps_type inference (v2 typevar default)
+            return process_result.as_node(f'Result: {self.value}')  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder.DepsT has no TypeVar default (BaseNode gained one in https://github.com/pydantic/pydantic-ai/pull/5307). Check: drop this ignore.
 
     g.add(
         g.node(V1StartNode),
@@ -156,7 +152,7 @@ async def test_mixed_step_and_basenode_with_broadcast():
             self, ctx: GraphRunContext[IntegrationState, object]
         ) -> Annotated[JoinNode[IntegrationState, object], collect]:
             ctx.state.log.append(f'ProcessNode: {self.value}')
-            return collect.as_node(self.value * 2)  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder deps_type inference (v2 typevar default)
+            return collect.as_node(self.value * 2)  # pyright: ignore[reportReturnType]  # TODO: GraphBuilder.DepsT has no TypeVar default (BaseNode gained one in https://github.com/pydantic/pydantic-ai/pull/5307). Check: drop this ignore.
 
     @g.step
     async def generate_values(ctx: StepContext[IntegrationState, object, None]) -> list[int]:

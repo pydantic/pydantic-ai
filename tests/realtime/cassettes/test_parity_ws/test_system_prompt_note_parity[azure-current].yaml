@@ -1,0 +1,503 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: event_EdJuDfV8FSuhLJy5EG52n
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EdJuCts7DbULZAzdO4lIl
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793043616
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.06
+  data:
+    type: session.updated
+    event_id: event_EdJuDHN8ZFtCFG3Z5BsSi
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EdJuCts7DbULZAzdO4lIl
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793043616
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.061
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: system
+      content:
+      - type: input_text
+        text: The caller has been verified as the account holder, Jamie. Address them
+          by name.
+- kind: message
+  direction: sent
+  at: 0.061
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+- kind: message
+  direction: sent
+  at: 0.061
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.143
+  data:
+    type: conversation.item.added
+    event_id: event_EdJuDplUN3s6mXipGEgSc
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: The caller has been verified as the account holder, Jamie. Address them
+          by name.
+- kind: message
+  direction: received
+  at: 0.143
+  data:
+    type: conversation.item.done
+    event_id: event_EdJuDShuTG1puK50BtV0e
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: The caller has been verified as the account holder, Jamie. Address them
+          by name.
+- kind: message
+  direction: received
+  at: 0.143
+  data:
+    type: conversation.item.added
+    event_id: event_EdJuDZGjutBs9KNVSrLsT
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+- kind: message
+  direction: received
+  at: 0.143
+  data:
+    type: conversation.item.done
+    event_id: event_EdJuDzdEE2KUGjitj8ATJ
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+- kind: message
+  direction: received
+  at: 0.154
+  data:
+    type: response.created
+    event_id: event_EdJuDOEPqOwxA77yKmcYB
+    response:
+      object: realtime.response
+      id: resp_EdJuDE4yHTFedRPqHfaO0
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EdJuCk3YHxtevMNx2Hasi
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.317
+  data:
+    type: response.output_item.added
+    event_id: event_EdJuDDBd0vMxZR0Xsala8
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    output_index: 0
+    item:
+      id: item_EdJuDvnGwABagul21zadb
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.317
+  data:
+    type: conversation.item.added
+    event_id: event_EdJuDeSRJuHOs9sUl9DVu
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_EdJuDvnGwABagul21zadb
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.317
+  data:
+    type: response.content_part.added
+    event_id: event_EdJuD6RtjieA3w4ubnFHT
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+    content:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.318
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDHirgJIm9TB7E5tDt
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: Hi
+    obfuscation: kznEfPGiAciIBk
+- kind: message
+  direction: received
+  at: 0.322
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDoVaDUfewxotMmEzn
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' Jamie'
+    obfuscation: hEU9NwPgV8
+- kind: message
+  direction: received
+  at: 0.329
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDkacJllqn5rIbLf9l
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ','
+    obfuscation: 23qZv2rtgnNSHD4
+- kind: message
+  direction: received
+  at: 0.336
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDIZe0lalX1vJZ3nSC
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' this'
+    obfuscation: QWzW677MKEz
+- kind: message
+  direction: received
+  at: 0.342
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDsjWPAuywBY2ftPvm
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' account'
+    obfuscation: xnv5C2XB
+- kind: message
+  direction: received
+  at: 0.35
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDClnHdb7skzqGwWE9
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' belongs'
+    obfuscation: RCkPwsha
+- kind: message
+  direction: received
+  at: 0.359
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDUvzkeKqY7lq1syBg
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' to'
+    obfuscation: btxYFDdlUS6u2
+- kind: message
+  direction: received
+  at: 0.366
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuD43dY5vgpWURZJas1
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: ' you'
+    obfuscation: VtQSE1lKL9w9
+- kind: message
+  direction: received
+  at: 0.371
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJuDRztFufwr69IVUjcB
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: IQboLmuAyX5Oh2B
+- kind: message
+  direction: received
+  at: 0.395
+  data:
+    type: response.output_text.done
+    event_id: event_EdJuDM9Ef1qy8iEJwPZpZ
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    text: Hi Jamie, this account belongs to you.
+- kind: message
+  direction: received
+  at: 0.395
+  data:
+    type: response.content_part.done
+    event_id: event_EdJuD6mY5cISrgZElZfOx
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    item_id: item_EdJuDvnGwABagul21zadb
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: Hi Jamie, this account belongs to you.
+    content:
+      type: text
+      text: Hi Jamie, this account belongs to you.
+- kind: message
+  direction: received
+  at: 0.395
+  data:
+    type: conversation.item.done
+    event_id: event_EdJuDPzqr9cbJf2imNWvt
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_EdJuDvnGwABagul21zadb
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hi Jamie, this account belongs to you.
+- kind: message
+  direction: received
+  at: 0.395
+  data:
+    type: response.output_item.done
+    event_id: event_EdJuDT3zMcNzAxhmHNf3G
+    response_id: resp_EdJuDE4yHTFedRPqHfaO0
+    output_index: 0
+    item:
+      id: item_EdJuDvnGwABagul21zadb
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hi Jamie, this account belongs to you.
+- kind: message
+  direction: received
+  at: 0.396
+  data:
+    type: response.done
+    event_id: event_EdJuDSVJLb4hDrJ207942
+    response:
+      object: realtime.response
+      id: resp_EdJuDE4yHTFedRPqHfaO0
+      status: completed
+      status_details: null
+      output:
+      - id: item_EdJuDvnGwABagul21zadb
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: Hi Jamie, this account belongs to you.
+      conversation_id: conv_EdJuCk3YHxtevMNx2Hasi
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 66
+        input_tokens: 55
+        output_tokens: 11
+        input_token_details:
+          text_tokens: 55
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 11
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '1'

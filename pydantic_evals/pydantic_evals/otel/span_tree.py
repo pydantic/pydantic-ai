@@ -2,22 +2,31 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import cache
 from textwrap import indent
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
 
-# Should match opentelemetry.util.types.AttributeValue
-AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
+if TYPE_CHECKING:
+    # Recursive TypeAliasType values can resolve to Unknown in threaded type checking.
+    AttributeValue: TypeAlias = (
+        str | bool | int | float | Sequence['AttributeValue'] | Mapping[str, 'AttributeValue'] | None
+    )
+else:
+    # Recursive OTel values; byte strings validate as UTF-8 text through the str arm.
+    AttributeValue = TypeAliasType(
+        'AttributeValue',
+        'str | bool | int | float | Sequence[AttributeValue] | Mapping[str, AttributeValue] | None',
+    )
 
 SpanStatus = Literal['unset', 'ok', 'error']
 """The status of a span, mirroring `opentelemetry.trace.StatusCode`."""
@@ -46,8 +55,8 @@ class SpanQuery(TypedDict, total=False):
     ## Attribute conditions
     has_attributes: dict[str, Any]
     """Attribute values are compared with equality; a dict or list value also matches an attribute stored as its
-    JSON serialization, since OTel attributes cannot hold nested objects and instrumentation libraries like Logfire
-    store them as JSON strings. A list value also matches an attribute stored as a tuple."""
+    JSON serialization, as used by instrumentation libraries like Logfire. A list value also matches an attribute
+    stored as a tuple."""
     has_attribute_keys: list[str]
 
     ## Status conditions
@@ -148,8 +157,8 @@ class SpanNode:
             trace_id=span.context.trace_id,
             span_id=span.context.span_id,
             parent_span_id=span.parent.span_id if span.parent else None,
-            start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=timezone.utc),
-            end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=timezone.utc),
+            start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=UTC),
+            end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=UTC),
             attributes=dict(span.attributes or {}),
             status=status,
         )
@@ -261,8 +270,7 @@ class SpanNode:
         stored = self.attributes.get(key)
         if stored == expected:
             return True
-        # OTel attribute values can only be primitives or sequences thereof, so instrumentation
-        # libraries like Logfire store dict and list values as JSON strings.
+        # Instrumentation libraries like Logfire may store structured values as JSON strings.
         if isinstance(expected, dict | list) and isinstance(stored, str):
             try:
                 return json.loads(stored) == expected
@@ -273,31 +281,38 @@ class SpanNode:
             return list(stored) == expected
         return False
 
-    def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
+    def _matches_query(self, query: SpanQuery) -> bool:
         """Check if the span matches the query conditions."""
         # Logical combinations
         if or_ := query.get('or_'):
             if len(query) > 1:
                 raise ValueError("Cannot combine 'or_' conditions with other conditions at the same level")
             return any(self._matches_query(q) for q in or_)
-        if not_ := query.get('not_'):
-            if self._matches_query(not_):
-                return False
-        if and_ := query.get('and_'):
-            results = [self._matches_query(q) for q in and_]
-            if not all(results):
-                return False
+        if (not_ := query.get('not_')) and self._matches_query(not_):
+            return False
+        if (and_ := query.get('and_')) and not all([self._matches_query(q) for q in and_]):
+            return False
         # At this point, all existing ANDs and no existing ORs have passed, so it comes down to this condition
+        return (
+            self._name_matches(query)
+            and self._attribute_conditions_match(query)
+            and self._status_matches(query)
+            and self._duration_matches(query)
+            and self._children_match(query)
+            and self._descendants_match(query)
+            and self._ancestors_match(query)
+        )
 
-        # Name conditions
+    def _name_matches(self, query: SpanQuery) -> bool:
         if (name_equals := query.get('name_equals')) and self.name != name_equals:
             return False
         if (name_contains := query.get('name_contains')) and name_contains not in self.name:
             return False
         if (name_matches_regex := query.get('name_matches_regex')) and not re.match(name_matches_regex, self.name):
             return False
+        return True
 
-        # Attribute conditions
+    def _attribute_conditions_match(self, query: SpanQuery) -> bool:
         if (has_attributes := query.get('has_attributes')) and not all(
             self._attribute_matches(key, value) for key, value in has_attributes.items()
         ):
@@ -306,12 +321,14 @@ class SpanNode:
             key in self.attributes for key in has_attributes_keys
         ):
             return False
+        return True
 
-        # Status conditions
+    def _status_matches(self, query: SpanQuery) -> bool:
         if (has_status := query.get('has_status')) and self.status != has_status:
             return False
+        return True
 
-        # Timing conditions
+    def _duration_matches(self, query: SpanQuery) -> bool:
         if (min_duration := query.get('min_duration')) is not None:
             if not isinstance(min_duration, timedelta):
                 min_duration = timedelta(seconds=min_duration)
@@ -322,11 +339,12 @@ class SpanNode:
                 max_duration = timedelta(seconds=max_duration)
             if self.duration > max_duration:
                 return False
+        return True
 
-        # Children conditions
+    def _children_match(self, query: SpanQuery) -> bool:
         if (min_child_count := query.get('min_child_count')) and len(self.children) < min_child_count:
             return False
-        if (max_child_count := query.get('max_child_count')) and len(self.children) > max_child_count:
+        if (max_child_count := query.get('max_child_count')) is not None and len(self.children) > max_child_count:
             return False
         if (some_child_has := query.get('some_child_has')) and not any(
             child._matches_query(some_child_has) for child in self.children
@@ -340,8 +358,9 @@ class SpanNode:
             child._matches_query(no_child_has) for child in self.children
         ):
             return False
+        return True
 
-        # Descendant conditions
+    def _descendants_match(self, query: SpanQuery) -> bool:
         # The following local functions with cache decorators are used to avoid repeatedly evaluating these properties
         @cache
         def descendants():
@@ -351,12 +370,16 @@ class SpanNode:
         def pruned_descendants():
             stop_recursing_when = query.get('stop_recursing_when')
             return (
-                self._filter_descendants(lambda _: True, stop_recursing_when) if stop_recursing_when else descendants()
+                list(self._filter_descendants(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else descendants()
             )
 
         if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
             return False
-        if (max_descendant_count := query.get('max_descendant_count')) and len(descendants()) > max_descendant_count:
+        if (max_descendant_count := query.get('max_descendant_count')) is not None and len(
+            descendants()
+        ) > max_descendant_count:
             return False
         if (some_descendant_has := query.get('some_descendant_has')) and not any(
             descendant._matches_query(some_descendant_has) for descendant in pruned_descendants()
@@ -370,8 +393,9 @@ class SpanNode:
             descendant._matches_query(no_descendant_has) for descendant in pruned_descendants()
         ):
             return False
+        return True
 
-        # Ancestor conditions
+    def _ancestors_match(self, query: SpanQuery) -> bool:
         # The following local functions with cache decorators are used to avoid repeatedly evaluating these properties
         @cache
         def ancestors():
@@ -380,11 +404,15 @@ class SpanNode:
         @cache
         def pruned_ancestors():
             stop_recursing_when = query.get('stop_recursing_when')
-            return self._filter_ancestors(lambda _: True, stop_recursing_when) if stop_recursing_when else ancestors()
+            return (
+                list(self._filter_ancestors(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else ancestors()
+            )
 
         if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
             return False
-        if (max_depth := query.get('max_depth')) and len(ancestors()) > max_depth:
+        if (max_depth := query.get('max_depth')) is not None and len(ancestors()) > max_depth:
             return False
         if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
             ancestor._matches_query(some_ancestor_has) for ancestor in pruned_ancestors()
@@ -398,7 +426,6 @@ class SpanNode:
             ancestor._matches_query(no_ancestor_has) for ancestor in pruned_ancestors()
         ):
             return False
-
         return True
 
     # -------------------------------------------------------------------------

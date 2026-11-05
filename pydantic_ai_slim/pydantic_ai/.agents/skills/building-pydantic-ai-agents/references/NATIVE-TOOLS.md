@@ -22,6 +22,11 @@ For OpenAI web search, use the Responses API model prefix (`openai-responses:`),
 Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
 or indexed content.
 
+Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
+the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
+(Gemini applies none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+`optional=True` tool is left out, and `UserError` is raised otherwise.
+
 ## Native Tool Defaults
 
 Reach for these when the provider supports them:
@@ -58,6 +63,12 @@ agent = Agent(
     deps_type=dict,
 )
 ```
+
+Returning `None` omits the tool for that step. `XSearch` and `ImageGeneration` are the exception when
+`fallback_subagent_model` is set: they route unsupported models to a subagent rather than a local tool, and their
+`native=` factory is resolved a second time when that subagent runs. Once `fallback_subagent_model` is set, returning
+`None` no longer omits anything — the subagent tool stays offered and calling it raises `UserError`.
+Return a configured tool instance, or drop `fallback_subagent_model`.
 
 ## When to Use Native Tools vs Provider-Adaptive Capabilities
 

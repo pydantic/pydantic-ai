@@ -1,15 +1,13 @@
 from __future__ import annotations as _annotations
 
-import inspect
-import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, assert_never, overload
 
-from typing_extensions import assert_never, overload
+import anyio
 
 from .. import _utils, usage
 from .._instrumentation import get_instructions
@@ -19,13 +17,14 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -42,15 +41,19 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    Model,
     ModelRequestParameters,
     StreamedResponse,
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
+from ._in_memory_batch import InMemoryBatchModel
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionModel(InMemoryBatchModel):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -61,6 +64,9 @@ class FunctionModel(Model):
     # instead of requiring a subclass to restate what the profile already says.
     supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+    # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
+    # history a test inspects.
+    _announces_system_voice = False
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -115,7 +121,8 @@ class FunctionModel(Model):
         Args:
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
-            model_name: The name of the model. If not provided, a name is generated from the function names.
+            model_name: The name of the model. If not provided, a name is generated from the function names,
+                falling back to the class name for a callable that has no `__name__`.
             profile: The model profile to use.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -125,8 +132,14 @@ class FunctionModel(Model):
         self.function = function
         self.stream_function = stream_function
 
-        function_name = self.function.__name__ if self.function is not None else ''
-        stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
+        function_name = (
+            getattr(self.function, '__name__', type(self.function).__name__) if self.function is not None else ''
+        )
+        stream_function_name = (
+            getattr(self.stream_function, '__name__', type(self.stream_function).__name__)
+            if self.stream_function is not None
+            else ''
+        )
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
         # Use a default profile that supports JSON schema and object output if none provided
@@ -143,6 +156,7 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -158,16 +172,17 @@ class FunctionModel(Model):
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
-        if inspect.iscoroutinefunction(self.function):
-            response = await self.function(messages, agent_info)
+        result: ModelResponse | Awaitable[ModelResponse]
+        if _utils.is_async_callable(self.function):
+            result = self.function(messages, agent_info)
         else:
-            # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
-            response_ = await _utils.await_maybe(await _utils.run_in_executor(self.function, messages, agent_info))
-            assert isinstance(response_, ModelResponse), response_
-            response = response_
+            result = await _utils.run_in_executor(self.function, messages, agent_info)
+        # A plain `def` may also return an awaitable, which `run_in_executor` would leave un-awaited.
+        response = await _utils.await_maybe(result)
+        assert isinstance(response, ModelResponse), response
         response.model_name = self._model_name
         # Add usage data if not already present
-        if not response.usage.has_values():  # pragma: no branch
+        if not response.usage.has_values() and not response.usage.unmeasured_requests:
             response.usage = _estimate_usage(
                 chain(messages, [response]),
                 allow_tool_availability_deltas=self.tool_addition_mode is not None,
@@ -182,6 +197,7 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -215,7 +231,10 @@ class FunctionModel(Model):
                 _iter=response_stream,
             )
         finally:
-            await response_stream.aclose()
+            # Closing can wait for a pending pull's lock before reaching the user's
+            # generator, so protect the entire close from an already-cancelled scope.
+            with anyio.CancelScope(shield=True):
+                await response_stream.aclose()
 
     @property
     def provider(self) -> None:
@@ -305,12 +324,21 @@ DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolReturnPart]
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
-"""A function used to generate a non-streamed response."""
+"""A function used to generate a non-streamed response.
+
+Any callable with this signature works: a plain `def`, an `async def`, or an instance with a `__call__`
+method of either kind. An async callable is awaited directly; a sync one is run in a worker thread.
+"""
 
 StreamFunctionDef: TypeAlias = Callable[
     [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
 ]
 """A function used to generate a streamed response.
+
+Any callable with this signature works: an async generator function, a plain `def` returning an async
+iterator, or an instance with a `__call__` of either kind. What matters is the value returned, not the
+callable — an `async def __call__` that *returns* an async iterator instead of yielding does not match,
+and its coroutine is never awaited.
 
 While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinTools]`, it should
 really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
@@ -354,14 +382,13 @@ class FunctionStreamedResponse(StreamedResponse):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
                             args=delta.json_args,
                             tool_call_id=delta.tool_call_id,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif isinstance(delta, NativeToolCallPart):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
@@ -400,6 +427,12 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
+    """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
+    if _has_instruction_state(messages):
+        raise _unprojected_instruction_delta_error()
+
+
 def _estimate_usage(  # noqa: C901
     messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
 ) -> usage.RequestUsage:
@@ -416,17 +449,17 @@ def _estimate_usage(  # noqa: C901
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in message.parts:
+            for part in _sendable_request_parts(message.parts):
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, ToolAvailabilityDeltaPart):
-                    if not allow_tool_availability_deltas:
-                        raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                    raise _unprojected_instruction_delta_error()
+                elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, _UnpreparedPart):
+                    raise _unprepared_part_error(part)
                 elif isinstance(part, SpeechPart):
                     # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
                     # user speech can arrive unconverted; estimate from the transcript like the
@@ -447,6 +480,7 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
+                    # A provider's own compaction item is opaque state, not text the model reads.
                     pass
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)
@@ -465,18 +499,15 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
 
     if isinstance(content, str):
-        return len(_TOKEN_SPLIT_RE.split(content.strip()))
+        return _utils.estimate_string_tokens(content)
 
     tokens = 0
     for part in content:
         if isinstance(part, str | TextContent):
             text = part if isinstance(part, str) else part.content
-            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
+            tokens += _utils.estimate_string_tokens(text)
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.
 
     return tokens
-
-
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')

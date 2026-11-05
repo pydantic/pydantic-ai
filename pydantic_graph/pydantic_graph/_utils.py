@@ -5,7 +5,7 @@ import inspect
 import types
 import warnings
 from collections.abc import Awaitable, Generator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
@@ -32,12 +32,12 @@ try:
     # Logic taken from logfire.experimental.annotations
     def get_traceparent(span: AbstractSpan) -> str | None:
         """Get a string representing the span context to use for annotating spans."""
-        real_span: Span
         if isinstance(span, Span):
             real_span = span  # pragma: lax no cover
         else:
-            real_span = span._span
-            assert real_span
+            real_span = getattr(span, '_span', None)
+            if not isinstance(real_span, Span):
+                return ''
         context = set_span_in_context(real_span)
         carrier: dict[str, Any] = {}
         TRACEPARENT_PROPAGATOR.inject(carrier, context)
@@ -64,7 +64,12 @@ def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
@@ -92,7 +97,8 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
     *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    other tasks on the (caller-owned) loop. What the cleanup raised is chained to the re-raised
+    exception by `chain_cleanup_exception()`.
 
     Raises:
         UnsupportedEventLoopError: If the current event loop doesn't implement `run_until_complete()`.
@@ -113,12 +119,44 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     task = asyncio.ensure_future(coro, loop=loop)
     try:
         return loop.run_until_complete(task)
-    except BaseException:
+    except BaseException as exc:
         if not task.done():
             task.cancel()
-            with suppress(BaseException):
+            try:
                 loop.run_until_complete(task)
+            except BaseException as cleanup_exc:
+                chain_cleanup_exception(exc, cleanup_exc)
         raise
+
+
+def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> None:
+    """Chain the exception raised while cleaning up after `exc` to it, as a hidden `__context__`.
+
+    When an interrupt is handled by cancelling a task and driving its cleanup, the task's exception
+    (typically its `CancelledError`) would otherwise be lost, along with anything attached to it --
+    like the run state that `pydantic_ai.RunCancelled.from_cancellation()` recovers from a cancelled
+    agent run. `__suppress_context__` keeps the traceback of `exc` as it was. An existing
+    `__context__` is left alone (so an interrupt raised while another exception is being handled
+    doesn't carry the cleanup's exception), as is `__cause__`.
+    """
+    # Never chain `exc` to itself: cleanup can surface it again (the stream bridge's `entered` holds the error
+    # `__aenter__()` raised, and `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`).
+    if exc.__context__ is not None or cleanup_exc is exc:
+        return
+    # The cleanup ran while `exc` was being handled, so implicit chaining made `exc` the context of
+    # (an exception in the chain of) `cleanup_exc`. Unlink it, as CPython does when chaining, so the
+    # chain doesn't loop back to `exc`.
+    node: BaseException | None = cleanup_exc
+    seen: set[int] = set()
+    # `exc` is always in the chain when cleanup ran while it was handled; the other exits are a safety net.
+    while node is not None and id(node) not in seen:  # pragma: no branch
+        seen.add(id(node))
+        if node.__context__ is exc:
+            node.__context__ = None
+            break
+        node = node.__context__
+    exc.__context__ = cleanup_exc
+    exc.__suppress_context__ = True
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -201,7 +239,8 @@ else:
     @contextmanager
     def logfire_span(*args: Any, **kwargs: Any) -> Generator[LogfireSpan, None, None]:
         """Create a Logfire span without warning if logfire is not configured."""
-        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code.
+        # Closest: https://github.com/pydantic/logfire/issues/1331 (does not cover library-code suppress).
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:
@@ -227,7 +266,7 @@ def infer_obj_name(obj: Any, *, depth: int) -> str | None:
     """
     target_frame = inspect.currentframe()
     if target_frame is None:
-        return None  # pragma: no cover
+        return None
     for _ in range(depth):
         target_frame = target_frame.f_back
         if target_frame is None:

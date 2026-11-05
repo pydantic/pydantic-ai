@@ -2,8 +2,6 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -15,6 +13,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -24,10 +23,13 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class OllamaProvider(_OpenAICompatibleProvider):
+class OllamaProvider(_OpenAISDKProvider):
     """Provider for local or remote Ollama API."""
 
     @property
@@ -53,6 +55,7 @@ class OllamaProvider(_OpenAICompatibleProvider):
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'glm': _glm_5_3_schema_profile,
         }
 
         model_name = model_name.lower()
@@ -80,7 +83,7 @@ class OllamaProvider(_OpenAICompatibleProvider):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Ollama provider.
 
@@ -92,7 +95,7 @@ class OllamaProvider(_OpenAICompatibleProvider):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'

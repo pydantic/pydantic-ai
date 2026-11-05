@@ -1,7 +1,7 @@
 """Realtime camera + voice assistant: a browser bridged to a provider-agnostic realtime session.
 
 The browser streams microphone PCM, one camera frame per second, and typed text over a WebSocket;
-the server forwards them into a [realtime session](https://ai.pydantic.dev/realtime/overview/) and
+the server forwards them into a [realtime session](https://pydantic.dev/docs/ai/realtime/overview/) and
 streams model audio, transcripts, and tool results back. The spine is the two pumps in
 `_run_session`; everything else is configuration and optional demo features: **Watch** (proactive
 narration of scene changes), **web search** with citation chips, and **sketch redrawing** through a
@@ -49,7 +49,7 @@ from pydantic_ai import (
     RunContext,
     SpeechPartDelta,
 )
-from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.capabilities import Caching, WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
@@ -234,6 +234,7 @@ def _draw_agent() -> Agent[None, str]:
         name='diagram_drawer',
         instructions=DRAW_INSTRUCTIONS,
         model_settings={'max_tokens': 16_384},
+        capabilities=[Caching()],
     )
 
 

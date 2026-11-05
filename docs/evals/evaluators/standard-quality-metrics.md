@@ -1,3 +1,7 @@
+---
+description: "Score LLM outputs with G-Eval in Pydantic Evals, plus LLM judge rubrics for RAG faithfulness, answer relevance, context precision and recall, and translation."
+---
+
 # Standard Quality Metrics
 
 This page shows how to express widely-used LLM evaluation methods with Pydantic Evals primitives:
@@ -10,7 +14,7 @@ This page shows how to express widely-used LLM evaluation methods with Pydantic 
   (Kocmi & Federmann, 2023).
 
 The RAG and GEMBA metrics are provided as *rubric recipes* rather than evaluator classes: each is
-one rubric away from `LLMJudge`, and a rubric you own adapts freely to your dataset shape and
+one rubric away from `LLMJudge`, and a rubric you own adapts freely to your dataset structure and
 domain — rename a field, tighten a criterion, or translate the instructions without waiting on a
 library release. Copy them into your project and edit as needed.
 
@@ -53,6 +57,8 @@ The result is an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason
 the raw integer score — on the scale you chose via `score_range`, not normalized to `0.0`-`1.0`
 like [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] scores. If the judge returns a score outside
 `score_range`, the evaluation fails rather than recording a misleading value.
+When the judge cannot generate text, `GEval` uses an integer rubric of at most 20 levels on the same
+scale and returns `reason=None` instead of a reasoning trace.
 
 !!! note "Simplified G-Eval"
     The published G-Eval method computes a probability-weighted expectation over score tokens
@@ -66,7 +72,7 @@ like [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] scores. If the judge retur
 These recipes assume each case's `inputs` carries the user question and the context passages the
 output is supposed to rely on — a *supplied* context, not whatever an agent retrieved at runtime.
 With `include_input=True`, [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] shows the judge your
-full inputs object, so any shape works as long as the rubric describes it; adjust the wording if
+full inputs object, so any input structure works as long as the rubric describes it; adjust the wording if
 your fields are named differently.
 
 ```python

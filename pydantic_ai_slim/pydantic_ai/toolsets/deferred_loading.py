@@ -10,7 +10,9 @@ from .prepared import PreparedToolset
 
 @dataclass(init=False)
 class DeferredLoadingToolset(PreparedToolset[AgentDepsT]):
-    """A toolset that marks tools for deferred loading, hiding them from the model until discovered via tool search.
+    """A toolset that marks tools for deferred loading, hiding them from the model until revealed.
+
+    Tool search, `load_capability` and another tool's `ToolReturn.tools` all reveal.
 
     See [toolset docs](../toolsets.md#deferred-loading) for more information.
     """

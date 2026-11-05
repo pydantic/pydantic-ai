@@ -1,0 +1,517 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "15306"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases. Please explain what Python is and its main use
+              cases. Please explain what Python is and its main use cases. Please explain what
+              Python is and its main use cases.
+            type: text
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        model: claude-sonnet-5-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You are a helpful assistant (not streamed). Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python concisely.
+            Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about Python
+            concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions about
+            Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer questions
+            about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely. Answer questions about Python concisely. Answer
+            questions about Python concisely.
+          cache_control:
+            type: ephemeral
+            ttl: 1h
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=95
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-83d93a7173d7095bcf3a00fd4fc362bf-de98ef2af7a3bb19-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPGBRzrh6mMsazxWESVX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":4370,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":752,"ephemeral_1h_input_tokens":3618},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**Python**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is a high-level, interp"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"reted, general-purpose"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" programming language known"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for its readable syntax and"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" vers"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"atility. It"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s dynamically typed,"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" supports multiple paradig"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ms (object-oriented,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" procedural, functional), and"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has a large stand"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ard library and "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ecosystem.\n\n**"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Main use cases:**\n\n-"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Web development:** Django"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Flask, and FastAP"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I for"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" backends"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and APIs.\n- **"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Data science and analytics:"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** pandas, NumP"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y, and Matplotl"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ib for anal"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ysis and"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" visualization.\n- **"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Machine learning and AI:"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** T"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ensorFlow, Py"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Torch, and scikit"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-learn.\n- **"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Automation and scripting:**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" handling, web"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" scraping, and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" system"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" administ"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ration tasks.\n- **"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DevOps and c"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"loud:"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** inf"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rastructure tooling,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" de"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ployment sc"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ripts, and c"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"loud S"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DKs.\n- **"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Scientific computing:** S"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ciPy and"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Jupyter notebooks"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for research."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Education:** its"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" simple syntax mak"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"es it a popular first"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" language.\n- **Testing"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" prototyping:** qu"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ick development of t"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ools"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" proofs of concept, and"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" test su"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ites.\n\n**Str"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"engths:** eas"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y to learn, fast to"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" write, and back"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ed by a hu"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ge community and package"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" index ("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"PyPI)."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n**Weaknesses:"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** slower execution than"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" comp"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iled languages like C++"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or R"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ust, and it's less common"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" mobile apps or"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" low"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-level syst"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ems work"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":4370,"cache_read_input_tokens":0,"output_tokens":426,"output_tokens_details":{"thinking_tokens":0}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-25T16:22:04.907384+00:00
