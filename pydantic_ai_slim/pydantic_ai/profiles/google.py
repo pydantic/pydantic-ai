@@ -207,6 +207,19 @@ class GoogleModelProfile(ModelProfile, total=False):
     or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
+    google_stream_function_call_arguments: bool
+    """Whether to stream tool-call arguments incrementally on Vertex AI.
+
+    `GoogleModel` sends Vertex's `stream_function_call_arguments` option only on streamed
+    generate-content requests when this is `True`: the provider validates it for streaming only,
+    and the Gemini API does not support it at all, so `GoogleModel.profile` turns the flag off on
+    non-Vertex clients. Default: `False`.
+
+    When enabled, streamed function calls arrive as `FunctionCall.partial_args` fragments -- a
+    JSONPath like `$.tags[0]` plus a typed value each -- which `GoogleModel` decodes into
+    incremental `ToolCallPartDelta` events and then into the final tool-call arguments.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
