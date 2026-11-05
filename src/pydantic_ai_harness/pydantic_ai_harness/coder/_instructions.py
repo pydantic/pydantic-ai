@@ -23,16 +23,12 @@ leave it idle. It does not say whether anyone can answer: `ask_parent`, when the
 
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 
-_READING_SHORT = 'Read files with `read_file`, not batched `cat`.'
-_READING_MAX = (
-    'Before editing, read the code and data files the task names, and the source you will change, '
-    'in full with `read_file` rather than batched `cat` in the shell. '
-    'If any tool output is marked truncated, re-read the missing part.'
+_READING = (
+    'Before editing, read the code and data files the task names in full with `read_file`, not batched `cat`. '
+    'If any tool output is marked truncated, re-read the missing part. '
+    "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
 )
-"""The 0.65.0 wording. At `'max'` only (headless / nobody will answer): shorter text dropped the
-'read named files in full' and truncation sentences that mattered on some tasks."""
-
-_EFFICIENCY = "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
+"""The same at every agency level: reading the named files, and truncated output, is about doing the work correctly."""
 
 _REPO_FILES = "Instruction files ({names}) for the project, if any, are already in your context; don't search for them."
 """Only when the bundled `RepoContext` autoloads instruction files."""
@@ -52,21 +48,18 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
-_DELIVER_SHORT = 'If deliverables will run elsewhere, make them self-contained.'
-_DELIVER_MAX = (
-    'Deliverables may be used outside this workspace, where only the files you were asked to produce are present. '
-    'Make them self-contained, with no reliance on other workspace files, caches, or data you did not include, '
-    'and check that they still work when run from a clean directory.'
+_DELIVER = (
+    'If deliverables will run elsewhere, make them self-contained, '
+    'with no reliance on workspace files you did not include, '
+    'and check that they still work from a clean directory.'
 )
-"""The 0.65.0 wording. At `'max'` only: the short form missed sidecar files some deliverables must not use."""
+"""The same at every agency level: a deliverable that needs a file it does not include fails outside this workspace."""
 
-_EXACT_SHORT = "Write checks from the task's stated behavior, not your code."
-_EXACT_MAX = (
-    'When the task specifies exact behavior, write your checks directly from the task text, '
-    'not from your own implementation, '
+_EXACT = (
+    "Write checks from the task's stated behavior, not your code, "
     'and make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 )
-"""The 0.65.0 wording. At `'max'` only: the short form dropped 'use every field'."""
+"""The same at every agency level: the checks and the fields come from the task, not from how autonomous the run is."""
 
 _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '
@@ -74,30 +67,23 @@ _FINISHING = (
 )
 
 
-def _reading(*, thorough: bool) -> str:
-    line5 = _READING_MAX if thorough else _READING_SHORT
-    return f'{line5} {_EFFICIENCY}'
-
-
-def _checks(*, measure: bool, cleanup: bool, thorough: bool) -> str:
+def _checks(*, measure: bool, cleanup: bool) -> str:
     return ' '.join(
         [
-            _DELIVER_MAX if thorough else _DELIVER_SHORT,
+            _DELIVER,
             *([_TARGETS] if measure else []),
             'Before finishing, confirm each stated requirement and edge case.',
             'If inputs seem inconsistent or goals impossible, assume you misread. '
             'Re-read, and try other interpretations before settling.',
-            _EXACT_MAX if thorough else _EXACT_SHORT,
+            _EXACT,
             'Check behavior with heredocs for one-offs, not new files.',
             *([_CLEANUP] if cleanup else []),
         ]
     )
 
 
-def _compose(
-    lead: str, *, context: Sequence[str], reading: str, checks: str, delegation: Sequence[str], suffix: str
-) -> str:
-    return '\n\n'.join([_INTRO, lead, *context, reading, *delegation, checks, _FINISHING]) + '\n' + suffix
+def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
+    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
 
 
 def coder_instructions(
@@ -114,13 +100,11 @@ def coder_instructions(
     own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads there.
-    At `'max'`, the reading, deliverable, and exact-behavior sentences use the longer 0.65.0 wording.
+    Reading, deliverables, and exact behavior use the same sentences at every level.
     """
-    thorough = agency == 'max'
     cleanup = agency == 'max'
-    reading = _reading(thorough=thorough)
-    parent_checks = _checks(measure=agency in ('high', 'max'), cleanup=cleanup, thorough=thorough)
-    delegate_checks = _checks(measure=True, cleanup=cleanup, thorough=thorough)
+    parent_checks = _checks(measure=agency in ('high', 'max'), cleanup=cleanup)
+    delegate_checks = _checks(measure=True, cleanup=cleanup)
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
@@ -128,17 +112,8 @@ def coder_instructions(
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(
-            _AGENCY[agency],
-            context=context,
-            reading=reading,
-            checks=parent_checks,
-            delegation=delegation,
-            suffix=suffix,
-        ),
-        _compose(
-            _DELEGATED, context=context, reading=reading, checks=delegate_checks, delegation=delegation, suffix=suffix
-        ),
+        _compose(_AGENCY[agency], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
+        _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
     )
 
 
