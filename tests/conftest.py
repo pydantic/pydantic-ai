@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
+from importlib.metadata import version
 from pathlib import Path
 from time import monotonic
 from types import ModuleType
@@ -29,6 +30,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
+from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -156,6 +158,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
+    from dbos import DBOSConfig
     from pluggy import Result
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -171,6 +174,10 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
+
+    class _DBOS2Config(DBOSConfig, total=False):
+        run_admin_server: bool
+
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
 
@@ -706,6 +713,18 @@ def detach_dbos_logging() -> None:
             logger.removeHandler(handler)
         for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
             logger.removeFilter(log_filter)
+
+
+def without_admin_server(config: DBOSConfig) -> DBOSConfig:
+    """Set `run_admin_server` to `False` on DBOS 2.x, which otherwise starts an admin server on port 3001.
+
+    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
+    Drop it once the `dbos` extra requires 3.0.
+    """
+    if Version(version('dbos')) >= Version('3'):
+        return config
+    dbos_2_config: _DBOS2Config = {**config, 'run_admin_server': False}
+    return dbos_2_config
 
 
 @pytest.fixture
