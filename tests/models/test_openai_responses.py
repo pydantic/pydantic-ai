@@ -120,7 +120,6 @@ from ..conftest import (
     message,
     try_import,
 )
-from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
 from .citation_utils import IsCitationList
 from .conftest import json_objects
 from .mock_openai import (
@@ -6002,7 +6001,7 @@ _EDITED_HISTORY_QUESTION = (
 
 
 @pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+@pytest.mark.moves_cache_prefix(reason="a history processor edits an earlier response's text")
 async def test_edit_reaches_the_model_from_a_response_without_a_digest(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
@@ -6027,7 +6026,7 @@ async def test_edit_reaches_the_model_from_a_response_without_a_digest(
 
 
 @pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+@pytest.mark.moves_cache_prefix(reason="a history processor edits an earlier response's text")
 async def test_edit_needs_its_item_id_cleared_to_reach_the_model(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
