@@ -462,7 +462,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
+OpenAIModelName = str | AllModels | Literal['gpt-6-rosalind', 'gpt-6.1-sol', 'gpt-6.1-terra']
 """
 Possible OpenAI model names.
 
@@ -478,6 +478,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 (https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
 `gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
 Drop its bridge once the SDK floor includes the release that adds it.
+`gpt-6-rosalind` is bridged until the SDK floor reaches `openai` 3.46.0, which first lists it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
