@@ -71,8 +71,13 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part
+from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytest.importorskip('starlette')
 
@@ -1426,6 +1431,35 @@ async def test_run_stream_on_complete_error():
             "<error type='ValueError'>Faulty on_complete</error>",
             '</stream>',
         ]
+    )
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_run_stream_on_complete_error_is_recorded_on_current_span():
+    """An `on_complete` failure runs after the agent run's span has ended, so it's recorded on the span current then.
+
+    That's the HTTP request's span on an instrumented server. Only the exception's type is recorded: the stream doesn't
+    know the run's `include_content` setting, and the message can quote the run's output.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    def raise_error(run_result: AgentRunResult[Any]) -> None:
+        raise ValueError(f'Could not save {run_result.output!r}')
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    adapter = DummyUIAdapter(agent, request)
+    with provider.get_tracer('test').start_as_current_span('POST /chat'):
+        events = [event async for event in adapter.run_stream(on_complete=raise_error)]
+
+    assert events[-2:] == snapshot(
+        ["<error type='ValueError'>Could not save 'success (no tool calls)'</error>", '</stream>']
+    )
+    [span] = exporter.get_finished_spans()
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == snapshot(
+        [('exception', {'exception.type': 'ValueError', 'exception.escaped': 'False'})]
     )
 
 

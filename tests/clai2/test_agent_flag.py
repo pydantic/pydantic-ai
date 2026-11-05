@@ -109,6 +109,34 @@ def test_cli_chats_with_agent_and_no_plugins(
     assert store.load().model == 'saved:model'
 
 
+class TestCodeMode:
+    @pytest.fixture
+    def native_tools(self) -> None:
+        """The shipped code mode default, not the suite's code-mode-off stand-in."""
+
+    def test_agent_launch_starts_with_code_mode_off(
+        self, fixture_module: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SettingsStore(fixture_module / 'config.db')
+        store.set('run.speculative_code_mode', True)
+        monkeypatch.setattr('sys.argv', ['clai2', '--database', str(store.path), '-a', f'{_MODULE}:agent'])
+        seen: list[Settings] = []
+
+        async def chat(_agent: object, *, settings: Settings, **_: object) -> None:
+            seen.append(settings)
+
+        monkeypatch.setattr('pydantic_clai2.app.chat', chat)
+        cli.run()
+        [settings] = seen
+        assert not settings.code_mode and not settings.speculative_code_mode
+        assert store.load().speculative_code_mode
+
+    def test_default_launch_keeps_code_mode_on(self, tmp_path: Path) -> None:
+        store = SettingsStore(tmp_path / 'config.db')
+        settings = cli._settings_for(store, model=None, request_limit=None)(ProjectSettings())  # pyright: ignore[reportPrivateUsage]
+        assert settings.code_mode
+
+
 def test_cli_prompt_passes_agent_to_headless(fixture_module: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', '--agent', f'{_MODULE}:agent', '-p', 'hi'])
     seen: list[AbstractAgent[None, object] | None] = []

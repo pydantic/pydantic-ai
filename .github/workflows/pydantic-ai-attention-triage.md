@@ -46,6 +46,7 @@ safe-outputs:
   activation-comments: false
   # Keep transient engine failures in Actions instead of filing report issues.
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:

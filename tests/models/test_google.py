@@ -6630,6 +6630,66 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     assert http_options.timeout == custom_timeout * 1000
 
 
+@pytest.mark.vcr()
+async def test_google_tool_return_with_ref_key_is_accepted(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini reads a `$ref` key in a function response as a reference to a named part and rejects the request
+    (`400 INVALID_ARGUMENT: The referenced name ... does not match to a display_name`), so such a return goes as text.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+
+    @agent.tool_plain
+    def get_layout() -> dict[str, Any]:
+        """Return the dashboard layout."""
+        return {'layout': [{'$ref': '#/defs/panel'}], 'title': 'x'}
+
+    result = await agent.run('Call get_layout and tell me the title in one word.')
+
+    assert result.output == snapshot('x')
+    function_response = cast(
+        dict[str, Any], cast(list[Any], request_capture.body(':generateContent', index=1)['contents'])[-1]
+    )['parts'][0]['functionResponse']
+    assert function_response['response'] == snapshot({'output': '{"layout":[{"$ref":"#/defs/panel"}],"title":"x"}'})
+
+
+@pytest.mark.parametrize(
+    'content, expected',
+    [
+        pytest.param(
+            {'$ref': '#/defs/panel', 'title': 'x'}, {'output': '{"$ref":"#/defs/panel","title":"x"}'}, id='top-level'
+        ),
+        pytest.param(
+            {'layout': [{'$ref': '#/defs/panel'}]}, {'output': '{"layout":[{"$ref":"#/defs/panel"}]}'}, id='nested'
+        ),
+        pytest.param([{'$ref': '#/defs/panel'}], {'output': '[{"$ref":"#/defs/panel"}]'}, id='list'),
+        pytest.param({'ref': 'x'}, {'ref': 'x'}, id='no-ref-unchanged'),
+    ],
+)
+async def test_google_tool_return_ref_key_mapping(google_provider: GoogleProvider, content: Any, expected: Any):
+    """Every `$ref` position becomes JSON text, and other returns stay objects.
+
+    A mapping test rather than one cassette per shape: cassette matching ignores the body, and the VCR test
+    above already shows Gemini accepting the text form.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_layout', content=content, tool_call_id='call_1')])
+    ]
+
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
+
+    assert contents == [
+        {
+            'role': 'user',
+            'parts': [{'function_response': {'name': 'get_layout', 'response': expected, 'id': 'call_1'}}],
+        }
+    ]
+
+
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 
