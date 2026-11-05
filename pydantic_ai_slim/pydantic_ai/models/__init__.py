@@ -2311,7 +2311,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # Where system messages follow the user content, the reasoning is that content.
         follows_turn = inline_system and self._system_entries_follow_user_turn
         notes: list[_FrameworkNote] = []
-        for replies, preceding in ((following, follows_turn), (earlier, True)):
+        # The note for `earlier` replies can be there on the request's first send, and the one for `following` only
+        # once the next reply exists, so it goes after, keeping what was sent a prefix.
+        for replies, preceding in ((earlier, True), (following, follows_turn)):
             # One note covers all of a reply's reasoning, which goes out in one user turn.
             if tags := [tag for part in self._carried_thinking(replies) for tag in lookalike_tags(part.content)]:
                 notes.append(self._lookalike_note(request, 'thinking', tags, preceding=preceding, genuine_change=False))

@@ -1138,6 +1138,29 @@ def test_reasoning_in_a_reply_with_no_request_right_before_it_gets_its_note_in_t
         assert lookalike_note_announcement(system_role=True) in request_texts([last])
 
 
+@pytest.mark.parametrize('inline_system', [True, False], ids=['native', 'fallback'])
+def test_a_request_holding_both_reasoning_notes_keeps_what_it_first_sent(inline_system: bool):
+    """The note for the reply after a request only exists once that reply does, so it goes after the earlier one."""
+    model = carrying_model(inline_system=inline_system)
+    params = ModelRequestParameters()
+    first_send: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(_QUOTED_LOOKALIKE), TextPart('Hello.')]),
+        ModelRequest(parts=[UserPromptPart('Hi.')]),
+    ]
+    second_send: list[ModelMessage] = [
+        *first_send,
+        ModelResponse(parts=[ThinkingPart(_QUOTED_LOOKALIKE), TextPart('Hi again.')]),
+        ModelRequest(parts=[UserPromptPart('Thanks.')]),
+    ]
+
+    before = model.prepare_messages(first_send, params)[1]
+    after = model.prepare_messages(second_send, params)[1]
+
+    assert isinstance(before, ModelRequest) and isinstance(after, ModelRequest)
+    assert [part.content for part in after.parts[: len(before.parts)]] == [part.content for part in before.parts]
+    assert 'The following <assistant_thinking>' in str(after.parts[-1].content)
+
+
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_anthropic_sends_an_opening_replys_note_after_its_reasoning():
     """The opening reply's reasoning goes out first, in a user turn of its own, and the note comes after it."""
