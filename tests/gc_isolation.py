@@ -64,19 +64,15 @@ def pytest_runtestloop() -> Generator[None, object, object]:
     try:
         return (yield)
     finally:
-        _collect_what_outlived_its_test()
+        leaks: list[object] = []
 
+        def record(unraisable: sys.UnraisableHookArgs) -> None:
+            leaks.append(repr(unraisable.exc_value))  # pragma: lax no cover
 
-def _collect_what_outlived_its_test() -> None:
-    leaks: list[object] = []
-
-    def record(unraisable: sys.UnraisableHookArgs) -> None:
-        leaks.append(repr(unraisable.exc_value))  # pragma: lax no cover
-
-    with pytest.MonkeyPatch.context() as patch, warnings.catch_warnings(record=True) as warned:
-        patch.setattr(sys, 'unraisablehook', record)
-        warnings.simplefilter('always')
-        gc.unfreeze()
-        gc.collect()
-    for leak in (*leaks, *(warning.message for warning in warned)):  # pragma: lax no cover
-        print(f'Leaked by a test, and dropped after it ended: {leak}', file=sys.stderr)
+        with pytest.MonkeyPatch.context() as patch, warnings.catch_warnings(record=True) as warned:
+            patch.setattr(sys, 'unraisablehook', record)
+            warnings.simplefilter('always')
+            gc.unfreeze()
+            gc.collect()
+        for leak in (*leaks, *(warning.message for warning in warned)):  # pragma: lax no cover
+            print(f'Leaked by a test, and dropped after it ended: {leak}', file=sys.stderr)
