@@ -352,9 +352,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # mutate the public sequence while this request is in progress.
         self._dynamic_snapshot = tuple(self.dynamic_reminders)
         for index, dynamic in enumerate(self._dynamic_snapshot):
-            if not (
-                isinstance(dynamic, LLMReminder) and type(dynamic).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            ):
+            if not _is_builtin_llm_reminder(dynamic):
                 result = await _awaited(dynamic(ctx))
             elif not dynamic._is_due(self._request_count):  # pyright: ignore[reportPrivateUsage]
                 continue
@@ -572,6 +570,14 @@ def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:
 
 def _is_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
     return isinstance(value, LLMReminder)
+
+
+def _is_builtin_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
+    """Whether `value` is an `LLMReminder` with the built-in `__call__`, whose generation `SystemReminders` runs itself.
+
+    A subclass that overrides `__call__` is called like any other dynamic reminder.
+    """
+    return isinstance(value, LLMReminder) and type(value).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 def _should_fire(reminder: Reminder[AgentDepsT], count: int) -> bool:
