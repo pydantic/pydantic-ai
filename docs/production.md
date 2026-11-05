@@ -8,17 +8,19 @@ description: "Take a Pydantic AI agent to production: crash recovery, human appr
 
 Pydantic AI is open source, with [commercial enterprise support from Pydantic](enterprise-support.md), and runs on [Azure OpenAI](models/azure.md), [Amazon Bedrock](models/bedrock.md) and [Google Vertex AI](models/google-cloud.md) as well as on OpenAI, Anthropic, Gemini and [models you host yourself](models/ollama.md). [Pydantic AI for Enterprise](enterprise.md) answers the questions security, platform and procurement teams ask: what leaves your infrastructure, which models you can use, approvals and audit trails, central model access and spending caps through the Gateway, Logfire's compliance and self-hosting, and support.
 
-A production agent usually takes one of three shapes:
+Start from how a run begins and who is waiting for it:
 
-- **A plain service, with no durable engine.** Run the agent inside your own FastAPI, Starlette or other ASGI route, store each run's [`Conversation`](#state) in your database between requests, and let a later request resume a run that paused for [approval](#approval). A [UI adapter](#frontend) streams it to a frontend from one route, and the [chat app example](examples/chat-app.md) keeps the message history in SQLite. A run in flight [dies with the process](#crash), so you start it again or continue it from the last [`StepPersistence`](#checkpointer) snapshot (Harness). Install `pydantic-ai` and your web framework.
-- **A durable workflow.** The [end-to-end service](#end-to-end) below, one file that serves an agent over HTTP with a human approval step and traces: a [durable execution](durable_execution/overview.md) engine journals model requests and tool calls, so a run survives a crash and can wait days for an approval. Install `pydantic-ai` with one engine's extra, such as `pydantic-ai[dbos]`, plus your web framework.
-- **A coding agent.** [`Coder`](harness/coder.md) (Harness) is a complete coding agent that you run in a terminal, embed in your own service, or put to work on a repository as a [GitHub Agentic Workflow](harness/gh-aw.md). Install `pydantic-ai-harness[coder]`.
+- **A person is waiting in your web app.** Run the agent inside a route of your application, [stream it to the frontend](#frontend) with a UI adapter, and store each run's [`Conversation`](#state) in your database; the [chat app example](examples/chat-app.md) keeps its history in SQLite. Install `pydantic-ai`; there is nothing else to run.
+- **Nobody is waiting.** A queue, an event or a schedule starts the run, as a job in your task queue or a step in your pipeline, and it usually returns [structured output](output.md) for your code to store. See [how to deploy it](#deploy).
+- **A person is waiting in a terminal.** The run lives as long as the session and its history in local files. Start from [`Agent.to_cli()`](cli.md), or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent.
 
-Whichever shape you pick, the rest of the page answers the questions teams ask before shipping it, each with the short answer and a link to the page that covers it in full.
+Then decide what a crash costs. A run in flight [dies with the process](#crash), and for most agents starting it again is fine. When a run is long, has side effects you can't repeat, or has to [wait days for an approval](#approval), put it on a [durable execution](durable_execution/overview.md) engine, as the [end-to-end service](#end-to-end) below does with DBOS (`pydantic-ai[dbos]`). [`StepPersistence`](#checkpointer) (Harness) sits between the two.
+
+The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full.
 
 | Before you ship, you want to know... | Short answer | Install |
 |---|---|---|
-| [What happens when the process crashes mid-run?](#crash) | Run the agent on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
+| [What happens when the process crashes mid-run?](#crash) | The run is lost, and you start it again; if that's too costly, run the agent on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
 | [How does a human approve a risky action, and the run resume days later?](#approval) | [Deferred tools](deferred-tools.md) end the run; a later run resumes it | `pydantic-ai` |
 | [How do I keep conversation state?](#state) | Store the run's `Conversation` in your database | `pydantic-ai` |
 | [How do I bound cost and runaway loops?](#cost) | `UsageLimits` per run, `SpendLimits` per day, tenant or month | `pydantic-ai`, and `pydantic-ai-harness` for `SpendLimits` |
@@ -308,10 +310,11 @@ Approvals for [deferred tools](#approval) travel over the same stream. The adapt
 
 ## How do I deploy it? {#deploy}
 
-An agent is a Python object in your process, so you deploy it the way you deploy the rest of your Python: there is nothing Pydantic-specific to host. Typical shapes:
+An agent is a Python object in your process, so you deploy it the way you deploy the rest of your Python: there is nothing Pydantic-specific to host. Where it runs:
 
 - **A web service**: run the agent inside your FastAPI, Starlette, Django or Flask handler, as [above](#frontend), and scale it like any other web app. A conversation's state lives in what you [store](#state) or in the durable engine, not in the process, so any instance can continue any conversation.
-- **A worker**: start runs from a queue or schedule, on a durable engine's workers such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), or on [Render Workflows](harness/render-workflows.md) (Harness), which run model requests and supported tool calls as separate tasks.
+- **A worker**: start runs from a queue, event or schedule, as a job in the Celery, Dramatiq or arq you already run. A retry starts the run over, repeating any tool side effects, so make those idempotent, or use a durable engine's workers such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), or [Render Workflows](harness/render-workflows.md) (Harness), which resume instead.
+- **A step in a pipeline**: call the agent from your data pipeline or CI job and store its structured output. The step's own retries start the run over; [Apache Airflow](durable_execution/airflow.md) can resume from a journal instead. [Batch Processing](batch.md) sends many runs through a provider's batch API.
 - **A serverless function**: run on [AWS Lambda durable functions](harness/aws-lambda.md) so a timed-out or retried invocation resumes instead of starting over.
 - **A voice agent**: a [realtime session](realtime/overview.md) holds a provider connection open for the whole call, so it needs long-lived compute rather than request-scoped functions; see [hosting a realtime backend](realtime/deployment.md#hosting).
 - **An agent on a repository**: [GitHub Agentic Workflows](harness/gh-aw.md) run an agent on issues, pull requests or a schedule.
