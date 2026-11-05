@@ -255,7 +255,7 @@ An approver reads the requests with `DBOS.get_event()` (`get_event_async()`), bu
 
 **End the workflow and resume in a new one.** Return the `DeferredToolRequests` to the caller, store the run's messages and `conversation_id`, and when the answers arrive start a new workflow that calls `agent.run(message_history=..., deferred_tool_results=...)` with a new `run_id`. Do not reuse the paused run's `run_id`; correlate the two runs by `conversation_id`.
 
-A waiting workflow stays open, so it only recovers on the DBOS application version that started it. If you deploy many times a day, either keep old workers running until pending workflows drain, or prefer the second pattern: its workflow is already complete, so a deploy cannot strand it.
+If you deploy many times a day, prefer the second pattern: a workflow waiting in `DBOS.recv()` stays open, so the warning below applies to it, while an ended workflow is already complete and a deploy cannot strand it.
 
 !!! warning "Application versions and in-flight workflows"
 
@@ -263,7 +263,7 @@ A waiting workflow stays open, so it only recovers on the DBOS application versi
 
 ### Delegation and Nested Agents
 
-A function tool can delegate to another agent. Give the delegate its own [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and a unique `name`, and its model requests and durable tool calls become steps in the enclosing workflow's history, alongside the parent's. The integration does not start a child workflow: one workflow recovers both agents, and each agent's steps are namespaced by its `name` (`lead__model.request`, `researcher__model.request`).
+A function tool can delegate to another agent. Give the delegate its own [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and a unique `name`, and its model requests and durable tool calls become steps in the enclosing workflow's history, alongside the parent's. By default the integration does not start a child workflow: one workflow recovers both agents, and each agent's steps are namespaced by its `name` (`lead__model.request`, `researcher__model.request`). To record the delegate's steps in a child workflow's own history instead, opt the tool into [`child_workflow`](#child-workflows).
 
 ```python {title="dbos_nested_agents.py" test="skip"}
 from dbos import DBOS
@@ -304,7 +304,35 @@ async def run(prompt: str) -> str:
 
 A delegate without `DBOSDurability` runs its model requests directly in workflow code, which is the non-deterministic I/O DBOS requires you to isolate in steps.
 
-Steps do not nest: DBOS folds a step called from another step into the calling step's execution. If you decorate the delegating tool with `@DBOS.step`, or call the delegate from an MCP tool (which always runs in a step), the delegate's steps are not recorded separately; the outer step is retried as a whole, so the delegate is not checkpointed per model request and its side effects can repeat. Call the delegate from a plain function tool to keep each of its steps in the workflow history.
+Steps do not nest: DBOS folds a step called from another step into the calling step's execution. If you decorate the delegating tool with `@DBOS.step`, or call the delegate from an MCP tool (which always runs in a step), the delegate's steps are not recorded separately; the outer step is retried as a whole, so the delegate is not checkpointed per model request and its side effects can repeat. Call the delegate from a plain function tool to keep each of its steps in the workflow history, or from a [child-workflow tool](#child-workflows), which checkpoints the delegate per step in the child's own history and gives it its own recovery and timeout.
+
+**Starting child workflows yourself.** A DBOS workflow that starts child workflows and waits on them can deadlock if parents and children share a queue: once parents hold every slot, no child can start. Use separate queues, with the children's concurrency always higher than the parents'. Start the children inside `SetWorkflowTimeout(None)` so the parent's deadline does not reach them, and give each a deterministic `SetWorkflowID` so that re-enqueuing it when the parent recovers is a no-op:
+
+```python {title="dbos_parent_child_queues.py" test="skip"}
+import asyncio
+
+from dbos import DBOS, Queue, SetWorkflowID, SetWorkflowTimeout
+
+parent_queue = Queue('runs', worker_concurrency=2)  # parents wait on children
+child_queue = Queue('lanes', worker_concurrency=4)  # children: always higher
+
+
+@DBOS.workflow()
+async def run_lane(lane: str) -> str:
+    result = await researcher.run(f'Research: {lane}')  # `researcher` as above
+    return result.output
+
+
+@DBOS.workflow()
+async def run_all(run_id: str, lanes: list[str]) -> list[str | BaseException]:
+    handles = []
+    for lane in lanes:
+        with SetWorkflowTimeout(None), SetWorkflowID(f'run:{run_id}:lane:{lane}'):
+            handles.append(await child_queue.enqueue_async(run_lane, lane))
+    return await asyncio.gather(*(h.get_result() for h in handles), return_exceptions=True)
+```
+
+Start `run_all` on `parent_queue` with `parent_queue.enqueue_async(run_all, ...)`.
 
 ### Agent Run Context and Dependencies
 
