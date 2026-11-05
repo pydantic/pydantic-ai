@@ -37,7 +37,7 @@ try:
     agent.run_sync('List the files.')
 except UserError as e:
     print(str(e).split('.')[0])
-    # > `Shell` needs a workspace, but none is attached to this run
+    #> `Shell` needs a workspace, but none is attached to this run
 ```
 
 - Add `LocalWorkspace('.')` (from `pydantic_ai.capabilities`; `- LocalWorkspace: .` in an agent spec)
