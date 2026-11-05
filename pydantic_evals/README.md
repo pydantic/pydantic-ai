@@ -1,7 +1,7 @@
 # Pydantic Evals
 
 [![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
-[![Coverage](https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg)](https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai)
+![Coverage](https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg)
 [![PyPI](https://img.shields.io/pypi/v/pydantic-evals.svg)](https://pypi.python.org/pypi/pydantic-evals)
 [![python versions](https://img.shields.io/pypi/pyversions/pydantic-evals.svg)](https://github.com/pydantic/pydantic-ai)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/LICENSE)
@@ -39,7 +39,7 @@ class MatchAnswer(Evaluator[str, str]):
     def evaluate(self, ctx: EvaluatorContext[str, str]) -> float:
         if ctx.output == ctx.expected_output:
             return 1.0
-        elif isinstance(ctx.output, str) and ctx.expected_output.lower() in ctx.output.lower():
+        elif ctx.expected_output is not None and ctx.expected_output.lower() in ctx.output.lower():
             return 0.8
         return 0.0
 

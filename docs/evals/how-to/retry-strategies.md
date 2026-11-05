@@ -1,3 +1,7 @@
+---
+description: "Retry rate-limited or timed-out tasks and LLM judge evaluators in Pydantic Evals, with Tenacity stop conditions and exponential backoff passed to evaluate()."
+---
+
 # Retry Strategies
 
 Handle transient failures in tasks and evaluators with automatic retry logic.
@@ -46,6 +50,7 @@ Retry configurations use [Tenacity](https://tenacity.readthedocs.io/) and suppor
 ```python
 from tenacity import stop_after_attempt, wait_exponential
 
+from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 
 
@@ -55,7 +60,7 @@ def my_function(inputs: str) -> str:
 
 dataset = Dataset(name='retry_config', cases=[Case(inputs='test')], evaluators=[])
 
-retry_config = {
+retry_config: RetryConfig = {
     'stop': stop_after_attempt(3),  # Stop after 3 attempts
     'wait': wait_exponential(multiplier=1, min=1, max=10),  # Exponential backoff: 1s, 2s, 4s, 8s (capped at 10s)
     'reraise': True,  # Re-raise the original exception after exhausting retries
@@ -154,6 +159,40 @@ Attempt 5: ~8s delay (multiplier * 2^3, capped at max)
 ```
 
 The actual delay depends on the `multiplier`, `min`, and `max` parameters passed to `wait_exponential()`.
+
+## Task Timeouts
+
+A task that hangs, such as a stalled network call, holds up the whole evaluation. Pass `task_timeout` to [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate] or [`evaluate_sync()`][pydantic_evals.dataset.Dataset.evaluate_sync] to bound each call of the task, in seconds:
+
+```python
+from tenacity import retry_if_not_exception_type, stop_after_attempt
+
+from pydantic_evals import Case, Dataset
+
+
+async def call_llm(inputs: str) -> str:
+    return f'LLM response to: {inputs}'
+
+
+dataset = Dataset(name='task_timeout', cases=[Case(inputs='test')])
+
+report = dataset.evaluate_sync(
+    task=call_llm,
+    task_timeout=30,  # Each attempt may take at most 30 seconds
+    retry_task={
+        'stop': stop_after_attempt(3),
+        'retry': retry_if_not_exception_type(TimeoutError),  # Don't retry timeouts
+        'reraise': True,
+    },
+)
+```
+
+A call that overruns the timeout is cancelled and raises `TimeoutError: Task timed out after 30s`. The case is then reported in `report.failures` like any other task error, and the remaining cases carry on.
+
+The timeout applies to each attempt separately, and a timeout counts as a failed attempt. With `retry_task`, timeouts are retried like any other exception unless the `retry` condition excludes `TimeoutError`, as above. The wait between attempts doesn't count toward the timeout. Lifecycle hooks and evaluators are not bounded by it.
+
+!!! warning "Timeouts can't stop sync tasks"
+    A sync (`def`) task runs in a worker thread, which Python can't interrupt. When it times out, the case fails on time, but the thread keeps running in the background and its result is discarded. To stop a slow call, make the task `async`, or set a timeout on the client it calls, such as your HTTP or model client.
 
 ## Evaluator Retries
 
@@ -501,6 +540,7 @@ Increase delays or use `max_concurrency`:
 ```python
 from tenacity import stop_after_attempt, wait_exponential
 
+from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 
 
@@ -511,7 +551,7 @@ def task(inputs: str) -> str:
 dataset = Dataset(name='rate_limit_config', cases=[Case(inputs='test')], evaluators=[])
 
 # Longer delays
-retry_config = {
+retry_config: RetryConfig = {
     'stop': stop_after_attempt(5),
     'wait': wait_exponential(multiplier=5, min=5, max=60),  # Start at 5s, exponential up to 60s
     'reraise': True,

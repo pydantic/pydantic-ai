@@ -1,0 +1,44 @@
+interactions:
+- request:
+    body: client_id=scrubbed
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '43'
+      content-type:
+      - application/x-www-form-urlencoded
+      host:
+      - github.com
+    method: POST
+    uri: https://github.com/login/device/code
+  response:
+    headers:
+      cache-control:
+      - no-cache
+      content-length:
+      - '22'
+      content-security-policy:
+      - default-src 'none'; base-uri 'self'; connect-src 'self'; form-action 'self'; img-src 'self' data:; script-src 'self';
+        style-src 'unsafe-inline'
+      content-type:
+      - application/json; charset=utf-8
+      referrer-policy:
+      - origin-when-cross-origin, strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubdomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame, X-Requested-With, X-GitHub-Client-Version,Accept-Encoding, Accept,
+        X-Requested-With
+    parsed_body:
+      error: Not Found
+    status:
+      code: 404
+      message: Not Found
+version: 1

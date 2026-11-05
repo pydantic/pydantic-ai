@@ -13,6 +13,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -24,11 +25,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class OllamaProvider(_OpenAICompatibleProvider):
+class OllamaProvider(_OpenAISDKProvider):
     """Provider for local or remote Ollama API."""
 
     @property
@@ -54,6 +55,7 @@ class OllamaProvider(_OpenAICompatibleProvider):
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'glm': _glm_5_3_schema_profile,
         }
 
         model_name = model_name.lower()

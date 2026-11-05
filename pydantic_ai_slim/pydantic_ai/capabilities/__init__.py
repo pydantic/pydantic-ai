@@ -35,16 +35,22 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .batch_model_requests import BatchModelRequests
+from .caching import Caching
 from .capability import Capability
+from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
+from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
-from .mcp import MCP
+from .local_workspace import LocalWorkspace
+from .mcp import MCP, MCPAuthorizationTokenFunc
+from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -75,11 +81,17 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        BatchModelRequests,
+        Caching,
+        Citations,
         RaiseContentFilterError,
+        FileUnderstanding,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
+        ModelFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -127,12 +139,18 @@ __all__ = [
     'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'BatchModelRequests',
+    'Caching',
     'Capability',
+    'Citations',
     'CAPABILITY_TYPES',
+    'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
+    'MCPAuthorizationTokenFunc',
     'PrefixTools',
     'PrepareOutputTools',
     'PrepareTools',
@@ -140,6 +158,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
     'Thinking',

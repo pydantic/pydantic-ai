@@ -1,3 +1,7 @@
+---
+description: "Synchronize and aggregate results from parallel paths in a pydantic-graph workflow with join nodes and reducers that combine many inputs into one output."
+---
+
 # Joins and Reducers
 
 Join nodes synchronize and aggregate data from parallel execution paths. They use **Reducers** to combine multiple inputs into a single output.
@@ -316,7 +320,7 @@ async def main():
         return f'Result from task {ctx.inputs}'
 
     # Use ReduceFirstValue to get the first result and cancel the rest
-    first_result = g.join(ReduceFirstValue[str](), initial=None, node_id='first_result')
+    first_result = g.join(ReduceFirstValue[str](), initial='', node_id='first_result')
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -411,7 +415,7 @@ def reduce_metrics_max(current: ReducedMetrics, inputs: ReducedMetrics) -> Reduc
 
 
 async def main():
-    g = GraphBuilder(state_type=MetricsState, output_type=dict[str, int])
+    g = GraphBuilder(state_type=MetricsState, output_type=ReducedMetrics)
 
     @g.step
     async def generate(ctx: StepContext[object, None, None]) -> list[int]:
@@ -469,7 +473,7 @@ Reducers with access to [`ReducerContext`][pydantic_graph.join.ReducerContext] c
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, ReducerContext, StepContext
+from pydantic_graph import GraphBuilder, ReducerContext, StepContext, TypeExpression
 
 
 @dataclass
@@ -490,7 +494,7 @@ def reduce_find_match(ctx: ReducerContext[SearchState, None], current: str | Non
 
 
 async def main():
-    g = GraphBuilder(state_type=SearchState, output_type=str | None)
+    g = GraphBuilder(state_type=SearchState, output_type=TypeExpression[str | None])
 
     @g.step
     async def generate_searches(ctx: StepContext[SearchState, None, None]) -> list[str]:
@@ -498,10 +502,10 @@ async def main():
 
     @g.step
     async def search(ctx: StepContext[SearchState, None, str]) -> str:
-        """Simulate a slow search operation."""
-        # make the search artificially slower for 'item4' and 'item5'
-        search_duration = 0.1 if ctx.inputs not in {'item4', 'item5'} else 1.0
-        await asyncio.sleep(search_duration)
+        """Simulate a search that never finishes for 'item4' and 'item5'."""
+        if ctx.inputs in {'item4', 'item5'}:
+            # These searches only ever end by being canceled.
+            await asyncio.Event().wait()
         ctx.state.searches_completed += 1
         return ctx.inputs
 

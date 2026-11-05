@@ -1,10 +1,11 @@
 ---
 title: Pydantic Evals
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
 ---
 
 # Pydantic Evals
 
-**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
+**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications. It grades an agent's final outputs and its [trajectory](evals/evaluators/agentic.md) (the sequence and arguments of its tool calls), against datasets in code or, with [online evaluation](evals/online-evaluation.md), against a sample of live production traffic.
 
 ## Design Philosophy
 
@@ -30,6 +31,11 @@ title: Pydantic Evals
 - [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
 - [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's *trajectory*, the sequence and arguments of its tool calls, not just the final output
+
+**Online Evaluation:**
+
+- [Online Evaluation](evals/online-evaluation.md) - Attach evaluators to production or staging traffic so every call, or a sampled subset, is graded in the background
 
 **How-To Guides:**
 
@@ -181,7 +187,7 @@ class MyEvaluator(Evaluator):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -204,6 +210,7 @@ Learn more:
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's trajectory
 
 ## Running Experiments
 
@@ -228,7 +235,7 @@ class MyEvaluator(Evaluator[str, str]):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -270,6 +277,8 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 _(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
+
+To evaluate an agent at batch prices, add [`BatchModelRequests`](batch.md) to it: cases run concurrently, so their model requests share batches, and the evaluation takes as long as its batches do.
 
 ## API Reference
 

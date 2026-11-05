@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -19,16 +19,23 @@ from pydantic_ai import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
+    ModelConnectionError,
+    ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    ModelTimeoutError,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    TransportPhase,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -46,6 +53,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_e
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
+    import huggingface_hub.utils._http
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -60,7 +68,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import GenerationError, HfHubHTTPError, OverloadedError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -70,7 +78,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
 
@@ -211,6 +218,7 @@ Hello! 👋 How can I help you today?\
             ],
             usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
+            model_id='huggingface:deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
             provider_url='https://router.huggingface.co/together',
@@ -252,7 +260,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                 parts=[
                     UserPromptPart(
                         content='What are the first three prime numbers? Return them as a list of integers.',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -269,6 +277,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -284,7 +293,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -407,8 +416,8 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=UTC)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -424,7 +433,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:hf-model',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
@@ -438,11 +448,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -459,7 +471,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:hf-model',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
@@ -477,7 +490,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -486,8 +499,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:hf-model',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
@@ -601,7 +616,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                                 url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                             ),
                         ],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -616,7 +631,8 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 ],
                 usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:Qwen/Qwen2.5-VL-72B-Instruct',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/nebius',
                 provider_details={
@@ -647,10 +663,150 @@ async def test_image_as_binary_content_input(
     )
 
 
+class _StreamBreakingOff(httpx.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'm',
+    'system_fingerprint': 'x',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError('connection refused', request=request)
+
+
+def _timeout(request: httpx.Request) -> httpx.Response:
+    # `huggingface_hub` converts `TimeoutError` to `InferenceTimeoutError`.
+    raise TimeoutError
+
+
+def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx.ReadError('connection reset')),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'cause_name', 'error_class', 'phase'),
+    [
+        pytest.param(_connect_error, False, 'ConnectError', ModelConnectionError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'ConnectError', ModelConnectionError, 'connect', id='stream-connect'),
+        # `InferenceTimeoutError` doesn't say at which stage the request timed out.
+        pytest.param(_timeout, False, 'InferenceTimeoutError', ModelTimeoutError, None, id='timeout'),
+        pytest.param(_stream_breaking_off, True, 'ReadError', ModelConnectionError, 'read', id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+    stream: bool,
+    cause_name: str,
+    error_class: type[ModelConnectionError],
+    phase: TransportPhase | None,
+) -> None:
+    """`huggingface_hub` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+    with pytest.raises(ModelAPIError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+    assert type(exc_info.value) is error_class
+    assert exc_info.value.phase == phase
+    assert type(exc_info.value.__cause__).__name__ == cause_name
+
+
+def _completion_body(message: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'id': '1',
+        'object': 'chat.completion',
+        'created': 0,
+        'model': 'm',
+        'system_fingerprint': 'x',
+        'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+    }
+
+
+async def test_tool_call_arguments_sent_in_message_history(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool call in the history goes back to the model with its `arguments`.
+
+    `huggingface_hub` serializes the request body from its own types, so the body is read off a mock transport:
+    the `MockHuggingFace` client skips that serialization, and a cassette match ignores the body.
+
+    https://github.com/pydantic/pydantic-ai/issues/11125
+    """
+    tool_call = {'id': 'call_0', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{"q": "a"}'}}
+    responses = iter(
+        [
+            _completion_body({'role': 'assistant', 'content': None, 'tool_calls': [tool_call]}),
+            _completion_body({'role': 'assistant', 'content': 'done'}),
+        ]
+    )
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=next(responses))
+
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        return q
+
+    result = await agent.run('Look it up')
+    assert result.output == 'done'
+    assert request_bodies[1]['messages'][1]['tool_calls'] == snapshot(
+        [
+            {
+                'function': {'arguments': '{"q":"a"}', 'name': 'lookup', 'description': None},
+                'id': 'call_0',
+                'type': 'function',
+            }
+        ]
+    )
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
-        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+        response=Mock(
+            status_code=500, content=b'{"error": "test error"}', headers=httpx.Headers({'x-request-id': 'abc'})
+        ),
     )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -658,8 +814,47 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     exc = exc_info.value
-    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc) == snapshot('status_code: 500, model_name: not_a_model, body: b\'{"error": "test error"}\'')
     assert exc.headers == {'x-request-id': 'abc'}
+
+
+@pytest.mark.parametrize(
+    ('error_kind', 'error_class'),
+    [
+        pytest.param('overloaded', ModelOverloadedError, id='overloaded'),
+        pytest.param('generation', ModelAPIError, id='generation'),
+    ],
+)
+@pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
+async def test_stream_error_object_raises_model_api_error(
+    allow_model_requests: None,
+    first_chunk: bool,
+    error_kind: Literal['overloaded', 'generation'],
+    error_class: type[ModelAPIError],
+) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces with
+    `in_stream` set: an overloaded server gets the 429 it answers with before a stream opens, other errors no status.
+
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+    error = (OverloadedError if error_kind == 'overloaded' else GenerationError)('Model is overloaded')
+    stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+
+    assert isinstance(exc_info.value, error_class)
+    assert exc_info.value.in_stream is True
+    if error_kind == 'overloaded':
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.body == 'Model is overloaded'
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'Model is overloaded'
+    assert exc_info.value.__cause__ is error
 
 
 @pytest.mark.vcr()
@@ -709,6 +904,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
                 ],
                 usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -759,10 +955,15 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     result = await agent.run('Hello')
     messages = result.all_messages()
     response_message = message(messages, ModelResponse, index=1)
-    assert response_message.timestamp == IsNow(tz=timezone.utc)
+    assert response_message.timestamp == IsNow(tz=UTC)
 
 
-async def test_retry_prompt_without_tool_name(allow_model_requests: None):
+async def test_retry_feedback_without_inline_system_prompts(allow_model_requests: None):
+    """A tool-less retry reaches the model in the harness's voice, not as something a person wrote.
+
+    `'test-model'` is a bare name, so it gets no profile and no inline system prompt support — the
+    rendered `SystemPromptPart` degrades to `<system>`-tagged user text rather than a system message.
+    """
     responses = [
         completion_message(
             ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # pyright: ignore[reportUnknownMemberType]
@@ -790,15 +991,17 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:test-model',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
@@ -812,10 +1015,10 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Response is invalid',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -824,8 +1027,10 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='huggingface:test-model',
+                timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
@@ -845,10 +1050,17 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
         'role': 'assistant',
         'content': 'invalid-response',
     }
-    assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == {
-        'role': 'user',
-        'content': 'Validation feedback:\nResponse is invalid\n\nFix the errors and try again.',
-    }
+    assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == snapshot(
+        {
+            'role': 'user',
+            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Response is invalid
+</retry_feedback>\
+""",
+        }
+    )
 
 
 async def test_thinking_part_in_history(allow_model_requests: None):
@@ -865,7 +1077,7 @@ async def test_thinking_part_in_history(allow_model_requests: None):
                 TextPart(content='text 2'),
             ],
             model_name='hf-model',
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         ),
     ]
 
@@ -913,29 +1125,30 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
-async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+def test_unsupported_media_type_in_tool_return_is_replaced_by_a_note():
+    """A document a tool returned is not silently dropped: the request names it in the tool result instead.
+
+    Without an extension the URL says nothing of its media type, so the note leaves it out.
+    """
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-VL-72B-Instruct',
         provider=HuggingFaceProvider(api_key='x'),
     )
-    agent = Agent(model)
-
-    messages = [
+    document = DocumentUrl(url='url', identifier='report')
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_file',
-                    content=['here', DocumentUrl(url='url')],
-                    tool_call_id='call_1',
-                )
-            ]
-        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['here', document], tool_call_id='call_1')]),
     ]
 
-    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
-        await agent.run('continue', message_history=messages)
+    prepared = model.prepare_messages(messages)
+
+    tool_return = prepared[-1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['here', 'File report was not sent: this model cannot read documents.'])
+    stored = messages[-1].parts[0]
+    assert isinstance(stored, ToolReturnPart)
+    assert stored.content == ['here', document]
 
 
 async def test_image_tool_return_is_forwarded_as_user_message():
@@ -998,6 +1211,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1041,6 +1255,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1092,6 +1307,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1126,3 +1342,27 @@ async def test_map_user_prompt_with_text_content():
 
     assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
     assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_non_json_response_body_raises_model_api_error(allow_model_requests: None, stream: bool) -> None:
+    """A 200 response body, or a streamed chunk, that `huggingface_hub` can't decode as JSON surfaces as `ModelAPIError`.
+
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    error = json.JSONDecodeError('Expecting value', '   ', 3)
+    mock_client = (
+        MockHuggingFace.create_stream_mock([text_chunk('Hello'), error])
+        if stream
+        else MockHuggingFace.create_mock(error)
+    )
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x')))
+    with pytest.raises(ModelAPIError) as exc_info:
+        if stream:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('Hello')
+
+    assert exc_info.value.__cause__ is error
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

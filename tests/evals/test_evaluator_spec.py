@@ -11,7 +11,7 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators.spec import EvaluatorSpec
     from pydantic_evals.otel.span_tree import SpanQuery
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluator_spec_basic():

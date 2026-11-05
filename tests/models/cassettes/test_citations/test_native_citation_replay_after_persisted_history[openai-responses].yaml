@@ -1,0 +1,324 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '327'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use web search to find Pydantic AI's GitHub repository and cite it.
+        role: user
+      model: gpt-5.4-mini
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2478'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '3486'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1787636163
+      created_at: 1787636160
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0bf20b7676e4f03f006a8d29c0828487d292e50f83f993ca2e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-mini-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - action:
+          queries:
+          - Pydantic AI GitHub repository official
+          query: Pydantic AI GitHub repository official
+          type: search
+        id: ws_0bf20b7676e4f03f006a8d29c12ce887d29f177b7740e7a8aa
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 143
+            start_index: 70
+            title: 'GitHub - pydantic/pydantic-ai: AI Agent Framework, the Pydantic way · GitHub'
+            type: url_citation
+            url: https://github.com/pydantic/pydantic-ai?utm_source=openai
+          logprobs: []
+          text: Pydantic AI's official GitHub repository is **pydantic/pydantic-ai**. ([github.com](https://github.com/pydantic/pydantic-ai?utm_source=openai))
+          type: output_text
+        id: msg_0bf20b7676e4f03f006a8d29c380f887d2954cdf12f79eadc7
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 1
+      tools:
+      - return_token_budget: default
+        search_content_types:
+        - text
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8649
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 69
+        output_tokens_details:
+          reasoning_tokens: 31
+        total_tokens: 8718
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1209'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use web search to find Pydantic AI's GitHub repository and cite it.
+        role: user
+      - action:
+          queries:
+          - Pydantic AI GitHub repository official
+          query: Pydantic AI GitHub repository official
+          type: search
+        id: ws_0bf20b7676e4f03f006a8d29c12ce887d29f177b7740e7a8aa
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 143
+            start_index: 70
+            title: 'GitHub - pydantic/pydantic-ai: AI Agent Framework, the Pydantic way · GitHub'
+            type: url_citation
+            url: https://github.com/pydantic/pydantic-ai?utm_source=openai
+          text: Pydantic AI's official GitHub repository is **pydantic/pydantic-ai**. ([github.com](https://github.com/pydantic/pydantic-ai?utm_source=openai))
+          type: output_text
+        id: msg_0bf20b7676e4f03f006a8d29c380f887d2954cdf12f79eadc7
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Continue.
+        role: user
+      model: gpt-5.4-mini
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2233'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1310'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1787636165
+      created_at: 1787636164
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0bf20b7676e4f03f006a8d29c489a087d2a4a6b4e2e4b509bc
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-mini-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Here's the repository again, with a bit more context:\n\n- **Repository:** `pydantic/pydantic-ai`\n- **GitHub
+            URL:** `https://github.com/pydantic/pydantic-ai`\n- **Description:** Pydantic AI is described on GitHub as an
+            \"AI Agent Framework, the Pydantic way.\" \n\nIf you want, I can also pull the README summary, installation instructions,
+            or the latest release info."
+          type: output_text
+        id: msg_0bf20b7676e4f03f006a8d29c52f9c87d2956c8d960f09aa4a
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - return_token_budget: default
+        search_content_types:
+        - text
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8587
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 4224
+        output_tokens: 110
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 8697
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from typing import Any
+import sys
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from dataclasses import dataclass, replace as dataclasses_replace
+from types import AsyncGeneratorType
+from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+from pydantic_ai import (
+    Agent,
+    CapabilityEvent,
+    CustomEvent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    EndStrategy,
+    RunContext,
+    ToolOutput,
+    _agent_graph,
+    _run_context,
+    _tool_execution,
+)
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     CombinedCapability,
+    HandleDeferredToolCalls,
     Hooks,
     WrapperCapability,
     on_event,
@@ -23,7 +38,8 @@ from pydantic_ai.capabilities._on_event import (
     _OnEventMethod,  # pyright: ignore[reportPrivateUsage]
     collect_on_event_methods,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities.abstract import CapabilityOrdering
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -42,8 +58,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from .capability_models import simple_model_function, simple_stream_function
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass(kw_only=True)
@@ -476,6 +490,84 @@ async def test_stream_listener_exception_fails_run() -> None:
     agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()])
     with pytest.raises(RuntimeError, match='listener failed'):
         await agent.run('go')
+
+
+@pytest.mark.parametrize(
+    'end_strategy,tool_path',
+    [
+        ('early', 'function_tool'),
+        ('graceful', 'function_tool'),
+        ('exhaustive', 'function_tool'),
+        # `early` skips function tools once an output tool succeeds, so it has no in-flight tool here.
+        ('graceful', 'function_then_output_tool'),
+        ('exhaustive', 'function_then_output_tool'),
+        ('early', 'approved_deferred_tool'),
+        ('graceful', 'approved_deferred_tool'),
+        ('exhaustive', 'approved_deferred_tool'),
+    ],
+)
+async def test_stream_listener_exception_cancels_in_flight_tool(
+    end_strategy: EndStrategy,
+    tool_path: Literal['function_tool', 'function_then_output_tool', 'approved_deferred_tool'],
+) -> None:
+    """A failing listener cancels the tool that emitted, and the run awaits it before raising.
+
+    Each generator between the listener and the tool has to close the one it reads from. The generators
+    are held here, so the garbage collector can't close a link the code left open.
+    """
+    cleaned_up: list[bool] = []
+    emitter = Capability[Any](id='emitter')
+
+    @emitter.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        if tool_path == 'approved_deferred_tool' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        try:
+            await ctx.emit(FileReadEvent(path='a'))
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.append(True)
+        return 'unreachable'  # pragma: no cover
+
+    @dataclass
+    class Boom(AbstractCapability[Any]):
+        @on_event(FileReadEvent)
+        async def boom(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+            raise RuntimeError('listener failed')
+
+    async def approve_all(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        calls = {0: DeltaToolCall(name='read_file', json_args='{}', tool_call_id='call_1')}
+        if tool_path == 'function_then_output_tool':
+            calls[1] = DeltaToolCall(name='final_result', json_args='{"response": 1}', tool_call_id='call_2')
+        yield calls
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=ToolOutput(int),
+        capabilities=[emitter, Boom(), HandleDeferredToolCalls(handler=approve_all)],
+        end_strategy=end_strategy,
+    )
+    event_stream_modules = {_agent_graph.__file__, _tool_execution.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    sys.set_asyncgen_hooks(track, finalizer)
+    try:
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await agent.run('go')
+    finally:
+        sys.set_asyncgen_hooks(firstiter, finalizer)
+    assert cleaned_up == [True]
+    assert {'dispatch_event_stream', 'process_tool_calls'} <= {agen.ag_code.co_qualname for agen in layers}
 
 
 async def test_immediate_listener_exception_propagates_to_emitter() -> None:
@@ -986,3 +1078,186 @@ async def test_hooks_filters_non_matching_callbacks_once_dispatch_is_entered() -
     assert 'any:capability' in seen
     assert seen.count('read:file') == 1
     assert not any(entry == 'read:dir' for entry in seen)
+
+
+@dataclass(kw_only=True)
+class AgentLevelEvent(CapabilityEvent, namespace='on_event_agent_level'):
+    value: str
+
+
+@dataclass(kw_only=True)
+class AgentLevelNoteEvent(CustomEvent, name='on_event_agent_level_note'):
+    value: str
+
+
+@dataclass
+class AgentLevelEmitter(AbstractCapability[Any]):
+    """Emits one `AgentLevelEvent` before the model request."""
+
+    value: str = 'x'
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await ctx.emit(AgentLevelEvent(value=self.value))
+        return request_context
+
+
+@dataclass
+class AgentLevelListener(AbstractCapability[Any]):
+    seen: list[str]
+
+    @on_event(AgentLevelEvent)
+    async def heard(self, ctx: RunContext[Any], event: AgentLevelEvent) -> None:
+        self.seen.append('capability')
+
+
+async def test_agent_on_event_filters_and_runs_after_capability_listeners() -> None:
+    seen: list[str] = []
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream_function),
+        capabilities=[AgentLevelEmitter(), AgentLevelListener(seen)],
+    )
+
+    @agent.on_event(AgentLevelEvent)
+    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        seen.append(f'agent:{event.value}')
+
+    await agent.run('hello')
+
+    # The capability's listener runs first: an agent-level listener observes what the
+    # registered capabilities did.
+    assert seen == ['capability', 'agent:x']
+
+
+async def test_agent_on_event_bare_sees_every_event() -> None:
+    kinds: list[str] = []
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event
+    async def every(ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        kinds.append(event.event_kind)
+
+    await agent.run('hello')
+
+    assert 'capability' in kinds
+    assert len(kinds) > 1
+
+
+async def test_agent_on_event_listener_can_emit_a_custom_event() -> None:
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event(AgentLevelEvent)
+    async def republish(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        await ctx.emit(AgentLevelNoteEvent(value=event.value))
+
+    notes: list[AgentLevelNoteEvent] = []
+    async with agent.run_stream_events('hello') as stream:
+        async for event in stream:
+            if isinstance(event, AgentLevelNoteEvent):
+                notes.append(event)
+
+    assert [note.value for note in notes] == ['x']
+
+
+async def test_agent_without_listeners_registers_no_capability() -> None:
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    hooks = agent._event_hooks  # pyright: ignore[reportPrivateUsage]
+    before, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
+
+    # Until a listener is registered the agent's `Hooks` is not wrapped in at all, so an agent
+    # that never calls `on_event` runs against exactly the capability tree it was built with.
+    assert before is agent._effective_root_capability()  # pyright: ignore[reportPrivateUsage]
+    assert hooks not in before.capabilities
+
+    seen: list[str] = []
+
+    @agent.on_event(AgentLevelEvent)
+    async def typed(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        seen.append(event.value)
+
+    after, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
+
+    # Once one is, it joins last (`CombinedCapability` flattens, so the agent's own capabilities
+    # keep their order ahead of it) and nothing else about the tree changes.
+    assert after.capabilities[-1] is hooks
+    assert list(after.capabilities[:-1]) == list(before.capabilities)
+
+    await agent.run('hello')
+    assert seen == ['x']
+
+
+async def test_agent_on_event_registers_bare_with_a_timeout() -> None:
+    """`@agent.on_event(timeout=...)` names no classes, so it sees everything, with a deadline."""
+    kinds: list[str] = []
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[AgentLevelEmitter()])
+
+    @agent.on_event(timeout=5)
+    async def every(ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        kinds.append(event.event_kind)
+
+    await agent.run('hello')
+
+    assert 'capability' in kinds
+
+
+async def test_agent_on_event_sees_events_before_a_stream_wrapper_rewrites_them() -> None:
+    """Dispatch is upstream of `wrap_run_event_stream`, so a listener sees what was emitted."""
+
+    @dataclass
+    class Rewriter(AbstractCapability[Any]):
+        async def wrap_run_event_stream(
+            self, ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    yield dataclasses_replace(event, part=TextPart(content='REWRITTEN'))
+                else:
+                    yield event
+
+    agent = Agent(FunctionModel(stream_function=simple_stream_function), capabilities=[Rewriter()])
+    listener_saw: list[str] = []
+
+    @agent.on_event(PartStartEvent)
+    async def watch(ctx: RunContext[None], event: PartStartEvent) -> None:
+        listener_saw.append(repr(event.part))
+
+    consumer_saw: list[str] = []
+    async with agent.run_stream_events('hello') as stream:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                consumer_saw.append(event.part.content)
+
+    # The listener ran before the wrapper, so it never sees the rewrite the consumer receives.
+    assert 'REWRITTEN' in consumer_saw
+    assert listener_saw and not any('REWRITTEN' in part for part in listener_saw)
+
+
+async def test_agent_listeners_yield_to_an_innermost_capability() -> None:
+    """Agent listeners join after the agent's capabilities, but capability ordering still wins."""
+    order: list[str] = []
+
+    @dataclass
+    class Innermost(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position='innermost')
+
+        @on_event(AgentLevelEvent)
+        async def heard(self, ctx: RunContext[Any], event: AgentLevelEvent) -> None:
+            order.append('innermost')
+
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream_function),
+        capabilities=[AgentLevelEmitter(), Innermost()],
+    )
+
+    @agent.on_event(AgentLevelEvent)
+    async def watch(ctx: RunContext[None], event: AgentLevelEvent) -> None:
+        order.append('agent')
+
+    await agent.run('hello')
+
+    # `position='innermost'` is a deliberate request, so it keeps its place: the agent's listeners
+    # are not unconditionally last.
+    assert order == ['agent', 'innermost']

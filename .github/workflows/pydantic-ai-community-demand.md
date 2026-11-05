@@ -8,7 +8,12 @@ on:
     # Weekly, offset from the Monday stale-issues finder.
     - cron: '40 9 * * 3'
   workflow_dispatch:
-if: github.repository == 'pydantic/pydantic-ai'
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
+if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai') }}
 permissions:
   contents: read
   issues: read
@@ -20,7 +25,14 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
+    # Logfire ingestion endpoints used by shared/otel-logfire.md.
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 tools:
   bash: []
   cli-proxy: false
@@ -32,9 +44,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-community-verdict:
       description: "Record one demand verdict for deterministic host-side label application."
@@ -77,7 +92,10 @@ safe-outputs:
         - name: Install the typed-boundary dependency
           # Pinned exactly: this job holds a write-scoped token, so a
           # compromised new release must never reach it.
-          run: python3 -m pip install --quiet 'pydantic==2.13.4'
+          run: >-
+            python3 -m pip install --quiet 'pydantic==2.13.4'
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+            --no-deps
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -112,7 +130,10 @@ pre-agent-steps:
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   - name: Install the typed-boundary dependency
-    run: python3 -m pip install --quiet 'pydantic==2.13.4'
+    run: >-
+      python3 -m pip install --quiet 'pydantic==2.13.4'
+      'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+      --no-deps
   - name: Build bounded community demand snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}
@@ -124,13 +145,19 @@ pre-agent-steps:
       path: community-candidates.json
       retention-days: 1
       overwrite: true
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 # Decide whether community demand is genuine
 

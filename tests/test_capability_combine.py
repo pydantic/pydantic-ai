@@ -13,24 +13,32 @@ import pkgutil
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
+from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
-from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai import Agent, BinaryImage, FunctionToolset, RunContext, Tool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    Caching,
     Capability,
     CapabilityOrdering,
+    Citations,
+    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
     ToolSearch,
+    Toolset,
     UseThreadExecutor,
     WebFetch,
     WebSearch,
@@ -46,18 +54,21 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
+from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import FilePart, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-pytestmark = pytest.mark.anyio
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -83,6 +94,10 @@ class Combines:
 
 
 Policy = Anonymous | Combines
+
+
+def _check_caching(merged: Caching) -> None:
+    assert merged.retention == '1h', 'a scalar takes the later value'
 
 
 def _check_thinking(merged: Thinking) -> None:
@@ -112,6 +127,10 @@ def _check_content_filter(merged: RaiseContentFilterError) -> None:
     assert merged.id == 'raise_content_filter_error'
 
 
+def _check_citations(merged: Citations) -> None:
+    assert merged.id == 'citations'
+
+
 def _check_x_search(merged: XSearch) -> None:
     assert merged.allowed_x_handles == ['a', 'b']
     assert isinstance(merged.native, XSearchTool)
@@ -122,6 +141,10 @@ def _check_image_generation(merged: ImageGeneration) -> None:
     assert merged.quality == 'high'
 
 
+def _check_file_understanding(merged: FileUnderstanding) -> None:
+    assert merged.instructions == 'One sentence.', 'a scalar takes the later value'
+
+
 def _check_instrumentation(merged: Instrumentation) -> None:
     assert merged.settings is not None
     assert merged.settings.include_content is False, 'a scalar takes the later value'
@@ -129,6 +152,11 @@ def _check_instrumentation(merged: Instrumentation) -> None:
 
 _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
+
+
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
 def _check_tool_search(merged: ToolSearch) -> None:
@@ -141,6 +169,11 @@ def _check_thread_executor(merged: UseThreadExecutor) -> None:
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Caching': Combines(
+        'an agent has one caching configuration',
+        lambda: (Caching('5m'), Caching('1h')),
+        _check_caching,
+    ),
     'Thinking': Combines(
         'an agent has one thinking configuration',
         lambda: (Thinking(effort='low'), Thinking(effort='high')),
@@ -159,18 +192,26 @@ COMBINE_POLICY: dict[str, Policy] = {
     'XSearch': Combines(
         'one X search configuration',
         lambda: (
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['a']),
-            XSearch(fallback_model='xai:grok-4.3', allowed_x_handles=['b']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['a']),
+            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['b']),
         ),
         _check_x_search,
     ),
     'ImageGeneration': Combines(
         'one image generation configuration',
         lambda: (
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='low'),
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', quality='high'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='low'),
+            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='high'),
         ),
         _check_image_generation,
+    ),
+    'FileUnderstanding': Combines(
+        'an agent describes files one way',
+        lambda: (
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol'),
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol', instructions='One sentence.'),
+        ),
+        _check_file_understanding,
     ),
     'Instrumentation': Combines(
         'an agent is instrumented one way',
@@ -185,10 +226,20 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
         _check_reinject,
     ),
+    'Citations': Combines(
+        'carries no configuration at all, so two are interchangeable',
+        lambda: (Citations(), Citations()),
+        _check_citations,
+    ),
     'RaiseContentFilterError': Combines(
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'LocalWorkspace': Combines(
+        'the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
+        _check_local_workspace,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
@@ -217,6 +268,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
+    'BatchModelRequests': Anonymous(
+        'each instance is its own batching pool; a model already batched is not batched again'
+    ),
     'ProcessHistory': Anonymous('history processors stack'),
     'ProcessEventStream': Anonymous('event-stream processors stack'),
     'PrepareTools': Anonymous('tool preparers stack'),
@@ -225,21 +280,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
     'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
     'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
+    '_GroupMember': Anonymous('internal: dispatches a deferred group member, never registered'),
 }
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
-    if not isinstance(obj, type):
-        return False
-    try:
-        return issubclass(obj, AbstractCapability)
-    except TypeError:
-        return False
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
+    return isinstance(obj, type) and issubclass(obj, AbstractCapability)
 
 
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
@@ -441,11 +488,14 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
         [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
     )
     assert isinstance(merged, WebFetch)
-    local = merged.local
-    assert isinstance(local, Tool)
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
     # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
-    fetcher = cast('Any', local).function.__self__
-    assert fetcher.allowed_domains == ['a.com', 'b.com']
+    fetch = toolset.wrapped.tools['web_fetch'].function
+    assert isinstance(fetch, MethodType)
+    assert isinstance(fetch.__self__, WebFetchLocalTool)
+    assert fetch.__self__.allowed_domains == ['a.com', 'b.com']
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
@@ -565,7 +615,12 @@ def test_a_plain_class_capability_cannot_silently_lose_private_configuration() -
 
 
 def test_generic_alias_metadata_is_not_capability_configuration() -> None:
-    """`__orig_class__` is typing metadata attached after initialization, not hidden user state."""
+    """`__orig_class__` is typing metadata attached after initialization, not hidden user state.
+
+    Exempt from the undeclared-attribute check but *not* dropped from the merged copy, unlike a
+    `cached_property`: `copy.copy` carries it over correctly and nothing could recompute it, so
+    dropping it would lose the parameterization for good.
+    """
 
     merged = ReinjectSystemPrompt[Any].combine(
         [ReinjectSystemPrompt[Any](replace_existing=False), ReinjectSystemPrompt[Any](replace_existing=True)]
@@ -573,18 +628,39 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
 
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
+    assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
 
 
-def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping."""
+def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:
+    """Derived state declared as a `cached_property` is dropped from the copy, not carried over.
 
-    first = ReinjectSystemPrompt(replace_existing=False)
-    first._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
+    `replace_no_init` deliberately skips `__post_init__`, so a value cached against one instance's
+    fields would report that instance's answer for a capability built from both. Dropping it is
+    what makes the next read recompute -- which is why a `cached_property` is the supported way to
+    derive state, and why it does not trip the undeclared-attribute check.
+    """
 
-    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
+    @dataclass
+    class Counted(AbstractCapability[Any]):
+        names: list[str] = field(default_factory=list[str])
+        _: KW_ONLY
+        id: str | None = 'counted'
 
-    assert isinstance(merged, ReinjectSystemPrompt)
-    assert merged.replace_existing is True
+        @cached_property
+        def count(self) -> int:
+            return len(self.names)
+
+    first, second = Counted(names=['a']), Counted(names=['b'])
+    # Materialize both caches against their own fields, which is what makes a carried-over value
+    # wrong rather than merely absent.
+    assert (first.count, second.count) == (1, 1)
+
+    merged = Counted.combine([first, second])
+
+    assert isinstance(merged, Counted)
+    assert merged.names == ['a', 'b']
+    assert merged.count == 2, 'the last instance had cached 1'
+    assert (first.count, second.count) == (1, 1), 'the inputs are left as they were'
 
 
 def test_the_undeclared_attribute_error_explains_derived_state() -> None:
@@ -778,21 +854,28 @@ def test_a_chain_of_wrappers_walks_its_subtree_once_per_level() -> None:
     assert len(seen) == 8
 
 
-@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
+@pytest.mark.parametrize(
+    ('capability_type', 'message'),
+    [
+        (ImageGeneration, 'cannot specify more than one of `local`, `fallback_subagent_model`'),
+        (XSearch, 'cannot specify both `fallback_subagent_model` and `local`'),
+    ],
+)
 def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
-    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]], message: str
 ) -> None:
-    """`fallback_model` and `local` are alternatives, and merging two instances must not pair them.
+    """`fallback_subagent_model` and `local` are alternatives, and merging two instances must not pair them.
 
     Each states one half of a combination `__init__` refuses, so the merged capability would carry
-    both -- and the local tool would take effect while `fallback_model` was silently ignored. The
+    both -- and the local tool would take effect while `fallback_subagent_model` was silently ignored. The
     invariant lives in `__post_init__`, which `combine` re-runs, rather than in `__init__`, which
-    it cannot.
+    it cannot. `ImageGeneration` has a third alternative, `fallback_image_model`, so it words the
+    same refusal as a list.
     """
-    with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+    with pytest.raises(UserError, match=message):
         capability_type.combine(
             [
-                capability_type(fallback_model=TestModel()),
+                capability_type(fallback_subagent_model=TestModel()),
                 capability_type(local=_a_local_tool),
             ]
         )
@@ -801,6 +884,102 @@ def test_a_merge_cannot_reach_a_combination_the_constructor_rejects(
 def _a_local_tool(prompt: str) -> str:  # pragma: no cover
     """A local fallback."""
     return 'x'
+
+
+def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
+    """`fallback_subagent_model` is a scalar, so two differing values take the later one.
+
+    `COMBINE_POLICY` only pins the field where both sides agree, so this covers the differing
+    case through the general scalar rule.
+    """
+
+    merged = XSearch.combine(
+        [
+            XSearch(fallback_subagent_model='xai:grok-4.1'),
+            XSearch(fallback_subagent_model='xai:grok-4.3'),
+        ]
+    )
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    subagent_tool = toolset.wrapped.tools['x_search'].function
+    assert isinstance(subagent_tool, MethodType)
+    assert isinstance(subagent_tool.__self__, XSearchSubagentTool)
+    assert subagent_tool.__self__.model == 'xai:grok-4.3'
+
+
+@pytest.mark.parametrize(
+    ('capability_type', 'tool_call', 'subagent_output', 'subagent_profile'),
+    [
+        pytest.param(
+            ImageGeneration,
+            ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'}),
+            FilePart(content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')),
+            ModelProfile(supports_image_output=True),
+            id='image_generation',
+        ),
+        pytest.param(
+            XSearch,
+            ToolCallPart(tool_name='x_search', args={'query': 'latest news'}),
+            TextPart(content='recent posts'),
+            ModelProfile(supported_native_tools=frozenset({XSearchTool})),
+            id='x_search',
+        ),
+    ],
+)
+async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
+    capability_type: type[ImageGeneration[object]] | type[XSearch[object]],
+    tool_call: ToolCallPart,
+    subagent_output: FilePart | TextPart,
+    subagent_profile: ModelProfile,
+) -> None:
+    """Two models that differ only in `settings` are two values, so the later one runs.
+
+    Not a VCR test: the claim is which of the two models the merge keeps, and the settings a function
+    model receives show that without a provider.
+    """
+    subagent_settings: list[ModelSettings | None] = []
+
+    def subagent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        subagent_settings.append(info.model_settings)
+        return ModelResponse(parts=[subagent_output])
+
+    first = FunctionModel(subagent, settings={'temperature': 0.0}, profile=subagent_profile)
+    later = FunctionModel(subagent, settings={'temperature': 1.0}, profile=subagent_profile)
+
+    def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')] if len(messages) > 1 else [tool_call])
+
+    agent = Agent(
+        FunctionModel(outer, profile=ModelProfile(supported_native_tools=frozenset())),
+        capabilities=[capability_type(fallback_subagent_model=first), capability_type(fallback_subagent_model=later)],
+    )
+    await agent.run('go')
+
+    assert subagent_settings == [{'temperature': 1.0}]
+
+
+def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
+    """A value set through the deprecated `fallback_model` setter is configuration the merge keeps.
+
+    The setter writes `fallback_subagent_model` itself, so the rebuild guards see a declared field
+    rather than undeclared state -- the merge keeps the alias-set value and no refusal fires.
+    """
+
+    first = XSearch(allowed_x_handles=['a'])
+    second = XSearch(allowed_x_handles=['b'])
+    with pytest.warns(PydanticAIDeprecationWarning, match='`fallback_model` is deprecated'):
+        second.fallback_model = 'xai:grok-4.3'  # pyright: ignore[reportDeprecated]
+
+    merged = XSearch.combine([first, second])
+
+    assert isinstance(merged, XSearch)
+    assert merged.fallback_subagent_model == 'xai:grok-4.3'
+    assert merged.allowed_x_handles == ['a', 'b']
 
 
 def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
@@ -827,11 +1006,41 @@ def test_a_merged_collection_keeps_the_type_the_field_declared() -> None:
     assert type(merged.unique) is frozenset
 
 
-def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() -> None:
-    """A `NamedTuple` takes its fields positionally, so rebuilding it from a list raises.
+def test_a_field_shadowing_an_inherited_cached_property_is_merged_not_dropped() -> None:
+    """A name can be a cache on the base and configuration on the subclass, and the field wins.
 
-    Merging keeps the later declared value rather than turning a type mismatch into a `TypeError`
-    or corrupting the field to a plain `list`. A `NamedTuple` is a record, not a collection.
+    Dropping is keyed on the name, so an inherited `cached_property` would otherwise take the
+    merged field's value with it and leave the class default showing -- a merge that silently
+    reports something neither instance stated.
+    """
+
+    @dataclass
+    class Base(AbstractCapability[Any]):
+        names: list[str] = field(default_factory=list[str])
+        _: KW_ONLY
+        id: str | None = 'shadowed'
+
+        @cached_property
+        def count(self) -> int:
+            return len(self.names)  # pragma: no cover
+
+    @dataclass
+    class Sub(Base):
+        count: int = 0  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    merged = Sub.combine([Sub(names=['a'], count=1), Sub(names=['b'], count=9)])
+
+    assert isinstance(merged, Sub)
+    assert merged.names == ['a', 'b']
+    assert merged.count == 9, 'the later declared value, not the class default a dropped field falls back to'
+
+
+def test_a_record_that_merely_looks_like_a_sequence_takes_the_later_value() -> None:
+    """A `NamedTuple` is a record, not a collection, so the later value wins as for any scalar.
+
+    Recognized as a record up front rather than discovered by trying to rebuild one from a union:
+    unioning `Pair('a', 'b')` with `Pair('c', 'd')` would splice one record's columns into the
+    other's, which is not a merge anyone asked for whether or not the result can be rebuilt.
     """
 
     class Pair(NamedTuple):
@@ -848,6 +1057,34 @@ def test_a_collection_that_cannot_be_rebuilt_keeps_the_later_declared_value() ->
     assert isinstance(merged, Record)
     assert merged.pair == Pair('c', 'd')
     assert type(merged.pair) is Pair
+
+
+def test_a_collection_that_cannot_be_rebuilt_is_refused() -> None:
+    """Neither answer is safe for a real collection whose declared type cannot be rebuilt.
+
+    The union has a type the field's own annotation does not describe, and `__post_init__` is
+    skipped so nothing downstream would catch it; taking one instance's value drops entries the
+    other stated, which is the one thing the merge promises not to do. So it says so, and the same
+    way for a mapping, a set and a sequence -- one failure should not have three answers.
+    """
+
+    class Roster(list[str]):
+        def __init__(self, entries: list[str], *, label: str) -> None:
+            super().__init__(entries)
+            self.label = label
+
+    @dataclass
+    class Team(AbstractCapability[Any]):
+        members: Roster = field(default_factory=lambda: Roster([], label='none'))
+        _: KW_ONLY
+        id: str | None = 'team'
+
+    with pytest.raises(UserError) as exc_info:
+        Team.combine([Team(members=Roster(['ana'], label='a')), Team(members=Roster(['bo'], label='b'))])
+
+    message = str(exc_info.value)
+    assert "field 'members'" in message, 'the author needs to know which field to change'
+    assert 'Roster' in message, 'and which type could not be rebuilt'
 
 
 async def test_a_second_local_search_tool_replaces_the_first() -> None:
@@ -914,6 +1151,100 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
+    """A deferred `CombinedCapability` is one capability, so a run-level one with its `id` replaces all its members.
+
+    The replaced group's members are gone with it, so a member id the new group reuses for a
+    different class is not a clash.
+    """
+
+    def agent_tool() -> str:
+        return 'agent'  # pragma: no cover
+
+    def run_tool() -> str:
+        return 'run'  # pragma: no cover
+
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def group(*members: AbstractCapability[Any]) -> CombinedCapability[Any]:
+        return CombinedCapability(list(members), id='group', description='Group.', defer_loading=True)
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[group(Capability(id='member', tools=[agent_tool]))])
+
+    await agent.run('hi', capabilities=[group(Toolset(FunctionToolset([run_tool]), id='member'))])
+
+    assert seen == [['load_capability'], ['load_capability', 'run_tool']]
+
+
+async def test_a_deferred_group_passed_again_at_run_level_loads_once() -> None:
+    """The same deferred group object on the agent and the run is one capability, loaded with all its members."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    group = CombinedCapability(
+        [Capability(id='member', tools=[lookup])], id='group', description='Group.', defer_loading=True
+    )
+
+    await Agent(FunctionModel(model_fn), capabilities=[group]).run('hi', capabilities=[group])
+
+    assert seen == [['load_capability'], ['load_capability', 'lookup']]
+
+
+def test_a_wrapper_repeated_in_one_layer_still_combines_what_it_wraps() -> None:
+    """`combine` may keep the last repeat as it is, and then what it wraps still takes part in combining."""
+
+    @dataclass(kw_only=True)
+    class Mergeable(WrapperCapability[object]):
+        id: str | None = 'mergeable'
+
+    wrapped = Mergeable(CombinedCapability([WebSearch(allowed_domains=['wrapped.example'])]))
+    agent = Agent(TestModel(), capabilities=[wrapped, wrapped, WebSearch(allowed_domains=['sibling.example'])])
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['wrapped.example', 'sibling.example'])]
+
+
+def test_an_occurrence_inside_a_removed_wrapper_does_not_outrank_an_earlier_one() -> None:
+    """A repeat that goes away with its removed wrapper leaves the earlier occurrence as the one that survives."""
+
+    @dataclass(kw_only=True)
+    class Inner(WrapperCapability[object]):
+        id: str | None = 'inner'
+
+    @dataclass(kw_only=True)
+    class Outer(WrapperCapability[object]):
+        id: str | None = 'outer'
+
+    inner = Inner(CombinedCapability([WebSearch(allowed_domains=['inner.example'])]))
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            inner,
+            Outer(CombinedCapability([inner])),
+            Outer(CombinedCapability([Thinking()])),
+            WebSearch(allowed_domains=['sibling.example']),
+        ],
+    )
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['inner.example', 'sibling.example'])]
 
 
 @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
@@ -1013,7 +1344,7 @@ async def test_native_mcp_combine_rebuilds_the_provider_tool() -> None:
         [
             [
                 MCPServerTool(
-                    id='example.com-mcp',
+                    id='example.com',
                     url='https://example.com/mcp',
                     headers={'X-First': '1'},
                     allowed_tools=['search'],
@@ -1123,6 +1454,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
 
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
+
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:
     """Within a layer they are one configuration stated twice, so both sides' domains survive.
@@ -1209,7 +1545,7 @@ async def test_two_capabilities_supplied_for_one_run_merge_like_two_on_the_agent
 
 
 def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
-    """A server's identity is its URL, so the capability is named by it too, not just its leaf.
+    """A server's identity is its URL's hostname, so the capability is named by it too, not just its leaf.
 
     `MCP` already derived a stable id for the `MCPToolset` it builds, while the capability itself
     stayed anonymous and fell back to a positional `mcp` / `mcp_2` -- which reorders when the
@@ -1218,7 +1554,7 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
     """
     capability = MCP[Any](url='https://mcp.example.com/sse')
 
-    assert capability.id == snapshot('mcp.example.com-sse')
+    assert capability.id == snapshot('mcp.example.com')
     assert cast('AbstractToolset[Any]', capability.get_toolset()).id == capability.id
 
     # An explicit `id=` still wins, and a client that carries its own connection has nothing to
@@ -1228,13 +1564,13 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
 
 
 def test_a_deferred_mcp_capability_still_demands_an_id_of_its_own() -> None:
-    """A deferred capability's id is shown to the model, so it may not be derived from the URL.
+    """A deferred capability's id is shown to the model, so it isn't derived from the URL.
 
-    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction,
-    and the derived id carries the URL's last path segment. Deriving one for a deferred `MCP` would
-    put a signed path -- or a token-in-path server's token -- in the prompt, where a model can be
-    talked into repeating it. Naming a durable operation is ours to do; naming something the model
-    reads is the user's, so this keeps raising exactly as it did before ids were derived at all.
+    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction.
+    The derived id is only the URL's hostname, so even a signed or token-in-path URL like the one
+    below keeps its secret out of it, but what the model reads is still the user's to name. Naming
+    a durable operation is ours to do, so this keeps raising exactly as it did before ids were
+    derived at all.
     """
     assert MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True).id is None
 

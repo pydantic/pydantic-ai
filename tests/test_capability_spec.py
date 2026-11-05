@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import httpx2
 import pytest
 
 from pydantic_ai import Capability as TopLevelCapability
@@ -23,10 +26,16 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    BatchModelRequests,
+    Caching,
     Capability,
+    Citations,
+    FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -44,22 +53,26 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    BinaryImage,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.settings import ModelSettings as _ModelSettings, ToolOrOutput
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -69,13 +82,14 @@ from .capability_models import (
     noop_greet as _noop_greet,
     registered_capability_context as _registered_capability_context,
 )
-from .conftest import iter_message_parts, remove_schema_descriptions
+from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 def test_capability_top_level_export() -> None:
@@ -86,11 +100,17 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'BatchModelRequests': BatchModelRequests,
+            'Caching': Caching,
+            'Citations': Citations,
             'RaiseContentFilterError': RaiseContentFilterError,
+            'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
+            'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
+            'ModelFallback': ModelFallback,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
@@ -105,10 +125,34 @@ def test_capability_types() -> None:
 
 def test_instrumentation_default_settings() -> None:
     """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_removes_binary_content_from_nested_lists(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    def image_list() -> list[BinaryImage]:
+        return [BinaryImage(data=b'secret', media_type='image/png')]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='image_list', args={})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        tools=[image_list],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Generate images')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
+        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+    )
 
 
 def test_instrumentation_spec_covers_every_serializable_setting() -> None:
@@ -172,7 +216,7 @@ def test_agent_from_spec_basic():
 def test_agent_from_spec_no_capabilities():
     """Test Agent.from_spec with no capabilities."""
     agent = Agent.from_spec({'model': 'test'})
-    assert agent.model is not None
+    assert isinstance(agent.model, TestModel)
 
 
 def test_agent_from_spec_image_generation():
@@ -185,6 +229,107 @@ def test_agent_from_spec_image_generation():
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
     assert cap.local is False
+
+
+def test_agent_from_spec_deprecated_fallback_model_key():
+    """A spec written against the old key keeps loading, and warns at the loading line.
+
+    The deprecated name stays in `ImageGeneration.__init__` and `XSearch.__init__` for exactly
+    this: the published schema forbids extra keys, so removing it would fail such a spec outright
+    rather than deprecate it. `from_spec` reaches the capability through several pydantic-ai
+    frames, so the notice has to be attributed past them to be filterable by the user's module.
+    """
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`fallback_model` is deprecated; use `fallback_subagent_model`'
+    ) as record:
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ImageGeneration': {'fallback_model': 'openai-responses:gpt-5.4'}},
+                    {'XSearch': {'fallback_model': 'xai:grok-4.3'}},
+                ],
+            }
+        )
+    assert [warning.filename for warning in record] == [__file__, __file__]
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+
+
+def test_agent_from_spec_fallback_subagent_model_key():
+    """The current key configures the same subagent from a spec."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ImageGeneration': {'fallback_subagent_model': 'openai-responses:gpt-5.4'}},
+                {'XSearch': {'fallback_subagent_model': 'xai:grok-4.3'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    image_gen = next(c for c in children if isinstance(c, ImageGeneration))
+    x_search = next(c for c in children if isinstance(c, XSearch))
+    assert image_gen.fallback_subagent_model == 'openai-responses:gpt-5.4'
+    assert x_search.fallback_subagent_model == 'xai:grok-4.3'
+    assert image_gen.get_toolset() is not None
+    assert x_search.get_toolset() is not None
+
+
+@pytest.mark.parametrize('name, model', [('ImageGeneration', 'openai-responses:gpt-5.4'), ('XSearch', 'xai:grok-4.3')])
+def test_agent_from_spec_rejects_both_fallback_model_keys(name: str, model: str):
+    """A spec carrying both spellings is refused rather than silently picking one.
+
+    `_spec.load_from_registry` wraps every capability-constructor error, so the refusal the
+    constructor raises as a `UserError` reaches the caller as a `ValueError` naming the capability,
+    with the `UserError` as its cause. Direct construction raises the `UserError` itself, which
+    `tests/test_capability_image_generation.py` and `tests/test_capability_native_or_local.py` pin.
+    """
+    with pytest.raises(ValueError, match=f'Failed to instantiate capability {name!r}') as exc_info:
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{name: {'fallback_model': model, 'fallback_subagent_model': model}}],
+            }
+        )
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, UserError)
+    assert str(cause).startswith(f'{name}: cannot specify both `fallback_model` and `fallback_subagent_model`')
+
+
+def test_agent_from_spec_direct_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'ImageGeneration': {
+                        'native': False,
+                        'fallback_image_model': 'openai:gpt-image-1.5',
+                        'dimensions': [1280, 720],
+                    }
+                }
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.dimensions == (1280, 720)
+    assert isinstance(cap.dimensions, tuple)
+    assert cap.get_toolset() is not None
+
+
+def test_agent_from_spec_rejects_invalid_image_dimensions_length():
+    with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'ImageGeneration': {'local': False, 'dimensions': [1280]}}],
+            }
+        )
 
 
 def test_agent_from_spec_web_fetch():
@@ -200,6 +345,55 @@ def test_agent_from_spec_web_fetch():
     assert cap.max_uses == 5
 
 
+def test_agent_from_spec_batch_model_requests(tmp_path: Path):
+    """A spec gives durations as seconds or ISO 8601 durations, and each agent built from it has its own pool."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text(
+        'model: test\n'
+        'capabilities:\n'
+        '  - BatchModelRequests:\n'
+        '      max_requests: 5000\n'
+        '      max_wait: PT5M\n'
+        '      max_resubmissions: 0\n'
+        '      poll_interval: 1.5\n'
+        '      max_poll_interval: "00:20:00"\n',
+        encoding='utf-8',
+    )
+    spec = AgentSpec.from_file(spec_path)
+
+    def batching(agent: Agent[Any, Any]) -> BatchModelRequests:
+        children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+        return next(c for c in children if isinstance(c, BatchModelRequests))
+
+    first = batching(Agent.from_spec(spec))
+    assert first == BatchModelRequests(
+        max_requests=5000,
+        max_wait=timedelta(minutes=5),
+        max_resubmissions=0,
+        poll_interval=timedelta(seconds=1.5),
+        max_poll_interval=timedelta(minutes=20),
+    )
+    second = batching(Agent.from_spec(spec))
+    assert second is not first
+    assert second._pool is not first._pool  # pyright: ignore[reportPrivateUsage]
+
+    defaults = batching(Agent.from_spec({'model': 'test', 'capabilities': ['BatchModelRequests']}))
+    assert defaults == BatchModelRequests()
+    no_wait = batching(Agent.from_spec({'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': None}}]}))
+    assert no_wait.max_wait is None
+
+
+async def test_agent_from_spec_batch_model_requests_runs_in_a_batch():
+    agent = Agent.from_spec(
+        {'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': 0.001, 'poll_interval': 0.001}}]}
+    )
+    result = await agent.run('Hello')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert result.output == 'success (no tool calls)'
+    assert 'batch' in (response.provider_details or {})
+
+
 def test_agent_from_spec_mcp():
     pytest.importorskip('mcp', reason='mcp package not installed')
     agent = Agent.from_spec(
@@ -210,9 +404,11 @@ def test_agent_from_spec_mcp():
                     'MCP': {
                         'url': 'https://mcp.example.com/sse',
                         'allowed_tools': ['search'],
+                        'tool_prefix': True,
                         'native': True,
                         'id': 'search-mcp',
                         'description': 'Search MCP server.',
+                        'include_instructions': False,
                         'defer_loading': True,
                     }
                 }
@@ -223,8 +419,10 @@ def test_agent_from_spec_mcp():
     cap = next(c for c in children if isinstance(c, MCP))
     assert cap.url == 'https://mcp.example.com/sse'
     assert cap.allowed_tools == ['search']
+    assert cap.tool_prefix is True
     assert cap.id == 'search-mcp'
     assert cap.description == 'Search MCP server.'
+    assert cap.include_instructions is False
     assert cap.defer_loading is True
 
 
@@ -489,8 +687,9 @@ def test_agent_from_spec_metadata_override():
 
 
 def test_agent_from_spec_model_override():
-    agent = Agent.from_spec({'model': 'test'}, model='test')
-    assert agent.model is not None
+    model = TestModel(model_name='override')
+    agent = Agent.from_spec({'model': 'test'}, model=model)
+    assert agent.model is model
 
 
 def test_agent_from_spec_capabilities_merged():
@@ -511,11 +710,32 @@ def test_agent_from_spec_capabilities_merged():
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from _subclasses(subclass)
+
+
+def _open_nested_dataclass_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the `additionalProperties: false` that Pydantic 2.14 adds to nested stdlib-dataclass definitions.
+
+    From 2.14, the schema model's `extra='forbid'` also reaches the stdlib dataclasses it nests (the native
+    tool configs and `ToolOrOutput`), where earlier versions left their definitions open. Dropping it from those
+    definitions keeps the snapshot stable across the supported pydantic range; every other definition keeps it.
+    """
+    dataclass_names = {cls.__name__ for cls in _subclasses(AbstractNativeTool)} | {ToolOrOutput.__name__}
+    defs = {
+        name: {k: v for k, v in definition.items() if not (name in dataclass_names and k == 'additionalProperties')}
+        for name, definition in schema['$defs'].items()
+    }
+    return {**schema, '$defs': defs}
+
+
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
-    schema = AgentSpec.model_json_schema_with_capabilities()
+    schema = _open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities())
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
@@ -531,11 +751,14 @@ def test_model_json_schema_with_capabilities():
                                         'claude-fable-5',
                                         'claude-mythos-5-1',
                                         'claude-mythos-5',
+                                        'claude-opus-5-5',
                                         'claude-opus-5',
                                         'claude-opus-4-8',
                                         'claude-opus-4-7',
                                         'claude-opus-4-6',
+                                        'claude-sonnet-5-5',
                                         'claude-sonnet-4-6',
+                                        'claude-haiku-5-5',
                                     ],
                                     'type': 'string',
                                 },
@@ -570,6 +793,15 @@ def test_model_json_schema_with_capabilities():
                         'output': {'title': 'Output', 'type': 'integer'},
                     },
                     'title': 'AgentRetries',
+                    'type': 'object',
+                },
+                'CacheConfig': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'retention': {'enum': ['5m', '30m', '1h', '12h'], 'title': 'Retention', 'type': 'string'},
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'CacheConfig',
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
@@ -698,6 +930,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-fable-5-1',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-haiku-5-5',
                         'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-5-1',
                         'anthropic:claude-mythos-preview',
@@ -707,10 +940,12 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-7',
                         'anthropic:claude-opus-4-8',
                         'anthropic:claude-opus-5',
+                        'anthropic:claude-opus-5-5',
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
                         'anthropic:claude-sonnet-5',
+                        'anthropic:claude-sonnet-5-5',
                         'bedrock-mantle:openai.gpt-5.4',
                         'bedrock-mantle:openai.gpt-5.4-2026-03-05',
                         'bedrock-mantle:openai.gpt-5.5',
@@ -733,6 +968,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:anthropic.claude-3-opus-20240229-v1:0',
                         'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
                         'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:anthropic.claude-haiku-5-5',
                         'bedrock:anthropic.claude-instant-v1',
                         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
                         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
@@ -740,6 +976,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:anthropic.claude-sonnet-4-6',
                         'bedrock:anthropic.claude-v2',
                         'bedrock:anthropic.claude-v2:1',
+                        'bedrock:au.anthropic.claude-haiku-5-5',
                         'bedrock:cohere.command-light-text-v14',
                         'bedrock:cohere.command-r-plus-v1:0',
                         'bedrock:cohere.command-r-v1:0',
@@ -747,21 +984,33 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:deepseek.r1-v1:0',
                         'bedrock:deepseek.v3.2',
                         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:eu.anthropic.claude-haiku-5-5',
                         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-6',
                         'bedrock:global.amazon.nova-2-lite-v1:0',
                         'bedrock:global.anthropic.claude-fable-5',
                         'bedrock:global.anthropic.claude-fable-5-1',
+                        'bedrock:global.anthropic.claude-haiku-5-5',
                         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
                         'bedrock:global.anthropic.claude-opus-4-8',
                         'bedrock:global.anthropic.claude-opus-5',
+                        'bedrock:global.anthropic.claude-opus-5-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
+                        'bedrock:global.anthropic.claude-sonnet-5-5',
+                        'bedrock:global.openai.gpt-5.6-luna',
+                        'bedrock:global.openai.gpt-5.6-sol',
+                        'bedrock:global.openai.gpt-5.6-terra',
+                        'bedrock:global.xai.grok-4.6',
+                        'bedrock:global.xai.grok-4.7',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
                         'bedrock:google.gemma-3-4b-it',
+                        'bedrock:in.openai.gpt-5.6-luna',
+                        'bedrock:in.openai.gpt-5.6-terra',
+                        'bedrock:jp.anthropic.claude-haiku-5-5',
                         'bedrock:meta.llama3-1-405b-instruct-v1:0',
                         'bedrock:meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -808,6 +1057,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-fable-5',
                         'bedrock:us.anthropic.claude-fable-5-1',
                         'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:us.anthropic.claude-haiku-5-5',
                         'bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -815,6 +1065,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-opus-4-7',
                         'bedrock:us.anthropic.claude-opus-4-8',
                         'bedrock:us.anthropic.claude-opus-5',
+                        'bedrock:us.anthropic.claude-opus-5-5',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
@@ -829,8 +1080,13 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
                         'bedrock:us.mistral.pixtral-large-2502-v1:0',
+                        'bedrock:us.openai.gpt-5.6-luna',
+                        'bedrock:us.openai.gpt-5.6-sol',
+                        'bedrock:us.openai.gpt-5.6-terra',
                         'bedrock:us.writer.palmyra-x4-v1:0',
                         'bedrock:us.writer.palmyra-x5-v1:0',
+                        'bedrock:us.xai.grok-4.6',
+                        'bedrock:us.xai.grok-4.7',
                         'bedrock:zai.glm-4.7',
                         'bedrock:zai.glm-4.7-flash',
                         'bedrock:zai.glm-5',
@@ -859,6 +1115,7 @@ def test_model_json_schema_with_capabilities():
                         'crusoe:zai/GLM-5.1',
                         'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
+                        'deepseek:deepseek-flash',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
@@ -866,32 +1123,44 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-fable-5-1',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-haiku-5-5',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-opus-4-8',
                         'gateway/anthropic:claude-opus-5',
+                        'gateway/anthropic:claude-opus-5-5',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
                         'gateway/anthropic:claude-sonnet-5',
+                        'gateway/anthropic:claude-sonnet-5-5',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
                         'gateway/bedrock:deepseek.r1-v1:0',
                         'gateway/bedrock:deepseek.v3.2',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-haiku-5-5',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.amazon.nova-2-lite-v1:0',
                         'gateway/bedrock:global.anthropic.claude-fable-5',
                         'gateway/bedrock:global.anthropic.claude-fable-5-1',
+                        'gateway/bedrock:global.anthropic.claude-haiku-5-5',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
                         'gateway/bedrock:global.anthropic.claude-opus-5',
+                        'gateway/bedrock:global.anthropic.claude-opus-5-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:global.anthropic.claude-sonnet-5-5',
+                        'gateway/bedrock:global.openai.gpt-5.6-luna',
+                        'gateway/bedrock:global.openai.gpt-5.6-sol',
+                        'gateway/bedrock:global.openai.gpt-5.6-terra',
+                        'gateway/bedrock:global.xai.grok-4.6',
+                        'gateway/bedrock:global.xai.grok-4.7',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:google.gemma-3-4b-it',
@@ -926,12 +1195,15 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.anthropic.claude-opus-4-7',
                         'gateway/bedrock:us.anthropic.claude-opus-4-8',
                         'gateway/bedrock:us.anthropic.claude-opus-5',
+                        'gateway/bedrock:us.anthropic.claude-opus-5-5',
                         'gateway/bedrock:us.anthropic.claude-sonnet-5',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
                         'gateway/bedrock:us.mistral.pixtral-large-2502-v1:0',
                         'gateway/bedrock:us.writer.palmyra-x4-v1:0',
                         'gateway/bedrock:us.writer.palmyra-x5-v1:0',
+                        'gateway/bedrock:us.xai.grok-4.6',
+                        'gateway/bedrock:us.xai.grok-4.7',
                         'gateway/bedrock:zai.glm-4.7',
                         'gateway/bedrock:zai.glm-4.7-flash',
                         'gateway/bedrock:zai.glm-5',
@@ -943,12 +1215,14 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3-pro-image',
                         'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-image',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google-cloud:gemini-3.7-flash',
                         'gateway/google-cloud:gemini-3.8-flash',
+                        'gateway/google-cloud:gemini-4-argon',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -957,12 +1231,14 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
+                        'gateway/google:gemini-3.1-flash-lite-image',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.6-flash',
                         'gateway/google:gemini-3.7-flash',
                         'gateway/google:gemini-3.8-flash',
+                        'gateway/google:gemini-4-argon',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -971,6 +1247,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-3.5-turbo',
                         'gateway/openai:gpt-3.5-turbo-0125',
                         'gateway/openai:gpt-3.5-turbo-1106',
+                        'gateway/openai:gpt-audio-mini',
+                        'gateway/openai:gpt-audio-mini-2025-12-15',
                         'gateway/openai:gpt-4',
                         'gateway/openai:gpt-4-0613',
                         'gateway/openai:gpt-4-turbo',
@@ -1017,8 +1295,13 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.6-sol',
                         'gateway/openai:gpt-5.6-terra',
                         'gateway/openai:gpt-6-astra',
+                        'gateway/openai:gpt-6-luna',
+                        'gateway/openai:gpt-6-sol',
+                        'gateway/openai:gpt-6.1-sol',
+                        'gateway/openai:gpt-6.1-terra',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
+                        'gateway/openai:gpt-rosalind-research',
                         'gateway/openai:o1',
                         'gateway/openai:o1-2024-12-17',
                         'gateway/openai:o1-pro',
@@ -1045,12 +1328,14 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
+                        'google-cloud:gemini-3.1-flash-lite-image',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-3.7-flash',
                         'google-cloud:gemini-3.8-flash',
+                        'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1067,25 +1352,23 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
+                        'google:gemini-3.1-flash-lite-image',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.6-flash',
                         'google:gemini-3.7-flash',
                         'google:gemini-3.8-flash',
+                        'google:gemini-4-argon',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
                         'groq:llama-3.3-70b-versatile',
-                        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-                        'groq:meta-llama/llama-guard-4-12b',
                         'groq:meta-llama/llama-prompt-guard-2-22m',
                         'groq:meta-llama/llama-prompt-guard-2-86m',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:openai/gpt-oss-safeguard-20b',
-                        'groq:playai-tts',
-                        'groq:playai-tts-arabic',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -1119,6 +1402,12 @@ def test_model_json_schema_with_capabilities():
                         'huggingface:meta-llama/Llama-3.3-70B-Instruct',
                         'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
                         'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+                        'meta:muse-spark-1.1',
+                        'meta:muse-spark-1.2',
+                        'meta:muse-spark-1.2-contributor',
+                        'meta:muse-spark-1.3',
+                        'meta:muse-spark-1.3-contributor',
+                        'meta:muse-wonder-1.0',
                         'mistral:codestral-latest',
                         'mistral:mistral-large-latest',
                         'mistral:mistral-moderation-latest',
@@ -1129,6 +1418,8 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-k3',
+                        'moonshotai:kimi-k3.1-pro',
+                        'moonshotai:kimi-k3.1-pro-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -1145,6 +1436,8 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-3.5-turbo-0301',
                         'openai-chat:gpt-3.5-turbo-1106',
                         'openai-chat:gpt-3.5-turbo-16k',
+                        'openai-chat:gpt-audio-mini',
+                        'openai-chat:gpt-audio-mini-2025-12-15',
                         'openai-chat:gpt-4',
                         'openai-chat:gpt-4-0314',
                         'openai-chat:gpt-4-0613',
@@ -1206,8 +1499,13 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-5.6-sol',
                         'openai-chat:gpt-5.6-terra',
                         'openai-chat:gpt-6-astra',
+                        'openai-chat:gpt-6-luna',
+                        'openai-chat:gpt-6-sol',
+                        'openai-chat:gpt-6.1-sol',
+                        'openai-chat:gpt-6.1-terra',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
+                        'openai-chat:gpt-rosalind-research',
                         'openai-chat:o1',
                         'openai-chat:o1-2024-12-17',
                         'openai-chat:o1-pro',
@@ -1224,12 +1522,15 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:o4-mini-2025-04-16',
                         'openai-chat:o4-mini-deep-research',
                         'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-decisions:gpt-6-luna',
                         'openai:computer-use-preview',
                         'openai:computer-use-preview-2025-03-11',
                         'openai:gpt-3.5-turbo',
                         'openai:gpt-3.5-turbo-0125',
                         'openai:gpt-3.5-turbo-0301',
                         'openai:gpt-3.5-turbo-1106',
+                        'openai:gpt-audio-mini',
+                        'openai:gpt-audio-mini-2025-12-15',
                         'openai:gpt-4',
                         'openai:gpt-4-0314',
                         'openai:gpt-4-0613',
@@ -1287,8 +1588,13 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-5.6-sol',
                         'openai:gpt-5.6-terra',
                         'openai:gpt-6-astra',
+                        'openai:gpt-6-luna',
+                        'openai:gpt-6-sol',
+                        'openai:gpt-6.1-sol',
+                        'openai:gpt-6.1-terra',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
+                        'openai:gpt-rosalind-research',
                         'openai:o1',
                         'openai:o1-2024-12-17',
                         'openai:o1-pro',
@@ -1338,6 +1644,8 @@ def test_model_json_schema_with_capabilities():
                         'snowflake:openai-gpt-5.4',
                         'snowflake:openai-gpt-5.5',
                         'snowflake:snowflake-llama-3.3-70b',
+                        'typesafe:jev-latest',
+                        'typesafe:jev-preview',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -1373,6 +1681,7 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
                         'xai:grok-4.6',
+                        'xai:grok-4.7',
                         'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
@@ -1446,6 +1755,9 @@ def test_model_json_schema_with_capabilities():
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
+                        'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
+                        'first_event_timeout': {'title': 'First Event Timeout', 'type': 'number'},
+                        'max_retries': {'title': 'Max Retries', 'type': 'integer'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
                             'anyOf': [
@@ -1473,9 +1785,18 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
+                        },
+                        'citations': {'title': 'Citations', 'type': 'boolean'},
+                        'cache': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'},
+                                {'$ref': '#/$defs/CacheConfig'},
+                            ],
+                            'title': 'Cache',
                         },
                         'service_tier': {
                             'enum': ['auto', 'default', 'flex', 'priority'],
@@ -1672,6 +1993,30 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'FileUnderstanding': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
+                            'title': 'Fileunderstanding',
+                        }
+                    },
+                    'required': ['FileUnderstanding'],
+                    'title': 'short_spec_FileUnderstanding',
+                    'type': 'object',
+                },
+                'short_spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'LocalWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Localworkspace',
+                        }
+                    },
+                    'required': ['LocalWorkspace'],
+                    'title': 'short_spec_LocalWorkspace',
+                    'type': 'object',
+                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1699,6 +2044,25 @@ def test_model_json_schema_with_capabilities():
                     'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
+                'short_spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'ModelFallback': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Modelfallback',
+                        }
+                    },
+                    'required': ['ModelFallback'],
+                    'title': 'short_spec_ModelFallback',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1713,6 +2077,34 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['IncludeToolReturnSchemas'],
                     'title': 'spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
+                'spec_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {'BatchModelRequests': {'$ref': '#/$defs/spec_params_BatchModelRequests'}},
+                    'required': ['BatchModelRequests'],
+                    'title': 'spec_BatchModelRequests',
+                    'type': 'object',
+                },
+                'spec_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {'FileUnderstanding': {'$ref': '#/$defs/spec_params_FileUnderstanding'}},
+                    'required': ['FileUnderstanding'],
+                    'title': 'spec_FileUnderstanding',
+                    'type': 'object',
+                },
+                'spec_Caching': {
+                    'additionalProperties': False,
+                    'properties': {'Caching': {'$ref': '#/$defs/spec_params_Caching'}},
+                    'required': ['Caching'],
+                    'title': 'spec_Caching',
+                    'type': 'object',
+                },
+                'spec_Citations': {
+                    'additionalProperties': False,
+                    'properties': {'Citations': {'$ref': '#/$defs/spec_params_Citations'}},
+                    'required': ['Citations'],
+                    'title': 'spec_Citations',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1744,11 +2136,25 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_Instrumentation',
                     'type': 'object',
                 },
+                'spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'LocalWorkspace': {'$ref': '#/$defs/spec_params_LocalWorkspace'}},
+                    'required': ['LocalWorkspace'],
+                    'title': 'spec_LocalWorkspace',
+                    'type': 'object',
+                },
                 'spec_Thinking': {
                     'additionalProperties': False,
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
                     'required': ['Thinking'],
                     'title': 'spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {'ModelFallback': {'$ref': '#/$defs/spec_params_ModelFallback'}},
+                    'required': ['ModelFallback'],
+                    'title': 'spec_ModelFallback',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -1818,6 +2224,68 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_params_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'max_requests': {'title': 'Max Requests', 'type': 'integer'},
+                        'max_wait': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}, {'type': 'null'}],
+                            'title': 'Max Wait',
+                        },
+                        'max_resubmissions': {'title': 'Max Resubmissions', 'type': 'integer'},
+                        'poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Poll Interval',
+                        },
+                        'max_poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Max Poll Interval',
+                        },
+                    },
+                    'title': 'spec_params_BatchModelRequests',
+                    'type': 'object',
+                },
+                'spec_params_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
+                            'title': 'Fallback Subagent Model',
+                        },
+                        'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'required': ['fallback_subagent_model'],
+                    'title': 'spec_params_FileUnderstanding',
+                    'type': 'object',
+                },
+                'spec_params_Caching': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'retention': {
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h', '12h'], 'type': 'string'}],
+                            'title': 'Retention',
+                        },
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Caching',
+                    'type': 'object',
+                },
+                'spec_params_Citations': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Citations',
+                    'type': 'object',
+                },
                 'spec_XSearch': {
                     'additionalProperties': False,
                     'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
@@ -1854,6 +2322,37 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_Instrumentation',
                     'type': 'object',
                 },
+                'spec_params_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                        'path_authority': {
+                            'anyOf': [
+                                {
+                                    'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                    'type': 'object',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Path Authority',
+                        },
+                        'env': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Env',
+                        },
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_LocalWorkspace',
+                    'type': 'object',
+                },
                 'spec_params_Thinking': {
                     'additionalProperties': False,
                     'properties': {
@@ -1863,12 +2362,80 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },
                     },
                     'title': 'spec_params_Thinking',
+                    'type': 'object',
+                },
+                'spec_params_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'models': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Models',
+                        },
+                        'fallback_on': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'ModelAPIError',
+                                        'ModelHTTPError',
+                                        'ModelRateLimitError',
+                                        'ModelQuotaExceededError',
+                                        'ModelUnavailableError',
+                                        'ModelOverloadedError',
+                                        'ModelServerError',
+                                        'ModelConnectionError',
+                                        'ModelTimeoutError',
+                                        'ModelRequestRejectedError',
+                                        'ModelContextWindowExceededError',
+                                        'ModelAuthenticationError',
+                                        'ModelNotFoundError',
+                                        'ModelRequestTimeout',
+                                        'ContentFilterError',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {
+                                    'items': {
+                                        'enum': [
+                                            'ModelAPIError',
+                                            'ModelHTTPError',
+                                            'ModelRateLimitError',
+                                            'ModelQuotaExceededError',
+                                            'ModelUnavailableError',
+                                            'ModelOverloadedError',
+                                            'ModelServerError',
+                                            'ModelConnectionError',
+                                            'ModelTimeoutError',
+                                            'ModelRequestRejectedError',
+                                            'ModelContextWindowExceededError',
+                                            'ModelAuthenticationError',
+                                            'ModelNotFoundError',
+                                            'ModelRequestTimeout',
+                                            'ContentFilterError',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Fallback On',
+                        },
+                        'sticky': {'title': 'Sticky', 'type': 'boolean'},
+                    },
+                    'required': ['models'],
+                    'title': 'spec_params_ModelFallback',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -1878,10 +2445,21 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'fallback_image_model': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Image Model',
                         },
                         'action': {
                             'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
@@ -1932,10 +2510,43 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Size',
                         },
+                        'dimensions': {
+                            'anyOf': [
+                                {
+                                    'maxItems': 2,
+                                    'minItems': 2,
+                                    'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Dimensions',
+                        },
                         'aspect_ratio': {
                             'anyOf': [
                                 {
-                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'enum': [
+                                        '1:1',
+                                        '1:2',
+                                        '1:4',
+                                        '1:8',
+                                        '2:1',
+                                        '2:3',
+                                        '3:2',
+                                        '3:4',
+                                        '4:1',
+                                        '4:3',
+                                        '4:5',
+                                        '5:4',
+                                        '8:1',
+                                        '9:16',
+                                        '9:19.5',
+                                        '9:20',
+                                        '16:9',
+                                        '19.5:9',
+                                        '20:9',
+                                        '21:9',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'null'},
@@ -1984,7 +2595,12 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Tools',
                         },
+                        'tool_prefix': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Tool Prefix',
+                        },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'include_instructions': {'title': 'Include Instructions', 'type': 'boolean'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'required': ['url'],
@@ -1999,16 +2615,28 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'BatchModelRequests', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_BatchModelRequests'},
+                                {'const': 'Caching', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Caching'},
+                                {'const': 'Citations', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Citations'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
+                                {'$ref': '#/$defs/short_spec_FileUnderstanding'},
+                                {'$ref': '#/$defs/spec_FileUnderstanding'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Instrumentation'},
+                                {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                                {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/short_spec_ModelFallback'},
+                                {'$ref': '#/$defs/spec_ModelFallback'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2131,6 +2759,10 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Subagent Model',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -2220,16 +2852,28 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'BatchModelRequests', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_BatchModelRequests'},
+                            {'const': 'Caching', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Caching'},
+                            {'const': 'Citations', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Citations'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
+                            {'$ref': '#/$defs/short_spec_FileUnderstanding'},
+                            {'$ref': '#/$defs/spec_FileUnderstanding'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Instrumentation'},
+                            {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                            {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/short_spec_ModelFallback'},
+                            {'$ref': '#/$defs/spec_ModelFallback'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2644,10 +3288,32 @@ def test_to_file_with_path_schema_path(tmp_path: str):
 # --- from_spec error cases ---
 
 
-def test_from_spec_no_model_raises():
-    """from_spec() without model raises UserError."""
-    with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'instructions': 'hello'})
+def test_from_spec_without_model_defers_error_until_run():
+    """from_spec() without a model defers the UserError until run time."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+    assert agent.model is None
+
+    with pytest.raises(UserError, match='`model` must either be set on the agent or included when calling it'):
+        agent.run_sync('hello')
+
+
+def test_from_spec_without_model_runs_with_model_argument():
+    """A model omitted from the spec can be supplied when running the agent."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+
+    result = agent.run_sync('hello', model=TestModel(custom_output_text='runtime model'))
+
+    assert result.output == 'runtime model'
+
+
+def test_from_file_without_model(tmp_path: Path):
+    """from_file() constructs an agent from a spec that names no model."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text('instructions: hello\n', encoding='utf-8')
+
+    agent = Agent.from_file(spec_path)
+
+    assert agent.model is None
 
 
 # --- run() with spec: additional merge scenarios ---
@@ -3065,6 +3731,31 @@ def test_web_fetch_local_true_silent():
     assert cap.local is not None and cap.local is not False
 
 
+async def test_capability_web_fetch_local_excludes_script_and_style():
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    response = httpx2.Response(
+        200,
+        text='<script>window.x = 1;</script><style>.a{color:red}</style><p>Text</p>',
+        headers={'content-type': 'text/html'},
+        request=httpx2.Request('GET', 'https://example.com'),
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            assert [tool.name for tool in info.function_tools] == ['web_fetch']
+            return ModelResponse([ToolCallPart('web_fetch', {'url': 'https://example.com'})])
+        return ModelResponse([TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WebFetch(native=False, local=True)])
+    with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = response
+        result = await agent.run('Fetch the page')
+
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == {'url': 'https://example.com', 'title': '', 'content': 'Text'}
+
+
 def test_mcp_local_true_silent_with_explicit_native():
     """MCP(url=..., local=True, native=True) resolves silently — no PydanticAIDeprecationWarning."""
     pytest.importorskip('mcp', reason='mcp package not installed')
@@ -3305,8 +3996,11 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
     assert non_deferred_cap.id is None
     assert non_deferred_cap.description is None
     assert non_deferred_cap.defer_loading is False
-    assert non_deferred_capability_map == {'deferred_cap': non_deferred_cap}
-    assert 'deferred_cap' in non_deferred_available_ids
+    assert list(non_deferred_capability_map.values()) == [non_deferred_cap]
+    # No `id`, so the registry keys it by a run-local handle rather than a name.
+    (handle,) = non_deferred_capability_map
+    assert re.fullmatch(r'<deferred_cap:[0-9a-f]{6}>', handle), handle
+    assert handle in non_deferred_available_ids
 
 
 async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
@@ -3334,7 +4028,12 @@ async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at
 
 
 async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
-    """Anonymous non-deferred capabilities are still present in run context."""
+    """Anonymous non-deferred capabilities are present in run context, keyed by a handle.
+
+    Run-local is what the keys always were; they now say so. The pair used to be `plain_cap` and
+    `plain_cap_2`, numbered from the order they were listed in, so which one was `plain_cap_2`
+    moved when the list did.
+    """
 
     @dataclass
     class PlainCap(AbstractCapability):
@@ -3344,10 +4043,13 @@ async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
     second = PlainCap()
     capability_map, available_ids = await _registered_capability_context(first, second)
 
-    assert list(capability_map) == ['plain_cap', 'plain_cap_2']
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<plain_cap:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
     assert first.id is None
     assert second.id is None
-    assert {'plain_cap', 'plain_cap_2'} <= available_ids
+    assert set(handles) <= available_ids
 
 
 def _bare_local(query: str) -> str:
@@ -3360,8 +4062,8 @@ async def test_one_off_capabilities_carry_a_stable_default_id() -> None:
     them without the user naming something they never constructed."""
     assert WebSearch(local=_bare_local).id == 'web_search'
     assert WebFetch(local=_bare_local).id == 'web_fetch'
-    assert ImageGeneration(fallback_model='openai-responses:gpt-5.4').id == 'image_generation'
-    assert XSearch(fallback_model='xai:grok-4.3').id == 'x_search'
+    assert ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4').id == 'image_generation'
+    assert XSearch(fallback_subagent_model='xai:grok-4.3').id == 'x_search'
     assert Thinking().id == 'thinking'
     assert Instrumentation().id == 'instrumentation'
     assert ReinjectSystemPrompt().id == 'reinject_system_prompt'
@@ -3380,11 +4082,18 @@ async def test_two_one_off_capabilities_in_one_layer_combine() -> None:
 
 
 async def test_one_off_capability_with_id_none_is_still_disambiguated() -> None:
-    """`id=None` is the documented escape hatch back to per-occurrence ids."""
+    """`id=None` is the documented escape hatch back to per-occurrence keys.
+
+    Both survive as separate entries, which is what the escape hatch is for; neither is named.
+    """
     first = Thinking(effort='low', id=None)
     second = Thinking(effort='high', id=None)
     capability_map, _ = await _registered_capability_context(first, second)
-    assert list(capability_map) == ['thinking', 'thinking_2']
+
+    handles = list(capability_map)
+    assert len(handles) == 2, handles
+    assert all(re.fullmatch(r'<thinking:[0-9a-f]{6}>', handle) for handle in handles), handles
+    assert list(capability_map.values()) == [first, second]
 
 
 async def test_run_level_one_off_capability_supersedes_the_agent_level_one() -> None:
