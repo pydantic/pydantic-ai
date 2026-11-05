@@ -31,6 +31,7 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.conftest import without_admin_server
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -132,8 +133,8 @@ async def test_dbos_workspace_capabilities(tmp_path: Path, capability: str) -> N
         return [str(p.content) for m in result.all_messages() for p in m.parts if p.part_kind == 'tool-return']
 
     DBOS(
-        config=DBOSConfig(
-            name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}', run_admin_server=False
+        config=without_admin_server(
+            DBOSConfig(name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}')
         )
     )
     DBOS.launch()
