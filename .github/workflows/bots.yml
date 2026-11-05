@@ -638,9 +638,12 @@ jobs:
         if: steps.review.outcome == 'failure'
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_REF: ${{ github.sha }}
         run: |
-          python3 -m pip install --quiet 'pydantic==2.13.4'
-          python3 .github/scripts/douwebot_usage_limit.py
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
+          python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"
 
   douwebot-opencode:
     name: douwebot-opencode

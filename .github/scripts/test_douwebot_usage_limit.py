@@ -118,7 +118,14 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     review = _job('review')
     fallback = _job('douwebot-opencode')
     publish = _job('publish-review')
-    assert _step(review, 'usage-limit')['if'] == "steps.review.outcome == 'failure'"
+    detector = _step(review, 'usage-limit')
+    assert detector['if'] == "steps.review.outcome == 'failure'"
+    detector_run = detector['run']
+    assert isinstance(detector_run, str)
+    assert 'contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}' in detector_run
+    assert 'pip install' not in detector_run
+    assert 'python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"' in detector_run
+    assert _OBJECT.validate_python(detector['env'])['TRUSTED_REF'] == '${{ github.sha }}'
     assert fallback['needs'] == 'review'
     assert fallback['if'] == "needs.review.result == 'success' && needs.review.outputs.fallback == 'true'"
     assert 'douwebot-opencode' in publish['needs']

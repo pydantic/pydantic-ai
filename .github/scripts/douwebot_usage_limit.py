@@ -12,25 +12,20 @@ import os
 import sys
 from pathlib import Path
 
-from pydantic import TypeAdapter, ValidationError
-
-_MESSAGES: TypeAdapter[list[dict[str, object]]] = TypeAdapter(list[dict[str, object]])
-_OBJECT: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 _SUBSCRIPTION_WINDOWS = {'five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'}
 
 
 def is_usage_limit(payload: object) -> bool:
     """Return whether the last rate-limit event rejects a subscription window."""
-    try:
-        messages = _MESSAGES.validate_python(payload, strict=True)
-    except ValidationError:
+    if not isinstance(payload, list) or not all(
+        isinstance(message, dict) and all(isinstance(key, str) for key in message) for message in payload
+    ):
         return False
-    events = [message for message in messages if message.get('type') == 'rate_limit_event']
+    events = [message for message in payload if message.get('type') == 'rate_limit_event']
     if not events:
         return False
-    try:
-        info = _OBJECT.validate_python(events[-1].get('rate_limit_info'), strict=True)
-    except ValidationError:
+    info = events[-1].get('rate_limit_info')
+    if not isinstance(info, dict) or not all(isinstance(key, str) for key in info):
         return False
     if info.get('status') != 'rejected':
         return False
