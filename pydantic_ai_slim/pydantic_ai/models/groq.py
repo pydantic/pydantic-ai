@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, assert_never, cast, overload
 
 from pydantic import BaseModel, ValidationError
@@ -49,7 +50,7 @@ from ..messages import (
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
@@ -268,6 +269,36 @@ class GroqModel(Model[AsyncGroq]):
         """Return `native_tool`'s restricting settings other than the domain filters `search_settings` applies."""
         # `WebSearchTool` is the only native tool Groq supports.
         return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        `WebSearchTool` is only supported if `groq_always_has_web_search_builtin_tool` is `True`.
+        """
+        _profile = super().profile
+        if not _profile.get('groq_always_has_web_search_builtin_tool', False):
+            new_tools = _profile.get('supported_native_tools', frozenset()) - {WebSearchTool}
+            _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        return _profile
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check for `WebSearchTool` before base validation to name the models that support it
+        if (
+            not self.profile.get('groq_always_has_web_search_builtin_tool', False)
+            and any(isinstance(t, WebSearchTool) and not t.optional for t in model_request_parameters.native_tools)
+            and not any(t.unless_native == WebSearchTool.kind for t in model_request_parameters.function_tools)
+        ):
+            raise UserError(
+                f'`WebSearchTool` is not supported by Groq model {self.model_name!r}. '
+                "Use a compound model such as 'groq/compound', or a local fallback such as "
+                "`WebSearch(local='duckduckgo')`."
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -595,8 +626,6 @@ class GroqModel(Model[AsyncGroq]):
         search_settings: SearchSettings | NotGiven = NOT_GIVEN
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
-                    raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
                 # Compound models run web search implicitly, so we forward only the domain filters
                 # (as `search_settings`) rather than emitting a tool definition.
                 ss: SearchSettings = {}

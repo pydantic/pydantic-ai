@@ -1131,6 +1131,13 @@ navigation:
           - "comparisons/strands-agents"
           - "pydantic-ai-vs-strands"
           - "strands-vs-pydantic-ai"
+      - page: "vs OpenHands Software Agent SDK"
+        path: "comparisons/vs-openhands.md"
+        slug: "comparisons/vs-openhands"
+        aliases:
+          - "comparisons/openhands"
+          - "pydantic-ai-vs-openhands"
+          - "openhands-vs-pydantic-ai"
       - page: "vs Mastra"
         path: "comparisons/vs-mastra.md"
         slug: "comparisons/vs-mastra"
