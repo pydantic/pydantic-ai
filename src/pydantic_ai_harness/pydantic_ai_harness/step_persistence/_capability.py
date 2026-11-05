@@ -13,7 +13,8 @@ import anyio
 
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler, WrapToolExecuteHandler
+from pydantic_ai.exceptions import ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
@@ -654,6 +655,37 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
+        await self._record_tool_failure(ctx, call, tool_def, error)
+        raise error
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Record a tool that raised `ModelRetry` or `ToolFailed` as `failed`.
+
+        Core turns those into `ToolRetryError` and `ToolFailedError` and re-raises them past
+        `on_tool_execute_error` and `after_tool_execute`, so without this the call's `started`
+        effect would stay unresolved after the run moved on.
+        """
+        try:
+            return await handler(args)
+        except (ToolRetryError, ToolFailedError) as error:
+            await self._record_tool_failure(ctx, call, tool_def, error)
+            raise
+
+    async def _record_tool_failure(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        error: Exception,
+    ) -> None:
         run_id = self._effective_run_id(ctx)
         await self._finish_tool_effect(run_id, call.tool_call_id, tool_def.name, 'failed', repr(error))
         await self._record_event(
@@ -663,7 +695,6 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             tool_name=tool_def.name,
             error=repr(error),
         )
-        raise error
 
     async def after_node_run(
         self,

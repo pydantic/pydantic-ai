@@ -305,7 +305,7 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
     return 'ok'
 ```
 
-The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the metadata into the prior record. It is a no-op when called outside a step-persistence-wrapped tool call. `after_tool_execute` preserves both fields when it writes the terminal `completed` / `failed` entry.
+The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the metadata into the prior record. It is a no-op when called outside a step-persistence-wrapped tool call. The terminal `completed` / `failed` entry preserves both fields.
 
 ## Compaction receipt handles
 

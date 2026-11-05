@@ -18,7 +18,7 @@ from uuid import UUID
 import anyio
 import pytest
 
-from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
+from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext, ToolFailed
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
@@ -1128,6 +1128,50 @@ class TestStepPersistenceCapability:
         assert effect is not None
         assert effect.status == 'failed'
         assert effect.effect_summary is not None and 'kaboom' in effect.effect_summary
+
+    @pytest.mark.parametrize(
+        ('error', 'recorded'),
+        [
+            (ModelRetry('try another query'), "ToolRetryError('try another query')"),
+            (ToolFailed('upstream rejected the query'), "ToolFailedError('upstream rejected the query')"),
+        ],
+        ids=['model_retry', 'tool_failed'],
+    )
+    async def test_retried_or_failed_tool_call_is_recorded_as_failed(self, error: Exception, recorded: str) -> None:
+        """The run continues past a tool raising `ModelRetry` or `ToolFailed`, so its effect must not stay `started`."""
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call-1')])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'y'}, tool_call_id='call-2')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model), capabilities=[StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            if q == 'x':
+                raise error
+            return 'found'
+
+        assert (await agent.run('look it up')).output == 'done'
+
+        assert await store.list_unresolved_tool_effects(run_id='r1') == []
+        effect = await store.get_tool_effect(run_id='r1', tool_call_id='call-1')
+        assert effect is not None
+        assert (effect.status, effect.effect_summary) == ('failed', recorded)
+        assert effect.ended_at is not None
+        events = await store.list_events(run_id='r1')
+        assert [(e.kind, e.tool_call_id, e.error) for e in events if e.tool_call_id is not None] == [
+            ('tool_call_started', 'call-1', None),
+            ('tool_call_failed', 'call-1', recorded),
+            ('tool_call_started', 'call-2', None),
+            ('tool_call_completed', 'call-2', None),
+        ]
 
     async def test_explicit_run_id_wins_over_ctx_run_id(self) -> None:
         store = InMemoryStepStore()
