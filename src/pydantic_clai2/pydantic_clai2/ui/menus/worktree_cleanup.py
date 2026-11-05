@@ -6,8 +6,8 @@ from typing import Literal
 from rich.console import Console
 
 from pydantic_ai_harness.ask_user import Question, QuestionOption
-from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu
 from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.question_menu import QuestionMenu
 from pydantic_clai2.ui.prompt.question_input import question_input
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 

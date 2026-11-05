@@ -1116,8 +1116,8 @@ and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
 shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
-to keep. The inline picker also offers **No, don't ask again for this worktree**,
-saved for this checkout only. This includes existing linked worktrees. By default, removal uses Git
+to keep. This includes existing linked worktrees. The inline picker also offers
+**No, don't ask again for this worktree**, saved for this checkout only. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved

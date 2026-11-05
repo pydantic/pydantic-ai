@@ -113,6 +113,7 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
             )
             connection.execute('CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY)')
+            # Older builds never read cleanup preferences, so this table needs no schema version bump.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS kept_worktrees (path TEXT PRIMARY KEY, checkout TEXT NOT NULL)'
             )

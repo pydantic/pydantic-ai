@@ -50,13 +50,14 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
 | `cli/shell_passthrough.py` | `!command`: captured runs (pipes, or a `PtyRun` on CLAI's terminal), and `run_in_terminal` for `!!command`, which hands the terminal over from the start (`full_terminal()` hold, terminal modes kept, Ctrl-C left to the child) and saves only its exit status |
 | `cli/shell_terminal.py` | `PtyRun`: a `!` command on a pseudo-terminal (controlling terminal, `PAGER=cat`, keys relayed, Ctrl-C to CLAI's interrupt), `TerminalText` for transcript text, and the hand-over when the program switches to the alternate screen; no list of programs |
-| `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu` (also the fixed-choice exit picker), `TerminalAnswerer`, the transcript renderer |
+| `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `TerminalAnswerer`, the transcript renderer; the picker lives in `ui/menus/question_menu.py` |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/prompt/line_input.py` | `read_line`: one line pinned under the transcript through the live panel (`run_worker(inline=True)`), for a prompt after printed output such as a sign-in URL; `CodexAuth` and `OpenRouterAuth` default to it |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets (multi-line text through `Runners.edit`, `view` as a pager), and `run_settings_menu`, which shows a `SettingsMenu`, and the menus its rows open, under one hold |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext`, and `settings_menu`, the `SettingsMenu` `/set`, `/theme`, and `/spinner` declare as their `Command.menu` |
 | `ui/menus/system_prompt_menu.py` | `/system_prompt`: `system_prompt_menu`, the `SettingsMenu` the terminal runs and the web UI shows (its `Command.menu`): the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, edited and appended in a multi-line `Dialogs.text`, and the latest request's full instructions in a read-only `Dialogs.view` |
+| `ui/menus/question_menu.py` | shared inline picker state, choice handling, framing, and terminal rendering (`QuestionMenu`) |
 | `ui/menus/worktree_cleanup.py` | inline exit removal picker, with No selected by default and checkout-specific suppression |
 | `ui/menus/update_menu.py` | `/update`'s menu, which bare `/update` opens and the web UI shows as Settings > About: the running version with whether a newer one is out, whose action confirms, then closes the menu (`CloseMenu`) and enters `/update now`, and the `updates.channel` row of `/set` |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
