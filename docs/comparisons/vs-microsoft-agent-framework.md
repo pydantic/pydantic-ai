@@ -36,7 +36,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 
 ## FAQ
 
-**Can I use Pydantic AI with Microsoft Foundry?** Yes. Run agents on [Azure OpenAI and other Foundry model deployments](../models/azure.md), including [Claude on Foundry](../models/azure.md#claude-on-microsoft-foundry), and voice agents on [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live), and make them durable on [Azure Durable Task Scheduler](../harness/azure-durable-task.md).
+**Can I use Pydantic AI with Microsoft Foundry?** Yes. Run agents on [Azure OpenAI and other Foundry model deployments](../models/azure.md), including [Claude on Foundry](../models/azure.md#claude-on-microsoft-foundry), and voice agents on [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live). Make them durable on [Azure Durable Task Scheduler](../harness/azure-durable-task.md).
 
 **Can I build a coding agent on Pydantic AI?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the
