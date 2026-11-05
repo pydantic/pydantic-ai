@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.subagents._toolset import delegation_depth
 
 Agency = Literal['low', 'medium', 'high', 'max']
 """How far `Coder` works on its own before it checks in with the user."""
@@ -38,34 +39,56 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
-_FINISHING = 'Finish long-running work before replying; poll until done or blocked. Stop servers you no longer need.'
+_FINISHING = (
+    'Finish long-running work before replying; poll until done or blocked. '
+    'Servers the task needs may keep running; stop the rest.'
+)
 
 
-def coder_instructions(*, agency: Agency, delegate_tool: str | None, delegated: bool = False) -> str:
+def coder_instructions(
+    *, agency: Agency, delegate_tool: str | None, extra: str | None = None
+) -> Callable[[RunContext[AgentDepsT]], str]:
     """`Coder`'s default guidance for an agency level, with the delegation rule only when it can delegate.
 
-    `delegated` marks a delegate run, which is told to finish on its own.
+    A delegate (delegation depth above 1) is told to finish on its own: `include_self` starts a fresh
+    run of this agent, and a plan-and-wait level would propose a plan to nobody. Non-empty `extra` is
+    appended after a blank line.
     """
     autonomous = agency in ('high', 'max')
-    checks = [
-        'If deliverables will run elsewhere, make them self-contained.',
-        *([_TARGETS] if autonomous else []),
-        'Before finishing, confirm each stated requirement and edge case.',
-        'If inputs seem inconsistent or goals impossible, assume you misread. '
-        'Re-read, and try other interpretations before settling.',
-        "Write checks from the task's stated behavior, not your code.",
-        'Check behavior with heredocs for one-offs, not new files.',
-        *([_CLEANUP] if agency == 'max' else []),
-    ]
-    sections = [
-        _INTRO,
-        _DELEGATED if delegated else _AGENCY[agency],
-        _READING,
-        *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
-        ' '.join(checks),
-        _FINISHING,
-    ]
-    return '\n\n'.join(sections) + '\n'
+    checks = ' '.join(
+        [
+            'If deliverables will run elsewhere, make them self-contained.',
+            *([_TARGETS] if autonomous else []),
+            'Before finishing, confirm each stated requirement and edge case.',
+            'If inputs seem inconsistent or goals impossible, assume you misread. '
+            'Re-read, and try other interpretations before settling.',
+            "Write checks from the task's stated behavior, not your code.",
+            'Check behavior with heredocs for one-offs, not new files.',
+            *([_CLEANUP] if agency == 'max' else []),
+        ]
+    )
+    delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
+    suffix = '\n' + extra if extra else ''
+    texts = {
+        delegated: '\n\n'.join(
+            [
+                _INTRO,
+                _DELEGATED if delegated else _AGENCY[agency],
+                _READING,
+                *delegation,
+                checks,
+                _FINISHING,
+            ]
+        )
+        + '\n'
+        + suffix
+        for delegated in (False, True)
+    }
+
+    def instructions(_ctx: RunContext[AgentDepsT]) -> str:
+        return texts[delegation_depth() > 1]
+
+    return instructions
 
 
 def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:

@@ -215,6 +215,7 @@ class TestCoder:
         assert 'Measure results against any numeric target the task states.' in default
         assert 'assume you misread' in default
         assert 'Check behavior with heredocs for one-offs, not new files.' in default
+        assert 'Servers the task needs may keep running; stop the rest.' in default
         assert 'delete your scratch files' not in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
@@ -314,18 +315,23 @@ class TestCoder:
 
     @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize('sub_agents', [False, True])
+    @pytest.mark.parametrize('extra_instructions', [None, 'Keep new files under 400 lines.'])
     async def test_instructions_follow_the_composition(
-        self, tmp_path: Path, repo_context: bool, sub_agents: bool
+        self, tmp_path: Path, repo_context: bool, sub_agents: bool, extra_instructions: str | None
     ) -> None:
-        """The delegation rule comes with `delegate_task`, whether or not `RepoContext` is bound."""
+        """The delegation rule comes with `delegate_task`, and extra guidance is appended, with or without `RepoContext`."""
         model = TestModel(call_tools=[])
-        coder = Coder(repo_context=repo_context, sub_agents=sub_agents)
+        coder = Coder(instructions=extra_instructions, repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        parts = model.last_model_request_parameters.instruction_parts or []
+        text = '\n'.join(part.content for part in parts)
+        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
         assert ("Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks." in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
+        if extra_instructions:
+            assert guidance.endswith('\n' + extra_instructions)
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),

@@ -207,13 +207,3 @@ async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, str
 
     assert 'ask_parent' in delegate_tools
     assert set(delegate_tools.values()) == {strict}
-
-
-async def test_coder_appends_custom_instructions(tmp_path: Path) -> None:
-    model = TestModel(call_tools=[])
-    coder = Coder(instructions='Custom instructions', repo_context=False)
-    await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-    assert model.last_model_request_parameters is not None
-    instructions = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-    for text in ('Custom instructions', 'software engineering agent', "Match the surrounding code's style"):
-        assert text in instructions

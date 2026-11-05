@@ -216,7 +216,7 @@ supervisor, cleanup, and the `CommandStartedEvent`, `CommandOutputEvent`, and `C
 events a UI can subscribe to.
 
 The default instructions tell the agent to finish long-running work before replying, polling until it is done or
-blocked, and to stop servers it no longer needs. Commands get only the environment
+blocked. Servers the task needs may keep running; it stops the rest. Commands get only the environment
 the workspace passes (see [The command environment](#the-command-environment)); host files remain
 accessible to commands in a local workspace.
 

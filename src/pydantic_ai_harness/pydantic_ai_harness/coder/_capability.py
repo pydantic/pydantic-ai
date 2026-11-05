@@ -22,7 +22,7 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
-from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES, delegation_depth
+from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
@@ -117,26 +117,6 @@ and discards its work.
 """
 
 
-def _guidance(
-    *, agency: Agency, delegate_tool: str | None, extra: str | None
-) -> Callable[[RunContext[AgentDepsT]], str]:
-    """The default guidance plus `extra`, with a delegate run told to finish on its own.
-
-    `include_self` delegates to a fresh run of this agent, so without this a `'low'` delegate would
-    propose a plan to nobody and stop.
-    """
-    texts = {
-        delegated: coder_instructions(agency=agency, delegate_tool=delegate_tool, delegated=delegated)
-        + ('\n' + extra if extra else '')
-        for delegated in (False, True)
-    }
-
-    def guidance(ctx: RunContext[AgentDepsT]) -> str:
-        return texts[delegation_depth() > 1]
-
-    return guidance
-
-
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
@@ -229,7 +209,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             Capability[AgentDepsT](
                 id='coder_instructions',
                 instructions=[
-                    _guidance(
+                    coder_instructions(
                         agency=agency,
                         delegate_tool=delegation.tool_name if delegation is not None else None,
                         extra=instructions,
