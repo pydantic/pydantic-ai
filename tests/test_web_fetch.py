@@ -31,6 +31,10 @@ from pydantic_ai.exceptions import ModelRetry
 READINESS_WAIT_TIMEOUT = 10
 
 
+_CPU_SECONDS_BUDGET = 60
+"""What a conversion may cost. It's counted in CPU time, which a slow algorithm uses up but a stalled runner doesn't."""
+
+
 def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx2.Response:
     """Helper to create a mock HTML response."""
     return httpx2.Response(
@@ -764,14 +768,14 @@ class TestWebFetchLocalTool:
             return_value=_html_response(html),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            start = time.perf_counter()
+            start = time.process_time()
             result = await tool('https://example.com')
-            elapsed = time.perf_counter() - start
+            elapsed = time.process_time() - start
 
         assert isinstance(result, dict)
         assert result['title'] == ''
         assert result['content'] == ''
-        assert elapsed < 60
+        assert elapsed < _CPU_SECONDS_BUDGET
 
     @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
     async def test_fetch_html_unterminated_title_is_empty(self, html: str):
@@ -1304,26 +1308,26 @@ class TestMarkdownConverter:
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
         html = f'<{tag}>' * 120 + 'line\n' * 150_000 + f'</{tag}>' * 120
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_deeply_nested_empty_tags_are_bounded(self):
         """Generated line breaks must count towards work even without descendant text."""
         html = '<q>' * 120 + '<br>' * 30_000 + '</q>' * 120
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_shallow_nested_indentation_is_bounded(self):
         """Indented lines also count when the document is fewer than 16 levels deep."""
         html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     @pytest.mark.parametrize(
         ('tag', 'depth', 'prefix'),
@@ -1493,18 +1497,18 @@ class TestMarkdownConverter:
     def test_repeated_table_row_search_is_bounded(self):
         """Rows under thead must not each rescan all of their siblings."""
         html = '<table><thead>' + '<tr><td>x</td></tr>' * 5000 + '</thead></table>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_repeated_tbody_table_search_is_bounded(self):
         """The first row of each tbody must not rescan the whole table."""
         html = '<table>' + '<tbody><tr><td>x</td></tr></tbody>' * 2000 + '</table>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
@@ -1586,10 +1590,10 @@ class TestMarkdownConverter:
     def test_wide_ordered_list_marker_is_bounded(self):
         """A large list start must count towards indentation on every continuation line."""
         html = '<ol start="' + '9' * 4300 + '"><li>' + 'x\n' * 10_000 + '</li></ol>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_generated_list_lines_with_wide_marker_are_bounded(self):
         """A URL can generate the lines an ordered-list marker would indent."""
@@ -1617,12 +1621,12 @@ class TestMarkdownConverter:
         long either, and neither may normalizing text among tens of thousands of siblings. The
         bound is generous; the point is that it isn't minutes.
         """
-        start = time.perf_counter()
+        start = time.process_time()
         try:
             _convert_html(html)
         except (RecursionError, ModelRetry):
             assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 120
+        assert time.process_time() - start < _CPU_SECONDS_BUDGET
 
 
 class TestWebFetchToolFactory:
