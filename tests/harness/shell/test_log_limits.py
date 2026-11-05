@@ -238,7 +238,10 @@ class _WatcherTrapsLate(LocalWorkspaceBackend):
 
 
 class _HeldAtWatcherFork(LocalWorkspaceBackend):
-    """Launches jobs whose wrapper creates `forking` just before it forks the log watcher, then waits for `release`."""
+    """Launches a job whose wrapper creates `forking` just before it forks the log watcher, then waits for `release`.
+
+    Serves only the launch: the test reads the job's files directly.
+    """
 
     async def run(
         self,
@@ -248,15 +251,14 @@ class _HeldAtWatcherFork(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if not isinstance(command, str) and 'wrapper=' in _script(command):
-            sh, flag, script, *arguments = command
-            held = script.replace(
-                'watch_logs "$6" "$7" &',
-                ': > "$dir/forking"; until [ -e "$dir/release" ]; do sleep 0.01; done; watch_logs "$6" "$7" &',
-            )
-            assert held != script
-            command = [sh, flag, held, *arguments]
-        return await super().run(command, shell=shell, env=env, timeout=timeout)
+        assert not isinstance(command, str)
+        sh, flag, script, *arguments = command
+        held = script.replace(
+            'watch_logs "$6" "$7" &',
+            ': > "$dir/forking"; until [ -e "$dir/release" ]; do sleep 0.01; done; watch_logs "$6" "$7" &',
+        )
+        assert held != script
+        return await super().run([sh, flag, held, *arguments], shell=shell, env=env, timeout=timeout)
 
 
 class _ClearedWhileCounted(_FirstReadMarked):
@@ -471,7 +473,7 @@ class TestShellLogLimits:
         try:
             with anyio.fail_after(10):
                 while not (status.parent / 'forking').exists():
-                    await anyio.sleep(0.01)
+                    await anyio.sleep(0.01)  # pragma: lax no cover
                 os.killpg(group, signal.SIGTERM)
                 (status.parent / 'release').touch()
                 while json.loads(status.read_text())['exit_code'] is None:
