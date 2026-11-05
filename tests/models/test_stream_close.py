@@ -18,10 +18,12 @@ from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     import xai_sdk.chat as xai_chat
+    from cohere import ContentDeltaV2ChatStreamResponse, V2ChatStreamResponse
     from google.genai.types import GenerateContentResponse
     from huggingface_hub import AsyncInferenceClient, ChatCompletionStreamOutput
     from xai_sdk.proto import chat_pb2
 
+    from pydantic_ai.models.cohere import CohereStreamedResponse
     from pydantic_ai.models.google import GeminiStreamedResponse, GoogleModel
     from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
     from pydantic_ai.models.xai import XaiModel, XaiStreamedResponse
@@ -66,6 +68,7 @@ CASES = [
                         cost=Decimal('0.0000918'),
                     ),
                     model_name='gemini-2.5-flash',
+                    model_id='google:gemini-2.5-flash',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
@@ -95,6 +98,7 @@ CASES = [
                     parts=[TextPart(content='Paris')],
                     usage=RequestUsage(cost=Decimal('0.00')),
                     model_name='meta-llama/llama-3.1-8b-instruct',
+                    model_id='huggingface:meta-llama/Llama-3.1-8B-Instruct',
                     timestamp=IsDatetime(),
                     provider_name='huggingface',
                     provider_url='https://router.huggingface.co/novita',
@@ -124,6 +128,7 @@ CASES = [
                         input_tokens=189, cache_read_tokens=128, output_tokens=1, cost=Decimal('0.0000191')
                     ),
                     model_name='grok-4-fast-non-reasoning',
+                    model_id='xai:grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                     provider_url='https://api.x.ai/v1',
@@ -183,18 +188,34 @@ async def _assert_close_cancels_active_pull(
     assert finalization_started.is_set()
 
 
-@pytest.mark.parametrize('provider', ['google', 'huggingface', 'xai'])
-async def test_provider_close_stream_cancels_active_pull(provider: Literal['google', 'huggingface', 'xai']):
+@pytest.mark.parametrize('provider', ['cohere', 'google', 'huggingface', 'xai'])
+async def test_provider_close_stream_cancels_active_pull(
+    provider: Literal['cohere', 'google', 'huggingface', 'xai'],
+):
     """Provider shutdown must synchronize with an active pull through `PeekableAsyncStream`."""
     pull_started = anyio.Event()
     finalization_started = anyio.Event()
 
-    if provider == 'google':
+    if provider == 'cohere':
+        first = ContentDeltaV2ChatStreamResponse(index=0)
+        cohere_source: AsyncIterator[V2ChatStreamResponse] = _active_stream(first, pull_started, finalization_started)
+        cohere_stream: PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = (
+            PeekableAsyncStream(cohere_source)
+        )
+        response: StreamedResponse = CohereStreamedResponse(
+            model_request_parameters=ModelRequestParameters(),
+            _model_name='command-r7b-12-2024',
+            _provider_name='cohere',
+            _provider_url='https://api.cohere.com',
+            _response=cohere_stream,
+        )
+        stream: _ClosableStream = cohere_stream
+    elif provider == 'google':
         first = GenerateContentResponse()
         google_stream: PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]] = (
             PeekableAsyncStream(_active_stream(first, pull_started, finalization_started))
         )
-        response: StreamedResponse = GeminiStreamedResponse(
+        response = GeminiStreamedResponse(
             model_request_parameters=ModelRequestParameters(),
             _model_name='gemini-2.0-flash',
             _response=google_stream,
@@ -202,7 +223,7 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             _model_id_namespace='google',
             _provider_url='https://generativelanguage.googleapis.com',
         )
-        stream: _ClosableStream = google_stream
+        stream = google_stream
     elif provider == 'huggingface':
         first = ChatCompletionStreamOutput(
             choices=[], created=0, id='response-id', model='model', system_fingerprint='fingerprint'

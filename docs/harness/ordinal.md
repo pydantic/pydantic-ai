@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to Ordinal's hosted MCP server to draft
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.](../img/harness/ordinal.svg)
+
 ## Before you start
 
 Ordinal MCP needs the Pro plan or higher, the same as the REST API. You need an Ordinal account with access to at least one workspace. Ordinal MCP takes an OAuth access token; there is no API key to copy.
@@ -107,7 +109,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
@@ -132,8 +134,6 @@ from pydantic_ai_harness import Ordinal
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Ordinal])
 ```
-
-Pass `custom_capability_types` so the loader can create `Ordinal` from the file.
 
 ## API reference
 

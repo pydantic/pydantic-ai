@@ -55,6 +55,8 @@ from .exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     PydanticAIDeprecationWarning,
+    RequestTimeoutSetting,
+    RetryModelRequest,
     RunCancelled,
     RunTimedOut,
     SkipModelRequest,
@@ -92,6 +94,8 @@ from .messages import (
     CachePoint,
     CapabilityEvent,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
     Citation,
     CitationAnchor,
     CitationSource,
@@ -150,6 +154,8 @@ from .messages import (
     RunInstructionSource,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
+    SpeechTimestampGranularity,
     StructuredContent,
     SystemPromptPart,
     TextContent,
@@ -296,6 +302,7 @@ __all__ = (
     'ModelConnectionError',
     'ModelTimeoutError',
     'TransportPhase',
+    'RequestTimeoutSetting',
     'ModelContextWindowExceededError',
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
@@ -307,6 +314,7 @@ __all__ = (
     'RunTimedOut',
     'MessageHistoryMutatedWarning',
     'PydanticAIDeprecationWarning',
+    'RetryModelRequest',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
@@ -323,6 +331,8 @@ __all__ = (
     'AudioUrl',
     'SpeechPart',
     'SpeechPartDelta',
+    'SpeechTimestamp',
+    'SpeechTimestampGranularity',
     'BaseToolCallPart',
     'BaseToolReturnPart',
     'BinaryAudio',
@@ -330,6 +340,8 @@ __all__ = (
     'NativeToolCallPart',
     'NativeToolReturnPart',
     'CachePoint',
+    'CapabilityLoadDeltaEvent',
+    'CapabilityLoadDeltaPart',
     'Citation',
     'CitationAnchor',
     'CitationSource',
@@ -504,5 +516,7 @@ BANNER_ENABLED = True
 Set it to `False` before the first agent run; `PYDANTIC_AI_NO_BANNER` does the same from the
 environment. Neither is needed to keep the banner out of an application's way: it is only ever shown
 once per process, to a terminal or a coding agent, and never at all once instrumentation is
-configured, under `pytest`, or in CI.
+configured, under `pytest`, in CI, or for a run an installed package (a library or platform built
+on Pydantic AI) starts by calling the agent itself. A library that hands runs to a framework or task
+of its own may still want to set it.
 """

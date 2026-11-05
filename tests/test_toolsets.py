@@ -4,7 +4,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, Self, TypeVar
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
@@ -52,6 +53,14 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
+
+has_mcp = find_spec('mcp') is not None
+if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
+    # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
+    # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
 
 T = TypeVar('T')
 
@@ -740,15 +749,9 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager():
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
     transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
     server1 = MCPToolset(transport)
     server2 = MCPToolset(transport)
@@ -767,16 +770,10 @@ class InitializationError(Exception):
     pass
 
 
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
     server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
     # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
@@ -1280,6 +1277,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1386,6 +1384,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1408,6 +1407,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[TextPart(content='{"my_tool":0}')],
                 usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1992,24 +1992,25 @@ async def test_combined_toolset_instructions_empty():
 async def test_combined_toolset_collects_instructions_concurrently_in_child_order():
     """Instruction collection starts all children together without changing their declared order."""
     started: list[str] = []
-    all_started = anyio.Event()
+    started_when_resumed: list[list[str]] = []
 
     class SynchronizingToolset(MockToolsetWithInstructions):
         async def get_instructions(self, ctx: RunContext[object]) -> str:
             assert self.custom_instructions is not None
             started.append(self.custom_instructions)
-            if len(started) == 2:
-                all_started.set()
-            await all_started.wait()
+            # Concurrent children all start before the first one resumes; sequential ones don't.
+            await anyio.lowlevel.checkpoint()
+            started_when_resumed.append(list(started))
             return self.custom_instructions
 
     combined = CombinedToolset(
         [SynchronizingToolset('First.', id='first'), SynchronizingToolset('Second.', id='second')]
     )
 
-    with anyio.fail_after(1):
-        instructions = await combined.get_instructions(build_run_context(None))
+    instructions = await combined.get_instructions(build_run_context(None))
 
+    # Either child may start first (Trio picks its own order); concurrency means both started before either resumed.
+    assert sorted(started_when_resumed[0]) == ['First.', 'Second.']
     assert instructions == [
         InstructionPart(content='First.', dynamic=True, id=InstructionId(ToolsetInstructionSource('first'))),
         InstructionPart(content='Second.', dynamic=True, id=InstructionId(ToolsetInstructionSource('second'))),

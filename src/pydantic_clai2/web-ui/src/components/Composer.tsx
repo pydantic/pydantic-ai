@@ -304,7 +304,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         setSuggestions([])
       } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (mention || single))) {
         const suggestion = suggestions[selected]
-        if (suggestion && (mention || `/${suggestion.text}` !== text.trim())) {
+        // As for a command: Enter on a file typed in full sends it, instead of swapping it for another file.
+        const { caret } = anchor.current
+        // The whole word under the caret, which accepting would replace, as in `@README.md|x`.
+        const typed =
+          mention && event.key === 'Enter'
+            ? `${MENTION.exec(text.slice(0, caret))?.[1] ?? ''}${text.slice(caret).match(/^\S*/)?.[0] ?? ''}`
+            : undefined
+        if (suggestion && (mention ? typed !== suggestion.text : `/${suggestion.text}` !== text.trim())) {
           event.preventDefault()
           accept(suggestion)
           return

@@ -15,6 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -50,6 +51,9 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
 - `'when_idle'`: Delivered only when the agent would otherwise terminate, after
     any `'asap'` messages. Doesn't interrupt in-flight work.
 """
+
+QueueChangeMethod: TypeAlias = Literal['dequeue', 'set_enqueue_priority']
+"""The methods that change a queued message, named in their errors."""
 
 
 EnqueueContent: TypeAlias = 'UserContent | ModelRequestPart | ModelMessage'
@@ -118,6 +122,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
@@ -163,7 +168,9 @@ class PendingMessage:
     """The `tool_call_id` and run step of the tool call whose result this content goes next to, if any.
 
     Set by `from_content` for parts enqueued with `priority='asap'` during a tool call (from the tool or a
-    capability hook wrapping it). The step matters because a model may reuse a `tool_call_id` later, and
+    capability hook wrapping it). Only `asap` delivery reads it, so content demoted to `when_idle` is
+    delivered as its own request, and goes next to the result again if promoted back before the request
+    carrying that result is sent. The step matters because a model may reuse a `tool_call_id` later, and
     content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
     """
 
@@ -198,11 +205,21 @@ class PendingMessage:
         return cls(messages=messages, priority=priority, _tool_call=_tool_call)
 
 
+CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
+"""A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
+
+
 class PendingMessageQueue(list[PendingMessage]):
     """A run's pending messages with thread-safe append and drain operations."""
 
-    def __init__(self, messages: Iterable[PendingMessage] = ()) -> None:
+    def __init__(
+        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[CapabilityLoadRecord] = ()
+    ) -> None:
         super().__init__(messages)
+        # Kept apart from the list items: a capability load rides along with the next model request
+        # but must never make the run continue, and code that checks whether messages are pending
+        # (e.g. to decide whether the run will continue) must not see it.
+        self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
         # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
@@ -211,8 +228,10 @@ class PendingMessageQueue(list[PendingMessage]):
         self._spliced_request: tuple[ModelRequest, ModelRequest] | None = None
         self._last_delivered_for_call: dict[str, ModelRequestPart] = {}
 
-    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
-        return PendingMessageQueue, (list(self),)
+    def __reduce_ex__(
+        self, protocol: SupportsIndex
+    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[CapabilityLoadRecord]]]:
+        return PendingMessageQueue, (list(self), list(self._capability_loads))
 
     def append(self, pending: PendingMessage) -> None:
         with self._lock:
@@ -224,14 +243,66 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             return self._pop_priority(priority)
 
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more).
+
+        A closed queue can hold messages a run left early didn't deliver; they're out of reach too.
+        """
+        with self._lock:
+            return not self._closed and remove_pending(self, enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
+        with self._lock:
+            return not self._closed and set_pending_priority(self, enqueue_id, priority)
+
+    def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
+        """Queue the records of a load of `capability_id`, delivered together with the next model request.
+
+        Returns `False`, queueing nothing, if a load of `capability_id` is already queued. The check and the append
+        happen under one lock, so parallel tool calls in worker threads can't both queue the same load.
+        """
+        with self._lock:
+            if self._closed:
+                raise UserError('`ctx.load_capability()` is not available because the agent run has ended.')
+            if any(
+                isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
+                for record in self._capability_loads
+            ):
+                return False
+            self._capability_loads.extend(records)
+            return True
+
+    def pop_capability_loads(self) -> list[CapabilityLoadRecord]:
+        with self._lock:
+            loads, self._capability_loads = self._capability_loads, []
+            return loads
+
     def drain_at_end(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
-        """Drain both priorities, or atomically close an empty queue."""
+        """Drain both priorities, or atomically close a queue with nothing that continues the run.
+
+        Queued capability loads stay queued for the request the drained messages continue the run with,
+        or are dropped with the run: a load alone never continues it.
+        """
         with self._lock:
             asap = self._pop_priority('asap')
             when_idle = self._pop_priority('when_idle')
             if not asap and not when_idle:
+                self._capability_loads.clear()
                 self._closed = True
             return asap, when_idle
+
+    def drain_at_pause(self) -> list[PendingMessage] | None:
+        """Drain and close the queue for a deferred-tool pause, or leave it untouched if it holds a `ModelResponse`.
+
+        A recorded response would read as the paused one when the run resumes.
+        """
+        with self._lock:
+            if any(isinstance(message, ModelResponse) for pending in self for message in pending.messages):
+                return None
+            drained = [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
+            self._closed = True
+            return drained
 
     def close(self) -> None:
         with self._lock:
@@ -247,6 +318,54 @@ class PendingMessageQueue(list[PendingMessage]):
         selected = [pending for pending in self if pending.priority == priority]
         self[:] = [pending for pending in self if pending.priority != priority]
         return selected
+
+
+def remove_pending(messages: list[PendingMessage], enqueue_id: str) -> bool:
+    """Remove the message `enqueue_id` from `messages`, returning whether it was there. The caller handles locking."""
+    for index, pending in enumerate(messages):
+        if pending.enqueue_id == enqueue_id:
+            del messages[index]
+            return True
+    return False
+
+
+def set_pending_priority(messages: list[PendingMessage], enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    """Give the message `enqueue_id` in `messages` a new priority, returning whether it was there. The caller handles locking."""
+    for pending in messages:
+        if pending.enqueue_id == enqueue_id:
+            pending.priority = priority
+            return True
+    return False
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason.
+    """
+
+    def __init__(self, unit_noun: str, container_noun: str):
+        """`unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and `container_noun` its durable container (`'workflow'`/`'flow'`), so every engine raises the same explanation in its own vocabulary."""
+        super().__init__()
+        self._unit_noun = unit_noun
+        self._container_noun = container_noun
+
+    def append(self, pending: PendingMessage) -> None:
+        raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
+
+    def change_error(self, method: QueueChangeMethod) -> UserError:
+        """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
+        return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
+
+    def _error(self, method: str, consequence: str, advice: str) -> UserError:
+        return UserError(
+            f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
+            f'{advice} from {self._container_noun}-level code instead.'
+        )
 
 
 def stamped_messages(

@@ -382,8 +382,6 @@ When you use `anthropic_cache_instructions` with both static and dynamic [instru
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 ```python {test="skip"}
-from datetime import date
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
@@ -399,7 +397,7 @@ agent = Agent(
 
 @agent.instructions
 def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
-    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+    return f'Customer name: {ctx.deps}.'
 
 
 result = agent.run_sync('What is your return policy?', deps='Alice')
@@ -408,7 +406,7 @@ print(result.output)
 
 1. Static instructions are cached across requests.
 2. Enables smart cache placement at the static/dynamic boundary.
-3. Dynamic instructions change per-request and are not cached.
+3. Dynamic instructions are evaluated for each request and sit after the cache point, so a different customer doesn't invalidate the cached static instructions.
 
 ### Fine-Grained Control with CachePoint
 
@@ -580,6 +578,12 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
 
+## Token counting
+
+[`count_tokens()`][pydantic_ai.models.Model.count_tokens] and [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] use Anthropic's [token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting). On the `AsyncAnthropic` client, the count includes the definitions of the web search, web fetch, code execution, tool search and advisor tools, so it matches the request's input tokens. The Bedrock, Vertex AI and Foundry clients leave those tools out of the count, as their count endpoints haven't been verified to accept them, and no client counts MCP servers, which the endpoint rejects.
+
+[`anthropic_count_tokens_accepts_server_tools`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_count_tokens_accepts_server_tools] in the model's `profile` controls this. Set it to `False` if your `AsyncAnthropic` client's `base_url` points at a proxy whose count endpoint rejects server tools, or to `True` on a platform client whose count endpoint accepts them. With it off, a request whose function tools are all deferred can't be counted.
+
 ## Batch API
 
 `AnthropicModel` supports [batch processing](../batch.md) through the Claude API's
@@ -625,9 +629,11 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
+    Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so on Haiku 5.5 Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
+
 ### Refusals on repeated prompts
 
-Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, configure a [fallback model](overview.md#fallback-model) or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
+Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, add [`ModelFallback`](../capabilities/model-fallback.md), which falls back to another model on such a refusal by default, or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
 
 ### Turn-scoped system messages
 
@@ -718,7 +724,7 @@ Anthropic enforces the check for accounts created on or after 31 August 2026. Fo
 
 **Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
 
-Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because that endpoint omits server-side tools and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
+Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because counting omits MCP servers, and on Bedrock, Vertex AI and Foundry server-side tools too (see [Token counting](#token-counting)), and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
 The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, both Amazon Bedrock clients (the Bedrock Messages API's `AsyncAnthropicBedrockMantle` and the legacy `AsyncAnthropicBedrock`), and Google Vertex AI. It is not enabled for Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
 
@@ -885,6 +891,28 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Web Tool Callers
+
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
+
+Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md). When you ask for citations, with the [`Citations`][pydantic_ai.capabilities.Citations] capability and text output, or with [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] for web fetch, Pydantic AI sends the cited tools with `allowed_callers=['direct']` on the Anthropic API (the `AsyncAnthropic` client), so the model calls them itself and their results are cited. This turns off dynamic filtering for those tools, so the model reads every result in full. Claude Platform on AWS and Microsoft Foundry keep Anthropic's default, since they haven't been verified to accept `allowed_callers` with citations: set [`anthropic_calls_cited_web_tools_directly`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_calls_cited_web_tools_directly] in the model's `profile` to route them there too.
+
+A request that already needs code execution keeps Anthropic's default, so its web results come back uncited: one with an [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] you set, Skills included, and one in a user turn that has already used code execution, where direct calls would leave the request without it. Anthropic rejects that container on a request without code execution, and the turn's code execution calls can still be running. The callers are decided for each user turn, so every request in a turn sends the same ones. A conversation whose earlier turns used the sandbox switches to direct calls at its next user prompt, and the sandbox's container and files don't carry over.
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model call both web tools itself, with no sandbox, whether or not you ask for citations. This turns off dynamic filtering and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses, and takes precedence over the citations default.
+
+```py {title="anthropic_web_tools_allowed_callers.py"}
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(WebSearchTool())],
+    model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
+)
+```
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:
@@ -905,7 +933,7 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 ### Code Execution Containers
 
-When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
+When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
 If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 

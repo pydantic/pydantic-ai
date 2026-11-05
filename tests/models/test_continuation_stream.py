@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
+import anyio
 import httpx
 import pytest
 
@@ -1069,6 +1070,52 @@ def test_replace_previous_marker_forces_replace_and_is_stripped() -> None:
 
     # A follow-up merge of the stripped result must not still see a replace directive.
     assert merge_mode(merged, ModelResponse(parts=[TextPart('more')], provider_response_id='r3')) == 'accumulate'
+
+
+class _AwaitingTeardownModel(_FakeModel):
+    """Awaits while closing each segment, as a real model does when it closes its connection."""
+
+    def __init__(self, segments: list[_Segment]) -> None:
+        super().__init__(segments)
+        self.teardowns_finished = 0
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: object | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+        await asyncio.sleep(0)
+        self.teardowns_finished += 1
+
+
+@pytest.mark.parametrize('close', ['aclose', 'release_primed_segment'])
+async def test_a_primed_segment_is_closed_inside_a_cancelled_scope(close: str) -> None:
+    """Closing a primed stream the consumer never iterated finishes closing its segment inside a cancelled scope.
+
+    Stream teardown can run inside a cancelled graph scope, where an unshielded await is cancelled again, so the
+    segment's connection would be left open.
+    """
+    model = _AwaitingTeardownModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=1
+                ),
+            )
+        ]
+    )
+    stream = _composite(model)
+    await stream.prime()
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await getattr(stream, close)()
+    assert model.teardowns_finished == 1
 
 
 async def test_cancel_teardown_survives_scope_cancellation() -> None:

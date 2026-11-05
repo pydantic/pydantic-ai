@@ -19,6 +19,7 @@ from typing_extensions import deprecated
 
 from .. import _utils, usage
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
+from .._json_schema import InlinedValues
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -1646,11 +1647,15 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
     context: dict[str, list[str]] = {}
+    # Resolving a `$ref` inlines its definition into the field, so each one counts as an inlined copy.
+    inlined = InlinedValues(f'The JSON schema of {output_tool.kind} tool {output_tool.name!r}')
 
     def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
         prop = _schema(prop)
         if ref := prop.get('$ref'):
-            prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
+            definition = defs[ref.removeprefix('#/$defs/')]
+            inlined.add_copy(definition)
+            prop = {**resolve(definition), **{k: v for k, v in prop.items() if k != '$ref'}}
         if 'items' in prop:
             prop = {**prop, 'items': resolve(prop['items'])}
         if 'anyOf' in prop:

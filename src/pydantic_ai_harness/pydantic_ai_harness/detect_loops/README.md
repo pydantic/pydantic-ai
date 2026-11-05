@@ -6,6 +6,8 @@ Notice when an agent repeats the same actions without making progress, and inter
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![DetectLoops records each response in after_model_request and checks the run in before_model_request. Here the model called read_file(path='missing.txt') three times and got the same error each time, a repeated_result loop. With action='nudge', the default, a system prompt telling the model to change its approach joins the next request; with action='error', LoopDetectedError ends the run.](https://pydantic.dev/docs/ai/img/harness/detect-loops.svg)
+
 ## Usage
 
 uv:
@@ -38,7 +40,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[DetectLoops()])
 | `alternating_calls` | Two different tool calls are made in turn, A-B-A-B, for this many A-B cycles. | `alternating_calls_threshold` (`3`) |
 | `repeated_text` | This many consecutive responses have no tool calls and the same text, ignoring case and whitespace. This happens when [output validation](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions) keeps asking the model to retry. | `repeated_text_threshold` (`3`) |
 
-`window` (default `10`) is how many of the most recent tool calls the three call-based checks look at. Set a threshold to `None` to turn that check off. A threshold must be at least 2, and a call-based threshold has to fit in `window` (`alternating_calls_threshold` needs twice its value), so a check that could never fire raises `ValueError` when the capability is created.
+`window` (default `10`) is how many of the most recent tool calls the three call-based checks look at. Set a threshold to `None` to turn that check off. `window` must be at least 2, even when every call-based check is off. A threshold must be at least 2, and a call-based threshold has to fit in `window` (`alternating_calls_threshold` needs twice its value), so a check that could never fire raises `ValueError` when the capability is created.
 
 How calls and results are compared:
 

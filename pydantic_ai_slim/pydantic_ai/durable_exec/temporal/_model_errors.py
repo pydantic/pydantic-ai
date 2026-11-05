@@ -3,7 +3,7 @@
 A model request runs in an activity, so an error it raises reaches the workflow as Temporal's
 `ActivityError` wrapping an `ApplicationError`, rather than as the
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the model raised. Workflow-side code that
-handles model errors, like an `on_model_request_error` hook or the `Fallback` capability, would
+handles model errors, like an `on_model_request_error` hook or the `ModelFallback` capability, would
 never see one. So the activity raises the `ApplicationError` itself, with the model error encoded in
 its details, and the workflow raises a rebuilt copy of the original error.
 
@@ -17,9 +17,13 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any, cast
 
+from pydantic import TypeAdapter
 from pydantic_core import to_jsonable_python
+from temporalio import activity
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 from ...exceptions import (
@@ -31,11 +35,23 @@ from ...exceptions import (
     ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
+    RetryModelRequest,
+    UserError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
+from ...messages import ModelResponse
+from .._utils import mark_streamed_before_failing, streamed_before_failing
 
 _DETAILS_KEY = 'pydantic_ai_model_error'
 """Marks the `ApplicationError` detail that holds an encoded model error."""
+
+_STREAMED_KEY = 'pydantic_ai_streamed_before_failing'
+"""The detail that holds what a streamed request produced before the error ended it; see `mark_streamed_before_failing`."""
+
+_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
+
+_RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
+"""Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
 
 
 def _encode(error: ModelAPIError) -> dict[str, Any] | None:
@@ -54,6 +70,11 @@ def _encode(error: ModelAPIError) -> dict[str, Any] | None:
         return None
     args = reduced[1]
     state = reduced[2] if len(reduced) > 2 else None
+    if isinstance(state, dict):
+        # What Pydantic AI attached to the error isn't JSON: what has to cross is carried separately below.
+        state = {
+            key: value for key, value in cast(dict[str, Any], state).items() if not key.startswith('_pydantic_ai_')
+        }
     encoded: dict[str, Any] = {
         'module': error_type.__module__,
         'qualname': error_type.__qualname__,
@@ -116,25 +137,50 @@ def model_errors_as_application_errors(
     The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
     `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
     non-retryable `ApplicationError`, so Temporal fails the activity without retrying it whatever the retry
-    policy says.
+    policy says. A retryable error's `retry_after`, which the provider asked for with a `Retry-After` header or
+    the like, is the `ApplicationError`'s `next_retry_delay`, up to the retry policy's `maximum_interval`, so
+    Temporal waits that long before the next attempt rather than the retry policy's backoff; see `_next_retry_delay`.
     """
     try:
         yield
     except ModelAPIError as error:
         # Checked here, where the error's class is the same as in the workflow, so the workflow can
         # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
-        # with only the non-retryable flag added if it has to be marked.
+        # with only the non-retryable flag or the retry delay added if it has one.
         try:
             encoded = _encode(error)
         except Exception:
             encoded = None
-        details = ({_DETAILS_KEY: encoded},) if encoded is not None and _decode(encoded) is not None else ()
+        details: tuple[dict[str, Any], ...] = ()
+        if encoded is not None and _decode(encoded) is not None:
+            detail: dict[str, Any] = {_DETAILS_KEY: encoded}
+            if (streamed := streamed_before_failing(error)) is not None:
+                detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
+            details = (detail,)
         retryable = not isinstance(error, non_retryable)
-        if retryable and not details:
+        next_retry_delay = _next_retry_delay(error.retry_after) if retryable and error.retry_after is not None else None
+        if retryable and not details and next_retry_delay is None:
             raise
         raise ApplicationError(
-            str(error), *details, type=_retry_policy_type(error), non_retryable=not retryable
+            str(error),
+            *details,
+            type=_retry_policy_type(error),
+            non_retryable=not retryable,
+            next_retry_delay=next_retry_delay,
         ) from error
+
+
+def _next_retry_delay(retry_after: float) -> timedelta:
+    """The delay before the next attempt for a provider's `retry_after`, capped at the retry policy's `maximum_interval`.
+
+    Temporal waits a `next_retry_delay` instead of the interval its retry policy computes, so the policy's
+    `maximum_interval` would no longer bound the wait. Capping at it keeps a long `Retry-After`, or one too large for
+    a `timedelta`, from parking the activity longer than the policy ever would. Outside an activity, the cap is the
+    default policy's.
+    """
+    policy = (activity.info().retry_policy if activity.in_activity() else None) or RetryPolicy()
+    maximum_interval = policy.maximum_interval or policy.initial_interval * 100
+    return timedelta(seconds=min(retry_after, maximum_interval.total_seconds()))
 
 
 _ERROR_CATEGORIES = (
@@ -189,7 +235,55 @@ def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
     details = application_error.details
     if not details or not isinstance(details[0], dict):
         return None
-    encoded = cast(dict[str, Any], details[0]).get(_DETAILS_KEY)
+    detail = cast(dict[str, Any], details[0])
+    encoded = detail.get(_DETAILS_KEY)
     if not isinstance(encoded, dict):
         return None
-    return _decode(cast(dict[str, Any], encoded))
+    error = _decode(cast(dict[str, Any], encoded))
+    if error is not None and (streamed := detail.get(_STREAMED_KEY)) is not None:
+        mark_streamed_before_failing(error, _response_adapter.validate_python(streamed))
+    return error
+
+
+@contextmanager
+def retry_requests_as_application_errors() -> Generator[None]:
+    """In a capability operation's activity, raise a `RetryModelRequest` as an `ApplicationError` the workflow rebuilds.
+
+    A capability's `prepare_model_request`, `after_model_request` or `on_model_request_error` hook that runs as a
+    durable operation asks for another attempt by raising it, which the attempt loop in the workflow handles. The
+    model to attempt crosses as its name: a model instance can't, so asking for one raises a `UserError` here.
+    """
+    try:
+        yield
+    except RetryModelRequest as retry:
+        if retry.model is not None and not isinstance(retry.model, str):
+            raise UserError(
+                '`RetryModelRequest` raised from a capability hook that runs as a durable operation can only name '
+                "the model to attempt by its name: register a model instance with the durability capability's "
+                '`models` and pass its name.'
+            ) from retry
+        raise ApplicationError(
+            str(retry) or 'RetryModelRequest',
+            {_RETRY_MODEL_REQUEST_KEY: {'model': retry.model}},
+            type=RetryModelRequest.__name__,
+            # Asking for another attempt is the hook's answer, not a failure to retry.
+            non_retryable=True,
+        ) from retry
+
+
+@contextmanager
+def rebuilt_retry_requests() -> Generator[None]:
+    """In the workflow, re-raise a `RetryModelRequest` a capability operation's activity raised, as itself."""
+    try:
+        yield
+    except ActivityError as activity_error:
+        cause = activity_error.cause
+        if (
+            isinstance(cause, ApplicationError)
+            and cause.details
+            and isinstance(detail := cause.details[0], dict)
+            and isinstance(encoded := cast(dict[str, Any], detail).get(_RETRY_MODEL_REQUEST_KEY), dict)
+        ):
+            model = cast(dict[str, Any], encoded).get('model')
+            raise RetryModelRequest(model if isinstance(model, str) else None) from activity_error
+        raise

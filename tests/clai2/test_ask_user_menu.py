@@ -12,12 +12,13 @@ import pytest
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from rich.cells import cell_len
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.live.buffer import REVERSE
 
 from pydantic_ai import Agent, FunctionToolCallEvent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import (
@@ -340,8 +341,9 @@ async def test_plugin_declares_capability_and_renderer() -> None:
     console = Console(file=io.StringIO(), force_terminal=True)
     host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
     loaded = load_plugin(AskUserPlugin, host)
-    (capability,) = loaded.capabilities
+    capability, approvals = loaded.capabilities
     assert isinstance(capability, AskUser)
+    assert isinstance(approvals, HandleDeferredToolCalls)
     assert loaded.plugin.has_render
     assert (
         loaded.plugin.render(AskUserAnsweredEvent(request_id='r', response=AskUserResponse(cancelled=True))) is not None
@@ -644,6 +646,9 @@ async def test_typing_on_highlighted_other_through_the_terminal(question_pipe: P
 @pytest.mark.parametrize('enter', ['\r', '\n'])
 async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: PipeInput, enter: str) -> None:
     question_pipe.send_text(f'3Use another approach{enter}')
+    # End of input declines the question, so a picker that misses the Enter fails the assertion below
+    # instead of waiting for more keys.
+    question_pipe.close()
     screen = ScreenLog()
     output = io.StringIO()
     answerer = TerminalAnswerer(full_screen=screen, console=Console(file=output))
@@ -653,23 +658,23 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
             return ModelResponse(parts=[ToolCallPart('ask_user_question', {'questions': [APPROACH.model_dump()]})])
         return ModelResponse(parts=[TextPart('done')])
 
-    with anyio.fail_after(5):
-        result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
+    result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
     assert screen.events == ['taken', 'released']
-    console = Console(file=output)
-    console.print(
-        render_answer(
-            AskUserAnsweredEvent(
-                request_id='custom',
-                response=AskUserResponse(
-                    answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)
-                ),
-            )
+    rendered = render_answer(
+        AskUserAnsweredEvent(
+            request_id='custom',
+            response=AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)),
         )
     )
-    assert 'Approach: [red]Custom answer' in output.getvalue()
+    Console(file=output).print(rendered)
+    # A typed answer reads like a typed prompt: an accent marker and bold text, not muted tool output.
+    assert '● Approach:\n> [red]Custom answer\n' in output.getvalue()
+    assert isinstance(rendered, Text)
+    answer = rendered.plain.index('[red]')
+    assert rendered.get_style_at_offset(Console(), answer).bold
+    assert rendered.get_style_at_offset(Console(), answer - 2).color == Style.parse(theme.color(theme.ACCENT)).color
 
 
 async def test_bracketed_paste_is_atomic_and_does_not_answer_next_question(question_pipe: PipeInput) -> None:
