@@ -426,8 +426,10 @@ class TestServerErrors:
             server.break_streams(backend.ref.id)
 
     async def test_a_broken_stream_from_an_unreachable_server_propagates_at_once(
-        self, server: FakeOpenSandbox, working_dir: str
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Waiting for a killed sandbox to settle would now outlast the limit, which no stall reaches.
+        monkeypatch.setattr(f'{_MODULE}._GONE_SETTLE', 3600.0)
         backend = _create(server, working_dir)
         started = Path(working_dir, 'started')
 

@@ -70,7 +70,8 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr, no_leaked_tasks
 
-READINESS_WAIT_TIMEOUT = 5
+READINESS_WAIT_TIMEOUT = 300
+"""Seconds a test waits for something that should happen at once: only a hang reaches it, however stalled the runner is."""
 
 
 def _fail_first_tool() -> None:

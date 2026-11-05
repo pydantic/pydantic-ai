@@ -42,7 +42,11 @@ DOMAIN = 'opensandbox.invalid'
 """A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
-_DRAIN_STEPS_AFTER_EXIT = 1000
+_IDLE_TURNS_AFTER_EXIT = 1000
+"""Event loop turns with nothing to deliver after a command exits, which the readers need to queue what it wrote."""
+_MAX_CHARS_AFTER_EXIT = 1 << 20
+"""Characters of output after a command exits: more than it can have left unread in a full pipe, far below the backend's
+limit."""
 
 
 def _now() -> str:
@@ -322,17 +326,19 @@ class _EventStream(httpx.AsyncByteStream):
             asyncio.create_task(self._wait()),
         ]
         # execd reports the exit as soon as the command exits, even while a background child holds its output
-        # open. What the command wrote is in its pipes by then, so a bounded number of event loop turns delivers it
-        # however slow the machine is, and output still arriving after that is dropped.
+        # open. What the command wrote is in its pipes by then, and is delivered whatever the machine's speed: the
+        # drain only counts turns with nothing queued, and stops for a background child's output only after more
+        # than any pipe holds. The rest is dropped.
         code: int | None = None
-        steps_left = _DRAIN_STEPS_AFTER_EXIT
+        idle_turns_left = _IDLE_TURNS_AFTER_EXIT
+        chars_after_exit = 0
         open_pipes = 2
         while code is None or open_pipes:
             if code is not None:
-                if not steps_left:
+                if not idle_turns_left or chars_after_exit > _MAX_CHARS_AFTER_EXIT:
                     break
-                steps_left -= 1
                 if self._queue.empty():
+                    idle_turns_left -= 1
                     await asyncio.sleep(0)
                     continue
             kind, value = await self._queue.get()
@@ -343,6 +349,8 @@ class _EventStream(httpx.AsyncByteStream):
             elif kind == 'eof':
                 open_pipes -= 1
             else:
+                if code is not None:
+                    chars_after_exit += len(value)
                 yield event({'type': kind, 'text': value})
         self._sandbox.processes.pop(self._id, None)
         if code == 0:
