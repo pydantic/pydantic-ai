@@ -56,7 +56,7 @@ from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
-from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
+from tenacity import RetryCallState, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import (
@@ -450,7 +450,13 @@ _LLM_MAX_RETRIES = 4
 # Transient rate limits can outlast the SDK's retry window. Retry 429 responses
 # below the SDK with jittered exponential backoff for up to this long. Jitter
 # spreads retries when parallel sub-agents hit the limit together.
-RATE_LIMIT_RETRY_SECS = 60
+#
+# Z.ai `1302` bursts throttle rather than block, and can last hours. During the
+# 2026-11-04 burst, each retry passed about one time in five, however long its
+# request had waited. At that rate an estimated one request in 3,000 exhausts this window.
+RATE_LIMIT_RETRY_SECS = 5 * 60
+# Every request retries for at least this long, inside the run's time reserve too.
+RATE_LIMIT_MIN_RETRY_SECS = 60
 
 # Z.ai 429 codes for account and plan limits, which cannot clear inside the retry
 # window. Other 429s, such as `1302` request-rate limits and `1305` overload, are transient.
@@ -485,6 +491,24 @@ def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
     return response
 
 
+def _stop_rate_limit_retries(state: RetryCallState) -> bool:
+    """Stop before the next wait ends past `RATE_LIMIT_RETRY_SECS`, or inside the run's time reserve.
+
+    The reserve is the run's time to emit its safe output. A run cancelled at its deadline
+    fails as `time_limit`, which opens a task incident, while a rate limit that outlasts
+    these retries fails as `rate_limit`, which stays local to the run.
+    """
+    retry_ends = (state.seconds_since_start or 0.0) + state.upcoming_sleep
+    if retry_ends >= RATE_LIMIT_RETRY_SECS:
+        return True
+    seconds_left = _run_seconds_left()
+    return (
+        retry_ends >= RATE_LIMIT_MIN_RETRY_SECS
+        and seconds_left is not None
+        and seconds_left - state.upcoming_sleep <= RUN_TIME_RESERVE_SECS
+    )
+
+
 async def _close_rate_limited_response(state: RetryCallState) -> None:
     """Release a 429 response's connection before the next attempt replaces it."""
     if state.outcome is not None and not state.outcome.failed:
@@ -516,7 +540,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
         RetryConfig(
             retry=retry_if_result(should_retry),
             wait=wait_random_exponential(multiplier=1, max=16),
-            stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
+            stop=_stop_rate_limit_retries,
             before_sleep=_close_rate_limited_response,
             retry_error_callback=_give_up_on_rate_limit,
         ),

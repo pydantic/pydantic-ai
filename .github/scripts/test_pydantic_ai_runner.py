@@ -18,6 +18,7 @@ import inspect
 import io
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from typing import Any, cast
 import httpcore2
 import httpx2
 import pytest
+import tenacity
 import yaml
 from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
@@ -2925,6 +2927,92 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
     asyncio.run(_request())
     assert len(calls) == 2
+
+
+class _FakeClock:
+    """A monotonic clock that only `sleep` advances."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def retry_clock(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+    """One fake clock for tenacity's elapsed time and the run deadline, with every jittered wait at its upper bound."""
+    clock = _FakeClock()
+    monkeypatch.setattr(tenacity, 'time', clock)
+    monkeypatch.setattr(shim, 'time', clock)
+    monkeypatch.setattr(random, 'uniform', lambda _low, high: high)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    return clock
+
+
+def _zai_rate_limited_client(rate_limited_responses: int, calls: list[int], clock: _FakeClock) -> AsyncAnthropic:
+    """An `AsyncAnthropic` client on the shim's retry policy whose first requests receive a `1302` 429."""
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) <= rate_limited_responses:
+            return httpx2.Response(429, json=_zai_429_body('1302'))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['sleep'] = clock.sleep
+    return AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+
+def test_rate_limit_retry_rides_out_a_1302_burst_shorter_than_its_window(retry_clock: _FakeClock):
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=20, calls=calls, clock=retry_clock)
+    message = asyncio.run(
+        client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+    )
+    assert message.content[0].type == 'text'
+    assert len(calls) == 21
+    assert retry_clock.now == 271
+
+
+def test_rate_limit_retry_backs_off_exponentially_and_hands_a_longer_1302_burst_to_the_sdk(retry_clock: _FakeClock):
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=99, calls=calls, clock=retry_clock)
+    with pytest.raises(RateLimitError) as exc_info:
+        asyncio.run(
+            client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert exc_info.value.body == _zai_429_body('1302')
+    assert retry_clock.sleeps == [1, 2, 4, 8, *[16] * 17]
+    assert len(calls) == 22
+
+
+@pytest.mark.parametrize(
+    ('seconds_before_reserve', 'expected_sleeps'),
+    [
+        pytest.param(100, [1, 2, 4, 8, 16, 16, 16, 16, 16], id='stops-before-the-reserve'),
+        pytest.param(-1, [1, 2, 4, 8, 16, 16], id='inside-the-reserve-retries-a-minute'),
+    ],
+)
+def test_rate_limit_retry_leaves_the_run_time_reserve_to_the_safe_output(
+    retry_clock: _FakeClock, monkeypatch: pytest.MonkeyPatch, seconds_before_reserve: int, expected_sleeps: list[int]
+):
+    monkeypatch.setattr(shim, '_run_deadline', shim.RUN_TIME_RESERVE_SECS + seconds_before_reserve)
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=99, calls=calls, clock=retry_clock)
+    with pytest.raises(RateLimitError):
+        asyncio.run(
+            client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert retry_clock.sleeps == expected_sleeps
 
 
 def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.MonkeyPatch):
