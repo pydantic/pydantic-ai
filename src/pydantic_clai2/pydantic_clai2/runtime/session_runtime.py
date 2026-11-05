@@ -46,7 +46,7 @@ from pydantic_clai2.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
@@ -75,7 +75,9 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -175,6 +177,7 @@ def create_shell(
     workspace: Path | None = None,
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
+    settings_for: Callable[[ProjectSettings], Settings] | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
@@ -182,6 +185,7 @@ def create_shell(
     what the session shares with the others in this CLAI, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -217,7 +221,15 @@ def create_shell(
         # turn holds the change, and its model, until it ends.
         shell.show_model()
 
-    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    context = CommandContext(
+        settings=settings,
+        store=store,
+        apply_setting=apply_setting,
+        project=project,
+        settings_for=settings_for,
+        workspace=lambda: Path(session.workspace),
+    )
+    session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -321,6 +333,14 @@ def create_shell(
     commands.register(replace(set_, name='settings', description='Alias of /set'))
     commands.register(
         Command(
+            name='project',
+            description='Review what .clai/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
+            handler=context.project_command,
+            complete=context.project_completions,
+        )
+    )
+    commands.register(
+        Command(
             name='theme',
             description='Select a Termflow palette; no arguments opens the picker',
             handler=lambda args: theme_command(context, args),
@@ -328,6 +348,17 @@ def create_shell(
             during_turn=True,
             menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
             args_during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='permissions',
+            description='Choose what runs without asking: /permissions [full|auto|read-only]',
+            handler=lambda args: permissions_command(context, args),
+            complete=lambda args: PERMISSION_MODES if len(args) <= 1 else (),
+            during_turn=True,
+            args_during_turn=True,
+            menu=lambda: settings_menu(context, keys=(PERMISSIONS,), title='Permissions'),
         )
     )
     commands.register(
@@ -676,6 +707,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
+    permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
+    """`Permissions` for `run.permissions`, read on each tool call, and its denial of last resort; kept across runs."""
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
@@ -739,6 +772,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         else:
             self._inbox.remove(entry)
             self.live_session.changed()
+
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        return self._handling
 
     @property
     def idle(self) -> bool:
@@ -849,6 +887,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         )
         self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
+        self.permissions = session_permissions(lambda: self.context.settings.permissions)
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
@@ -856,8 +895,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities())
+        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
+        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -1232,13 +1271,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _rewind(self) -> None:
         assert self.editor is not None
-        async with self.forks.busy(), self._released():
-            try:
-                notice = await rewind(self.session, self.editor)
-            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
-                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
-            else:
-                self.console.print(notice, markup=False)
+        with self._handling_input():
+            async with self.forks.busy(), self._released():
+                try:
+                    notice = await rewind(self.session, self.editor)
+                except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                    self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+                else:
+                    self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:

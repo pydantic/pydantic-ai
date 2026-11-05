@@ -28,6 +28,10 @@ from pydantic_ai.tools import AgentDepsT, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
+FOLD_INTO_CODE_MODE = 'fold_into_code_mode'
+"""Tool metadata key that, set to `True`, lets `CodeMode` and `IPythonCodeMode` fold a code-execution tool into
+the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
+
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 
@@ -38,12 +42,14 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
     (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
     the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
+    `FOLD_INTO_CODE_MODE`.
     """
+    folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
     return (
         tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
         and not tool_def.unless_native
-        and not is_code_execution_tool(tool_def)
+        and (folds or not is_code_execution_tool(tool_def))
     )
 
 

@@ -144,6 +144,7 @@ with try_import() as imports_successful:
         InputContent,
         Message,
         RunAgentInput,
+        RunErrorEvent,
         StateSnapshotEvent,
         SystemMessage,
         TextInputContent,
@@ -11844,6 +11845,60 @@ async def test_server_message_history_resume_interrupt():
     assert conversation_view(requests[-1]) == snapshot(
         ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
     )
+
+
+def _delete_call(tool_call_id: str, path: str) -> ToolCall:
+    return ToolCall(id=tool_call_id, function=FunctionCall(name='delete_file', arguments=f'{{"path": "{path}"}}'))
+
+
+def _approve(*tool_call_ids: str) -> list[ResumeEntry]:
+    return [
+        ResumeEntry(interrupt_id=f'int-{tool_call_id}', status='resolved', payload={'approved': True})
+        for tool_call_id in tool_call_ids
+    ]
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('already_answered', id='approval-for-a-call-already-answered'),
+        pytest.param('not_made', id='call-the-model-did-not-make'),
+        pytest.param('beside_pending', id='call-the-model-did-not-make-beside-a-pending-one'),
+    ],
+)
+async def test_server_message_history_rejects_an_approval_for_a_call_not_pending(case: str):
+    """A `resume[]` entry only answers a tool call the stored history is waiting on; any other fails the run, which runs nothing."""
+    agent, requests, deleted = server_history_agent()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    stored = await _server_history_turn(agent, create_input(delete), None)
+    if case == 'already_answered':
+        called = AssistantMessage(id='a1', tool_calls=[_delete_call('del-1', 'a.txt')])
+        stored = await _server_history_turn(agent, create_input(delete, called, resume=_approve('del-1')), stored)
+        assert deleted == ['a.txt']
+        deleted.clear()
+        run_input = create_input(delete, called, resume=_approve('del-1'))
+    elif case == 'not_made':
+        called = AssistantMessage(id='a1', tool_calls=[_delete_call('del-2', 'b.txt')])
+        run_input = create_input(delete, called, resume=_approve('del-2'))
+    else:
+        called = AssistantMessage(id='a1', tool_calls=[_delete_call('del-1', 'a.txt'), _delete_call('del-2', 'b.txt')])
+        run_input = create_input(delete, called, resume=_approve('del-1', 'del-2'))
+    model_requests = len(requests)
+
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert deleted == []
+    assert len(requests) == model_requests
+    errors = [event.message for event in events if isinstance(event, RunErrorEvent)]
+    tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
+    assert errors == [
+        f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
+        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
+        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
+        'it, reload it from the server.'
+    ]
 
 
 async def test_dispatch_request_forwards_manage_message_history():

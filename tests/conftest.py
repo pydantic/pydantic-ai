@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import dataclasses
 import gc
@@ -8,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
@@ -74,6 +76,12 @@ from .function_model_prefix import RequestRecorder, check_function_model_prefix_
 # BlockBuster reports: https://github.com/pydantic/pydantic-ai/issues/7446.
 with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+
+# `openai` reads `aiohttp` package metadata at import (`openai/_vendor/httpx_aiohttp/transport.py`), a disk
+# read the detector reports when the first import happens inside an async test:
+# https://github.com/pydantic/pydantic-ai/issues/7660.
+with suppress(ImportError):
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
 
 T = TypeVar('T')
 
@@ -481,7 +489,114 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
+    # durable capability operations persist their results through them.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
+    # for a relative path. The harness relativizes absolute workspace paths with it.
+    ('os.path.abspath', '<frozen posixpath>', 'relpath'),
+    ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Spawning a Monty worker pool locates the worker binary, once per pool.
+    ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
+    # there, so starting and stopping the portal and each call through it wait on the portal thread.
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
+    ),
+    # Capabilities resolve their executables, and clients their package versions, once when they're built.
+    *(
+        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        for func in ('os.stat', 'os.access', 'os.path.abspath')
+        for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
+    ),
+    *(
+        (func, 'exa_py/utils.py', '_get_package_version')
+        for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
+    ),
+    # Each Sprites exec opens a websocket with no `ssl` argument, and its SDK has no way to pass one, so asyncio builds
+    # the default TLS context on the event loop, about 0.2 ms on the CI runners. Only the live tier reaches this code.
+    ('os.stat', 'sprites/websocket.py', 'start'),
+    # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
+    # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
+    ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
+    ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
+    ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
+    ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
+    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
+    # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
+    # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
+    *(
+        (func, 'browser_use/agent/service.py', '__init__')
+        for func in (
+            'os.stat',
+            'os.mkdir',
+            'os.listdir',
+            'os.unlink',
+            'os.rmdir',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedReader.read',
+        )
+    ),
+    # browser-use creates its config directories the first time it reads one, and its PostHog telemetry client
+    # resolves the current directory when it's built; both happen once per process.
+    ('os.stat', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.mkdir', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.getcwd', 'posthog/client.py', '__init__'),
+    # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
+    ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
+    # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
+    ('os.stat', 'pydantic_settings/sources/providers/dotenv.py', '_read_env_files'),
+    # An in-process MCP server reads its package version when a session initializes.
+    ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # jupyter-client starts and shuts down an IPython kernel with synchronous file I/O: it locates the
+    # kernelspec, reads config, and writes and removes the connection file, once per kernel.
+    *(
+        (func, 'jupyter_client/manager.py', ('_async_start_kernel', '_async_shutdown_kernel'))
+        for func in (
+            'os.stat',
+            'os.access',
+            'os.listdir',
+            'os.getcwd',
+            'os.path.abspath',
+            'os.read',
+            'os.remove',
+            'os.unlink',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedWriter.write',
+        )
+    ),
+    # The test blocks the agent loop on purpose, to check a run that never starts.
+    ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
+
+
+# Test doubles that serve a remote service from local files, processes or SQLite, synchronously. Any blocking call
+# made in one of their functions is the stand-in's own work; the harness code calling them stays checked.
+BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
+    'tests/harness/_postgres_sqlite.py',
+    'tests/harness/boxd_sandbox/fake_boxd.py',
+    'tests/harness/boxlite_sandbox/fake_boxlite.py',
+    'tests/harness/daytona_sandbox/fake_daytona.py',
+    'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/render_sandbox/workspace_helpers.py',
+)
+
+
+def _function_names(path: str) -> tuple[str, ...]:
+    """Every function name a frame running code in `path` can have."""
+    tree = ast.parse((Path(__file__).parent.parent / path).read_text(encoding='utf-8'))
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
+    return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
 def _configure_blockbuster(
@@ -500,6 +615,10 @@ def _configure_blockbuster(
     )
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
+    for path in BLOCKBUSTER_TEST_DOUBLES:
+        functions = _function_names(path)
+        for function in bb.functions.values():
+            function.can_block_in(path, functions)
     return bb
 
 
@@ -659,6 +778,25 @@ class UndrivableEventLoop(asyncio.AbstractEventLoop):
     """
 
 
+@pytest.fixture
+def fresh_event_loop_policy() -> Iterator[None]:
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
+
+    Policies are deprecated from Python 3.14, where the tests using this are skipped.
+    """
+    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
+    policy = asyncio.DefaultEventLoopPolicy()
+    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
+    try:
+        yield
+    finally:
+        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
+        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
+        if loop is not None:  # pragma: no branch
+            loop.close()
+        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
+
+
 @contextmanager
 def undrivable_event_loop() -> Generator[None]:
     """Make the current event loop one that can't be driven by the caller."""
@@ -700,12 +838,13 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture
 def young_gc() -> Iterator[None]:
-    """Limit the test's `gc.collect()` calls to the objects it creates.
+    """Limit the test's garbage collections to the objects it creates.
 
     A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
-    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
-    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
+    Freezing everything that exists before the test keeps it out of the collector's reach until
+    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
+    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
     """
     gc.freeze()
     try:
@@ -783,6 +922,26 @@ except ImportError:
     pass
 
 
+def _reserve_loopback_port() -> int:
+    """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
+
+    Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
+    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
+    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
+    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
+    dev-server ports the same way.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port: int = listener.getsockname()[1]
+        with socket.create_connection(('127.0.0.1', port)):
+            accepted, _ = listener.accept()
+            accepted.close()
+    return port
+
+
 @pytest.fixture(scope='session')
 def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
@@ -793,6 +952,7 @@ def prefect_test_server() -> Iterator[None]:
     short connect timeout that flakes on slow runners.
     """
     pytest.importorskip('prefect')
+    import prefect.testing.utilities
     from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
@@ -801,10 +961,15 @@ def prefect_test_server() -> Iterator[None]:
     # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
     # here reads what it records: task run states reach the API through the task engine.
     with (
+        pytest.MonkeyPatch.context() as monkeypatch,
         temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
-        prefect_test_harness(server_startup_timeout=120),
     ):
-        yield
+        # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
+        # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
+        # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
+        with prefect_test_harness(server_startup_timeout=120):
+            yield
     # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
     # warning is expected, rather than in whichever test the collector happens to run in.
     with warnings.catch_warnings():

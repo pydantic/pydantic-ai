@@ -4467,6 +4467,13 @@ async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None
         async for _ in stream:
             with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            # Changing a queued message would be lost on replay in the same way.
+            with pytest.raises(UserError, match=r'`ctx\.dequeue\(\)` is not supported inside a durable task'):
+                ctx.dequeue('some-enqueue-id')
+            with pytest.raises(
+                UserError, match=r'`ctx\.set_enqueue_priority\(\)` is not supported inside a durable task'
+            ):
+                ctx.set_enqueue_priority('some-enqueue-id', 'asap')
             # The ambient current context is guarded too, so reading it instead of the argument
             # doesn't bypass the guard.
             ambient = get_current_run_context()

@@ -71,8 +71,13 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part
+from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytest.importorskip('starlette')
 
@@ -80,7 +85,14 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
-from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
+from pydantic_ai.ui import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    MessagesBuilder,
+    NativeEvent,
+    OnCompleteFunc,
+    UIAdapter,
+    UIEventStream,
+)
 from pydantic_ai.ui._adapter import (
     _ServerHeldTurn,  # pyright: ignore[reportPrivateUsage]
     _take_new_turn,  # pyright: ignore[reportPrivateUsage]
@@ -1460,6 +1472,35 @@ async def test_run_stream_on_complete_error():
             "<error type='ValueError'>Faulty on_complete</error>",
             '</stream>',
         ]
+    )
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_run_stream_on_complete_error_is_recorded_on_current_span():
+    """An `on_complete` failure runs after the agent run's span has ended, so it's recorded on the span current then.
+
+    That's the HTTP request's span on an instrumented server. Only the exception's type is recorded: the stream doesn't
+    know the run's `include_content` setting, and the message can quote the run's output.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    def raise_error(run_result: AgentRunResult[Any]) -> None:
+        raise ValueError(f'Could not save {run_result.output!r}')
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    adapter = DummyUIAdapter(agent, request)
+    with provider.get_tracer('test').start_as_current_span('POST /chat'):
+        events = [event async for event in adapter.run_stream(on_complete=raise_error)]
+
+    assert events[-2:] == snapshot(
+        ["<error type='ValueError'>Could not save 'success (no tool calls)'</error>", '</stream>']
+    )
+    [span] = exporter.get_finished_spans()
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == snapshot(
+        [('exception', {'exception.type': 'ValueError', 'exception.escaped': 'False'})]
     )
 
 
@@ -3352,3 +3393,37 @@ async def test_rejection_message_names_the_normalized_media_type():
         )
 
     assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')
+
+
+def test_messages_builder_extends_its_own_parts_in_place():
+    """Each `add` to the same message appends to one list rather than copying it, so loading stays linear.
+
+    A unit test: the adapters only expose the finished messages, where a copy per part is invisible.
+    """
+    builder = MessagesBuilder()
+    builder.add(TextPart('a'))
+    parts = builder.messages[0].parts
+    builder.add(TextPart('b'))
+    builder.add(TextPart('c'))
+    builder.add(UserPromptPart('d'))
+    request_parts = builder.messages[1].parts
+    builder.add(UserPromptPart('e'))
+    builder.add(UserPromptPart('f'))
+
+    assert builder.messages[0].parts is parts
+    assert builder.messages[1].parts is request_parts
+    assert [len(message.parts) for message in builder.messages] == [3, 3]
+
+
+def test_messages_builder_copies_parts_it_did_not_make():
+    """A message passed in keeps its own parts list; `add` extends a copy of it."""
+    own_parts = [TextPart('a')]
+    message = ModelResponse(parts=own_parts)
+    builder = MessagesBuilder(messages=[message])
+    checkpoint = builder.checkpoint()
+    builder.add(TextPart('b'))
+    builder.add(TextPart('c'))
+
+    assert own_parts == [TextPart('a')]
+    assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
+    assert builder.last_modified(checkpoint, of_type=ModelResponse) is message

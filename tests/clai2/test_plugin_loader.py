@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -889,6 +890,44 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
         )
 
 
+@pytest.mark.parametrize('under_home', [True, False])
+async def test_repo_context_builtin_walks_up_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, under_home: bool
+) -> None:
+    # Under home the walk stops at home; elsewhere it stops at the repository root.
+    base = Path.home() if under_home else tmp_path / 'srv'
+    repo = base / 'repo'
+    workspace = repo / 'pkg'
+    workspace.mkdir(parents=True)
+    (repo / '.git').mkdir()
+    (workspace / 'AGENTS.md').write_text('project\n')
+    (repo / 'AGENTS.md').write_text('repo root\n')
+    (base / 'AGENTS.md').write_text('above the repo\n')
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+
+    async def instructions() -> str:
+        model = TestModel(call_tools=[])
+        await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+            'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert model.last_model_request_parameters is not None
+        return '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+
+    text = await instructions()
+    assert text.index('repo root') < text.index('project')
+    assert ('above the repo' in text) is under_home
+
+    off = '{"walk_up": false}'
+    assert await harness.loader.command(['add', 'repo_context', repo_context.factory, off]) == (
+        'Replaced built-in repo_context.'
+    )
+    text = await instructions()
+    assert 'project' in text and 'repo root' not in text
+
+
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])
 async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
     harness = Harness(tmp_path)
@@ -1462,7 +1501,7 @@ async def test_repo_context_user_boundaries_reach_the_model(
     (workspace / 'AGENTS.md').write_text('Workspace policy sentinel.')
     monkeypatch.chdir(workspace)
     values: dict[str, JsonValue] = {
-        'repo_context.walk_up_root': {'default': '~', 'ancestor': str(parent), 'nonancestor': str(home)}[root],
+        'repo_context.walk_up_roots': [{'default': '~', 'ancestor': str(parent), 'nonancestor': str(home)}[root]],
         'repo_context.autoload_symlink_roots': [str(tooling)] if allow_target else [],
     }
     host = PluginHost[None](
@@ -1483,6 +1522,56 @@ async def test_repo_context_user_boundaries_reach_the_model(
     if location == 'symlink' and parent_loaded:
         assert '../AGENTS.md' in text
         assert 'shared.md' not in text, 'external instructions retain the scanned entry label'
+
+
+@pytest.mark.parametrize(
+    ('roots', 'workspace_dir', 'loaded'),
+    [
+        pytest.param(['~/projects'], 'home/projects/team/ws', ['projects', 'team', 'ws'], id='one-root'),
+        pytest.param(
+            ['{tmp}/home/projects', '{tmp}/home/projects/team'], 'home/projects/team/ws', ['team', 'ws'], id='deepest'
+        ),
+        pytest.param(['{tmp}/home/projects/team', '~'], 'home/projects/team/ws', ['team', 'ws'], id='deepest-first'),
+        pytest.param(
+            ['~', '{tmp}/volume'], 'home/projects/team/ws', ['home', 'projects', 'team', 'ws'], id='home-tree'
+        ),
+        pytest.param(['~', '{tmp}/volume'], 'volume/repo/ws', ['volume', 'repo', 'ws'], id='volume-tree'),
+        pytest.param(['~', '{tmp}/link'], 'home/projects/team/ws', ['projects', 'team', 'ws'], id='symlinked-root'),
+        pytest.param(
+            ['~', '{tmp}/loop'], 'home/projects/team/ws', ['home', 'projects', 'team', 'ws'], id='symlink-loop'
+        ),
+        pytest.param(['{tmp}/volume'], 'home/projects/team/ws', ['ws'], id='no-containing-root'),
+        pytest.param([], 'home/projects/team/ws', ['ws'], id='no-roots'),
+    ],
+)
+async def test_repo_context_walks_up_to_the_nearest_listed_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roots: list[str], workspace_dir: str, loaded: list[str]
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    workspace = tmp_path / workspace_dir
+    workspace.mkdir(parents=True)
+    (tmp_path / 'link').symlink_to(tmp_path / 'home' / 'projects', target_is_directory=True)
+    (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
+    for directory in [Path(workspace_dir), *Path(workspace_dir).parents[:-1]]:
+        (tmp_path / directory / 'AGENTS.md').write_text(f'{directory.name} sentinel.')
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_roots': [root.format(tmp=tmp_path) for root in roots],
+        'repo_context.autoload_symlink_roots': [],
+    }
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': True},
+        setting=values.__getitem__,
+        workspace=lambda: workspace,
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=load_plugin(RepoContextPlugin, host).capabilities).run(
+        'nearest root probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert re.findall(r'(\w+) sentinel\.', text) == loaded
 
 
 @pytest.mark.moves_cache_prefix(reason='User instruction boundaries deliberately change between independent runs.')
@@ -1512,7 +1601,7 @@ async def test_repo_context_uses_live_user_settings_on_the_next_run(
     agent = Agent(model, deps_type=type(None), capabilities=loaded.capabilities)
     for step, expected in enumerate([False, False, True, False, True, False]):
         if step == 1:
-            store.set('repo_context.walk_up_root', str(parent))
+            store.set('repo_context.walk_up_roots', [str(parent)])
         elif step == 2:
             store.set('repo_context.autoload_symlink_roots', [str(tooling)])
         elif step == 3:
@@ -1520,7 +1609,7 @@ async def test_repo_context_uses_live_user_settings_on_the_next_run(
         elif step == 4:
             store.set('repo_context.autoload_symlink_roots', [str(tooling)])
         elif step == 5:
-            store.reset('repo_context.walk_up_root')
+            store.reset('repo_context.walk_up_roots')
         await agent.run(f'live boundary probe {step}', workspace=LocalWorkspaceBackend(working_dir=workspace))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
@@ -1559,7 +1648,7 @@ async def test_repo_context_without_clai_settings_keeps_home_defaults(
     assert 'Unauthorized fallback sentinel.' not in text
 
 
-@pytest.mark.parametrize('field', ['walk_up_root', 'autoload_symlink_roots'])
+@pytest.mark.parametrize('field', ['walk_up_roots', 'autoload_symlink_roots'])
 async def test_repo_context_plugin_cannot_supply_user_boundaries(tmp_path: Path, field: str) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(PluginError, match='extra_forbidden'):
@@ -1568,7 +1657,7 @@ async def test_repo_context_plugin_cannot_supply_user_boundaries(tmp_path: Path,
                 'add',
                 'repo_context',
                 'pydantic_clai2.builtin_plugins.repo_context',
-                json.dumps({field: '/' if field == 'walk_up_root' else ['/']}),
+                json.dumps({field: ['/']}),
             ]
         )
 
@@ -1587,7 +1676,7 @@ async def test_repo_context_authorizes_workspace_links_independently_of_walk_up(
     monkeypatch.setenv('HOME', str(home))
     monkeypatch.chdir(workspace)
     values: dict[str, JsonValue] = {
-        'repo_context.walk_up_root': '~',
+        'repo_context.walk_up_roots': ['~'],
         'repo_context.autoload_symlink_roots': ['~/shared tooling'],
     }
     loaded = load_plugin(
