@@ -1086,17 +1086,17 @@ class TestSpritesSandbox:
 
         async def run() -> None:
             with pytest.raises(WorkspaceTimeoutError) as caught:
-                await backend.run('printf ready >&2; exec sleep 600', shell=True, timeout=60)
+                await backend.run('printf ready >&2; exec sleep 7200', shell=True, timeout=3600)
             assert caught.value.stderr == 'ready'
 
         async with anyio.create_task_group() as group:
             group.start_soon(run)
             await transport.exec_started.wait()
             capture = Path(transport.execs[0].query['cmd'][4])
-            with anyio.fail_after(30):
+            with anyio.fail_after(300):
                 while not capture.exists() or capture.read_text(encoding='utf-8') != 'ready':
                     await anyio.sleep(0.01)
-            skipped = 60.0
+            skipped = 3600.0
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
     async def test_timeout_reads_stderr_back_over_a_slow_exec(

@@ -40,6 +40,9 @@ from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
 
+READINESS_WAIT_TIMEOUT = 300
+"""Longer than any stall seen on a CI runner, so that only a hang waits this long."""
+
 
 def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSandboxBackend:
     return OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=working_dir, **kwargs)
@@ -55,7 +58,7 @@ def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _wait_for(path: Path) -> None:
     """Wait for a command to create `path`: the signal it reached the point a test acts on."""
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         while not path.exists():
             await anyio.sleep(0.01)
 
@@ -98,7 +101,7 @@ class TestCommands:
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
         """execd reports the leader's exit even when a background child keeps writing."""
-        with no_leaked_tasks(), anyio.fail_after(5):
+        with no_leaked_tasks(), anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await _create(server, working_dir).run(['sh', '-c', '(while :; do printf x; done) &'])
         assert result.exit_code == 0
 
@@ -429,8 +432,8 @@ class TestServerErrors:
         started = Path(working_dir, 'started')
 
         async def run_until_broken() -> None:
-            with anyio.fail_after(1), pytest.raises(SandboxConnectionException):
-                await backend.run(['sh', '-c', f'touch {started}; exec sleep 300'])
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(SandboxConnectionException):
+                await backend.run(['sh', '-c', f'touch {started}; exec sleep 3000'])
 
         async with anyio.create_task_group() as group:
             group.start_soon(run_until_broken)

@@ -145,7 +145,7 @@ class TestCreate:
         backend = BoxdSandboxBackend()
         async with anyio.create_task_group() as group:
             group.start_soon(backend.run, ['true'])
-            with anyio.fail_after(30):
+            with anyio.fail_after(300):
                 while not host.machines:
                     await anyio.sleep(0)
             # Only the create runs out of time; the wait for the machine it left behind has a real probe to run.

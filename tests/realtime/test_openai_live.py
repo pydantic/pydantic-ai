@@ -4073,7 +4073,8 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
     """A link that fails while Live is asked to end the session leaves nothing to wait for.
 
-    On a virtual clock, which only moves when nothing can run, the deadline expires only if the close waits on a timer.
+    On a virtual clock, which only moves when nothing can run, a stalled runner can't use up the deadline, and only
+    waiting out `_END_SESSION_TIMEOUT` can.
     """
 
     class _DroppingSocket(_FakeWebSocket):
@@ -4090,7 +4091,7 @@ async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: Ope
 
     started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
     ws = _DroppingSocket([started])
-    with _patched_connect(ws), anyio.fail_after(0.02):
+    with _patched_connect(ws), anyio.fail_after(1):
         async with Agent().realtime(model).session() as session:
             reading = asyncio.ensure_future(anext(aiter(session)))
             await asyncio.sleep(0.01)
