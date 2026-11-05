@@ -645,6 +645,38 @@ def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> No
         assert 'plugin_requirements' in tables
 
 
+def test_database_without_approved_files_keeps_its_approvals_and_gains_the_table(tmp_path: Path) -> None:
+    """A database from before CLAI kept approved file contents opens unchanged; they go in a table older builds never read."""
+    path = tmp_path / 'config.db'
+    helper = Path('/work/repo/plugins/helper.py')
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'helper',
+                f'{{"id": "helper", "factory": "helper", "path": "{helper}", "enabled": true, "settings": {{}}}}',
+            ),
+        )
+    store = SettingsStore(path)
+    approval = PluginSettings(id='helper', factory='helper', path=str(helper))
+    assert store.plugins() == [approval]
+    assert store.approved_sha256(helper) is None, 'loading asks for this approval again'
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version; approved contents live in a table they never read.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.approve_files({helper: 'abc'})
+    reopened = SettingsStore(path)
+    assert reopened.approved_sha256(helper) == 'abc'
+    assert reopened.plugins() == [approval], 'the declaration older builds read is untouched'
+
+
 def test_database_without_chains_keeps_models_and_gains_chains(tmp_path: Path) -> None:
     """A database from before fallback chains and auth profiles keeps its models and settings unchanged."""
     path = tmp_path / 'config.db'

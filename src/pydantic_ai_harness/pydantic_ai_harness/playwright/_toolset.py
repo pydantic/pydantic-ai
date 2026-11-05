@@ -122,6 +122,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
     # `TargetClosedError` is not re-exported from `playwright.async_api`; see the module docstring.
@@ -176,9 +177,6 @@ One budget for the whole sweep rather than one per frame: a page can carry many
 frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
-
-_CHARS_PER_TOKEN = 4
-"""Characters-per-token estimate used to turn a token budget into a character cap."""
 
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
@@ -672,9 +670,13 @@ class EgressPolicy:
             return _PRIVATE_ADDRESS_REASON
         if host is None:
             return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        return self._domain_reason(host, request.kind)
+
+    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
+        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
         if self._matches(host, self.blocked_domains):
             return 'domain in blocked_domains'
-        if request.kind in self.allowlist_reach and not self._permitted(host):
+        if kind in self.allowlist_reach and not self._permitted(host):
             return 'domain not in allowed_domains'
         return None
 
@@ -698,12 +700,19 @@ class EgressPolicy:
 
         Asked before `refuse` so that `refuse` stays synchronous: an override needs
         no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none.
+        happens outside it. A host that is already an address needs none, and
+        neither does one the domain lists refuse, since `refuse` refuses it
+        whatever the host resolves to. That holds only for this
+        class's own `refuse`: an override may permit what the lists refuse, so its
+        hosts are still resolved. An override that refuses some hosts by name should
+        override this too, returning `False` for them, so they are not looked up.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
         host = _url_host(request.url)
-        return host is not None and not _is_ip_literal(host)
+        if host is None or _is_ip_literal(host):
+            return False
+        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
 
     def enforced(self) -> bool:
         """Whether anything is restricted, i.e. whether a route guard is worth installing."""
@@ -1686,7 +1695,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     def _truncate_output(self, text: str) -> str:
         """Apply the configured token budget to a model-facing textual result."""
-        return _truncate(text, self._max_content_tokens * _CHARS_PER_TOKEN)
+        return _truncate(text, self._max_content_tokens * CHARS_PER_TOKEN)
 
     def _error(self, message: str) -> str:
         """Bound an error result and record the failure on the operation's span.
@@ -1708,7 +1717,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         result should do. A note too large for the budget on its own wins the
         whole budget: it carries why the result is missing.
         """
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         separator = '\n\n'
         room = budget - len(note) - len(separator)
         if room <= 0:
@@ -2613,7 +2622,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if not events:
             return self._truncate_output(f'No {label} recorded.')
         lines = [event.describe() for event in events]
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         kept: list[str] = []
         used = 0
         for line in reversed(lines):

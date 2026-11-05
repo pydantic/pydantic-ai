@@ -71,8 +71,10 @@ except ImportError as _import_error:
 
 logger = logging.getLogger(__name__)
 
-_AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
-_MISSING_KEY_MESSAGE = 'No E2B API key found. Set E2B_API_KEY in the environment.'
+_AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+_MISSING_KEY_MESSAGE = (
+    'No E2B API key found. Set E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+)
 
 
 def _auth_error(error: e2b.AuthenticationException) -> WorkspaceUnavailableError:
@@ -227,6 +229,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
+        client: An `e2b.E2B` to create or attach with, for its API key and other connection
+            settings; `E2B_API_KEY` and the rest of the environment when `None`.
         ref: Identity of an existing sandbox to attach to on first use.
         template: E2B template name or ID a newly created sandbox runs; E2B's default when `None`.
             An unknown template raises `WorkspaceUnavailableError` on first use. Custom templates
@@ -248,6 +252,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self,
         *,
         sandbox: e2b.AsyncSandbox | None = None,
+        client: e2b.E2B | None = None,
         ref: WorkspaceRef | None = None,
         template: str | None = None,
         allow_internet_access: bool = True,
@@ -264,6 +269,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
+        self._client = client
         self._user = 'user'
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path: the configured one, or the
@@ -498,7 +504,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         with anyio.move_on_after(_CREATE_TIMEOUT, shield=True):
             async with self._sdk_errors(None, 'Could not start E2B sandbox'):
                 try:
-                    return await e2b.AsyncSandbox.create(
+                    return await _sandboxes(self._client).create(
                         template=self._template,
                         timeout=self._sandbox_timeout,
                         envs=dict(self._env) if self._env is not None else None,
@@ -531,7 +537,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             try:
                 # Without `timeout`, a resumed sandbox gets E2B's 300 seconds; a running one keeps
                 # the longer of its current and the given lifetime.
-                return await e2b.AsyncSandbox.connect(sandbox_id, timeout=self._sandbox_timeout)
+                return await _sandboxes(self._client).connect(sandbox_id, timeout=self._sandbox_timeout)
             except e2b.SandboxException as error:
                 if type(error) is not e2b.SandboxException or not _is_lifetime_refusal(error):
                     raise
@@ -723,7 +729,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
 
 
-async def kill_sandbox(sandbox_id: str) -> None:
+def _sandboxes(client: e2b.E2B | None) -> type[e2b.AsyncSandbox]:
+    """`e2b.AsyncSandbox`, bound to `client`'s connection settings when there is one."""
+    return client.AsyncSandbox if client is not None else e2b.AsyncSandbox
+
+
+async def kill_sandbox(sandbox_id: str, *, client: e2b.E2B | None = None) -> None:
     """Kill a sandbox by ID without connecting: connecting would resume a paused sandbox and bill it.
 
     A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
@@ -731,7 +742,7 @@ async def kill_sandbox(sandbox_id: str) -> None:
     """
     require_asyncio(_ASYNCIO_ONLY)
     try:
-        await e2b.AsyncSandbox.kill(sandbox_id)
+        await _sandboxes(client).kill(sandbox_id)
     except e2b.AuthenticationException as error:
         raise _auth_error(error) from error
 

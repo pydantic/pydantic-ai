@@ -84,6 +84,36 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        snapshot: str | None = None,
+        auto_stop_interval: int | None = None,
+        allow_internet_access: bool = True,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> DaytonaSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the
+        variadic base `from_spec`, because `client`'s `AsyncDaytona` hint is a `TYPE_CHECKING` import, and
+        publishes only the bare `'DaytonaSandbox'`.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            snapshot=snapshot,
+            auto_stop_interval=auto_stop_interval,
+            allow_internet_access=allow_internet_access,
+            working_dir=working_dir,
+            env=env,
+        )
+
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
         """Construct a lazy backend for an existing sandbox."""
         return DaytonaSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)

@@ -69,6 +69,31 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        runtime: str | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> SpritesSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
+        `client`'s `AsyncSpritesClient` hint has no JSON schema, so only the bare `'SpritesSandbox'` is published.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            runtime=runtime,
+            working_dir=working_dir,
+            env=env,
+        )
+
     def backend(self, ref: WorkspaceRef) -> SpritesSandboxBackend:
         """Construct a lazy backend for an existing Sprite."""
         return SpritesSandboxBackend(

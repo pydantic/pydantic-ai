@@ -163,20 +163,23 @@ built-in to its defaults rather than removing it. A repository's
 just above the built-ins, and start off until the user runs /plugins enable
 NAME, so repository code never runs without that approval. Its "hooks" table
 (commands run before and after tool calls and as a turn starts and ends) is the
-project plugin project_hooks, approved the same way; any change to the table
-needs approval again. The user's own table is the settings of the built-in
-hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
+project plugin project_hooks, approved the same way; any change to the table,
+or to a program inside the project that a list command runs, such as
+["./scripts/check.sh"],
+needs approval again (a string command is approved as written), and so does
+any change to a project plugin's file. The user's own table is the settings of
+the built-in hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
 ### Repository instruction boundaries
 
-Use the built-in repo_context plugin's `walk_up` option to enable ancestor
-instructions; its default is false. List the inclusive stops with
+The built-in repo_context plugin's `walk_up` option, on by default, loads ancestor
+instructions. List the inclusive stops with
 `/set repo_context.walk_up_roots '["~", "/srv/projects"]'` (default `["~"]`,
 home): roots are resolved, following symlinks, and the walk stops at the nearest
-one containing the workspace, or scans only the workspace when none does.
+one containing the workspace, or at the repository root when none does.
 Authorize shared instruction targets with
 `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
 
@@ -690,7 +693,8 @@ For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
 /plugins reports that plugins are off. Nothing saved changes, so the next plain
 clai2 loads plugins as before. The agent keeps its own model unless -m or
-CLAI_MODEL selects another; a saved or project model does not replace it. -p runs
+CLAI_MODEL selects another; a saved or project model does not replace it. Code
+mode starts off, whatever is saved, until /set run.code_mode true. -p runs
 the same agent headlessly, --resume and --worktree work as usual, and --agent
 cannot be combined with the config or plugins subcommands. A launcher is still the
 way to pass deps, plugins, or builtin_plugins.

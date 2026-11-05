@@ -15,6 +15,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -274,3 +275,32 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
     source = host.add()
     await BoxdSandbox[None]().fork(WorkspaceRef(provider='boxd', id=source.id))
     assert [client.closed for client in host.clients] == [True]
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
+    assert sorted(definitions['spec_params_BoxdSandbox']['properties']) == [
+        'auto_suspend_timeout',
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'org',
+        'snapshot',
+        'vcpu',
+        'working_dir',
+    ]
+
+
+@pytest.mark.parametrize('size', [{'snapshot': 'base'}, {'vcpu': 2}])
+def test_from_spec_forwards_the_spec_fields(size: dict[str, Any]) -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'org': 'acme',
+        'auto_suspend_timeout': 30,
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        **size,
+    }
+    assert BoxdSandbox[None].from_spec(**spec_fields) == BoxdSandbox[None](**spec_fields)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from render import Options, Retry, TaskContext, Workflows
 from render.workflows import TaskDefinition
@@ -20,6 +20,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.workspaces._telemetry import workspace_telemetry_scope
+from pydantic_ai_harness._typeguards import is_object_dict
 
 from ._compat import (
     BoundDurableOperation,
@@ -82,15 +83,11 @@ class _RegisteredTask:
         return self.definition
 
 
-def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
-
-
 def _completed_tool_result(operation_id: object, payload: object) -> bool:
     """Whether a wrapped tool result represents a completed call rather than control flow."""
     if not isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId):
         return True
-    return _is_object_dict(payload) and payload.get('kind') in {'tool_return', 'tool_content_result'}
+    return is_object_dict(payload) and payload.get('kind') in {'tool_return', 'tool_content_result'}
 
 
 class RenderBoundOperation(

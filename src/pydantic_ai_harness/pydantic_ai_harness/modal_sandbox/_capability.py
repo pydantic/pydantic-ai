@@ -190,6 +190,14 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
+    client: modal.Client | None = None
+    """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
+    Modal's client from the environment or config when `None`. A spec cannot set it.
+
+    To use different credentials for each user, supply the workspace from a capability of your own, which can build
+    the client from the run's `deps` and pass it to `ModalSandboxBackend`.
+    """
+
     warn_if_no_tools: bool = True
     """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
@@ -220,6 +228,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
+        client: modal.Client | None = None,
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -257,6 +266,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.idle_timeout = idle_timeout
         self.working_dir = working_dir
         self.env = env
+        self.client = client
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
         self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
@@ -302,7 +312,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, client=self.client)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate a sandbox by ID without running commands or restoring its workspace.
@@ -311,7 +321,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         """
         check_provider(ref, 'modal')
         with lifecycle_span('destroy', ref):
-            await terminate_sandbox(ref.id)
+            await terminate_sandbox(ref.id, client=self.client)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
@@ -327,6 +337,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            client=self.client,
         )
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:

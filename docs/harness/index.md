@@ -9,13 +9,11 @@ description: "Pydantic AI Harness is the official capability library for Pydanti
 
 [![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
 
-**Pydantic AI Harness** is the official [capability](../capabilities/overview.md) and harness library for [Pydantic AI](../index.md). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](../models/overview.md), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) that holds up in hour ten, and [durable execution](../durable_execution/overview.md) that survives a restart. **Pydantic AI Harness** ships that harness.
+**Pydantic AI Harness** is the official [capability](../capabilities/overview.md) and harness library for [Pydantic AI](../index.md). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](../models/overview.md), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) for long runs, and [durable execution](../durable_execution/overview.md) that survives a restart. **Pydantic AI Harness** ships that harness.
 
-Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [80+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves capabilities combined: they come apart the way they went together. Snap on a single block, compose your own stack, or start from the whole coding agent and take it apart later.
+Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [80+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
 ## Quick start
-
-Install with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder,anthropic]"
@@ -36,7 +34,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Render, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
 
 With [Modal](modal-sandbox.md), for example:
 
@@ -79,7 +77,7 @@ agent = Agent(
 
 [Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](../capabilities/web-fetch.md), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way.
 
-## No magic: it's capabilities all the way down
+## Built from capabilities
 
 `Coder` is a regular combined capability: [`FileSystem`](filesystem.md) with five of its tools and content hashes off, [`Shell`](shell.md) with its persistent `shell` tool and no allowlist, [`RepoContext`](repo-context.md), [`SubAgents`](subagents.md) delegating to the agent itself, [`ClearToolResults`](compaction.md), and a bounded [`ToolOutputLimits`](tool-output-limits.md), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](coder.md) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
 
@@ -135,6 +133,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
 | [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
@@ -206,11 +205,11 @@ How the agent thinks and divides the work.
 
 ### Context management
 
-How the agent spends its context window: the difference between an agent that degrades over a long run and one that doesn't, and between paying for tokens N times or once.
+How the agent spends its context window over a long run, and how often it pays for the same tokens.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Code Mode](code-mode.md) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window. The answer to tool-call token bloat |
+| [Code Mode](code-mode.md) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](ipython-code-mode.md) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
 | [Tool Search](../capabilities/tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Compaction](../capabilities/compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
@@ -225,6 +224,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](memory.md) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
+| [Pixeltable](pixeltable.md) | Harness | Read-only, allowlisted tools over Pixeltable tables and embedding indexes, plus a Pixeltable `MemoryStore` |
 | [Conversation Search](conversation-search.md) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](skills.md) | Harness | Load [Agent Skill](../capabilities/on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
@@ -263,7 +263,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures, on nine engines: [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), [Prefect](../durable_execution/prefect.md), [Restate](../durable_execution/restate.md), [Airflow](../durable_execution/airflow.md), and the four Harness engines in the next rows. See the [workspace guide](../workspace.md#durable-execution) for Coder, Shell, and FileSystem |
+| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures, on nine engines: [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), [Prefect](../durable_execution/prefect.md), [Restate](../durable_execution/restate.md), [Airflow](../durable_execution/airflow.md), and the Harness engines AWS Lambda, Absurd, pgtask, and Azure Durable Task below. See the [workspace guide](../workspace.md#durable-execution) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Absurd durability](absurd.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [pgtask durability](pgtask.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
@@ -297,7 +297,7 @@ New to Pydantic AI itself? Start with [its docs](../index.md): the agent you mou
 
 ## Observability
 
-Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](../logfire.md#using-logfire), the easiest way to see it during development.
+Core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](../logfire.md#using-logfire).
 
 ## Build your own
 
@@ -305,7 +305,7 @@ Everything the harness does is observable: core's [Instrumentation](../capabilit
 
 ## Version policy
 
-Pydantic AI Harness uses **0.x versioning**, and that's a statement about API stability, not maturity: these capabilities are tested end-to-end and meant for production use, but their APIs may still move between minor releases (0.1 -> 0.2): renamed parameters, changed defaults, restructured APIs, always with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](../version-policy.md), is what lets capabilities iterate at the speed the field moves.
+Pydantic AI Harness uses **0.x versioning** to signal API stability, not maturity: the capabilities are tested end-to-end and meant for production use, but their APIs may change between minor releases (0.1 -> 0.2) through renamed parameters, changed defaults, or restructured APIs, with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](../version-policy.md), lets capabilities change faster than core.
 
 ## Further reading
 
