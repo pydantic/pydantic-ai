@@ -693,7 +693,8 @@ For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
 /plugins reports that plugins are off. Nothing saved changes, so the next plain
 clai2 loads plugins as before. The agent keeps its own model unless -m or
-CLAI_MODEL selects another; a saved or project model does not replace it. -p runs
+CLAI_MODEL selects another; a saved or project model does not replace it. Code
+mode starts off, whatever is saved, until /set run.code_mode true. -p runs
 the same agent headlessly, --resume and --worktree work as usual, and --agent
 cannot be combined with the config or plugins subcommands. A launcher is still the
 way to pass deps, plugins, or builtin_plugins.

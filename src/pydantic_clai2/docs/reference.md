@@ -3177,7 +3177,8 @@ name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
 off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
-keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+keeps its own model unless `-m` or `CLAI_MODEL` selects another, and code mode
+starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--resume`,
 and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
 To pass deps or plugins, write a launcher that calls `chat` (see
 `customization.md`).
