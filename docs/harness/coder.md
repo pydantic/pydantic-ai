@@ -237,7 +237,7 @@ behavior with heredocs rather than new files; and finish long-running work befor
 |---|---|
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |
-| `'high'` (default) | Asks only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
+| `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
 
 A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
