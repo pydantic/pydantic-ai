@@ -559,6 +559,13 @@ class GoogleInteractionsModel(Model[Client]):
     async def _map_file(self, item: FileUrl | BinaryContent | UploadedFile) -> gi.ContentParam:
         if isinstance(item, UploadedFile):
             self._validate_uploaded_file_provider(item)
+            if self.client.vertexai:
+                if not item.file_id.startswith('gs://'):
+                    raise UserError('UploadedFile for Google Interactions on Google Cloud must use a GCS URI (gs://).')
+            elif not item.file_id.startswith('https://'):
+                raise UserError(
+                    'UploadedFile for Google Interactions on the Gemini API must use a Files API URI (https://).'
+                )
             value: dict[str, object] = {'uri': item.file_id, 'mime_type': item.media_type}
         elif isinstance(item, BinaryContent):
             value = {'data': base64.b64encode(item.data).decode(), 'mime_type': item.media_type}

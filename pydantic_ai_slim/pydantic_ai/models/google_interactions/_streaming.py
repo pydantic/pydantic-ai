@@ -36,27 +36,58 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _completed: bool = False
     _server_calls: set[str] = field(default_factory=set[str])
     _media_steps: set[int] = field(init=False, default_factory=set[int])
+    _deferred_events: list[gi.InteractionSSEEvent] = field(init=False, default_factory=list[gi.InteractionSSEEvent])
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._response:
-            if isinstance(event, gi.StepStart):
-                events = await self._map_start(event)
-            elif isinstance(event, gi.StepDelta):
-                events = self._map_delta(event)
-            elif isinstance(event, gi.StepStop):
-                events = await self._map_stop(event)
-            elif isinstance(event, gi.InteractionCompletedEvent):
-                events = self._map_completed(event)
-            elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
-                continue
-            elif isinstance(event, gi.ErrorEvent):
-                raise UnexpectedModelBehavior(f'Google Interactions stream failed: {event}')
-            else:
-                raise UnexpectedModelBehavior(f'Unexpected Google Interactions stream event: {event}')
-            for result in events:
-                yield result
+            for value in self._ready_events(event):
+                for result in await self._map_event(value):
+                    yield result
         if not self._completed:
             raise UnexpectedModelBehavior('Google Interactions stream ended before `interaction.completed`.')
+
+    def _ready_events(self, event: gi.InteractionSSEEvent) -> Iterable[gi.InteractionSSEEvent]:
+        if isinstance(event, gi.ErrorEvent) or not (self._deferred_events or self._is_mcp_candidate(event)):
+            return (event,)
+        # A namespace alone does not prove execution. Retain event order until results establish it.
+        self._deferred_events.append(event)
+        if not isinstance(event, gi.InteractionCompletedEvent):
+            return ()
+        self._server_calls.update(
+            value.step.call_id
+            for value in self._deferred_events
+            if isinstance(value, gi.StepStart) and isinstance(value.step, gi.FunctionResultStep)
+        )
+        events = self._deferred_events
+        self._deferred_events = []
+        return events
+
+    def _is_mcp_candidate(self, event: gi.InteractionSSEEvent) -> bool:
+        return (
+            isinstance(event, gi.StepStart)
+            and isinstance(event.step, gi.FunctionCallStep)
+            and event.step.name not in self.model_request_parameters.declared_tool_defs
+            and any(
+                isinstance(tool, MCPServerTool) and event.step.name.startswith(f'{tool.id}:')
+                for tool in self.model_request_parameters.native_tools
+            )
+        )
+
+    async def _map_event(self, event: gi.InteractionSSEEvent) -> Iterable[ModelResponseStreamEvent]:
+        if isinstance(event, gi.StepStart):
+            return await self._map_start(event)
+        elif isinstance(event, gi.StepDelta):
+            return self._map_delta(event)
+        elif isinstance(event, gi.StepStop):
+            return await self._map_stop(event)
+        elif isinstance(event, gi.InteractionCompletedEvent):
+            return self._map_completed(event)
+        elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
+            return ()
+        elif isinstance(event, gi.ErrorEvent):
+            raise UnexpectedModelBehavior(f'Google Interactions stream failed: {event}')
+        else:
+            raise UnexpectedModelBehavior(f'Unexpected Google Interactions stream event: {event}')
 
     async def _map_start(self, event: gi.StepStart) -> list[ModelResponseStreamEvent]:
         step = event.step
@@ -64,12 +95,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             step.model_dump(mode='json', by_alias=True, exclude_none=True)
         )
         if isinstance(step, gi.FunctionCallStep):
-            # The API also emits MCP calls as function steps in the configured server's namespace.
-            if step.name not in self.model_request_parameters.declared_tool_defs and any(
-                isinstance(tool, MCPServerTool) and step.name.startswith(f'{tool.id}:')
-                for tool in self.model_request_parameters.native_tools
-            ):
-                self._server_calls.add(step.id)
+            if step.id in self._server_calls:
                 return []
             return [
                 self._parts_manager.handle_tool_call_part(

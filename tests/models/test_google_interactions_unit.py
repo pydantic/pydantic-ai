@@ -61,6 +61,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
@@ -748,7 +749,14 @@ async def test_sdk_response_mode_guard(
             await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
 
 
-async def test_streamed_namespaced_mcp_calls():
+@pytest.mark.parametrize('paired,declared', [(True, False), (False, False), (False, True)])
+async def test_streamed_namespaced_mcp_calls(
+    mock_model: GoogleInteractionsModel,
+    mock_google: MockGoogle,
+    paired: bool,
+    declared: bool,
+    allow_model_requests: None,
+):
     """Provider-run functions can share the function-call wire shape with client tools."""
     values: list[dict[str, JsonValue]] = [
         {
@@ -771,18 +779,67 @@ async def test_streamed_namespaced_mcp_calls():
         {'event_type': 'step.stop', 'index': 1},
         {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
     ]
+    if not paired:
+        del values[3:5]
+    params = ModelRequestParameters(
+        native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')],
+        function_tools=[ToolDefinition(name='docs:lookup')] if declared else [],
+    )
     response = GoogleInteractionsStreamedResponse(
-        ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')]),
+        params,
         iter_events(values),
         'gemini-test',
         'google',
         'https://example.com',
     )
-    async for _ in response:
-        pass
-    call, result = response.get().parts
-    assert isinstance(call, NativeToolCallPart) and call.args_as_dict() == {'query': 'test'}
-    assert isinstance(result, NativeToolReturnPart) and result.content == [{'type': 'text', 'text': 'found'}]
+    events = [event async for event in response]
+    parts = response.get().parts
+    if paired:
+        call, result = parts
+        assert isinstance(call, NativeToolCallPart) and call.args_as_dict() == {'query': 'test'}
+        assert isinstance(result, NativeToolReturnPart) and result.content == [{'type': 'text', 'text': 'found'}]
+        assert [event.part.part_kind for event in events if isinstance(event, PartStartEvent)] == [
+            'builtin-tool-call',
+            'builtin-tool-return',
+        ]
+    else:
+        assert len(parts) == 1
+        call = parts[0]
+        assert isinstance(call, ToolCallPart) and call.args_as_dict() == {'query': 'test'}
+        assert [event.part.part_kind for event in events if isinstance(event, PartStartEvent)] == ['tool-call']
+    assert call.tool_call_id == 'mcp-call'
+    assert response.provider_details is not None
+    mock_google.body['steps'] = response.provider_details['google_interactions_steps']
+    ordinary = await model_request(
+        mock_model, [ModelRequest.user_text_prompt('hello')], model_request_parameters=params
+    )
+    assert [part.part_kind for part in ordinary.parts] == [part.part_kind for part in parts]
+
+
+@pytest.mark.parametrize('cloud', [False, True])
+@pytest.mark.parametrize(
+    'uri',
+    ['https://generativelanguage.googleapis.com/v1beta/files/test', 'gs://bucket/path', 'http://example.invalid/file'],
+)
+async def test_uploaded_file_uri_validation(mock_google: MockGoogle, cloud: bool, uri: str, allow_model_requests: None):
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle), timeout=120)
+    provider = (
+        GoogleCloudProvider(api_key='test-key', http_client=http_client)
+        if cloud
+        else GoogleProvider(api_key='test-key', http_client=http_client)
+    )
+    model = GoogleInteractionsModel('gemini-test', provider=provider)
+    file = UploadedFile(file_id=uri, provider_name='google-cloud' if cloud else 'google', media_type='application/pdf')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart([file])])]
+    if uri.startswith('gs://' if cloud else 'https://'):
+        await model_request(model, messages)
+        assert mock_google.requests[0]['input'] == [
+            {'type': 'user_input', 'content': [{'type': 'document', 'uri': uri, 'mime_type': 'application/pdf'}]}
+        ]
+    else:
+        with pytest.raises(UserError, match='UploadedFile for Google Interactions'):
+            await model_request(model, messages)
+        assert mock_google.requests == []
 
 
 @pytest.mark.parametrize('strict_profile,strict_tool', [(False, None), (True, False)])
