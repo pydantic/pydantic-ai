@@ -68,9 +68,9 @@ agent = Agent(
 )
 ```
 
-The outer `TypedDict` has a closed set of known model-system keys. Each system maps to its own
+The outer `TypedDict` lists the known model-system keys. Each system maps to its own
 tool-specific `TypedDict`, so autocomplete and type checking apply at both levels. A model adapter
-reads only its own system entry, so settings for several systems can coexist on one tool.
+reads only the options it knows from its own system entry, so settings for several systems can coexist on one tool.
 
 ## Dynamic Native Tool Configuration
 
