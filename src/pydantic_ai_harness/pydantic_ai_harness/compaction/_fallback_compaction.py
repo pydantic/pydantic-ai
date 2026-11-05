@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry.trace import NoOpTracer
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -53,14 +53,15 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     """Try compaction strategies in order, falling back when one raises.
 
     Each attempt receives a fresh list containing the original message objects.
-    `fallback_on` defaults to model API errors, including an exhausted `FallbackModel`, so
-    programming errors pass through. The last matching exception is re-raised if every strategy
+    `fallback_on` defaults to model API errors, including an exhausted `FallbackModel`, and
+    `UnexpectedModelBehavior`, such as a summary that failed its retries, so programming errors
+    and usage limits pass through. The last matching exception is re-raised if every strategy
     fails. Entries must derive from `Exception`, so cancellation and other `BaseException`
     subclasses are never caught.
     """
 
     fallback_chain: Sequence[CompactionStrategy[AgentDepsT]]
-    fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup)
+    fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup, UnexpectedModelBehavior)
 
     max_tokens: int | None = field(default=None, kw_only=True)
     """Trigger when estimated context tokens exceed this value. `None` disables."""

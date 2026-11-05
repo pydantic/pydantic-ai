@@ -145,7 +145,11 @@ inside tool results aren't the user's, so include your own), `instructions`, `br
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
 is discarded and the history left unchanged (a `compact_messages` span with
 `compaction.skipped='not_smaller'` records it); direct `compact()`/`compact_now()` calls return it
-anyway. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
+anyway. On its own trigger, `UnexpectedModelBehavior`, `ModelAPIError` and `FallbackExceptionGroup`
+leave the history unchanged and discard the attempt's receipts, with `compaction.skipped='summary_failed'`
+and `error.type` on the span. Explicit `compact()`/`compact_now()` calls still raise. Usage limits and
+programming errors propagate on both paths. A failed automatic summary is retried on the next request
+while the trigger stays exceeded. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.
 
 ### `RelevanceCompaction`
@@ -171,7 +175,7 @@ returns or user prompts.
 
 ### `FallbackCompaction`
 
-`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
+`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup, UnexpectedModelBehavior), *, max_tokens=None, max_fraction=None, background_start=None)`:
 tries the next strategy when one raises a `fallback_on` exception, re-raising the last one if all
 fail. When its trigger runs the chain, it also skips a `SummarizingCompaction` result that isn't
 smaller than the history, and leaves the history unchanged if nothing shrinks it. With no trigger,

@@ -19,7 +19,13 @@ from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -1052,13 +1058,19 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     async def _compact_if_smaller(
         self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
     ) -> list[ModelMessage]:
-        """`compact`, or *messages* unchanged when the compacted history would not be smaller."""
+        """`compact`, or *messages* unchanged when the compacted history would not be smaller or the summary failed.
+
+        A failed summary ends this compaction attempt, not the run: the model misbehaving (retries exhausted, an
+        empty or truncated summary) or its API failing. The parent run's own `UsageLimitExceeded` and programming
+        errors still propagate.
+        """
         compacted = await compact_if_smaller(
             ctx,
             strategy='SummarizingCompaction',
             messages=messages,
             compact=lambda: self.compact(messages, ctx),
             tokenizer=self.tokenizer,
+            skip_on=(UnexpectedModelBehavior, ModelAPIError, FallbackExceptionGroup),
         )
         return messages if compacted is None else compacted
 

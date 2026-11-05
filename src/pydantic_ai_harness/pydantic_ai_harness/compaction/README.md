@@ -282,8 +282,8 @@ Inside a run, the summary run takes the parent run's `conversation_id` without t
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction`
 advances when a strategy raises an exception selected by `fallback_on`, which defaults to
-Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model
-in a `FallbackModel` fails. When its trigger runs the chain, it also advances past a
+Pydantic AI's `ModelAPIError`, `FallbackExceptionGroup`, and `UnexpectedModelBehavior`. A
+`FallbackExceptionGroup` is raised when every model in a `FallbackModel` fails. When its trigger runs the chain, it also advances past a
 `SummarizingCompaction` whose result isn't smaller than the history (see
 [A summary that isn't smaller](#a-summary-that-isnt-smaller)), and leaves the history unchanged if
 no strategy shrinks it. Each attempt receives a fresh list containing the original message
@@ -506,7 +506,7 @@ The `summarizer` is a `SummarizingCompaction` used for its model, prompts and se
 
 Judge requests run concurrently, up to `judge_concurrency` (default 8) at once. Every judgement is remembered on the instance under the task and the step's content, so a later compaction with the same task judges only the new steps. All the judge requests of one compaction count as one request against a `UsageLimits` request limit, checked before any of them is sent. Their tokens are added to the run's usage and checked against its token and cost limits once they return, like the summary request's. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so the first compaction of a long history can take minutes there; later ones judge only the new steps.
 
-A judge error propagates, as a summary error does. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
+A judge error propagates, as an explicit summary error does. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
 
 ```python
 from pydantic_ai_harness.compaction import FallbackCompaction, RelevanceCompaction, SlidingWindowCompaction
@@ -604,10 +604,9 @@ raises a `UserError` saying so. A summary that is empty or only whitespace is re
 run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing
 history with an empty summary. Its nested summary run inherits the parent usage limits and reserves
 one request from a finite request limit for the pending parent request. These limits also apply to
-retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall
-back on either failure, set `FallbackCompaction`'s
-`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that
-makes no model requests. This does not increase the parent run's limits.
+retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead.
+On the automatic path, summary errors are [skipped](#a-summary-that-fails); the parent run's usage
+limits still apply and `UsageLimitExceeded` propagates.
 
 Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
@@ -713,6 +712,19 @@ still above the trigger.
 See the [token-retention guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
 for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
 
+## A summary that fails
+
+When `SummarizingCompaction` runs on its own trigger, `UnexpectedModelBehavior` (including exhausted
+retries, empty or truncated summaries), `ModelAPIError` and `FallbackExceptionGroup` end the
+compaction attempt, not the parent run. The history stays unchanged, the attempt's receipts are
+discarded, and a `compact_messages` span records `compaction.skipped='summary_failed'` and `error.type`. `UsageLimitExceeded` and programming errors such as `UserError` still propagate.
+The summary's usage still counts. While the trigger stays exceeded, the next request tries again.
+
+Inside `FallbackCompaction`, the next strategy runs: its default `fallback_on` includes
+`UnexpectedModelBehavior` as well as the API errors. Direct `compact()` and `compact_now()` calls
+still raise summary errors, as does a `TieredCompaction` tier. An explicit fallback chain still
+honours its `fallback_on` and re-raises the last error if every strategy fails.
+
 ## A summary that isn't smaller
 
 The summary replaces only part of the history: system prompts, the first user turn, the recent tail,
@@ -783,7 +795,8 @@ to keep span cardinality low. Attributes:
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
-| `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.skipped` | str | `summary_failed` when an automatic summary failed, or `not_smaller` when its result wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `error.type` | str | With `compaction.skipped='summary_failed'`: the exception's class name |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
