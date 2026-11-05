@@ -541,7 +541,7 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
     snapshots were kept in history marked them with a plain string, which still identifies them.
     """
     legacy = (f'{MEMORY_ORIGIN}:{metadata["scope"]}', MEMORY_ORIGIN)
-    texts = (
+    contents = (
         item
         for message in reversed(messages)
         if isinstance(message, ModelRequest)
@@ -550,7 +550,7 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
         for item in reversed(part.content)
         if isinstance(item, TextContent)
     )
-    return next((item.content for item in texts if item.metadata == metadata or item.metadata in legacy), None)
+    return next((item.content for item in contents if item.metadata == metadata or item.metadata in legacy), None)
 
 
 def _snapshot_to_append(

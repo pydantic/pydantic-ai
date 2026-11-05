@@ -367,7 +367,7 @@ def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str
     return previous
 
 
-def _resumed(
+def _resolve_resume(
     owner: DelegationTasks, resume: str | None, model: str | None, *, conversation_id: str, agent_name: str
 ) -> tuple[DelegationTask | None, str | None]:
     """The task `resume` names, if any, and the model to run on: `model`, else the resumed task's."""
@@ -823,7 +823,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Delegate with `SubAgents(task_control=...)`: announce the task, then hand it to the owner."""
         parent_id = DelegationTasks.child_id()
         conversation_id = _conversation_id(ctx, owner)
-        previous, model = _resumed(owner, resume, model, conversation_id=conversation_id, agent_name=agent_name)
+        previous, model = _resolve_resume(owner, resume, model, conversation_id=conversation_id, agent_name=agent_name)
         workspace, directory = await self._delegation_workspace(ctx, agent_name, working_directory, previous)
         backgroundable = _backgroundable(workspace)
         if background and not backgroundable:
@@ -1324,7 +1324,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     def _child_budget(
         self, ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT], owner: DelegationTasks | None
     ) -> tuple[bool, RunUsage | None, UsageLimits | None]:
-        """Whether the child has a budget of its own, the usage it counts into (`None` for the parent's), and its limits."""
+        """Whether the child has its own budget, the usage it counts into (`None`: the parent's), and its limits."""
         usage_limits: UsageLimits | None
         if sub_agent.usage_limits is not None:
             # Isolated accounting so the per-child budget counts only this child.
