@@ -32,6 +32,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai.types.chat import ChatCompletionMessage
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -41,15 +42,19 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-    from .models import test_anthropic as anthropic_mocks
     from .models.mock_openai import (
         MockOpenAI,
         MockOpenAIResponses,
-        get_mock_chat_completion_kwargs,
+        completion_message as openai_completion,
+        get_mock_chat_completion_kwargs as openai_request_kwargs,
         get_mock_responses_kwargs,
         response_message,
     )
-    from .models.test_openrouter import _openrouter_completion  # pyright: ignore[reportPrivateUsage]
+    from .models.test_anthropic import (
+        MockAnthropic,
+        completion_message as anthropic_completion,
+        get_mock_chat_completion_kwargs as anthropic_request_kwargs,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic or openai not installed'),
@@ -59,19 +64,19 @@ pytestmark = [
 
 def _anthropic_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
     text = BetaTextBlock(text='ok', type='text')
-    client = anthropic_mocks.MockAnthropic.create_mock(
-        anthropic_mocks.completion_message([text], BetaUsage(input_tokens=1, output_tokens=1))
-    )
+    client = MockAnthropic.create_mock(anthropic_completion([text], BetaUsage(input_tokens=1, output_tokens=1)))
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
     Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
-    return anthropic_mocks.get_mock_chat_completion_kwargs(client)[0]['tools'][0]
+    return anthropic_request_kwargs(client)[0]['tools'][0]
 
 
 def _openrouter_request_parameters(tool: AbstractNativeTool) -> dict[str, Any]:
-    client = MockOpenAI.create_mock(_openrouter_completion('ok'))
+    completion = openai_completion(ChatCompletionMessage(content='ok', role='assistant'))
+    completion.provider = 'test'  # pyright: ignore[reportAttributeAccessIssue]  # OpenRouter responses always carry it
+    client = MockOpenAI.create_mock(completion)
     model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=client))
     Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
-    return get_mock_chat_completion_kwargs(client)[0]['tools'][0]['parameters']
+    return openai_request_kwargs(client)[0]['tools'][0]['parameters']
 
 
 def _openai_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
