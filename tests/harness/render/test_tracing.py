@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import inspect
+from pathlib import Path
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from render.workflows import TaskContext, Workflows
+from render.workflows import TaskContext, TaskDefinition, Workflows
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, json_round_trip
 
 
 @pytest.mark.parametrize('instrumentation', ['disabled', 'agent', 'global', 'model'])
@@ -106,3 +111,47 @@ async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: boo
         assert recording == [instrumented]
     finally:
         provider.shutdown()
+
+
+class WorkerTaskContext(RecordingTaskContext):
+    """Run each child task in a fresh context, as a worker process does, so nothing leaks in from the workflow."""
+
+    async def run(self, task: TaskDefinition[Any, Any], *args: Any, **kwargs: Any) -> Any:
+        self.task_names.append(task.name)
+
+        async def run_task() -> Any:
+            result = task.func(self, *json_round_trip(args), **json_round_trip(kwargs))
+            return await result if inspect.isawaitable(result) else result
+
+        return json_round_trip(await asyncio.create_task(run_task(), context=contextvars.Context()))
+
+
+async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = TestModel(call_tools=['look'])
+    runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
+    agent = Agent(model, name='workspace-agent', deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), runtime])
+    agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+
+    @agent.tool
+    async def look(ctx: RunContext[None]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    @runtime.task
+    async def run_agent(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('go')).output
+
+    pending = run_agent.func(WorkerTaskContext())
+    assert inspect.isawaitable(pending)
+    await pending
+
+    # Both units run on the worker: the run-start `ensure` and the tool. A worker starts with no span of the
+    # workflow's, so each call is traced as a root of its own.
+    assert [
+        (span.name, (span.attributes or {}).get('pydantic_ai.workspace.provider'))
+        for span in exporter.get_finished_spans()
+        if span.name.startswith('workspace ')
+    ] == [('workspace working_dir', 'local'), ('workspace exists', 'local')]

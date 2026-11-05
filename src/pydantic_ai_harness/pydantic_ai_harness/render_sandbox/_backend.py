@@ -38,6 +38,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -159,35 +160,39 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._working_dir_pending = True
         logger.info('Created Render sandbox %s', sandbox.id)
 
+    async def _wait_until_running(self, client: RenderAsync, sandbox_id: str) -> None:
+        async with asyncio.timeout(_READINESS_TIMEOUT):
+            while True:
+                sandbox = await client.sandboxes.from_id(sandbox_id)
+                if sandbox.status == 'running':
+                    return
+                if sandbox.status in ('errored', 'terminated'):
+                    raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
+                await asyncio.sleep(_POLL_INTERVAL)
+
     async def _ensure_ready(self, client: RenderAsync) -> str:
         async with self._lock:
             if self._resolved_working_dir is not None:
                 return self._resolved_working_dir
-            if self._ref is None:
-                # Record the paid sandbox's ref even if this caller is cancelled meanwhile.
-                await run_to_completion(lambda: self._create(client))
-            assert self._ref is not None
-            try:
-                async with asyncio.timeout(_READINESS_TIMEOUT):
-                    while True:
-                        sandbox = await client.sandboxes.from_id(self._ref.id)
-                        if sandbox.status == 'running':
-                            break
-                        if sandbox.status in ('errored', 'terminated'):
-                            raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
-                        await asyncio.sleep(_POLL_INTERVAL)
-                resolve = prepare_command(
-                    command_argv(self._resolve_script(), shell=True), working_dir='/', env=self._env
-                )
-                result = await run_command(
-                    client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT, stop_client=self._client
-                )
-            except RateLimitError:
-                raise
-            except ClientError as error:
-                raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
-            except TimeoutError as error:
-                raise TimeoutError('Render sandbox readiness exceeded its deadline') from error
+            with lifecycle_span('create' if self._ref is None else 'attach', self):
+                if self._ref is None:
+                    # Record the paid sandbox's ref even if this caller is cancelled meanwhile.
+                    await run_to_completion(lambda: self._create(client))
+                assert self._ref is not None
+                try:
+                    await self._wait_until_running(client, self._ref.id)
+                    resolve = prepare_command(
+                        command_argv(self._resolve_script(), shell=True), working_dir='/', env=self._env
+                    )
+                    result = await run_command(
+                        client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT, stop_client=self._client
+                    )
+                except RateLimitError:
+                    raise
+                except ClientError as error:
+                    raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
+                except TimeoutError as error:
+                    raise TimeoutError('Render sandbox readiness exceeded its deadline') from error
             self._resolved_working_dir = self._canonical_dir(result)
             self._working_dir_pending = False
             return self._resolved_working_dir

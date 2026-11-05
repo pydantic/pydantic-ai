@@ -11,6 +11,7 @@ from render import RenderAsync
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 
 from ._backend import (
@@ -96,7 +97,8 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         Rejected credentials raise `WorkspaceUnavailableError`.
         """
         check_provider(ref, 'render')
-        await terminate_sandbox(self.client, ref.id)
+        with lifecycle_span('destroy', ref):
+            await terminate_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Supply a new sandbox workspace or attach to a recognized Render reference."""

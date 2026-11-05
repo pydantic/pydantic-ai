@@ -86,7 +86,7 @@ async def run_tests() -> CommandResult:
 
 ## Telemetry
 
-`BubblewrapSandbox` emits no spans of its own. The run's workspace is the wrapped one's, so core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each sandboxed command runs inside its tool call's span.
+`BubblewrapSandbox`'s `workspace run` spans record the caller's command, not the `bwrap` launcher; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). The run's workspace is the wrapped one's, so core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each sandboxed command runs inside its tool call's span.
 
 ## API reference
 

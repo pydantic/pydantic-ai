@@ -179,7 +179,7 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 
 ## Telemetry
 
-With [instrumentation](../capabilities/instrumentation.md), the agent run span identifies the sandbox with `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
+`RenderSandbox` traces creating or reconnecting to the sandbox, until it is running, as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](../logfire.md#workspace-spans). With [instrumentation](../capabilities/instrumentation.md), the agent run span identifies the sandbox with `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 

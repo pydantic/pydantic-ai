@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
     check_integer,
@@ -121,7 +122,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
         check_provider(ref, 'e2b')
-        await _backend.kill_sandbox(ref.id, client=self.client)
+        with lifecycle_span('destroy', ref):
+            await _backend.kill_sandbox(ref.id, client=self.client)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
