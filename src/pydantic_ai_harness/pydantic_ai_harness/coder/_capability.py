@@ -6,9 +6,8 @@ import copy
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
-from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
@@ -26,6 +25,9 @@ from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
 from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES, delegation_depth
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
+
+if TYPE_CHECKING:
+    from pydantic_ai._instructions import AgentInstructions
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
 """The `FileSystem` tools `Coder` registers; `shell` covers directory creation, file metadata, and the rest."""
@@ -145,7 +147,7 @@ class _CoderGuidance(Capability[AgentDepsT]):
         return [self._delegated_guidance if self._delegate else self._guidance, *self._project]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Capability[AgentDepsT]:
-        if delegation_depth() <= 1 or self._delegate:
+        if delegation_depth() <= 1:
             return self
         serving = copy.copy(self)
         serving._delegate = True

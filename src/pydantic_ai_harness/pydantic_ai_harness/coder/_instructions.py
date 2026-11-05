@@ -17,9 +17,9 @@ _AGENCY: dict[Agency, str] = {
     'max': 'Work fully autonomously; nobody will answer questions. Choose sensible defaults and finish.',
 }
 
-_DELEGATED = 'You are running a delegated task and nobody can answer questions. Choose sensible defaults and finish.'
-"""Replaces the agency sentence in a delegate: its parent already chose the task, and whether it can ask back depends
-on the workspace and sub-agent settings, so a plan-and-wait level could leave it idle."""
+_DELEGATED = 'You are running a delegated task. Choose sensible defaults and finish.'
+"""Replaces the agency sentence in a delegate. The parent already chose the task, so a plan-and-wait level would
+leave it idle. It does not say whether anyone can answer: `ask_parent`, when the run has it, says when to ask."""
 
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 

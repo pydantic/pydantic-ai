@@ -26,7 +26,7 @@ from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool, call_tools
 
 _PLAN = 'Propose a plan and wait for approval before editing.'
-_FINISH = 'You are running a delegated task and nobody can answer questions.'
+_FINISH = 'You are running a delegated task. Choose sensible defaults and finish.'
 
 
 @dataclass
