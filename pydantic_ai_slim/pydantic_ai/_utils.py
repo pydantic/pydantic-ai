@@ -1231,7 +1231,9 @@ def _rename_shared_defs_with_renamed_refs(
                 changed = True
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
+# The info string after the opening fence is any text up to the newline (`c++`, `JSON-LD`, `json {..}`),
+# and the JSON body may be indented, so skip the rest of that line and any leading whitespace before `{`.
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```[^\r\n]*\r?\n\s*(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
