@@ -1036,8 +1036,52 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         try:
             return self.profile.get('may_tokenize_special_tokens_in_content', False)
         except NotImplementedError:
-            # A router with no profile of its own, like `FallbackModel`: the models it answers through restore for themselves.
+            # A third-party router with no profile of its own that doesn't set `_answers_requests_itself`: the models
+            # it answers through restore for themselves.
             return False
+
+    @classmethod
+    def _restore_special_tokens_at_the_model_boundary(cls) -> None:
+        """Have each method of `cls` that returns a model's output remove the joiner `prepare_messages` put in its tokens.
+
+        Done here, for every model class, because a model copies the joiner into what it writes. A class that left this
+        out would corrupt the files its model edits, and everything after this boundary (tools, output validation,
+        users, stored history) sees the same value whichever way the response was produced.
+        """
+        request = cls.__dict__.get('request')
+        if inspect.iscoroutinefunction(request):
+
+            @wraps(request)
+            async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = await request(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.request = restoring_request
+
+        request_stream = cls.__dict__.get('request_stream')
+        if inspect.isfunction(request_stream):
+
+            @wraps(request_stream)
+            @asynccontextmanager
+            async def restoring_request_stream(
+                self: Model, *args: Any, **kwargs: Any
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                async with request_stream(self, *args, **kwargs) as stream:
+                    if self._restores_special_tokens:
+                        stream._parts_manager.special_token_restorer = StreamRestorer()
+                    yield stream
+
+            cls.request_stream = restoring_request_stream
+
+        batch_decode = cls.__dict__.get('batch_decode')
+        if inspect.isfunction(batch_decode):
+
+            @wraps(batch_decode)
+            def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = batch_decode(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.batch_decode = restoring_batch_decode
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -1060,7 +1104,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
-        _restore_special_tokens_at_the_model_boundary(cls)
+        cls._restore_special_tokens_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by model settings.
@@ -3906,49 +3950,6 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     )
     parts = [*first_request.parts[:position], announcement, *first_request.parts[position:]]
     return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
-
-
-def _restore_special_tokens_at_the_model_boundary(cls: type[Model]) -> None:
-    """Have each method of `cls` that returns a model's output remove the joiner `prepare_messages` put in its tokens.
-
-    Done here, for every model class, because a model copies the joiner into what it writes. A class that left this out
-    would corrupt the files its model edits, and everything after this boundary (tools, output validation, users, stored
-    history) sees the same value whichever way the response was produced.
-    """
-    request = cls.__dict__.get('request')
-    if inspect.iscoroutinefunction(request):
-
-        @wraps(request)
-        async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
-            response = await request(self, *args, **kwargs)
-            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response  # pyright: ignore[reportPrivateUsage]
-
-        cls.request = restoring_request
-
-    request_stream = cls.__dict__.get('request_stream')
-    if inspect.isfunction(request_stream):
-
-        @wraps(request_stream)
-        @asynccontextmanager
-        async def restoring_request_stream(
-            self: Model, *args: Any, **kwargs: Any
-        ) -> AsyncGenerator[StreamedResponse, None]:
-            async with request_stream(self, *args, **kwargs) as stream:
-                if self._restores_special_tokens:  # pyright: ignore[reportPrivateUsage]
-                    stream._parts_manager.special_token_restorer = StreamRestorer()
-                yield stream
-
-        cls.request_stream = restoring_request_stream
-
-    batch_decode = cls.__dict__.get('batch_decode')
-    if inspect.isfunction(batch_decode):
-
-        @wraps(batch_decode)
-        def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
-            response = batch_decode(self, *args, **kwargs)
-            return restore_special_tokens_in_response(response) if self._restores_special_tokens else response  # pyright: ignore[reportPrivateUsage]
-
-        cls.batch_decode = restoring_batch_decode
 
 
 def _neutralize_voice_tags(messages: list[ModelMessage]) -> list[ModelMessage]:
