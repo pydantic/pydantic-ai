@@ -40,7 +40,7 @@ class RewindUI:
     fleet: Fleet
 
     async def wait_until_idle(self) -> None:
-        """Wait for the session to finish its turn's end, until when it refuses a rewind though the page reads `ready`."""
+        """Wait for the session to finish its turn's end, until when it refuses a rewind though the page reads `ready` (#12603)."""
         fleet, runtime = self.fleet, self.fleet.runtimes['echo']
 
         async def idle_or_hung() -> None:
