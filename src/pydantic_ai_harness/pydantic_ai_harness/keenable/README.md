@@ -53,7 +53,7 @@ agent = Agent(
 |---|---|---|
 | `num_results` | `5` | How many results `web_search` returns, from 1 to 50. |
 | `max_snippet_chars` | `500` | Excerpt budget per search result. |
-| `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker cuts the page without one. |
+| `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the page with `…` instead. |
 | `guidance` | `None` | Replaces the default research instructions, keeping the untrusted-content rule; `''` contributes none. |
 | `client` | `None` | A `KeenableClient` to use instead of the default HTTP client. |
 
@@ -97,16 +97,16 @@ list; the toolset passes `num_results` as `max_results`. `fetch` sends
 `GET /v1/fetch`, or `/v1/fetch/public` when keyless, with the page address in
 the `url` query parameter, and returns the response object; the toolset reads
 its `content`, `title`, and `url`. Every request carries an `X-Keenable-Title: Pydantic AI
-Harness` header and adds `X-API-Key` when a key is set. Each connect, read,
-write, and pool wait has a 30-second httpx timeout; that bounds each operation,
-not the request as a whole.
+Harness` header and adds `X-API-Key` when a key is set. Each request must finish
+within 30 seconds, and a response body over 10 MiB is abandoned before parsing.
 
 ## Errors
 
 Any HTTP error status other than `401`, `402`, and `403` becomes `ModelRetry`,
-as do network failures and a `2xx` whose body is not JSON, so the model can
-wait, rephrase, or try another URL rather than abort the run. A `get_page` call
-that comes back with no readable content is a `ModelRetry` too. `get_page`
+as do network failures, a request past its deadline, and a `2xx` whose body is
+too large or not JSON, so the model can wait, rephrase, or try another URL
+rather than abort the run. A `get_page` call that comes back with no readable
+content is a `ModelRetry` too. `get_page`
 reads Keenable's indexed copy of a page, and Keenable documents that fetching a
 URL it has not indexed fails; the model sees that failure as a `ModelRetry` as
 well. A `401`, `402`, or `403` propagates as `httpx.HTTPStatusError`: a

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
+import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
@@ -191,6 +192,7 @@ class TestKeenableSearch:
             ({'num_results': 1.5}, '`num_results` must be a positive integer, got 1.5'),
             ({'max_page_chars': '10'}, "`max_page_chars` must be a positive integer, got '10'"),
             ({'max_page_chars': True}, '`max_page_chars` must be a positive integer, got True'),
+            ({'num_results': True}, '`num_results` must be a positive integer, got True'),
         ],
     )
     def test_budgets_are_validated(self, budgets: _Budgets, message: str):
@@ -319,12 +321,12 @@ class TestKeenableSearchToolset:
         assert len(_text(returned)) == 60
         assert returned.metadata['sources'][0] == KeenableSource(url='https://example.com/one', title=None)
 
-    async def test_get_page_cuts_the_page_when_the_budget_cannot_hold_the_marker(self):
+    async def test_get_page_uses_an_ellipsis_when_the_budget_cannot_hold_the_marker(self):
         client = FakeClient(page={'content': 'x' * 100})
 
         returned = await _toolset(client, max_page_chars=5).get_page('https://example.com/one')
 
-        assert _text(returned) == 'x' * 5
+        assert _text(returned) == f'{"x" * 4}…'
 
     async def test_get_page_retries_on_empty_content(self):
         client = FakeClient(page={'content': ''})
@@ -393,7 +395,7 @@ class TestHttpKeenableClient:
 
     They pin what the client sends and how it shapes odd responses: a cassette
     does not catch a header or field the code stops sending, and the live API
-    cannot be made to return a malformed body.
+    cannot be made to return a malformed, oversized, or stalled body.
     """
 
     async def test_default_client_is_keyless(self, monkeypatch: pytest.MonkeyPatch):
@@ -478,6 +480,33 @@ class TestHttpKeenableClient:
             await toolset.web_search('cats')
         with pytest.raises(ModelRetry, match='malformed response'):
             await toolset.get_page('https://example.com/one')
+
+    async def test_oversized_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(HttpKeenableClient, '_MAX_RESPONSE_BYTES', 32)
+        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=b'{"results": []}' + b' ' * 64))
+        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+
+        with pytest.raises(ModelRetry, match='response body exceeds 32 bytes'):
+            await toolset.web_search('cats')
+
+    async def test_a_slow_body_hits_the_request_deadline(self, monkeypatch: pytest.MonkeyPatch):
+        # Each chunk arrives well within the per-read timeout, so only the
+        # deadline on the whole request stops it.
+        async def drip() -> AsyncIterator[bytes]:
+            while True:
+                yield b' '
+                await anyio.sleep(0.001)
+
+        monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.05)
+        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=drip()))
+        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+
+        with pytest.raises(ModelRetry, match='timed out'):
+            await toolset.web_search('cats')
 
     @pytest.mark.parametrize('base_url', ['http://localhost:8080', 'https://keenable.internal'])
     def test_base_url_accepts_https_and_loopback_http(self, base_url: str):
