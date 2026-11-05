@@ -10,11 +10,12 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import anyio
+from pydantic import ValidationError
 
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler, WrapToolExecuteHandler
-from pydantic_ai.exceptions import ToolFailedError, ToolRetryError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
@@ -155,6 +156,8 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     _snapshot_sequence: int = field(default=0, init=False, repr=False)
     _last_snapshot_messages: list[ModelMessage] | None = field(default=None, init=False, repr=False)
     _last_snapshot_step: int | None = field(default=None, init=False, repr=False)
+    _open_tool_calls: set[int] = field(default_factory=set[int], init=False, repr=False)
+    """`id()` of each call whose `started` effect this run wrote and no terminal hook has finished yet."""
 
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> StepPersistence[Any]:
@@ -619,6 +622,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         run_id = self._effective_run_id(ctx)
         await self._record_tool_effect(run_id, call.tool_call_id, tool_def.name)
+        self._open_tool_calls.add(id(call))
         await self._record_event(
             ctx,
             kind='tool_call_started',
@@ -636,6 +640,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
+        self._open_tool_calls.discard(id(call))
         run_id = self._effective_run_id(ctx)
         await self._finish_tool_effect(run_id, call.tool_call_id, tool_def.name, 'completed')
         await self._record_event(
@@ -655,6 +660,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
+        self._open_tool_calls.discard(id(call))
         await self._record_tool_failure(ctx, call, tool_def, error)
         raise error
 
@@ -667,17 +673,24 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Record a tool that raised `ModelRetry` or `ToolFailed` as `failed`.
+        """Record a call that ends in a retry or a failure as `failed`.
 
-        Core turns those into `ToolRetryError` and `ToolFailedError` and re-raises them past
-        `on_tool_execute_error` and `after_tool_execute`, so without this the call's `started`
-        effect would stay unresolved after the run moved on.
+        Core re-raises a retry or failure past `on_tool_execute_error` and `after_tool_execute`:
+        the tool's own `ModelRetry` / `ToolFailed`, wrapped as `ToolRetryError` / `ToolFailedError`
+        or raw for a caller that asks for raw errors (`CodeMode`'s sandbox calls), and a
+        `ModelRetry`, `ToolFailed` or `ValidationError` from another capability's hook. The effect
+        is finished only while the call is open, between this capability's `before_tool_execute`
+        and its terminal hook, so a retry raised after `after_tool_execute` recorded `completed`, or
+        before `started` was written, leaves the ledger as it is.
         """
         try:
             return await handler(args)
-        except (ToolRetryError, ToolFailedError) as error:
-            await self._record_tool_failure(ctx, call, tool_def, error)
+        except (ToolRetryError, ToolFailedError, ModelRetry, ToolFailed, ValidationError) as error:
+            if id(call) in self._open_tool_calls:
+                await self._record_tool_failure(ctx, call, tool_def, error)
             raise
+        finally:
+            self._open_tool_calls.discard(id(call))
 
     async def _record_tool_failure(
         self,
