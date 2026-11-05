@@ -2506,7 +2506,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the
         announcement is the first part, so the application's own instructions keep the last word in the system
         prompt: with the announcement after them, Gemini acted more often on requests quoted in a tool result that
-        an operator instruction seemed to cover (numbers in #11813). It goes out unchanged on every request from the
+        an operator instruction seemed to cover. It goes out unchanged on every request from the
         first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
         `second_model_prompt()` doesn't get it.
         """
@@ -4288,7 +4288,7 @@ def _wrap_non_leading_system_prompts(
     `keep_request_scoped` is for a profile whose API clears request-scoped prompts itself. Such a part keeps its place
     as a `SystemPromptPart`, for the adapter's self-clearing entry, with the tags inside it: as a user part it would
     stay in every later request, and without them Claude Sonnet 5.5 and Haiku 5.5, told that the application's messages
-    are these blocks, followed it less often (numbers in #11813).
+    are these blocks, followed it less often.
 
     The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
     announcement at the start of the instructions says.

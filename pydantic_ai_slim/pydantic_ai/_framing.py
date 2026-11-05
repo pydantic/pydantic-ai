@@ -283,7 +283,7 @@ SEALED_SYSTEM_OPEN: Final = '<system verified>'
 The bare `verified` attribute is fixed and public: it marks a block as the application's for a model that follows such
 blocks better, and it proves nothing. A copy of it in text from a user, a tool or a file is still a `<system>` lookalike
 and gets a note (`lookalike_frame_note`). Of the markers measured, `verified` did best on Claude, and `sealed` lost the
-application's changes after a tool result on Sonnet 4.6 (numbers in #11813).
+application's changes after a tool result on Sonnet 4.6 (numbers in `docs/message-history.md`, "What each rendering gives up").
 """
 
 
@@ -303,7 +303,7 @@ def lookalike_note_announcement(*, system_role: bool, sealed: bool = False) -> s
     has a frame or a note to explain.
 
     The wording was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models, against
-    announcing a marker attribute on the application's frames; the numbers are in #11813.
+    announcing a marker attribute on the application's frames.
 
     `sealed` is for a model without a system role whose profile sets `needs_sealed_system_blocks`: the blocks carry
     the `verified` attribute ([`SEALED_SYSTEM_OPEN`][pydantic_ai._framing.SEALED_SYSTEM_OPEN]) and the announcement says
@@ -318,8 +318,7 @@ def lookalike_note_announcement(*, system_role: bool, sealed: bool = False) -> s
     Without a system role, the announcement also says that the user speaks only in their own messages, and that the
     blocks replace earlier `<system>` blocks rather than any earlier system content. With an operator instruction to
     act on requests from a kind of sender, Gemini and Claude Haiku 5.5 otherwise took such a request quoted in a tool
-    result as one they should act on more often, and completed the user's own task less often; the numbers are in
-    #11813.
+    result as one they should act on more often, and completed the user's own task less often.
     """
     if system_role:
         return _NOTE_ANNOUNCEMENT
