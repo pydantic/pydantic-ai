@@ -4358,9 +4358,9 @@ class TestKeepUserMessages:
         )
         cache_point = CachePoint()
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(content=['a' * 100, cache_point, TextContent(content='b' * 100)])]),
-            _assistant('a'),
             _user('b'),
+            _assistant('a'),
+            ModelRequest(parts=[UserPromptPart(content=['a' * 100, cache_point, TextContent(content='b' * 100)])]),
             _assistant('recent'),
         ]
         rc = _make_request_context(messages)
@@ -4397,14 +4397,14 @@ class TestKeepUserMessages:
         short = StructuredContent({'a': 1})
         long = StructuredContent({'b': 'b' * 100}, metadata={'m': 1})
         messages: list[ModelMessage] = [
+            _user('b'),
+            _assistant('a'),
             ModelRequest(
                 parts=[
                     UserPromptPart(content=[short, long]),
                     UserPromptPart(content=[TextContent('c' * 100, metadata={'m': 2})]),
                 ]
             ),
-            _assistant('a'),
-            _user('b'),
             _assistant('recent'),
         ]
         rc = _make_request_context(messages)
@@ -4444,14 +4444,14 @@ class TestKeepUserMessages:
             conversation_id='conversation-1',
             metadata={'source': 'caller'},
         )
-        messages: list[ModelMessage] = [original, _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [_user('zero'), _assistant('z'), original, _assistant('a')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S1')):
             first = await comp.compact(messages, _make_ctx())
         retained = next(message for message in first if isinstance(message, ModelRequest) and message.run_id == 'run-1')
         # The copy is recognized by the marker on its text; the request's own metadata is left as it was.
         assert retained.metadata == {'source': 'caller'}
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S2')):
-            second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
+            second = await comp.compact([*first, _assistant('b')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
 
     async def test_a_retained_copy_whose_text_has_dict_metadata_survives_a_merge(self):
@@ -4461,7 +4461,7 @@ class TestKeepUserMessages:
             model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
         )
         tagged = ModelRequest(parts=[UserPromptPart([TextContent('KEPT TURN', metadata={'source': 'caller'})])])
-        messages: list[ModelMessage] = [tagged, _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [_user('first'), _assistant('z'), tagged, _assistant('a')]
         first = await comp.compact(messages, _make_ctx(messages))
         continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
 
@@ -4486,7 +4486,7 @@ class TestKeepUserMessages:
         comp = SummarizingCompaction(
             model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
         )
-        messages: list[ModelMessage] = [_user('KEPT TURN'), _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [_user('first'), _assistant('z'), _user('KEPT TURN'), _assistant('a')]
         first = await comp.compact(messages, _make_ctx(messages))
         # The next run merges the retained copy with the request after it, as core's history cleanup does.
         continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
@@ -4634,6 +4634,33 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['turn 1', 'turn 2', 'turn 3']
         assert result[-1] == messages[-1]
+
+    async def test_tail_messages_displaced_by_retained_copies_are_summarized(self):
+        """#11804: messages the copies push out of the `keep_messages` tail go to the summary, not nowhere.
+
+        The copies are the newest user turns of the prefix that is summarized, as many as fit the budget.
+        """
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts),
+            max_messages=1,
+            keep_messages=4,
+            keep_user_messages=True,
+            preserve_first_user_message=False,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = []
+        for i in range(1, 11):
+            messages += [_user(f'U{i}'), _assistant(f'A{i}')]
+        messages.append(_user('U11'))
+
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        [prompt] = prompts
+        for text in ('A9', 'U10', 'A10'):
+            assert text in prompt
+        assert _user_texts(result) == ['U7', 'U8', 'U9', 'U10', 'U11']
+        assert result[-1] is messages[-1]
 
     async def test_retained_user_turns_exhausting_single_tail_slot_preserve_current_request(self):
         comp = SummarizingCompaction(
