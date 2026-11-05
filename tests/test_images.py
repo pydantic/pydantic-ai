@@ -3046,6 +3046,15 @@ async def test_xai_image_generation_usage_falls_back_to_sdk_totals(
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+def test_xai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(xai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage(unmeasured_requests=1)))
+
+    usage = xai_images._map_usage(xai_usage_pb2.SamplingUsage(), 'xai', 'https://api.x.ai/v1', 'grok-imagine-image')  # pyright: ignore[reportPrivateUsage]
+
+    assert usage == RequestUsage(unmeasured_requests=1)
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_empty_response():
     """A batch that comes back with no slots at all is unexpected behavior, not a moderation block.
 
@@ -3524,6 +3533,24 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(
     extracted_result = await model.generate('another tiny robot')
 
     assert extracted_result.usage == extracted_usage
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+def test_openai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        openai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage(unmeasured_requests=1))
+    )
+    usage = Usage.model_construct(
+        input_tokens=0,
+        input_tokens_details=UsageInputTokensDetails.model_construct(text_tokens=0, image_tokens=0),
+        output_tokens=0,
+        output_tokens_details=None,
+        total_tokens=0,
+    )
+
+    result = openai_images._map_usage(usage, 'openai', 'https://api.openai.com/v1', 'gpt-image-1')  # pyright: ignore[reportPrivateUsage]
+
+    assert result == RequestUsage(unmeasured_requests=1)
 
 
 def _openai_png_response() -> ImagesResponse:

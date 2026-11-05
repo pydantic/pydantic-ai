@@ -372,6 +372,10 @@ class RequestUsage(UsageBase):
     ) -> RequestUsage:
         """Extract usage information from the response data using genai-prices.
 
+        If extraction fails unexpectedly, this warns with
+        [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning] and returns usage with
+        `unmeasured_requests=1`. A caller that recovers the token counts from another source should reset it to `0`.
+
         Args:
             data: The response data from the model API.
             provider: The actual provider ID
@@ -661,7 +665,7 @@ class UsageLimits:
         Args:
             usage: The accumulated run usage to check.
             warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
-                When some responses omitted usage information, `check_tokens` warns instead.
+                When some responses have no available usage information, `check_tokens` warns instead.
         """
         if warn_if_cost_unavailable:
             self._warn_if_cost_unavailable(usage)

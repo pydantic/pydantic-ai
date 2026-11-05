@@ -16,7 +16,7 @@ from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsNow, try_import
+from .conftest import try_import
 
 with try_import() as openai_imports:
     from openai.types import chat
@@ -206,19 +206,19 @@ class RecordedUsageStream(StreamedResponse):
 
     @property
     def model_name(self) -> str:
-        return 'model'
+        raise NotImplementedError
 
     @property
     def provider_name(self) -> str:
-        return 'provider'
+        raise NotImplementedError
 
     @property
     def provider_url(self) -> str:
-        return 'https://example.com'
+        raise NotImplementedError
 
     @property
     def timestamp(self) -> datetime:
-        return IsNow()
+        raise NotImplementedError
 
 
 FAILED = RequestUsage(unmeasured_requests=1)

@@ -363,8 +363,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 and any(budget.tokens is not None for budget in self.budgets)
             ):
                 warnings.warn(
-                    'Some responses omitted usage information, so `SpendLimits` token totals are lower bounds '
-                    'and token ceilings cannot be fully enforced. A custom price does not restore missing tokens; '
+                    'Some responses omitted usage information or it could not be extracted, so `SpendLimits` token '
+                    'totals are lower bounds and token ceilings cannot be fully enforced. A custom price does not '
+                    'restore missing tokens; '
                     'check the provider usage reporting or promote `UsageLimitUnavailableWarning` to an error.',
                     UsageLimitUnavailableWarning,
                     stacklevel=3,

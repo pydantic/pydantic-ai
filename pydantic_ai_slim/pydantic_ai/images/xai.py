@@ -397,7 +397,8 @@ def _map_usage(
     if extracted_usage.output_tokens == 0 and usage.completion_tokens:
         extracted_usage.output_tokens = usage.completion_tokens
     # The raw totals are the provider's report, so a failed extraction doesn't leave this response unmeasured.
-    extracted_usage.unmeasured_requests = 0
+    if usage.prompt_tokens or usage.completion_tokens:
+        extracted_usage.unmeasured_requests = 0
 
     return extracted_usage
 
