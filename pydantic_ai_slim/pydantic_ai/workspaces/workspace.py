@@ -553,7 +553,7 @@ class Workspace(WorkspaceBackend):
     async def _command_in(self, cwd: str, command: WorkspaceCommand, *, shell: bool) -> WorkspaceCommand:
         """`command` changed to start in `cwd`, through the shell, so it works on any backend."""
         if isinstance(command, str) != shell:
-            # Checked before the directory, so a mismatch is reported as one, as without `cwd`.
+            # Checked before the directory, so a mismatch is a `TypeError`, as without `cwd`.
             raise TypeError('a string command requires `shell=True`, and an argv sequence `shell=False`')
         cwd = await self.resolve(cwd)
         if not (await self.stat(cwd)).is_dir:

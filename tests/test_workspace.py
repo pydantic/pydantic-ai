@@ -231,6 +231,7 @@ async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
     assert (await workspace.run(['sh', '-c', 'exit 7'], cwd='sub')).exit_code == 7
     missing = await workspace.run(['pydantic-ai-missing-program'], cwd='sub', env={'PATH': '/usr/bin:/bin'})
     assert missing.exit_code == 127
+    assert (await workspace.run(['/bin/pwd'], cwd='sub', env={'PATH': '/nonexistent'})).stdout == f'{root / "sub"}\n'
     with pytest.raises(FileNotFoundError):
         await workspace.run(['pwd'], cwd='missing')
     with pytest.raises(NotADirectoryError):
