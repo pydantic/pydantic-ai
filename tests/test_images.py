@@ -2344,7 +2344,9 @@ async def test_google_cloud_gcs_image_edit_vcr(
     assert result.usage.output_tokens > 0
 
 
-def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
+def _xai_image_responses(
+    *data: bytes, respect_moderation: bool = True, usage: xai_usage_pb2.SamplingUsage | None = None
+) -> list[XaiImageResponse]:
     proto = xai_image_pb2.ImageResponse(
         images=[
             xai_image_pb2.GeneratedImage(
@@ -2354,7 +2356,8 @@ def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[
             for image_data in data
         ],
         model='grok-imagine-image',
-        usage=xai_usage_pb2.SamplingUsage(
+        usage=usage
+        or xai_usage_pb2.SamplingUsage(
             prompt_tokens=7,
             completion_tokens=11,
             total_tokens=18,
@@ -3046,12 +3049,21 @@ async def test_xai_image_generation_usage_falls_back_to_sdk_totals(
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-def test_xai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(monkeypatch: pytest.MonkeyPatch):
+async def test_xai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Not a VCR test because a provider response can't make the extraction fail or report zero totals on demand."""
     monkeypatch.setattr(xai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage(unmeasured_requests=1)))
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'first-image', usage=xai_usage_pb2.SamplingUsage())[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
 
-    usage = xai_images._map_usage(xai_usage_pb2.SamplingUsage(), 'xai', 'https://api.x.ai/v1', 'grok-imagine-image')  # pyright: ignore[reportPrivateUsage]
+    result = await model.generate('tiny robot')
 
-    assert usage == RequestUsage(unmeasured_requests=1)
+    assert result.usage == RequestUsage(unmeasured_requests=1)
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
@@ -3536,21 +3548,31 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-def test_openai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_image_generation_failed_extraction_without_raw_totals_is_unmeasured(
+    monkeypatch: pytest.MonkeyPatch, openai_mock_client: AsyncMock
+):
+    """Not a VCR test because a provider response can't make the extraction fail or report zero totals on demand."""
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
+        usage=Usage.model_construct(
+            input_tokens=0,
+            input_tokens_details=UsageInputTokensDetails.model_construct(text_tokens=0, image_tokens=0),
+            output_tokens=0,
+            output_tokens_details=None,
+            total_tokens=0,
+        ),
+    )
     monkeypatch.setattr(
         openai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage(unmeasured_requests=1))
     )
-    usage = Usage.model_construct(
-        input_tokens=0,
-        input_tokens_details=UsageInputTokensDetails.model_construct(text_tokens=0, image_tokens=0),
-        output_tokens=0,
-        output_tokens_details=None,
-        total_tokens=0,
+    model = OpenAIImageGenerationModel(
+        'gpt-image-1',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
-    result = openai_images._map_usage(usage, 'openai', 'https://api.openai.com/v1', 'gpt-image-1')  # pyright: ignore[reportPrivateUsage]
+    result = await model.generate('tiny robot')
 
-    assert result == RequestUsage(unmeasured_requests=1)
+    assert result.usage == RequestUsage(unmeasured_requests=1)
 
 
 def _openai_png_response() -> ImagesResponse:

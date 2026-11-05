@@ -19,7 +19,7 @@ Provider usage APIs aggregate usage after the fact and are read by polling, so t
 
 ## The solution
 
-`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], while responses with omitted usage contribute any known `response.usage.cost` subtotal.
+`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], while responses with omitted or unextractable usage contribute any known `response.usage.cost` subtotal.
 
 ```python
 from decimal import Decimal
@@ -269,7 +269,7 @@ Any object with `get_many` and `add_many` works, so a DynamoDB counter is a smal
 
 ## Pricing
 
-When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
+When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted or unextractable usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
 
 A model the registry does not know -- a local deployment, a negotiated rate -- is handled by `price`:
 
