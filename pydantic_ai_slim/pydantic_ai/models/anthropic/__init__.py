@@ -3520,7 +3520,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for message_index, message in enumerate(anthropic_messages)
             if not isinstance(message['content'], str)
             for block_index, block in enumerate(message['content'])
-            if 'cache_control' in block
+            if isinstance(block, dict) and 'cache_control' in block
         ]
         if automatic_caching:
             breakpoints.append('automatic')
