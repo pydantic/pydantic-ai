@@ -70,6 +70,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogOpened,
     DialogShown,
     ForkEntry,
+    Item,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -264,10 +265,15 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         settled, _ = receive_until(socket, SessionsChanged)
         final = [message.status for message in settled if isinstance(message, StatusChanged)][-1]
         assert final.run is None and final.output_tokens == end.usage.output_tokens
-        # A browser connecting now sees the finished turn as history.
+        # A browser connecting now sees the finished turn as history, with its usage line.
         state = web_.get('/api/state').json()
-        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
-        assert state['items'][-1]['text'] == 'All **done**.'
+        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant', 'turn']
+        assert state['items'][-2]['text'] == 'All **done**.'
+        assert state['items'][-1]['usage'] == {
+            'input_tokens': end.usage.input_tokens,
+            'output_tokens': end.usage.output_tokens,
+            'requests': 2,
+        }
         assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
@@ -862,7 +868,8 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         copy = web_.post(f'/api/sessions/{first}/fork').json()['id']
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.title) == (copy, 'Renamed (fork)')
-        assert [item.text for item in snapshot.items] == ['first', 'ok']
+        assert [item.text for item in snapshot.items if isinstance(item, Item)] == ['first', 'ok']
+        assert snapshot.items[-1].kind == 'turn'
 
         other = web_.portal.call(
             lambda: shell.sessions.store.save(
@@ -1077,6 +1084,22 @@ def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tm
         ('feature', False),
         ('gone', True),
     ]
+
+
+def test_sidebar_project_folder_is_its_main_checkout(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A repository's folder is its main checkout, not the Git folder that keys it; Removed folders has none."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    gone.mkdir()
+    for title, workspace in [('Feature', feature), ('Gone', gone)]:
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    gone.rmdir()
+    web_.shell.session.workspace = str(feature.resolve())
+
+    folders = {project['name']: project['folder'] for project in web_.get('/api/sessions').json()}
+    assert folders == {'repo': str(repo.resolve()), 'Removed folders': None}
 
 
 def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
@@ -2191,6 +2214,8 @@ def test_sessions_continue_in_their_own_directories(
     )
     follow_workspaces(web_)
     shell = web_.shell
+    # Approved for that folder, so moving there applies them; `test_project_settings_approval.py` covers the rest.
+    shell.context.store.approve_project_settings(other, {'run.instructions': 'Work in other.', 'model': 'test'})
     here = saved_in(web_, launch.resolve(), 'Here')
     there = saved_in(web_, other.resolve(), 'There')
     lost = saved_in(web_, gone, 'Lost')

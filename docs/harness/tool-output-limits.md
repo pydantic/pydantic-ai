@@ -23,10 +23,6 @@ A tool can return a payload large enough to dominate the context window: a big f
 verbose log, a large JSON document. Because tool returns persist in history, an oversized one
 is re-sent on every later model request, paying its token cost for the rest of the run.
 
-This is the overflow-to-file follow-up the [compaction](compaction.md) capability names as out
-of scope: it moves large tool outputs *out* of the window at production time, rather than
-compressing or dropping context already inside it.
-
 ## The three modes
 
 | Mode | Cost | Lossy? | What the model gets |
@@ -36,8 +32,7 @@ compressing or dropping context already inside it.
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool (the Claude
-Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
+the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
@@ -94,8 +89,8 @@ agent = Agent(
 ```
 
 The default band, when you pass no `bands`, is `Spill(then=Truncate())` at a 10,000-character
-threshold: lossless when a store accepts the write, a bounded truncation otherwise -- zero LLM
-cost and no silent drop.
+threshold: lossless when a store accepts the write, otherwise truncated to `max_chars`. Neither
+calls a model.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.

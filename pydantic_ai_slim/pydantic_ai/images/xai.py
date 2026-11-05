@@ -220,23 +220,24 @@ class XaiImageGenerationModel(ImageGenerationModel):
         order_violated = False
 
         for image in images:
-            if isinstance(image, UploadedFile):
-                self._validate_uploaded_file_provider(image)
-                if seen_reference:
-                    order_violated = True
-                file_ids.append(image.file_id)
-            elif isinstance(image, BinaryImage):
-                image_references.append(image.data_uri)
-                seen_reference = True
-            elif isinstance(image, ImageUrl):
-                if image.force_download:
-                    downloaded_image = await download_item(image, data_format='base64_uri')
-                    image_references.append(downloaded_image['data'])
-                else:
-                    image_references.append(image.url)
-                seen_reference = True
-            else:
-                assert_never(image)
+            match image:
+                case UploadedFile():
+                    self._validate_uploaded_file_provider(image)
+                    if seen_reference:
+                        order_violated = True
+                    file_ids.append(image.file_id)
+                case BinaryImage():
+                    image_references.append(image.data_uri)
+                    seen_reference = True
+                case ImageUrl():
+                    if image.force_download:
+                        downloaded_image = await download_item(image, data_format='base64_uri')
+                        image_references.append(downloaded_image['data'])
+                    else:
+                        image_references.append(image.url)
+                    seen_reference = True
+                case _:
+                    assert_never(image)
 
         if len(images) == 1:
             if file_ids:

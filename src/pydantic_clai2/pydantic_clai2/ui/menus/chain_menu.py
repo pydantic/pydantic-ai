@@ -71,27 +71,28 @@ def edit_chain(context: CommandContext, name: str | None, runners: Runners) -> C
         result = runners.run_list(_build_editor(name, models, cursor=cursor, notice=notice))
         notice = ''
         value = None if result.cancelled or result.item is None else result.item.value
-        if value is None:
-            return None
-        if isinstance(value, _Move):
-            models.insert(value.index + value.offset, models.pop(value.index))
-            cursor = value.index + value.offset
-        elif isinstance(value, _Remove):
-            models.pop(value.index)
-            cursor = min(value.index, max(len(models) - 1, 0))
-        elif value is _Row.ADD:
-            cursor = len(models)  # back on the add row, or on the model it added
-            if (picked := _pick_member(context, models, runners)) is not None:
-                models.append(picked)
-        else:
-            # Enter on a model does nothing, so the menu closes with a row only for Save.
-            assert value is _Row.SAVE
-            if len(models) < 2:
-                notice = 'A chain needs at least two models.'
-                cursor = len(models)
-                continue
-            context.store.save_chain(name=name, models=models)
-            return ChainChange(name=name, message=f'Saved chain:{name} ({" -> ".join(models)}).')
+        match value:
+            case None:
+                return None
+            case _Move():
+                models.insert(value.index + value.offset, models.pop(value.index))
+                cursor = value.index + value.offset
+            case _Remove():
+                models.pop(value.index)
+                cursor = min(value.index, max(len(models) - 1, 0))
+            case _Row.ADD:
+                cursor = len(models)  # back on the add row, or on the model it added
+                if (picked := _pick_member(context, models, runners)) is not None:
+                    models.append(picked)
+            case _:
+                # Enter on a model does nothing, so the menu closes with a row only for Save.
+                assert value is _Row.SAVE
+                if len(models) < 2:
+                    notice = 'A chain needs at least two models.'
+                    cursor = len(models)
+                    continue
+                context.store.save_chain(name=name, models=models)
+                return ChainChange(name=name, message=f'Saved chain:{name} ({" -> ".join(models)}).')
 
 
 def rename_chain(context: CommandContext, name: str, runners: Runners) -> ChainChange | None:

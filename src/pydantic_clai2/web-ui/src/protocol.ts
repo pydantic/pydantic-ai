@@ -37,6 +37,8 @@ export interface Item {
   by_user: boolean
   /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
   images: string[]
+  /** The run a prompt started, which Edit and Retry rewind to; `null` for a prompt they cannot rewind to. */
+  run_id: string | null
 }
 
 export interface Option {
@@ -135,6 +137,17 @@ export interface Usage {
   input_tokens: number
   output_tokens: number
   requests: number
+}
+
+/** A finished turn's line: a live turn's end adds one, and a snapshot carries each saved turn's. */
+export interface TurnSummary {
+  id: string
+  kind: 'turn'
+  outcome: 'completed' | 'failed' | 'cancelled'
+  error: string | null
+  usage: Usage | null
+  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected or was saved. */
+  seconds: number | null
 }
 
 /** Tokens, requests, and cost of one turn, or of all of them, as a `/usage` row shows them. */
@@ -322,7 +335,7 @@ export type ServerMessage =
   | {
       type: 'snapshot'
       session: SessionInfo
-      items: Item[]
+      items: (Item | TurnSummary)[]
       running: boolean
       status: StatusInfo
       questions: Questions[]
@@ -373,6 +386,8 @@ export interface SessionEntry {
   archived: boolean
   /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
   openable: boolean
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  source: string | null
 }
 
 export interface Worktree {
@@ -387,6 +402,7 @@ export interface Worktree {
 
 export interface Project {
   key: string
+  folder: string | null
   name: string
   current: boolean
   worktrees: Worktree[]

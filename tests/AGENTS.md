@@ -175,10 +175,11 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
@@ -241,7 +242,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 ## Assertion Helpers
 
 ### From `conftest.py`
-- `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now
+- `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now, plus however long the running test has taken so far
 - `IsStr()` - any string, supports `regex=r'...'`
 - `IsDatetime()` - any datetime
 - `IsBytes()` - any bytes
@@ -299,6 +300,20 @@ The suite runs on every push across a matrix of Python versions and install shap
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
 
+## Garbage from earlier tests
+
+`tests/gc_isolation.py` freezes every existing object before each test, so a test's collections, including explicit `gc.collect()` calls, only reach objects created since. Garbage in a reference cycle from an earlier test therefore can't be finalized by this test's collections, or land in its `pytest.warns` record or raise under its `simplefilter('error')`. Don't add per-test `gc.freeze()` calls or filter `ResourceWarning`s out of a record to work around that kind of failure.
+
+- A test still collects its own garbage, so `del obj; gc.collect()` followed by a `weakref` check keeps working for objects the test created. For anything older, including a module-level object, `gc.collect()` does nothing, and only dropping the last reference frees it.
+- `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects, so a test that needs them to find something created before it must create that object itself, or run them in a subprocess.
+- A leak the suite's `filterwarnings` doesn't ignore fails the test that caused it, in teardown, because each test's own garbage is collected there. Close the resource where it's created.
+- A leak can still be blamed on the wrong test, or on none:
+  - An object in no cycle is freed as soon as it's dropped, so its warning lands in whichever test drops it.
+  - A background thread that outlives its test creates garbage in the next one.
+  - A higher-scoped parametrized fixture finishes its old value in the next test's setup, so that test is blamed for it if the value is in no cycle. One in a cycle is reported as described next.
+  - An object in a cycle that's still referenced when its test ends, such as one a module-scoped fixture holds, is collected after the last test if it's dropped later. It's reported on stderr as `Leaked by a test, and dropped after it ended`, without failing anything or naming a test. Until then it keeps whatever it holds, so close resources explicitly in higher-scoped fixtures.
+  - A leak finalized in an `xfail` test's teardown is reported as `xfail`, not as an error.
+
 ## Property tests
 
 `tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
@@ -308,6 +323,16 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 - Never mark a property test as an expected failure: it would then stop checking every other input.
 - Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
 - Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
+
+## Proving a refactor keeps stream events and requests
+
+A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__aiter__`, or what feeds them) must leave the events consumers receive unchanged, and a refactor of how a model builds its request must leave the request it sends unchanged. `tests/refactor_capture.py` records the streams each selected test iterates and the requests it sends, once on a base commit and once on the working tree, and lists the tests whose records differ:
+
+```bash
+uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
+```
+
+Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method. The module docstring says what it records and normalizes.
 
 ## Directory Structure
 

@@ -23,7 +23,7 @@ import asyncio
 import gc
 import pickle
 import threading
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC
@@ -70,13 +70,17 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr, no_leaked_tasks
 
-READINESS_WAIT_TIMEOUT = 5
+READINESS_WAIT_TIMEOUT = 300
+"""Seconds a test waits for something that should happen at once: only a hang reaches it, however stalled the runner is."""
 
 
-def _parallel_sibling_tools_agent(*, raise_first: bool) -> tuple[Agent[None, str], asyncio.Event]:
-    """An agent whose first-emitted tool waits until its sibling task has completed."""
+def _fail_first_tool() -> None:
+    raise RuntimeError('first tool failed')
+
+
+def _parallel_sibling_tools_agent(first_tool_action: Callable[[], None]) -> Agent[None, str]:
+    """An agent whose first-emitted tool waits until its sibling task has completed, then runs `first_tool_action`."""
     fast_finished = asyncio.Event()
-    first_blocked = asyncio.Event()
 
     def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(
@@ -97,10 +101,10 @@ def _parallel_sibling_tools_agent(*, raise_first: bool) -> tuple[Agent[None, str
     @agent.tool_plain
     async def first_tool() -> str:
         await fast_finished.wait()
-        if raise_first:
-            raise RuntimeError('first tool failed')
-        first_blocked.set()
-        await asyncio.Event().wait()
+        first_tool_action()
+        # Only bounds the failure mode: if the action's cancellation were swallowed, the run would complete and the
+        # test would fail.
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     @agent.tool_plain
@@ -112,7 +116,7 @@ def _parallel_sibling_tools_agent(*, raise_first: bool) -> tuple[Agent[None, str
         task.add_done_callback(lambda _: fast_finished.set())
         return 'fast result'
 
-    return agent, first_blocked
+    return agent
 
 
 def _assert_interrupted_fast_result(message: ModelMessage) -> None:
@@ -139,7 +143,7 @@ async def test_sibling_exception_keeps_completed_tool_result(
     mode: Literal['parallel', 'parallel_ordered_events'],
 ) -> None:
     """A completed tool's return survives in the interrupted request when an earlier-emitted sibling raises."""
-    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+    agent = _parallel_sibling_tools_agent(_fail_first_tool)
 
     with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
         with pytest.raises(RuntimeError, match='first tool failed'):
@@ -153,21 +157,57 @@ async def test_external_cancellation_keeps_completed_tool_result(
     mode: Literal['parallel', 'parallel_ordered_events'],
 ) -> None:
     """A completed tool's return survives in the interrupted request when the run is cancelled mid-segment."""
-    agent, first_blocked = _parallel_sibling_tools_agent(raise_first=False)
+
+    def cancel_run() -> None:
+        run_task.cancel()
+
+    agent = _parallel_sibling_tools_agent(cancel_run)
 
     with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
         run_task = asyncio.create_task(agent.run('go'))
-        await asyncio.wait_for(first_blocked.wait(), timeout=READINESS_WAIT_TIMEOUT)
-        run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await run_task
 
     _assert_interrupted_fast_result(messages[-1])
 
 
+@pytest.mark.parametrize('message', [None, '', 'stop tools'])
+async def test_tool_cancellation_preserves_sibling_cancellation_message(message: str | None) -> None:
+    tool_started = asyncio.Event()
+    cancellation_args: list[tuple[object, ...]] = []
+    error = asyncio.CancelledError() if message is None else asyncio.CancelledError(message)
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('cancel_tool', {}), ToolCallPart('tool', {})])
+
+    agent = Agent(FunctionModel(call_tools))
+
+    @agent.tool_plain
+    async def cancel_tool() -> None:
+        await asyncio.wait_for(tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        raise error
+
+    @agent.tool_plain
+    async def tool() -> None:
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as e:
+            cancellation_args.append(e.args)
+            raise
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await agent.run('go')
+
+    expected_args = () if message is None else (message,)
+    assert exc_info.value is error
+    assert exc_info.value.args == expected_args
+    assert cancellation_args == [expected_args]
+
+
 async def test_parallel_ordered_sibling_exception_does_not_emit_later_result_event() -> None:
     """Keeping the completed return doesn't add a result event: ordered settlement stops at the first exception."""
-    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+    agent = _parallel_sibling_tools_agent(_fail_first_tool)
     seen_events: list[object] = []
 
     with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
@@ -1035,22 +1075,21 @@ async def test_event_stream_handler_cancels_run():
 async def test_external_cancellation_is_never_translated():
     """Externally cancelling the task running the agent keeps raising `CancelledError`, not
     `RunCancelled` — it's an infrastructure signal, not an application outcome."""
-    started = asyncio.Event()
-
     agent = Agent(TestModel())
 
     @agent.tool_plain
     async def slow_tool() -> str:
-        started.set()
+        # Cancel from inside the tool so the cancellation lands mid-tool with no readiness wait
+        # whose deadline a stalled CI worker can outlast. The sleep only bounds the failure mode:
+        # if the cancellation were swallowed, the run would complete and the test would fail.
+        task.cancel()
         await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('go'))
-    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-    task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+        await task
 
 
 async def test_task_cancel_of_run_carries_run_cancelled():
@@ -1642,13 +1681,14 @@ async def test_run_stream_events_external_cancel_caught_in_task():
     """The consumer's own `except CancelledError` sees the attached state on all Python versions:
     the state is attached by the context manager's exit in the consumer's task, so no `await task`
     boundary is crossed before the catch."""
-    started = asyncio.Event()
     agent = Agent(TestModel())
     recorded: list[RunCancelled | None] = []
 
     @agent.tool_plain
     async def slow_tool() -> str:
-        started.set()
+        # Cancel the consumer from inside the tool, so the cancellation lands mid-tool without a
+        # readiness wait whose deadline a stalled CI worker can outlast.
+        task.cancel()
         await asyncio.Event().wait()
         return 'never reached'  # pragma: no cover
 
@@ -1661,8 +1701,6 @@ async def test_run_stream_events_external_cancel_caught_in_task():
             raise
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-    task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
@@ -1862,27 +1900,21 @@ async def test_run_stream_events_early_break_has_no_result():
 
 async def test_run_stream_events_binding_does_not_leak_to_nested_run():
     """A plain nested run completes independently before cancellation targets the outer run."""
-    inner_completed = asyncio.Event()
-    outer_blocked = asyncio.Event()
     inner_agent = Agent(TestModel(custom_output_text='inner complete'))
     outer_agent = Agent(TestModel())
 
     @outer_agent.tool_plain
     async def nested_run() -> str:
         result = await inner_agent.run('inner')
-        inner_completed.set()
-        outer_blocked.set()
-        await asyncio.Event().wait()
+        # The sleep only bounds the failure mode: if the cancellation were swallowed, the test would fail.
+        events.cancel()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
         return result.output  # pragma: no cover
 
     async with outer_agent.run_stream_events('outer') as events:
         consumer = asyncio.create_task(_consume_events(events))
-        await asyncio.wait_for(outer_blocked.wait(), timeout=READINESS_WAIT_TIMEOUT)
-        events.cancel()
         with pytest.raises(RunCancelled):
-            await asyncio.wait_for(consumer, timeout=READINESS_WAIT_TIMEOUT)
-
-    assert inner_completed.is_set()
+            await consumer
 
 
 async def test_run_stream_events_binding_across_blocking_portal():
@@ -2532,7 +2564,6 @@ async def test_iter_break_teardown_propagates_external_cancellation():
         task.result()
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_iter_early_exit_discards_wrap_run_cleanup_failure():
     """A failure in `wrap_run` cleanup after leaving `iter()` early has no result to surface on, so it's discarded."""
 

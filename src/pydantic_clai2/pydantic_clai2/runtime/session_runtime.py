@@ -77,6 +77,7 @@ from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -176,6 +177,7 @@ def create_shell(
     workspace: Path | None = None,
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
+    settings_for: Callable[[ProjectSettings], Settings] | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
@@ -183,6 +185,7 @@ def create_shell(
     what the session shares with the others in this CLAI, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -218,7 +221,15 @@ def create_shell(
         # turn holds the change, and its model, until it ends.
         shell.show_model()
 
-    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    context = CommandContext(
+        settings=settings,
+        store=store,
+        apply_setting=apply_setting,
+        project=project,
+        settings_for=settings_for,
+        workspace=lambda: Path(session.workspace),
+    )
+    session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -320,6 +331,14 @@ def create_shell(
     )
     commands.register(set_)
     commands.register(replace(set_, name='settings', description='Alias of /set'))
+    commands.register(
+        Command(
+            name='project',
+            description='Review what .clai/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
+            handler=context.project_command,
+            complete=context.project_completions,
+        )
+    )
     commands.register(
         Command(
             name='theme',
@@ -753,6 +772,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         else:
             self._inbox.remove(entry)
             self.live_session.changed()
+
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        return self._handling
 
     @property
     def idle(self) -> bool:
@@ -1247,13 +1271,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _rewind(self) -> None:
         assert self.editor is not None
-        async with self.forks.busy(), self._released():
-            try:
-                notice = await rewind(self.session, self.editor)
-            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
-                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
-            else:
-                self.console.print(notice, markup=False)
+        with self._handling_input():
+            async with self.forks.busy(), self._released():
+                try:
+                    notice = await rewind(self.session, self.editor)
+                except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                    self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+                else:
+                    self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
