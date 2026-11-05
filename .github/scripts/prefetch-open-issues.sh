@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
-out_root="/tmp/gh-aw/agent"
+out_root="${GH_AW_AGENT_DIR:-/tmp/gh-aw/agent}"
 issues_root="${out_root}/issues"
 all_dir="${issues_root}/all"
 batches_dir="${issues_root}/batches"
@@ -11,7 +11,8 @@ manifest_file="${issues_root}/batch-manifest.tsv"
 raw_file="${issues_root}/open-issues.raw.json"
 
 batch_size="${BATCH_SIZE:-25}"
-issue_limit="${ISSUE_LIMIT:-1000}"
+# A list that reaches the cap is rejected as incomplete, so keep the cap far above the open issue count.
+issue_limit="${ISSUE_LIMIT:-10000}"
 
 rm -rf "${issues_root}"
 mkdir -p "${all_dir}" "${batches_dir}"
@@ -19,16 +20,21 @@ mkdir -p "${all_dir}" "${batches_dir}"
 printf "number\ttitle\tupdated_at\tcreated_at\tlabel_names\n" > "${index_file}"
 printf "batch\tissue_number\tupdated_at\tlabel_names\n" > "${manifest_file}"
 
-# Fetch all open issues sorted by oldest update time first.
+# Fetch all open issues, oldest update first. Not with `--search "sort:updated-asc"`: GitHub search
+# returns at most 1,000 results whatever `--limit` asks for.
 gh issue list \
   --repo "${repo}" \
   --state open \
   --limit "${issue_limit}" \
-  --search "sort:updated-asc" \
   --json number,title,body,updatedAt,createdAt,url,labels,author,assignees \
+  | jq 'sort_by(.updatedAt)' \
   > "${raw_file}"
 
 issue_count="$(jq 'length' "${raw_file}")"
+if (( issue_count >= issue_limit )); then
+  echo "::error::The open issue list reached its cap of ${issue_limit}; refusing a partial corpus"
+  exit 1
+fi
 if [[ "${issue_count}" == "0" ]]; then
   echo "No open issues found."
   exit 0
