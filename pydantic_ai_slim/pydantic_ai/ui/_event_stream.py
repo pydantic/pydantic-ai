@@ -534,18 +534,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_model_response_rejected(event):
                     yield e
             case CustomEvent():
-                # Checked here rather than in each protocol's handler so that `ui=False` holds for
-                # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
-                # forward an event the application declared server-side only.
-                #
-                # An unknown event is one whose class this process never imported, so its `ui` says
-                # nothing about what the application declared: the flag lives on the class, not on
-                # the wire. Forwarding it would leak the payload of an event that may well have been
-                # declared `ui=False` where it was emitted, so the unresolved case fails closed.
-                # Import the modules defining your events in the process that serves the frontend.
-                if event.ui and not isinstance(event, UnknownCustomEvent):
-                    async for e in self.handle_custom_event(event):
-                        yield e
+                async for e in self._handle_ui_custom_event(event):
+                    yield e
             case CapabilityEvent():
                 async for e in self.handle_capability_event(event):
                     yield e
@@ -569,6 +559,21 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 pass
             case _:
                 pass
+
+    async def _handle_ui_custom_event(self, event: CustomEvent) -> AsyncIterator[EventT]:
+        """Forward a `CustomEvent` to `handle_custom_event`, unless it's server-side only."""
+        # Checked here rather than in each protocol's handler so that `ui=False` holds for
+        # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
+        # forward an event the application declared server-side only.
+        #
+        # An unknown event is one whose class this process never imported, so its `ui` says
+        # nothing about what the application declared: the flag lives on the class, not on
+        # the wire. Forwarding it would leak the payload of an event that may well have been
+        # declared `ui=False` where it was emitted, so the unresolved case fails closed.
+        # Import the modules defining your events in the process that serves the frontend.
+        if event.ui and not isinstance(event, UnknownCustomEvent):
+            async for e in self.handle_custom_event(event):
+                yield e
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.

@@ -540,6 +540,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
+    async def _rejected(
+        self, streamed: _messages.ModelResponse, *, cut_short: bool
+    ) -> _messages.ModelResponseRejectedEvent | None:
+        """The event reporting that `streamed` was rejected, if it was."""
+        if self._rejection is None:
+            return None
+        return await self._rejection(streamed, cut_short)
+
     async def _model_events(
         self,
     ) -> AsyncIterator[ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent]:
@@ -561,14 +569,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 break
             if event is None:
                 self._model_stream_finished = True
-                if self._rejection is not None and (rejected := await self._rejection(self.response, False)):
+                if rejected := await self._rejected(self.response, cut_short=False):
                     yield rejected
                 return
             yield event
 
         streamed = self.response
         response = await self._replacement_response()
-        if self._rejection is not None and (rejected := await self._rejection(streamed, True)):
+        if rejected := await self._rejected(streamed, cut_short=True):
             yield rejected
         if response is not None:
             self._raw_stream_response = models.CompletedStreamedResponse(
