@@ -107,6 +107,7 @@ try:
         TemporalModel,
         _RequestParams,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._payload_converter import PydanticAIPayloadConverter
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -4045,13 +4046,13 @@ class MockPayloadCodec(PayloadCodec):
         return list(payloads)
 
 
-def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
-    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
+def test_pydantic_ai_plugin_no_converter_uses_pydantic_ai_payload_converter() -> None:
+    """When no converter is provided, PydanticAIPlugin uses Pydantic AI's Pydantic payload converter."""
     plugin = PydanticAIPlugin()
     # Create a minimal config without data_converter
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is pydantic_data_converter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 async def test_request_params_preserve_telemetry_sensitive_ids() -> None:
@@ -4140,13 +4141,17 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
     assert observed_ids == [{identity, native_identity, 'docs'} if legacy_payload else {identity, native_identity}]
 
 
-def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
-    """When converter already uses PydanticPayloadConverter, return it unchanged."""
+def test_pydantic_ai_plugin_with_pydantic_payload_converter_replaced() -> None:
+    """When converter uses the stock PydanticPayloadConverter, replace it with Pydantic AI's without warning."""
     plugin = PydanticAIPlugin()
-    converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
+    codec = MockPayloadCodec()
+    converter = DataConverter(payload_converter_class=PydanticPayloadConverter, payload_codec=codec)
     config: dict[str, Any] = {'data_converter': converter}
-    result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is converter
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_codec is codec
 
 
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
@@ -4166,7 +4171,7 @@ def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
@@ -4180,7 +4185,7 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
@@ -4194,7 +4199,7 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
         match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
     ):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
@@ -4208,7 +4213,7 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(UserWarning):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 

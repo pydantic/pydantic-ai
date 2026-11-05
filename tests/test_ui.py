@@ -67,7 +67,7 @@ pytest.importorskip('starlette')
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
-from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
+from pydantic_ai.ui import MessagesBuilder, NativeEvent, UIAdapter, UIEventStream
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1800,3 +1800,37 @@ async def test_reinject_system_prompt_capability_with_pending_tool_calls():
             UserPromptPart(content='Call the tool', timestamp=IsDatetime()),
         ]
     )
+
+
+def test_messages_builder_extends_its_own_parts_in_place():
+    """Each `add` to the same message appends to one list rather than copying it, so loading stays linear.
+
+    A unit test: the adapters only expose the finished messages, where a copy per part is invisible.
+    """
+    builder = MessagesBuilder()
+    builder.add(TextPart('a'))
+    parts = builder.messages[0].parts
+    builder.add(TextPart('b'))
+    builder.add(TextPart('c'))
+    builder.add(UserPromptPart('d'))
+    request_parts = builder.messages[1].parts
+    builder.add(UserPromptPart('e'))
+    builder.add(UserPromptPart('f'))
+
+    assert builder.messages[0].parts is parts
+    assert builder.messages[1].parts is request_parts
+    assert [len(message.parts) for message in builder.messages] == [3, 3]
+
+
+def test_messages_builder_copies_parts_it_did_not_make():
+    """A message passed in keeps its own parts list; `add` extends a copy of it."""
+    own_parts = [TextPart('a')]
+    message = ModelResponse(parts=own_parts)
+    builder = MessagesBuilder(messages=[message])
+    checkpoint = builder.checkpoint()
+    builder.add(TextPart('b'))
+    builder.add(TextPart('c'))
+
+    assert own_parts == [TextPart('a')]
+    assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
+    assert builder.last_modified(checkpoint, of_type=ModelResponse) is message

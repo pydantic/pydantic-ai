@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry
+from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -95,6 +96,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             {'status_code': 429, 'model_name': 'gpt-4', 'body': {'error': 'rate limit'}},
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
+        ),
     ],
     ids=[
         'ModelRetry',
@@ -113,6 +118,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-no-body',
         'ModelHTTPError-with-body',
         'IncompleteToolCall',
+        'InlinedSchemaTooLargeError',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):

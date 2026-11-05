@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, cast
 
+import pydantic
 from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
@@ -12,7 +14,11 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturn, ToolReturnContent
+from pydantic_ai.messages import (
+    ToolReturn,
+    ToolReturnContent,
+    _RecordsContentFiles,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -55,10 +61,21 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+_decoded_result_shape: ContextVar[Literal['tool-return', 'content', 'legacy'] | None] = ContextVar(
+    '_decoded_result_shape', default=None
+)
+"""Which shape the `_ToolReturn` being validated says its result has, or `None` outside validation."""
+
+
 def _result_discriminator(v: Any) -> str:
-    if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
+    if isinstance(v, ToolReturn):
         return 'tool-return'
-    return 'content'
+    shape = _decoded_result_shape.get()
+    if shape == 'legacy':
+        # Written before `is_tool_return` existed: a `ToolReturn` is told apart by its `kind`.
+        return 'tool-return' if isinstance(v, dict) and v.get('kind') == 'tool-return' else 'content'  # pyright: ignore[reportUnknownMemberType]
+    # Any other value a tool returned is content, including a mapping whose `kind` is `'tool-return'`.
+    return shape or 'content'
 
 
 # Defined at module level so Pydantic resolves the Annotated metadata at runtime,
@@ -70,9 +87,26 @@ _ToolReturnResult = Annotated[
 
 
 @dataclass
-class _ToolReturn:
+class _ToolReturn(_RecordsContentFiles):
+    _content_field: ClassVar[str] = 'result'
+
     result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
+    is_tool_return: bool | None = None
+    """Whether `result` is a `ToolReturn`, rather than content that may share its shape; `None` in older payloads."""
+
+    @pydantic.model_validator(mode='wrap')
+    @classmethod
+    def _validate_result_shape(cls, value: Any, handler: pydantic.ModelWrapValidatorHandler[Any]) -> Any:
+        if not isinstance(value, Mapping):
+            return handler(value)
+        is_tool_return = cast(Mapping[str, Any], value).get('is_tool_return')
+        shape = 'legacy' if not isinstance(is_tool_return, bool) else 'tool-return' if is_tool_return else 'content'
+        token = _decoded_result_shape.set(shape)
+        try:
+            return handler(value)
+        finally:
+            _decoded_result_shape.reset(token)
 
 
 CallToolResult = Annotated[
@@ -122,7 +156,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
-            return _ToolReturn(result=result)
+            return _ToolReturn(result=result, is_tool_return=isinstance(result, ToolReturn))
         except ApprovalRequired as e:
             return _ApprovalRequired(metadata=e.metadata)
         except CallDeferred as e:
