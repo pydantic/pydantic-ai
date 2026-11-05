@@ -257,7 +257,7 @@ class SystemPromptPart:
     """
 
     context_id: str | None = None
-    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+    """The id of the `<pyai:context>` element this prompt is sent to the model as, or `None` to send its content as is.
 
     Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
     sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
@@ -3427,9 +3427,9 @@ class InstructionDeltaPart:
     """Part type identifier, used as a discriminator for deserialization."""
 
     def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
-        """Render this change as a `<context>` element that replaces the block's earlier one.
+        """Render this change as a `<pyai:context>` element that replaces the block's earlier one.
 
-        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
+        A replacement is rendered as a `<pyai:context_diff>` element instead, holding a unified diff against
         `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
         shorter than the full replacement.
 
@@ -3466,7 +3466,7 @@ def _instruction_text_hash(text: str) -> str:
 
 
 def _withdrawal_text(*, inline_system: bool) -> str:
-    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    """What a withdrawn `<pyai:context>` element says, which `<system>`-tagged user text has to say stays in effect."""
     if inline_system:
         return 'This context has been withdrawn.'
     return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
@@ -3476,7 +3476,7 @@ def _context_element(instruction_id: InstructionId | str | None, content: str) -
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
-    is a system-voice tag: a lookalike `<context>` in user or tool text gets a note instead.
+    is a system-voice tag: a lookalike `<pyai:context>` in user or tool text gets a note instead.
     """
     return frame(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
@@ -3494,13 +3494,11 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
-_SUPERSESSION_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
-)
+_SUPERSESSION_SENTENCE = f'A later <{CONTEXT_TAG}> element with the same id replaces the earlier one and stays in effect until replaced again.'
 
 
 def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
-    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+    """Render a statement of an appending dynamic system prompt as the `<pyai:context>` element its `context_id` names.
 
     An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
     appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
@@ -3511,14 +3509,14 @@ def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool
 
 
 def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
-    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    """The positions of the parts `_render_append_parts` sends as `<pyai:context>` elements."""
     return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
-    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+    """Render the prefix's append-mode blocks as tagged `<pyai:context>` elements, followed once by how later ones apply.
 
-    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    Each addressable append-mode part is wrapped in a `<pyai:context id>` element. The last of them is followed by
     one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
     with the same id replaces it and stays in effect, which models need to keep following an update on later
     turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as

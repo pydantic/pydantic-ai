@@ -852,10 +852,10 @@ async def test_openai_chat_cache_instructions_single_breakpoint_before_appending
             {
                 'role': 'system',
                 'content': """\
-<context id="agent:memory">
+<pyai:context id="agent:memory">
 The customer prefers email.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             },
             {'role': 'user', 'content': 'Where is order 1234?'},

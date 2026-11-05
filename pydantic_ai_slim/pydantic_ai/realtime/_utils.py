@@ -74,7 +74,7 @@ def session_instructions(messages: Sequence[ModelMessage], model_request_paramet
     recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
 
     Both are rendered as a standard model renders them: append-mode blocks and appending dynamic system
-    prompts as tagged `<context>` elements, so the changes a session delivers later can name them.
+    prompts as tagged `<pyai:context>` elements, so the changes a session delivers later can name them.
     """
     standing = _standing_system_prompt(messages)
     if any(part.context_id is not None for part in standing):

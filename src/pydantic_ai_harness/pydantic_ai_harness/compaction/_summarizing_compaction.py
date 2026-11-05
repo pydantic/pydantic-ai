@@ -331,7 +331,7 @@ def _neutralize_transcript_tags(content: str) -> str:
     """Escape the transcript's own tags and every framing tag core writes in *content*.
 
     Content then can't open or close a message, the transcript, or the previous summary, and a
-    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
+    `<system>`, `<pyai:context>` or `<tool_result>` tag in it stays inside its element.
     """
     # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
     # the transcript's tags as framing tags there.

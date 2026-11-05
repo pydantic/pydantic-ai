@@ -1765,7 +1765,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         until the latest compaction alone, since no baseline restates it.
 
         Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
-        `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
+        `<pyai:context>` element that id names, so a later statement of an appending dynamic system prompt replaces
         or withdraws the first.
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
@@ -1997,7 +1997,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
         An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
-        system-voice tag opener (`<system`, `<context`, `<context_diff`) gets a `SystemPromptPart` next to it, which on a
+        system-voice tag opener (`<system`, `<pyai:context`, `<pyai:context_diff`) gets a `SystemPromptPart` next to it, which on a
         model without inline system messages becomes a `<system>` block later on, saying the text is the
         user's, the tool's or the file author's (`lookalike_frame_note`). Nothing in the item itself changes. The
         note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
@@ -4740,7 +4740,7 @@ def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMe
 def _render_system_prompt_contexts(
     messages: list[ModelMessage], *, inline_system: bool, prefix_states_rule: bool
 ) -> list[ModelMessage]:
-    """Send each `SystemPromptPart` with a `context_id` as its `<context>` element, which history holds only the content of.
+    """Send each `SystemPromptPart` with a `context_id` as its `<pyai:context>` element, which history holds only the content of.
 
     The first statement of an id in `messages` opens it, and later ones replace or withdraw it. A statement that
     would open an id without content has nothing to state and is left out.

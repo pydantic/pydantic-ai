@@ -32,10 +32,10 @@ interactions:
           text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - type: text
           text: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -147,9 +147,9 @@ interactions:
               type: text
             is_error: false
           - text: |-
-              <system><context id="capability:todos:state">
+              <system><pyai:context id="capability:todos:state">
               Todo status: done.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-sonnet-5
         stream: true
@@ -158,10 +158,10 @@ interactions:
           text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - type: text
           text: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:

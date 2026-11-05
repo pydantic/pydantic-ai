@@ -32,7 +32,7 @@ _TASK_FRAME_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:task[-_]output|task_que
 def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
     """Frame `body` as `<task_output>` data that can't end its own element or open a framing tag, with escaped attributes.
 
-    Every opening or closing framing tag core writes (`<system>`, `<context_diff>`, `<tool_result>` and the rest)
+    Every opening or closing framing tag core writes (`<system>`, `<pyai:context_diff>`, `<tool_result>` and the rest)
     is neutralized in the body, as are `<task_output>` itself and `<task_question>`.
 
     Like a background tool's `<tool_result>`, the frame carries `outcome` only when the task didn't succeed.

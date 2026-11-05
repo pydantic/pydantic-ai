@@ -184,7 +184,7 @@ user-message `<context-file path="..." />` tag.
 
 Each file is wrapped in `<context-file path="...">` tags. The `<` of every
 opening or closing `<context-file>` tag inside a file, and of every framing tag
-Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is
+Pydantic AI writes (`<system>`, `<pyai:context>`, `<tool_result>` and the rest), is
 escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
 block.
 
