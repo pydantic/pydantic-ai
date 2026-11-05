@@ -41,7 +41,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
+from pydantic_ai.capabilities import HandleDeferredToolCalls, IncludeToolReturnSchemas, PrepareTools
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -2267,7 +2267,6 @@ def test_function_toolset_include_return_schema_false_overrides_capability_for_t
     Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
     these fields reach the wire.
     """
-    from pydantic_ai.capabilities import IncludeToolReturnSchemas
 
     def tool_instance() -> str:
         return 'tool'
