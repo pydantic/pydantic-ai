@@ -2991,8 +2991,8 @@ def test_rate_limit_retry_backs_off_exponentially_and_hands_a_longer_1302_burst_
             client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
         )
     assert exc_info.value.body == _zai_429_body('1302')
-    assert retry_clock.sleeps == [1, 2, 4, 8, *[16] * 17]
-    assert len(calls) == 22
+    assert retry_clock.sleeps == [1, 2, 4, 8, *[16] * 36]
+    assert len(calls) == 41
 
 
 @pytest.mark.parametrize(

@@ -453,8 +453,9 @@ _LLM_MAX_RETRIES = 4
 #
 # Z.ai `1302` bursts throttle rather than block, and can last hours. During the
 # 2026-11-04 burst, each retry passed about one time in five, however long its
-# request had waited. At that rate an estimated one request in 3,000 exhausts this window.
-RATE_LIMIT_RETRY_SECS = 5 * 60
+# request had waited. At that rate, an estimated one request in a million or fewer
+# exhausts this window.
+RATE_LIMIT_RETRY_SECS = 10 * 60
 # Every request retries for at least this long, inside the run's time reserve too.
 RATE_LIMIT_MIN_RETRY_SECS = 60
 
