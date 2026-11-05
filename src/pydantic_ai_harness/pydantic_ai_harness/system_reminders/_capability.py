@@ -577,6 +577,7 @@ def _is_builtin_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]
 
     A subclass that overrides `__call__` is called like any other dynamic reminder.
     """
+    # `isinstance` narrows `value` to `LLMReminder[Unknown]`, so `__call__` takes a `RunContext[Unknown]`.
     return isinstance(value, LLMReminder) and type(value).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
