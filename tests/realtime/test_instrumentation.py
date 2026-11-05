@@ -1948,7 +1948,7 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
         async with agent.realtime(_Model(conn)).session() as session:
-            async for _ in session:
+            async for _ in session:  # pragma: no branch
                 break
 
     # These are all spans this path starts. They must be exported before the owner block returns,
@@ -1998,7 +1998,7 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
         async with agent.realtime(_Model(_IdleAfterTool())).session() as session:
-            async for _ in session:
+            async for _ in session:  # pragma: no branch
                 await started.wait()
                 break
 

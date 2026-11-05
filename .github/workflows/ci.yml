@@ -917,8 +917,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
-        # 3.11 and 3.14 collect coverage, 3.13 enforces the per-test budget and 3.15 is the newest,
-        # so a pull request skips only 3.12 (see the `test` job's matrix).
+        # 3.14 collects coverage, 3.11 collects the coverage only it can, 3.13 enforces the per-test budget and 3.15 is
+        # the newest, so a pull request skips only 3.12 (see the `test` job's matrix).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         include: >-
           ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[]' || '[{"python-version": "3.11", "shard": 3}]') }}
@@ -927,9 +927,10 @@ jobs:
             python-version: "3.12"
     env:
       CI: true
-      # Collect 3.14 for fast coverage and 3.11 for branches and extras unavailable on 3.14.
-      # The 3.11 legacy tracer needs a third shard to stay within the job timeout.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
+      # Collect 3.14 for fast coverage. The legacy tracer 3.11 would use costs about a third of its job; the
+      # "cover what only 3.11 can" step below collects the few tests that need it. 3.11 keeps three shards because
+      # two would make its cells the slowest of the matrix.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Computed from `classify`'s output, so passed to the shell through the environment.
       SHARD: ${{ matrix.shard }}
       SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2 }}
@@ -1153,6 +1154,34 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # `voyageai` and `sentence-transformers` don't install on 3.14, and these tests hold the lines that only run before
+      # 3.14. Nothing else needs 3.11's coverage. When `coverage` reports lines that only a test skipped on 3.14 runs,
+      # such as a helper or fixture of a `skipif(sys.version_info >= (3, 14))` test, add that test here.
+      - name: cover what only 3.11 can
+        if: matrix.python-version == '3.11' && matrix.shard == 1 && needs.classify.outputs.harness_only != 'true'
+        run: >-
+          uv run --all-packages --all-extras --no-extra mcp-tasks
+          coverage run -m pytest -n logical --dist=loadgroup
+          tests/providers/test_voyageai.py
+          tests/test_embeddings.py
+          tests/test_embeddings_error_categories.py
+          tests/test_on_event.py
+          tests/test_custom_events.py
+          tests/test_utils.py::test_sync_entry_point_does_not_warn_about_a_missing_event_loop
+          tests/evals/test_utils.py::test_get_event_loop_does_not_warn_without_a_current_loop
+          && uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
+        env:
+          COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.3.11-version-specific
+
+      - name: store what only 3.11 can cover
+        if: matrix.python-version == '3.11' && matrix.shard == 1 && needs.classify.outputs.harness_only != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-3.11-version-specific
+          path: .coverage
+          include-hidden-files: true
+
   # The durable-execution suites pin their tests to xdist groups sharing a real local server --
   # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
   # one for Prefect -- so inside the main matrix those groups dominate its critical path. Running
@@ -1200,11 +1229,11 @@ jobs:
             resolution: locked
     env:
       CI: true
-      # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
+      # Python 3.14 covers the newest version; both 3.12 resolutions cover Temporal dependency branches.
       COLLECT_COVERAGE: >-
         ${{
           matrix.python-version == '3.12'
-          || ((matrix.python-version == '3.11' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
+          || (matrix.python-version == '3.14' && matrix.resolution == 'locked')
         }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
@@ -1281,8 +1310,11 @@ jobs:
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
+          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1984,6 +2016,10 @@ jobs:
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
     # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    env:
+      # 3.14 collects nearly all the data, and coverage only knows a bare annotation like `x: int` isn't executed there
+      # (PEP 649) when the report itself runs on 3.14. An older Python counts those lines as missing.
+      UV_PYTHON: "3.14"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

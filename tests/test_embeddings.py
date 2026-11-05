@@ -165,6 +165,15 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
             await model.embed('hello', input_type='query')
 
 
+@pytest.mark.skipif(not voyageai_installed, reason='voyageai not installed')
+@pytest.mark.usefixtures('voyageai_imported')
+def test_voyageai_embedding_model_infers_a_named_provider(monkeypatch: pytest.MonkeyPatch):
+    from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+
+    monkeypatch.setenv('VOYAGE_API_KEY', 'test-key')
+    assert VoyageAIEmbeddingModel('voyage-4', provider='voyageai').system == 'voyageai'
+
+
 @pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
 async def test_google_embedding_model_blocks_count_tokens_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))

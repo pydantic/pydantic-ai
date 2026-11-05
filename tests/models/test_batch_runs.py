@@ -1352,7 +1352,7 @@ async def test_a_pending_response_is_withdrawn_when_the_caller_stops_iterating_b
         wrapped, output_type=[str, PendingModelResponse], capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]
     )
     async with agent.iter('Hello') as agent_run:
-        async for node in agent_run:
+        async for node in agent_run:  # pragma: no branch
             if isinstance(node, CallToolsNode):
                 break
     assert agent_run.result is None
