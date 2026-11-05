@@ -278,7 +278,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_calls_cited_web_tools_directly: bool
-    """Whether a request that asks for citations sends the `20260209` or `20260318` web tools it cites with
+    """Whether a request that asks for citations sends the `20260209` web tools it cites with
     `allowed_callers=['direct']`, so their results are cited. Default: `False`.
 
     See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.

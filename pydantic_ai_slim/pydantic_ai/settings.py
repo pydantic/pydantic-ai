@@ -621,7 +621,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
-      `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      `20260209` web tools, which on the Anthropic API the setting has the model call directly unless the request
       needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)

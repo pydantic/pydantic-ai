@@ -43,8 +43,7 @@ The key follows the model class you use, not who makes the underlying model: Cla
 API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
 tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
 must not run the tool without them.
-See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
-[OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
+See the [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
 
 ### Google tool combinations
@@ -201,7 +200,6 @@ _(This example is complete, it can be run "as is")_
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `provider_settings.anthropic.response_inclusion` | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
@@ -224,14 +222,13 @@ left out on models that don't support them.
     For Anthropic, Pydantic AI selects the web search tool version from the model profile and
     Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_search_20250305` otherwise.
-    Anthropic-specific web search settings select `web_search_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
     By default the model can call `web_search_20260209` from a server-side code execution sandbox.
     On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
     needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
     Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
-    Without those settings, `WebSearchTool` on Vertex AI uses `web_search_20250305`, as Anthropic does not offer the
+    On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
@@ -719,8 +716,6 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
-| `provider_settings.anthropic.use_cache` | ✅ | ❌ |
-| `provider_settings.anthropic.response_inclusion` | ✅ | ❌ |
 
 As with [web search](#restricting-parameters), `max_uses`, `allowed_domains`, and `blocked_domains` restrict what the
 tool may do: on a model that can't apply one that is set, the tool is treated as unsupported, so a local fallback runs
@@ -734,7 +729,6 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     For Anthropic, Pydantic AI selects the web fetch tool version from the model profile and
     Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
-    Anthropic-specific web fetch settings select `web_fetch_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
     By default the model can call `web_fetch_20260209` from a server-side code execution sandbox.
     On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
     needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
