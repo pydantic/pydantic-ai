@@ -10,6 +10,7 @@ import asyncio
 import base64
 import gc
 import json
+import math
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -556,14 +557,20 @@ def book(*, trip: Trip, travellers: int) -> str:
         )
         assert 'no `HandleDeferredToolCalls` capability resolved it' in retry
 
-    async def test_cancelling_a_run_interrupts_its_cell(self, kernel: IPythonKernel) -> None:
+    async def test_cancelling_a_run_interrupts_its_cell(
+        self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cell that has not stopped within the real-clock interrupt grace gets its kernel replaced, and a loaded
+        # runner can take longer than that to stop one. Without the grace, only the cell stopping ends the wait, and
+        # `slept` shows whether the interrupt stopped it before its sleep ran out.
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', math.inf)
         started = asyncio.Event()
 
         async def begin() -> None:
             started.set()
 
         agent = Agent(
-            _scripted('begin()\nimport time\ntime.sleep(30)'),
+            _scripted('slept = False\nbegin()\nimport time\ntime.sleep(30)\nslept = True'),
             capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
             tools=[Tool(begin)],
         )
@@ -572,7 +579,7 @@ def book(*, trip: Trip, travellers: int) -> str:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert await _run(IPythonCodeMode(kernel=kernel), "'free'") == ['free']
+        assert await _run(IPythonCodeMode(kernel=kernel), 'slept') == [False]
 
 
 class TestIPythonCodeModeConfiguration:
