@@ -42,19 +42,11 @@ def doc_descriptions(
         return None, {}
 
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
-    # `warnings=False` stops griffe logging about docstrings it can't fully parse; that is the author's
-    # business, not something to surface every time a tool is built.
-    if docstring_style == 'google':
-        parser_options = GoogleOptions(returns_named_value=False, returns_multiple_items=False, warnings=False)
-    elif docstring_style == 'numpy':
-        parser_options = NumpyOptions(warnings=False)
-    else:
-        parser_options = SphinxOptions(warnings=False)
     docstring = Docstring(
         doc,
         lineno=1,
         parser=docstring_style,
-        parser_options=parser_options,
+        parser_options=_parser_options(docstring_style),
     )
     sections = docstring.parse()
 
@@ -84,6 +76,19 @@ def doc_descriptions(
             main_desc = return_xml
 
     return main_desc, params
+
+
+def _parser_options(docstring_style: DocstringStyle) -> GoogleOptions | NumpyOptions | SphinxOptions:
+    """The griffe parser options for `docstring_style`."""
+    # `warnings=False` stops griffe logging about docstrings it can't fully parse; that is the author's
+    # business, not something to surface every time a tool is built.
+    match docstring_style:
+        case 'google':
+            return GoogleOptions(returns_named_value=False, returns_multiple_items=False, warnings=False)
+        case 'numpy':
+            return NumpyOptions(warnings=False)
+        case _:
+            return SphinxOptions(warnings=False)
 
 
 def _infer_docstring_style(doc: str) -> DocstringStyle:

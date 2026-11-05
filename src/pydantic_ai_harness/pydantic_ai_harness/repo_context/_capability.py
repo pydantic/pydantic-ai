@@ -36,6 +36,7 @@ from pydantic_ai_harness.repo_context._loader import (
     directories_up_to,
     discover_instruction_files,
     find_dir_context_file,
+    find_root,
     render_context_file,
     render_context_file_path,
     render_context_files,
@@ -81,9 +82,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     Three strategies, each independently toggleable:
 
-    1. Walk-up instruction autoload (`autoload_instructions`, on by default):
-       load `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor
-       up to `home_dir`, deduped, ancestor-first. These are read once at run start
+    1. Instruction autoload (`autoload_instructions`, on by default): load the
+       working directory's instruction file, one per directory: the first of
+       `filenames` (`AGENTS.md`, then `CLAUDE.md`) that exists. `walk_up` adds the
+       ancestors up to the repository root (`'repo_root'`) or the filesystem root
+       (`'all'`); files are deduped by content, broadest first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
        conversation is appended rather than rewritten.
@@ -95,29 +98,27 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        `read_file` when the asset roots are inside the working directory, and
        the instructions then point at the roots instead.
 
-    3. Nested-on-traversal (`nested_traversal`, off by default): when the model
+    3. Nested-on-traversal (`nested_traversal`, on by default): when the model
        lists a directory or reads a file through a filesystem capability event,
-       surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
-       directory between it and the working directory, shallowest first. The
+       surface the instruction file of that directory and of every directory
+       between it and the working directory, shallowest first. The
        working directory's own files are not repeated when Strategy 1 loaded
        them. The note is enqueued in the message tail, not added to system
        instructions, so it does not invalidate the cached prefix.
-       `nested_inject='pointer'` (default) enqueues a one-line pointer;
-       `'contents'` inlines the file body. With it on, the instructions also gain
-       one static sentence on how instruction files relate: each applies to its
+       `nested_inject='contents'` (default) inlines the file body; `'pointer'`
+       enqueues a one-line pointer. With it on, the instructions also gain one
+       static sentence on how instruction files relate: each applies to its
        subtree, the deeper one wins, and the user's direct instructions win over
        all of them.
 
     ```python
-    from pathlib import Path
-
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import LocalWorkspace
     from pydantic_ai_harness.repo_context import RepoContext
 
     agent = Agent(
         'anthropic:claude-sonnet-4-6',
-        capabilities=[LocalWorkspace('.'), RepoContext(home_dir=Path.home())],
+        capabilities=[LocalWorkspace('.'), RepoContext(walk_up='repo_root')],
     )
     ```
     """
@@ -131,12 +132,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     home_dir: str | Path | None = None
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
 
-    A relative path resolves against the working directory. `None` (the default)
-    scans only the working directory -- no walk-up.
+    A relative path resolves against the working directory. Setting it walks up to it even with
+    `walk_up=None`, and with `walk_up='all'` it stops the walk there. It cannot be combined with
+    `walk_up='repo_root'`.
     """
 
-    filenames: Sequence[str] = ('CLAUDE.md', 'AGENTS.md')
-    """Instruction filenames to look for, in within-directory precedence order."""
+    filenames: Sequence[str] = ('AGENTS.md', 'CLAUDE.md')
+    """Instruction filenames to look for. Each directory contributes only the first one that exists there."""
 
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
@@ -155,13 +157,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     inventory_tool_name: str = 'inventory_agent_context'
     """Name of the inventory tool exposed to the model."""
 
-    nested_traversal: bool = False
+    nested_traversal: bool = True
     """Strategy 3: surface the instruction files between the working directory and
-    a directory the model lists or reads a file in. Off by default -- it couples to the list/read tools.
-    With it on, the instructions also state how instruction files relate."""
+    a directory the model lists or reads a file in, through `FileSystem` events (or the
+    same events emitted by another file tool). With it on, the instructions also state
+    how instruction files relate."""
 
-    nested_inject: Literal['pointer', 'contents'] = 'pointer'
-    """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
+    nested_inject: Literal['pointer', 'contents'] = 'contents'
+    """For Strategy 3: inline the file `contents`, or append a one-line `pointer` the model can follow."""
 
     traversal_tool_names: frozenset[str] = _DEFAULT_TRAVERSAL_TOOL_NAMES
     """Deprecated tool names used by the compatibility traversal detector."""
@@ -172,6 +175,30 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     asset_roots: Sequence[str] = ('.claude', '.agents', '.codex', '.grok')
     """Root directories the inventory tool scans, relative to the working directory."""
 
+    walk_up: Literal['repo_root', 'all'] | None = None
+    """How far above the working directory Strategy 1 looks for instruction files.
+
+    `None` (the default) scans only the working directory, unless `home_dir` is set. `'repo_root'`
+    walks up to the nearest directory holding one of `root_markers`, as Codex does, and scans only the
+    working directory when there is none. `'all'` walks every ancestor up to the filesystem root (or
+    `home_dir`), as Claude Code does.
+    """
+
+    root_markers: Sequence[str] = ('.git',)
+    """Entry names that mark the repository root for `walk_up='repo_root'`.
+
+    An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
+    """
+
+    nested_max_chars: int | None = 32_000
+    """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per conversation.
+
+    The total counts every inlined note still in the history the model sees, from earlier runs of the conversation
+    too, so it drops when a compaction summarizes earlier notes away. A file that would take the total past it is
+    surfaced as a pointer instead. `None` inlines every file. It has no effect with `nested_inject='pointer'`,
+    which inlines nothing.
+    """
+
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
@@ -180,6 +207,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     _loaded_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose instruction files Strategy 1 put in the instructions, which Strategy 3 never repeats."""
+
+    _pending_chars: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Characters each pending note in `_pending_dirs` inlined, counted against `nested_max_chars` until it's in history."""
+
+    _window_chars: int = field(default=0, init=False, repr=False, compare=False)
+    """Characters the inlined notes in the history window hold, as of the latest `_sync_surfaced_dirs`."""
 
     _latest_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
     """The latest compaction in history when `_pending_dirs` was last checked; a new one clears them."""
@@ -193,6 +226,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.root_markers, str):
+            raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if self.nested_max_chars is not None and self.nested_max_chars < 0:
+            raise UserError('`RepoContext.nested_max_chars` must not be negative.')
+        if self.home_dir is not None and self.walk_up == 'repo_root':
+            raise UserError(
+                "`RepoContext` takes either `home_dir` or `walk_up='repo_root'` to stop the walk-up, not both."
+            )
         if self.workspace_dir is not None:
             warn_argument_ignored('RepoContext', 'workspace_dir', SET_WORKING_DIR_ON_THE_WORKSPACE)
         self._sniff_traversal_tools = (
@@ -211,6 +252,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._context_files = None
         run._pending_dirs = set()
         run._loaded_dirs = set()
+        run._pending_chars = {}
+        run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
         return run
@@ -222,20 +265,19 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         workspace = ctx.workspace
         working_dir = await self._working_dir(workspace)
-        home = None
+        top: Path | None = None
         if self.home_dir is not None:
-            home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
-        symlink_roots: list[Path] = []
-        if self.autoload_symlink_roots:
-            if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
-                raise UserError(
-                    '`RepoContext.autoload_symlink_roots` requires a workspace backend implementing '
-                    '`SupportsRealpath` or `SupportsCommands` to resolve symlinks safely.'
-                )
-            for root in self.autoload_symlink_roots:
-                symlink_roots.append(Path(await workspace.realpath(workspace_path(Path(root)))))
+            top = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
+        elif self.walk_up == 'repo_root':
+            top = await find_root(workspace, working_dir, self.root_markers)
+        elif self.walk_up == 'all':
+            top = Path(working_dir.anchor)
         self._context_files = await discover_instruction_files(
-            workspace, working_dir, home, self.filenames, autoload_symlink_roots=symlink_roots
+            workspace,
+            working_dir,
+            top,
+            self.filenames,
+            autoload_symlink_roots=await self._autoload_symlink_roots(workspace),
         )
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
@@ -379,7 +421,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
-        ctx.enqueue(*_stamp(self._render_note(context_file), key))
+        chars = len(context_file.content)
+        used = self._window_chars + sum(self._pending_chars.values())
+        inline = self.nested_inject == 'contents' and (
+            self.nested_max_chars is None or used + chars <= self.nested_max_chars
+        )
+        if inline:
+            self._pending_chars[key] = chars
+        ctx.enqueue(*_stamp(self._render_note(context_file, inline=inline), key, chars=chars if inline else None))
 
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
         return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
@@ -390,24 +439,19 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Call it once per traversal, before any `_surfaced` check.
 
         A note survives in history until compaction summarizes it away, so this is derived from the window
-        rather than remembered, and it covers notes from earlier runs of the conversation. Notes enqueued but
-        not yet in history are tracked until they appear there, or until a new compaction replaces the history
-        they would have been in.
+        rather than remembered, and it covers notes from earlier runs of the conversation. The same goes for the
+        characters inlined notes hold, which `nested_max_chars` bounds. Notes enqueued but not yet in history are
+        tracked until they appear there, or until a new compaction replaces the history they would have been in.
         """
         latest = _latest_compaction(messages)
         if latest is not self._latest_compaction:
             self._latest_compaction = latest
             self._pending_dirs.clear()
-        in_history = {
-            directory
-            for message in post_compaction_window(messages)
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for item in part.content
-            if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
-        }
+        notes = _notes_in_window(messages)
+        in_history = {directory for directory, _ in notes}
+        self._window_chars = sum(chars for _, chars in notes)
         self._pending_dirs -= in_history
+        self._pending_chars = {key: chars for key, chars in self._pending_chars.items() if key in self._pending_dirs}
         return in_history
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
@@ -420,7 +464,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> Sequence[str | SystemPromptPart]:
+    def _render_note(self, context_file: ContextFile, *, inline: bool) -> Sequence[str | SystemPromptPart]:
         """The file's contents as repository data, or a framework pointer followed by the file's path as data.
 
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
@@ -428,9 +472,19 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
         label = context_file_label(context_file.path, self._cached_working_dir)
-        if self.nested_inject == 'contents':
+        if inline:
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
+
+    async def _autoload_symlink_roots(self, workspace: Workspace) -> list[Path]:
+        if not self.autoload_symlink_roots:
+            return []
+        if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
+            raise UserError(
+                '`RepoContext.autoload_symlink_roots` requires a workspace backend implementing '
+                '`SupportsRealpath` or `SupportsCommands` to resolve symlinks safely.'
+            )
+        return [Path(await workspace.realpath(workspace_path(Path(root)))) for root in self.autoload_symlink_roots]
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:
@@ -443,16 +497,22 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         return 'RepoContext'
 
 
-def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
-    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
+def _stamp(
+    parts: Sequence[str | SystemPromptPart], directory: str, *, chars: int | None = None
+) -> Iterator[TextContent | SystemPromptPart]:
+    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata.
+
+    `chars` goes on an inlined note's data, so the history window says how much of `nested_max_chars` it uses.
+    """
     for part in parts:
         # A dict per part, so mutating one part's metadata doesn't change the other's.
-        metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
-        yield (
-            replace(part, metadata=metadata)
-            if isinstance(part, SystemPromptPart)
-            else TextContent(part, metadata=metadata)
-        )
+        metadata: dict[str, object] = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
+        if isinstance(part, SystemPromptPart):
+            yield replace(part, metadata=metadata)
+        else:
+            if chars is not None:
+                metadata['chars'] = chars
+            yield TextContent(part, metadata=metadata)
 
 
 def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
@@ -461,6 +521,24 @@ def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | Non
             if isinstance(part, CompactionPart):
                 return part
     return None
+
+
+def _notes_in_window(messages: Sequence[ModelMessage]) -> list[tuple[str, int]]:
+    """The directory and inlined characters of each nested note in the post-compaction window."""
+    return [
+        (directory, _note_chars(item.metadata))
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for item in part.content
+        if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
+    ]
+
+
+def _note_chars(metadata: object) -> int:
+    chars = metadata.get('chars') if is_str_dict(metadata) else None
+    return chars if isinstance(chars, int) else 0
 
 
 def _note_directory(metadata: object) -> str | None:

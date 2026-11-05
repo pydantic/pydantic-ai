@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
+from ..conftest import without_admin_server
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
@@ -38,10 +39,9 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
     dbos_config: DBOSConfig = {
         'name': 'pydantic_dbos_workspace_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         'enable_otlp': False,
     }
-    dbos = DBOS(config=dbos_config)
+    dbos = DBOS(config=without_admin_server(dbos_config))
     DBOS.launch()
     try:
         yield dbos

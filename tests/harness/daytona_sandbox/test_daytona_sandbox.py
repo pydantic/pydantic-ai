@@ -12,6 +12,7 @@ import daytona
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -333,3 +334,30 @@ async def test_coder_works_in_the_sandbox(fake_daytona: FakeDaytona, tmp_path: P
     )
     assert 'hi from the sandbox' in results[1]
     assert (tmp_path / 'hello.py').read_text() == "print('hi from the sandbox')\n"
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([DaytonaSandbox])['$defs']
+    assert sorted(definitions['spec_params_DaytonaSandbox']['properties']) == [
+        'allow_internet_access',
+        'auto_stop_interval',
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'snapshot',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'snapshot': 'base',
+        'auto_stop_interval': 30,
+        'allow_internet_access': False,
+    }
+    assert DaytonaSandbox[None].from_spec(**spec_fields) == DaytonaSandbox[None](**spec_fields)
