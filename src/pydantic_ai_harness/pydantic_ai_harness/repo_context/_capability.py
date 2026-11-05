@@ -132,9 +132,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     home_dir: str | Path | None = None
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
 
-    A relative path resolves against the working directory. Setting it walks up to it even with
-    `walk_up=None`, and with `walk_up='all'` it stops the walk there. It cannot be combined with
-    `walk_up='repo_root'`.
+    A relative path resolves against the working directory. Symlinks in it are followed, as they are in the
+    working directory, so a linked spelling stops the walk-up at the directory it leads to. Setting it walks
+    up to it even with `walk_up=None`, and with `walk_up='all'` it stops the walk there. It cannot be
+    combined with `walk_up='repo_root'`.
     """
 
     filenames: Sequence[str] = ('AGENTS.md', 'CLAUDE.md')
