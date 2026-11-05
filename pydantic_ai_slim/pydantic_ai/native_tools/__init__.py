@@ -231,9 +231,6 @@ class WebSearchTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    provider_settings: WebSearchProviderSettings | None = None
-    """Provider-specific web search settings, keyed by the model class that reads them."""
-
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
     """The `search_context_size` parameter controls how much context is retrieved from the web to help the tool formulate a response.
 
@@ -306,6 +303,9 @@ class WebSearchTool(AbstractNativeTool):
 
     OpenAI's legacy `web_search_preview` tool ignores this parameter.
     """
+
+    provider_settings: WebSearchProviderSettings | None = None
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     kind: str = 'web_search'
     """The kind of tool."""
@@ -512,9 +512,6 @@ class WebFetchTool(AbstractNativeTool):
     * Google
     """
 
-    provider_settings: WebFetchProviderSettings | None = None
-    """Provider-specific web fetch settings, keyed by the model class that reads them."""
-
     max_uses: int | None = None
     """If provided, the tool will stop fetching URLs after the given number of uses.
 
@@ -560,6 +557,9 @@ class WebFetchTool(AbstractNativeTool):
 
     * Anthropic
     """
+
+    provider_settings: WebFetchProviderSettings | None = None
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     kind: str = 'web_fetch'
     """The kind of tool."""
@@ -862,9 +862,6 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    provider_settings: AdvisorProviderSettings | None = None
-    """Provider-specific advisor settings, keyed by the model class that reads them."""
-
     model: AdvisorModelName
     """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.
 
@@ -914,6 +911,9 @@ class AdvisorTool(AbstractNativeTool):
 
     OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
     """
+
+    provider_settings: AdvisorProviderSettings | None = None
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     kind: str = 'advisor'
     """The kind of tool."""
