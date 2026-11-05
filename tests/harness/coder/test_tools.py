@@ -224,14 +224,10 @@ class TestCoder:
         assert guidance_part.dynamic is False
         guidance = guidance_part.content
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 220
+        assert len(default.split()) < 150
         assert "Match the surrounding code's style, structure, and imports." in default
         assert 'Work until done. Ask only for credentials, approvals, or real ambiguity.' in default
-        assert 'read the code and data files the task names in full with `read_file`, not batched `cat`.' in default
-        assert 'If any tool output is marked truncated, re-read the missing part.' in default
-        assert 'check that they still work from a clean directory.' in default
-        assert "Write checks from the task's stated behavior, not your code," in default
-        assert 'uses every field the provided data supplies' in default
+        assert 'Read files with `read_file`, not batched `cat`.' in default
         assert 'Measure results against any numeric target the task states.' in default
         assert 'assume you misread' in default
         assert 'Check behavior with heredocs for one-offs, not new files.' in default
@@ -260,9 +256,6 @@ class TestCoder:
         assert ask in text
         assert ('Measure results against any numeric target the task states.' in text) is targets
         assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
-        assert 're-read the missing part' in text
-        assert 'from a clean directory' in text
-        assert 'uses every field the provided data supplies' in text
 
     async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
         """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""

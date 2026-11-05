@@ -24,11 +24,9 @@ leave it idle. It does not say whether anyone can answer: `ask_parent`, when the
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
 
 _READING = (
-    'Before editing, read the code and data files the task names in full with `read_file`, not batched `cat`. '
-    'If any tool output is marked truncated, re-read the missing part. '
+    'Read files with `read_file`, not batched `cat`. '
     "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
 )
-"""The same at every agency level: reading the named files, and truncated output, is about doing the work correctly."""
 
 _REPO_FILES = "Instruction files ({names}) for the project, if any, are already in your context; don't search for them."
 """Only when the bundled `RepoContext` autoloads instruction files."""
@@ -48,19 +46,6 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
-_DELIVER = (
-    'If deliverables will run elsewhere, make them self-contained, '
-    'with no reliance on workspace files you did not include, '
-    'and check that they still work from a clean directory.'
-)
-"""The same at every agency level: a deliverable that needs a file it does not include fails outside this workspace."""
-
-_EXACT = (
-    "Write checks from the task's stated behavior, not your code, "
-    'and make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
-)
-"""The same at every agency level: the checks and the fields come from the task, not from how autonomous the run is."""
-
 _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '
     'Servers the task needs may keep running; stop the rest.'
@@ -70,12 +55,12 @@ _FINISHING = (
 def _checks(*, measure: bool, cleanup: bool) -> str:
     return ' '.join(
         [
-            _DELIVER,
+            'If deliverables will run elsewhere, make them self-contained.',
             *([_TARGETS] if measure else []),
             'Before finishing, confirm each stated requirement and edge case.',
             'If inputs seem inconsistent or goals impossible, assume you misread. '
             'Re-read, and try other interpretations before settling.',
-            _EXACT,
+            "Write checks from the task's stated behavior, not your code.",
             'Check behavior with heredocs for one-offs, not new files.',
             *([_CLEANUP] if cleanup else []),
         ]
@@ -100,7 +85,6 @@ def coder_instructions(
     own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads there.
-    Reading, deliverables, and exact behavior use the same sentences at every level.
     """
     cleanup = agency == 'max'
     parent_checks = _checks(measure=agency in ('high', 'max'), cleanup=cleanup)

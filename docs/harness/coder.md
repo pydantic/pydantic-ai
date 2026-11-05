@@ -228,10 +228,8 @@ accessible to commands in a local workspace.
 ## Instructions
 
 The default instructions are short: match the surrounding code's style, structure, and imports; read
-the files the task names in full with `read_file`, and re-read truncated output; make deliverables
-self-contained and check them from a clean directory; use every field the provided data supplies;
-check behavior against the task's stated requirements and edge cases, with heredocs rather than new
-files; and finish long-running work before replying.
+files with `read_file`; check deliverables against the task's stated requirements and edge cases; check
+behavior with heredocs rather than new files; and finish long-running work before replying.
 
 `agency` sets how far the agent works on its own:
 
@@ -244,7 +242,7 @@ files; and finish long-running work before replying.
 
 A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
 so, whatever the level, it is told to choose sensible defaults and finish, and to measure results against any numeric
-target the task states. Reading, deliverables, and exact behavior use the same sentences at every level.
+target the task states.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
