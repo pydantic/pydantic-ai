@@ -254,6 +254,12 @@ class Coder(CombinedCapability[AgentDepsT]):
             agency=agency,
             delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
+            repo_files=bundled_repo_context.filenames
+            if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
+            else None,
+            nested_instructions=bundled_repo_context is not None
+            and bundled_repo_context.nested_traversal
+            and bundled_repo_context.nested_inject == 'contents',
         )
         # Naming the directory creates a lazily created sandbox, so it comes only with
         # `RepoContext`, which reads the workspace at run start anyway.

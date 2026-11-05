@@ -28,6 +28,14 @@ _READING = (
     "Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed."
 )
 
+_REPO_FILES = "Instruction files ({names}) for the project are already in your context; don't search for them."
+"""Only when the bundled `RepoContext` autoloads instruction files."""
+
+_NESTED_REPO_FILES = (
+    "A subdirectory's instruction files are added to your context the first time you read or list something in it."
+)
+"""Only when that `RepoContext` inlines nested files (`nested_traversal` and `nested_inject='contents'`)."""
+
 _DELEGATION = "Don't spawn sub-agents with `{tool_name}` unless the user or AGENTS.md asks."
 """The rule Codex gives its models for `spawn_agent`. A delegate starts from a fresh context and
 re-explores the project, so unrequested delegation multiplies tool calls and cost."""
@@ -44,14 +52,23 @@ _FINISHING = (
 )
 
 
-def _compose(lead: str, *, checks: str, delegation: Sequence[str], suffix: str) -> str:
-    return '\n\n'.join([_INTRO, lead, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
+def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
+    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
 
 
-def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str | None = None) -> tuple[str, str]:
+def coder_instructions(
+    *,
+    agency: Agency,
+    delegate_tool: str | None,
+    extra: str | None = None,
+    repo_files: Sequence[str] | None = None,
+    nested_instructions: bool = False,
+) -> tuple[str, str]:
     """The top-level guidance and the delegate guidance.
 
     They differ in the lead sentence. Non-empty `extra` is appended after a blank line.
+    `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
+    says a subdirectory's files are inlined the first time the model reads there.
     """
     autonomous = agency in ('high', 'max')
     checks = ' '.join(
@@ -67,10 +84,14 @@ def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str 
         ]
     )
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
+    context = [
+        *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
+        *([_NESTED_REPO_FILES] if nested_instructions else []),
+    ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AGENCY[agency], checks=checks, delegation=delegation, suffix=suffix),
-        _compose(_DELEGATED, checks=checks, delegation=delegation, suffix=suffix),
+        _compose(_AGENCY[agency], context=context, checks=checks, delegation=delegation, suffix=suffix),
+        _compose(_DELEGATED, context=context, checks=checks, delegation=delegation, suffix=suffix),
     )
 
 
