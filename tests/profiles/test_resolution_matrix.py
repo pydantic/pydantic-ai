@@ -1004,6 +1004,7 @@ def test_deepseek_provider_deepseek_chat():
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_responses_supports_json_schema_output': True,
             'openai_chat_supports_max_reasoning_effort': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -1028,6 +1029,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'thinking_enabled_by_default': True,
             'openai_responses_supports_json_schema_output': True,
             'openai_chat_supports_max_reasoning_effort': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 

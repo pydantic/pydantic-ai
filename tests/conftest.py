@@ -516,6 +516,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         (func, 'exa_py/utils.py', '_get_package_version')
         for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
     ),
+    # Each Sprites exec opens a websocket with no `ssl` argument, and its SDK has no way to pass one, so asyncio builds
+    # the default TLS context on the event loop, about 0.2 ms on the CI runners. Only the live tier reaches this code.
+    ('os.stat', 'sprites/websocket.py', 'start'),
     # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
     # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
     ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
@@ -773,6 +776,25 @@ class UndrivableEventLoop(asyncio.AbstractEventLoop):
     This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
     implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
     """
+
+
+@pytest.fixture
+def fresh_event_loop_policy() -> Iterator[None]:
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
+
+    Policies are deprecated from Python 3.14, where the tests using this are skipped.
+    """
+    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
+    policy = asyncio.DefaultEventLoopPolicy()
+    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
+    try:
+        yield
+    finally:
+        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
+        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
+        if loop is not None:  # pragma: no branch
+            loop.close()
+        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
 
 
 @contextmanager

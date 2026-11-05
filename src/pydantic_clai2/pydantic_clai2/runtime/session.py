@@ -56,6 +56,7 @@ from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
+from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.task_prompts import TASK_PROMPT, TaskPrompt
 from pydantic_clai2.ui import telemetry
@@ -491,6 +492,8 @@ class Session(Generic[DepsT, OutputT]):
 
         A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
         gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
+        self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
+        """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
@@ -832,6 +835,8 @@ class Session(Generic[DepsT, OutputT]):
             capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
+        if (project_instructions := self.project_instructions()) is not None:
+            capabilities.append(project_instructions)
         return run_model, capabilities
 
     def _user_instructions(self) -> str | None:

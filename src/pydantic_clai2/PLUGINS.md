@@ -1140,7 +1140,7 @@ settings using the former import paths are redirected to the new modules.
 |---|---|---|---|
 | `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
@@ -1197,13 +1197,13 @@ saved copy of an entry that now has its own built-in under the same id, such as
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
 `/plugins remove coder` cannot forget a built-in, so it resets it to its
-defaults. `/plugins disable repo_context` stops the instruction file from being
+defaults. `/plugins disable repo_context` stops the instruction files from being
 read. To run a built-in with different options, add your own declaration under
 the same name and it takes the built-in's place:
 
 ```text
 /plugins add coder pydantic_clai2.builtin_plugins.coder '{"unrestricted_filesystem": false, "repo_context": false}'
-/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
@@ -1332,20 +1332,26 @@ Saved settings that need features absent from this build use defaults; see
 [Settings that need a feature](#settings-that-need-a-feature-hostsettingsmodel-requires).
 
 `repo_context` wraps harness `RepoContext` with the launch directory as the
-workspace and its default filenames. Its settings:
+workspace and its default filenames: one instruction file per directory,
+`AGENTS.md` first and `CLAUDE.md` as the fallback. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from the workspace up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default); with no containing entry, only the workspace |
+| `walk_up` | `true` | also load instruction files from the directories above the workspace: up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default), or up to the repository root (the nearest `.git`) when no entry contains it |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
-| `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
+| `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
+| `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
+
+Under home, the walk-up reads every directory up to and including `~`, not just
+the repository. Add a root to `repo_context.walk_up_roots` to stop it elsewhere;
+avoid a root that other users can write to, such as `/tmp`, whose `AGENTS.md`
+would then load too.
 
 Two global user-only `/set` keys control autoload boundaries, not plugin JSON fields:
 
 | `/set` key | Default | Does |
 |---|---|---|
-| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies |
+| `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies, and with none, the walk stops at the repository root |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
 These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
@@ -1492,7 +1498,8 @@ worktree under its repository by the checkout saved with it (`ConversationSummar
 page lists them by project, or all together, in the order they were created
 (`ConversationSummary.created_at`). Archived ones are left out except in its Archived view
 (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`, and
-`POST /api/sessions/archive` for a branch's or project's sessions at once).
+`POST /api/sessions/archive` for a branch's or project's sessions at once). A session imported from
+Claude Code or Codex carries that agent's name (`source`), shown beside its title.
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -1837,7 +1844,7 @@ card that names a workspace has an **Open** button that shows that session in th
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None)` | answer a question request; no `answers` declines |
-| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title (with `(from Claude Code)` or `(from Codex)` for an imported one), project, worktree, last active, archived |
 | `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
 | `sessions_unarchive(ids)` | list them again |
 
