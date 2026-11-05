@@ -168,11 +168,9 @@ class WorkspaceBackendSuite:
         if isinstance(backend, SupportsCommands):
             assert (await backend.run(['sh', '-c', 'pwd -P'])).stdout == f'{working_dir}\n'
 
-    async def test_run_starts_in_cwd(self, backend: WorkspaceBackend, has_real_posix_shell: bool) -> None:
+    async def test_run_starts_in_cwd(self, backend: WorkspaceBackend) -> None:
         """`Workspace.run(cwd=...)` starts the command there, relative paths resolving against the working directory."""
         _commands(backend)
-        if not has_real_posix_shell:
-            pytest.skip('fake has no shell to change directory in')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             expected = f'{await workspace.realpath(root)}\n'
