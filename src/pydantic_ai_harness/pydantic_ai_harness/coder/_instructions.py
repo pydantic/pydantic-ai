@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -44,13 +44,14 @@ _FINISHING = (
 )
 
 
-def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str | None = None) -> tuple[str, str]:
-    """Top-level and delegate guidance, each a literal string.
+def _compose(lead: str, *, checks: str, delegation: Sequence[str], suffix: str) -> str:
+    return '\n\n'.join([_INTRO, lead, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
 
-    A function would be a dynamic instruction, and the static prompt-cache prefix ends at the first
-    dynamic part. `Coder.for_run` installs the second string when the run's delegation depth is above
-    1: a delegate was handed its task and a plan-and-wait level would propose a plan to nobody.
-    Non-empty `extra` is appended after a blank line.
+
+def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str | None = None) -> tuple[str, str]:
+    """The top-level guidance and the delegate guidance.
+
+    They differ in the lead sentence. Non-empty `extra` is appended after a blank line.
     """
     autonomous = agency in ('high', 'max')
     checks = ' '.join(
@@ -67,22 +68,10 @@ def coder_instructions(*, agency: Agency, delegate_tool: str | None, extra: str 
     )
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     suffix = '\n' + extra if extra else ''
-    texts = [
-        '\n\n'.join(
-            [
-                _INTRO,
-                _DELEGATED if delegated else _AGENCY[agency],
-                _READING,
-                *delegation,
-                checks,
-                _FINISHING,
-            ]
-        )
-        + '\n'
-        + suffix
-        for delegated in (False, True)
-    ]
-    return texts[0], texts[1]
+    return (
+        _compose(_AGENCY[agency], checks=checks, delegation=delegation, suffix=suffix),
+        _compose(_DELEGATED, checks=checks, delegation=delegation, suffix=suffix),
+    )
 
 
 def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:

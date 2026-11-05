@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, get_args
 
+from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
@@ -122,8 +123,10 @@ class _CoderGuidance(Capability[AgentDepsT]):
     """Literal coding guidance, with the delegate text installed when this run is a delegate.
 
     `Coder` is flattened into the agent's capability list, so this leaf is what `for_run` reaches.
-    Both texts are strings: a function would be dynamic, and the static prompt-cache prefix ends at
-    the first dynamic part.
+    The texts are strings: a function would be dynamic, and the static prompt-cache prefix ends at
+    the first dynamic part. `for_run` copies this instance and sets `_delegate`, so the copy shares
+    the construction-time function toolset. A new `Capability` would be a toolset added at runtime,
+    which durable execution rejects.
     """
 
     def __init__(
@@ -132,17 +135,20 @@ class _CoderGuidance(Capability[AgentDepsT]):
         delegated: str,
         project: Sequence[Callable[[RunContext[AgentDepsT]], Awaitable[str]]],
     ) -> None:
-        super().__init__(id='coder_instructions', instructions=[guidance, *project])
+        super().__init__(id='coder_instructions', instructions=None)
+        self._guidance = guidance
         self._delegated_guidance = delegated
+        self._project = project
+        self._delegate = False
+
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
+        return [self._delegated_guidance if self._delegate else self._guidance, *self._project]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Capability[AgentDepsT]:
-        if delegation_depth() <= 1:
+        if delegation_depth() <= 1 or self._delegate:
             return self
-        # Share the construction-time toolset. A new `Capability` would bring a new function
-        # toolset, which durable execution rejects as added at runtime.
         serving = copy.copy(self)
-        first, *rest = self._instructions
-        serving._instructions = [replace(first, instruction=self._delegated_guidance), *rest]
+        serving._delegate = True
         return serving
 
 
