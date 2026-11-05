@@ -46,7 +46,9 @@ recorded in the same order. Lines, and the id of each test node run, are written
 test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses, timestamps within a
 day of the capture, history digests (which hash those timestamps), attempt durations, local server ports, multipart
 boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id` gets,
-and `PromptInjectionDefender`'s measured `latency_ms` are normalized, so two runs of the same code compare equal.
+`PromptInjectionDefender`'s measured `latency_ms`, and `Planning`'s step ids where its plan and its reply to an added
+step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back in a tool
+call's arguments isn't.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -126,6 +128,9 @@ GENERATED_VALUES = [
     (re.compile(r'<(\w+):[0-9a-f]{6}>'), r'<\1:ID>'),
     # `PromptInjectionDefender` times each screening it runs.
     (re.compile(r'"latency_ms":[0-9.eE+-]+'), '"latency_ms":"LATENCY"'),
+    # `Planning`'s `uuid4().hex[:8]` step ids, in a plan line after the status marker and in the reply that adds a step.
+    (re.compile(r'(\[[ ~x!-]\] \[)[0-9a-f]{8}(?=\])'), r'\1STEP_ID'),
+    (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 # Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.

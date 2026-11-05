@@ -608,6 +608,9 @@ def test_normalized_replaces_values_that_change_between_runs():
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:0a1b2c>',
             'latency_ms': 12.5,
+            'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
+            'added_step': "Added step 'a' with id: 0a1b2c3d",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
         }
     ) == snapshot(
         {
@@ -629,5 +632,8 @@ def test_normalized_replaces_values_that_change_between_runs():
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:ID>',
             'latency_ms': 'LATENCY',
+            'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
+            'added_step': "Added step 'a' with id: STEP_ID",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
         }
     )
