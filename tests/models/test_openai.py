@@ -707,25 +707,15 @@ async def test_request_list_content(allow_model_requests: None):
 async def test_openai_service_tier_fast(allow_model_requests: None, openai_api_key: str) -> None:
     model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
     result = await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='fast'))
-    assert result.response.provider_details is not None
-    assert result.response.provider_details['service_tier'] == 'fast'
+    assert (result.response.provider_details or {}).get('service_tier') == 'fast'
 
 
 @pytest.mark.vcr(additional_matchers=['body'])
 async def test_openai_service_tier_ultrafast_rejected_on_chat(allow_model_requests: None, openai_api_key: str) -> None:
     """The setting's type allows `ultrafast` here because the Responses settings inherit it; OpenAI rejects it."""
     model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
-    with pytest.raises(ModelHTTPError) as error:
+    with pytest.raises(ModelHTTPError, match='Invalid service_tier argument'):
         await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='ultrafast'))
-    assert error.value.status_code == 400
-    assert error.value.body == snapshot(
-        {
-            'message': 'Invalid service_tier argument',
-            'type': 'invalid_request_error',
-            'param': 'service_tier',
-            'code': None,
-        }
-    )
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:

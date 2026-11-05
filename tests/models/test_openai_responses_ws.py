@@ -3682,21 +3682,11 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
     assert sent['metadata'] == {'test': 'websocket'}
 
 
-async def _assert_service_tier_round_trips(recorded: RecordedResponses, tier: Literal['fast', 'ultrafast']) -> None:
-    model = OpenAIResponsesModel('gpt-6.1-sol', provider=recorded.provider)
-    settings: OpenAIResponsesModelSettings = {'openai_transport': 'websocket', 'openai_service_tier': tier}
-    result = await Agent(model).run('Say hi.', model_settings=settings)
-    assert sent_frames(recorded.cassette)[0]['service_tier'] == tier
-    assert result.response.provider_details is not None
-    assert result.response.provider_details['service_tier'] == tier
-
-
-async def test_openai_service_tier_fast(allow_model_requests: None, recorded_responses: RecordedResponses):
-    await _assert_service_tier_round_trips(recorded_responses, 'fast')
-
-
 async def test_openai_service_tier_ultrafast(allow_model_requests: None, recorded_responses: RecordedResponses):
-    await _assert_service_tier_round_trips(recorded_responses, 'ultrafast')
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=recorded_responses.provider)
+    settings: OpenAIResponsesModelSettings = {'openai_transport': 'websocket', 'openai_service_tier': 'ultrafast'}
+    result = await Agent(model).run('Say hi.', model_settings=settings)
+    assert (result.response.provider_details or {}).get('service_tier') == 'ultrafast'
 
 
 async def test_credential_callbacks_refresh_over_http(

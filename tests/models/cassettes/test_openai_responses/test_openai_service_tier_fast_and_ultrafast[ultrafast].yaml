@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "212"
+      - "189"
       content-type:
       - application/json
       host:
@@ -27,7 +27,6 @@ interactions:
         input:
         - role: user
           content: Say hi.
-        max_output_tokens: 64
         reasoning:
           context: all_turns
   response:
@@ -44,7 +43,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1118"
+      - "1691"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -54,27 +53,27 @@ interactions:
     body:
       type: json
       content:
-        id: resp_061a89950a06380d006aeb891b51dc87d18a3efe485ba5a978
+        id: resp_006a88df9f44cae0006aec4844cfdc87d196f5ea1a4f5fe5ff
         object: response
-        created_at: 1793820955
+        created_at: 1793869892
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1793820956
+        completed_at: 1793869894
         error: null
         frequency_penalty: 0.0
         image:
           context_compression: disabled
         incomplete_details: null
         instructions: null
-        max_output_tokens: 64
+        max_output_tokens: null
         max_tool_calls: null
         model: gpt-6.1-sol
         moderation: null
         output:
-        - id: msg_061a89950a06380d006aeb891c205087d18eb3c722170fa34a
+        - id: msg_006a88df9f44cae0006aec48462ec887d1a8c37d8864c4feec
           type: message
           status: completed
           content:
@@ -131,4 +130,4 @@ interactions:
           total_tokens: 15
         user: null
         metadata: {}
-  recorded_at: 2026-11-04T19:35:52.485743+00:00
+  recorded_at: 2026-11-05T09:11:34.531676+00:00
