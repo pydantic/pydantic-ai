@@ -336,8 +336,16 @@ def _batch_group(model: OpenAIResponsesModel) -> str:
     client = _batch_client(model)
     group: _Group = {
         'endpoint': hashlib.sha256(str(client.base_url).encode()).hexdigest(),
-        # The client sends its API key's header under its default headers, which can replace it.
-        'credential': credential_hash([client.auth_headers, client.default_headers], client.default_query),
+        # The client sends its API key's header under its default headers, which can replace it. Reading the
+        # `default_headers` property would build the platform headers, which run `uname -p` on the event loop.
+        'credential': credential_hash(
+            [
+                client.auth_headers,
+                {'OpenAI-Organization': client.organization, 'OpenAI-Project': client.project},
+                client._custom_headers,  # pyright: ignore[reportPrivateUsage]
+            ],
+            client.default_query,
+        ),
         # An OpenAI batch runs one model.
         'model': model.model_name,
     }
