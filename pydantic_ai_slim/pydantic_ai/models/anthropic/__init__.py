@@ -244,10 +244,12 @@ try:
         BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
         BetaWebFetchTool20260209Param,
+        BetaWebFetchTool20260318Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchTool20260209Param,
+        BetaWebSearchTool20260318Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
@@ -483,10 +485,11 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
-# Citations route the `20260209` web tools to direct calls on the direct API, where uncited sandbox results were
-# reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
+# Citations route the `20260209` and `20260318` web tools to direct calls on the direct API, where uncited sandbox
+# results were reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
 # `AsyncAnthropic` subclass) also send those versions but aren't verified to accept `allowed_callers` with citations,
-# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
+# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients only send those versions when
+# `provider_settings` asks for `20260318`, which stays off for them too.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicAWS,
     AsyncAnthropicBedrock,
@@ -674,7 +677,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or `WebSearchTool` or `WebFetchTool` where code execution may call them: on Anthropic's
-    `20260209` versions by default, unless citations route them to direct calls, which only happens
+    `20260209` and `20260318` versions by default, unless citations route them to direct calls, which only happens
     on the Anthropic API, and on any version when `anthropic_web_tools_allowed_callers` names a code
     execution caller. The Anthropic API rejects a container on any other request, so
     Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
@@ -706,7 +709,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
 
     By default the field is omitted and Anthropic picks the caller from the tool version. The
-    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    `20260209` and `20260318` versions of web search and web fetch let the model call the tools from code
     execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
     filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
     enabled. Results the model reads from code execution come back without citations, so when a request
@@ -2462,8 +2465,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @staticmethod
     def _map_web_search_tool(
         tool: WebSearchTool, supports_dynamic_filtering: bool
-    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+    ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if 'response_inclusion' in settings:
+            web_search_tool = BetaWebSearchTool20260318Param(
+                name='web_search',
+                type='web_search_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                user_location=user_location,
+                response_inclusion=settings['response_inclusion'],
+            )
+            if not supports_dynamic_filtering:
+                web_search_tool['allowed_callers'] = ['direct']
+            return web_search_tool
         if supports_dynamic_filtering:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
@@ -2485,9 +2502,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @staticmethod
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
-    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
+    ) -> tuple[
+        BetaWebFetchTool20260318Param | BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param,
+        str | None,
+    ]:
         enable_citations = tool.enable_citations or include_citations
         citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
+        settings = (tool.provider_settings or {}).get('anthropic', {})
+        if 'use_cache' in settings or 'response_inclusion' in settings:
+            web_fetch_tool = BetaWebFetchTool20260318Param(
+                name='web_fetch',
+                type='web_fetch_20260318',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
+            )
+            if 'use_cache' in settings:
+                web_fetch_tool['use_cache'] = settings['use_cache']
+            if 'response_inclusion' in settings:
+                web_fetch_tool['response_inclusion'] = settings['response_inclusion']
+            if not supports_dynamic_filtering:
+                web_fetch_tool['allowed_callers'] = ['direct']
+            return web_fetch_tool, None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -2616,8 +2654,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     case {
                         'type': 'web_search_20250305'
                         | 'web_search_20260209'
+                        | 'web_search_20260318'
                         | 'web_fetch_20250910'
                         | 'web_fetch_20260209'
+                        | 'web_fetch_20260318'
                     }:
                         web_tool['allowed_callers'] = allowed_callers
                     case _:

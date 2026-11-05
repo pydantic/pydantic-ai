@@ -112,6 +112,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_fetch',
                     'optional': False,
+                    'provider_settings': None,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -198,7 +199,9 @@ def test_model_request_parameters_are_serializable():
 @pytest.mark.parametrize(
     'tool',
     [
+        WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
         WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
+        WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}),
         AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
     ],
 )

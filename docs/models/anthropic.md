@@ -913,6 +913,53 @@ agent = Agent(
 )
 ```
 
+## Web tool settings
+
+Anthropic's newer web tool versions have a few settings that are not shared by other providers. Pass
+the matching typed settings to each native tool:
+
+```python {title="anthropic_web_tool_options.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import (
+    AnthropicWebFetchToolSettings,
+    AnthropicWebSearchToolSettings,
+    WebFetchTool,
+    WebSearchTool,
+)
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebSearchToolSettings(
+                        response_inclusion='excluded'
+                    )
+                }
+            )
+        ),
+        NativeTool(
+            WebFetchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebFetchToolSettings(
+                        use_cache=False,
+                        response_inclusion='excluded',
+                    )
+                }
+            )
+        ),
+    ],
+)
+```
+
+Setting any option selects Anthropic's `web_search_20260318` or `web_fetch_20260318` tool version. Without one, Pydantic AI keeps choosing the version from the model and client, as described above.
+
+On a model without dynamic filtering, these versions are sent with `allowed_callers=['direct']`, so they don't bring code execution with them; set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls, including when [citations](#web-tool-callers) route the tools to them.
+
+On `AsyncAnthropicVertex`, which otherwise stays on `web_search_20250305`, setting a web search option still sends `web_search_20260318`, and Vertex's API reports it if it doesn't accept that version. The Bedrock clients and web fetch on Vertex still raise a `UserError` as described above.
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:

@@ -50,15 +50,17 @@ ignored, so use the typed dictionaries to catch typos:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.native_tools import OpenRouterWebSearchToolSettings, WebSearchTool
+from pydantic_ai.native_tools import AnthropicWebSearchToolSettings, WebSearchTool
 
 agent = Agent(
-    'openrouter:openai/gpt-5.2',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         NativeTool(
             WebSearchTool(
                 provider_settings={
-                    'openrouter': OpenRouterWebSearchToolSettings(engine='exa')
+                    'anthropic': AnthropicWebSearchToolSettings(
+                        response_inclusion='excluded'
+                    )
                 }
             )
         )

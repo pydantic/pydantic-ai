@@ -805,6 +805,31 @@ def test_model_json_schema_with_capabilities():
                     'title': 'AgentRetries',
                     'type': 'object',
                 },
+                'AnthropicWebFetchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'AnthropicWebFetchToolSettings',
+                    'type': 'object',
+                },
+                'AnthropicWebSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'response_inclusion': {
+                            'enum': ['full', 'excluded'],
+                            'title': 'Response Inclusion',
+                            'type': 'string',
+                        }
+                    },
+                    'title': 'AnthropicWebSearchToolSettings',
+                    'type': 'object',
+                },
                 'CacheConfig': {
                     'additionalProperties': False,
                     'properties': {
@@ -1928,10 +1953,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'UploadedFile',
                     'type': 'object',
                 },
+                'WebFetchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'anthropic': {'$ref': '#/$defs/AnthropicWebFetchToolSettings'}},
+                    'title': 'WebFetchProviderSettings',
+                    'type': 'object',
+                },
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1959,7 +1994,10 @@ def test_model_json_schema_with_capabilities():
                 },
                 'WebSearchProviderSettings': {
                     'additionalProperties': True,
-                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'}},
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicWebSearchToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'},
+                    },
                     'title': 'WebSearchProviderSettings',
                     'type': 'object',
                 },
