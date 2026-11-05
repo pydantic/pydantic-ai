@@ -63,33 +63,34 @@ def test_default_render_number(value: float | int, expected: str):
         (0.02, -25.0, snapshot('-25.0 / -1,250x')),
         (0.001, 25.0, snapshot('+25.0')),
         (0.0, 25.0, snapshot('+25.0')),
-        # Negative baselines: the relative indicator's sign must match the direction of the
-        # change, and multipliers (which read backwards for negative bases) are not used.
+        (0.0, -25.0, snapshot('-25.0')),
+        (1.0, -3.0, snapshot('-4.0 / -3.0x')),
+        # A negative base keeps the percentage form past 100%, where a multiplier would read backwards.
         (-2.0, -1.0, snapshot('+1.0 / +50.0%')),
         (-1.0, -2.0, snapshot('-1.0 / -100.0%')),
         (-1.0, -3.0, snapshot('-2.0 / -200.0%')),
+        (-1.0, 0.0, snapshot('+1.0 / +100.0%')),
+        (-2.0, 1.0, snapshot('+3.0 / +150.0%')),
         (-1.0, 3.0, snapshot('+4.0 / +400.0%')),
         (-0.5, -0.25, snapshot('+0.25 / +50.0%')),
+        (-0.02, -25.0, snapshot('-25.0 / -124,900.0%')),
+        (-0.001, -25.0, snapshot('-25.0')),
+        (-10.023, -10.024, snapshot('-0.001')),
     ],
 )
 def test_default_render_number_diff(old: int | float, new: int | float, expected: str | None):
     assert default_render_number_diff(old, new) == expected
 
 
-def test_negative_base_diff_sign_matches_direction():
-    """The absolute and relative halves of a diff cell must never point in opposite directions.
-
-    With a signed-base denominator, an improvement from -2.0 to -1.0 rendered as
-    '+1.0 / -50.0%', and -1.0 to -3.0 rendered as '-2.0 / 3.0x'.
-    """
-    for old, new in [(-2.0, -1.0), (-1.0, -3.0), (-1.0, 3.0), (-0.5, -0.25), (-2.0, 1.0)]:
-        rendered = default_render_number_diff(old, new)
-        assert rendered is not None
-        abs_part, _, rel_part = rendered.partition(' / ')
-        assert rel_part, f'{old} -> {new} rendered as {rendered!r}: no relative part'
-        assert abs_part[0] == rel_part[0], (
-            f'{old} -> {new} rendered as {rendered!r}: absolute and relative signs disagree'
-        )
+@pytest.mark.parametrize('old', [-2.0, -0.5, 0.5, 2.0])
+@pytest.mark.parametrize('new', [-5.0, -1.0, -0.25, 0.0, 0.25, 1.0, 5.0])
+def test_default_render_number_diff_sign_matches_direction(old: float, new: float):
+    """The absolute and relative halves of a diff never point in opposite directions, whatever the signs."""
+    rendered = default_render_number_diff(old, new)
+    assert rendered is not None
+    abs_part, _, rel_part = rendered.partition(' / ')
+    assert rel_part
+    assert abs_part.startswith('-') == rel_part.startswith('-')
 
 
 @pytest.mark.parametrize(

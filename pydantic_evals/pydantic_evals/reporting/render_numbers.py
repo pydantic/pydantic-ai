@@ -152,19 +152,16 @@ def _render_relative(new: float, base: float, small_base_threshold: float) -> st
     if abs(base) < small_base_threshold and abs(delta) > MULTIPLIER_DROP_FACTOR * abs(base):
         return None
 
-    # Compute the relative change as a percentage of the base's magnitude. Dividing by the
-    # signed base would invert the sign for negative bases, so an improvement from -2.0 to
-    # -1.0 would render as '-50.0%' next to an absolute diff of '+1.0'.
+    # Divide by the base's magnitude so the sign follows the direction of the change, not the
+    # sign of the base.
     rel_change = (delta / abs(base)) * 100
-    perc_str = f'{rel_change:+.{PERC_DECIMALS}f}%'
+    perc_str = f'{rel_change:+,.{PERC_DECIMALS}f}%'
     # If the percentage rounds to 0.0%, return only the absolute difference.
     if perc_str in ('+0.0%', '-0.0%'):
         return None
 
-    # Decide whether to use percentage style or multiplier style. A multiplier is only used
-    # for positive bases: for a negative base, `new / base` is arithmetically true but reads
-    # backwards (-1.0 -> -3.0 would render as '3.0x'), so percentages above 100% are used
-    # there instead.
+    # Decide whether to use percentage style or multiplier style. A negative base keeps the
+    # percentage: past 100%, `new / base` always has the opposite sign to `delta`.
     if abs(delta) / abs(base) <= 1 or base < 0:
         # Percentage style.
         return perc_str
