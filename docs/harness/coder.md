@@ -242,7 +242,9 @@ behavior with heredocs rather than new files; and finish long-running work befor
 
 A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
 so, whatever the level, it is told to choose sensible defaults and finish, and to measure results against any numeric
-target the task states.
+target the task states. At `'max'`, the parent and its delegates also use the original deliverable wording (self-contained
+for a clean directory), go through each stated requirement and edge case explicitly, and use every field the provided
+data supplies.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.

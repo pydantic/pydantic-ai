@@ -46,6 +46,24 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
+_DELIVER_SHORT = 'If deliverables will run elsewhere, make them self-contained.'
+_DELIVER_MAX = (
+    'Deliverables may be used outside this workspace, where only the files you were asked to produce are present. '
+    'Make them self-contained, with no reliance on other workspace files, caches, or data you did not include, '
+    'and check that they still work when run from a clean directory.'
+)
+"""The 0.65.0 wording. At `'max'` only: the short form missed sidecar files some deliverables must not use."""
+
+_CONFIRM_SHORT = 'Before finishing, confirm each stated requirement and edge case.'
+_CONFIRM_MAX = (
+    'Before finishing, go through each requirement and edge case the task states and confirm each one explicitly.'
+)
+"""The 0.65.0 wording. At `'max'` only."""
+
+_EXACT = "Write checks from the task's stated behavior, not your code."
+_EVERY_FIELD = 'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
+"""The 0.65.0 every-field clause. At `'max'` only; the short write-checks sentence stays at every level."""
+
 _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '
     'Servers the task needs may keep running; stop the rest.'
@@ -55,12 +73,13 @@ _FINISHING = (
 def _checks(*, measure: bool, cleanup: bool) -> str:
     return ' '.join(
         [
-            'If deliverables will run elsewhere, make them self-contained.',
+            _DELIVER_MAX if cleanup else _DELIVER_SHORT,
             *([_TARGETS] if measure else []),
-            'Before finishing, confirm each stated requirement and edge case.',
+            _CONFIRM_MAX if cleanup else _CONFIRM_SHORT,
             'If inputs seem inconsistent or goals impossible, assume you misread. '
             'Re-read, and try other interpretations before settling.',
-            "Write checks from the task's stated behavior, not your code.",
+            _EXACT,
+            *([_EVERY_FIELD] if cleanup else []),
             'Check behavior with heredocs for one-offs, not new files.',
             *([_CLEANUP] if cleanup else []),
         ]

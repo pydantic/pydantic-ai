@@ -228,6 +228,12 @@ class TestCoder:
         assert "Match the surrounding code's style, structure, and imports." in default
         assert 'Work until done. Ask only for credentials, approvals, or real ambiguity.' in default
         assert 'Read files with `read_file`, not batched `cat`.' in default
+        assert 'If deliverables will run elsewhere, make them self-contained.' in default
+        assert "Write checks from the task's stated behavior, not your code." in default
+        assert 'Before finishing, confirm each stated requirement and edge case.' in default
+        assert 'Deliverables may be used outside this workspace' not in default
+        assert 'go through each requirement and edge case the task states' not in default
+        assert 'uses every field the provided data supplies' not in default
         assert 'Measure results against any numeric target the task states.' in default
         assert 'assume you misread' in default
         assert 'Check behavior with heredocs for one-offs, not new files.' in default
@@ -256,6 +262,12 @@ class TestCoder:
         assert ask in text
         assert ('Measure results against any numeric target the task states.' in text) is targets
         assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
+        assert ('Deliverables may be used outside this workspace' in text) is cleanup
+        assert ('If deliverables will run elsewhere, make them self-contained.' in text) is (not cleanup)
+        assert ('go through each requirement and edge case the task states' in text) is cleanup
+        assert ('Before finishing, confirm each stated requirement and edge case.' in text) is (not cleanup)
+        assert ('uses every field the provided data supplies' in text) is cleanup
+        assert "Write checks from the task's stated behavior, not your code." in text
 
     async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
         """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""
