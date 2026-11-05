@@ -58,11 +58,13 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UsageExtractionFailedWarning,
     UserError,
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
     WebSearchTool,
+    usage as usage_module,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -4214,6 +4216,21 @@ def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
     result = _extract_usage(
         response, model='unknown-model', provider='unknown', provider_url='https://unknown.example.com'
     )
+    assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
+
+
+def test_xai_usage_failed_extraction_is_measured_by_raw_totals(monkeypatch: pytest.MonkeyPatch):
+    """The raw totals recover what a failed extraction lost, so token limits stay enforceable."""
+
+    def failing_snapshot() -> Any:
+        raise RuntimeError('snapshot failed')
+
+    monkeypatch.setattr(usage_module, 'get_snapshot', failing_snapshot)
+
+    response = create_response(content='answer', usage=create_usage(prompt_tokens=15, completion_tokens=8))
+    with pytest.warns(UsageExtractionFailedWarning):
+        result = _extract_usage(response, model='grok-4', provider='xai', provider_url='https://api.x.ai/v1')
+
     assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
 
 

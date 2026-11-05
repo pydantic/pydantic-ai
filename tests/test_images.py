@@ -3019,13 +3019,20 @@ async def test_xai_image_generation_response_without_cost_details():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    'zeroed_usage',
+    [RequestUsage(), RequestUsage(unmeasured_requests=1)],
+    ids=['missing-from-snapshot', 'extraction-failed'],
+)
+async def test_xai_image_generation_usage_falls_back_to_sdk_totals(
+    monkeypatch: pytest.MonkeyPatch, zeroed_usage: RequestUsage
+):
     """The SDK's own totals backfill the token counts genai-prices could not derive.
 
     `extract` is stubbed to the zeroed usage it returns when the model is missing from the pricing
-    snapshot, leaving `prompt_tokens`/`completion_tokens` as the only source for the counts.
+    snapshot or extraction fails, leaving `prompt_tokens`/`completion_tokens` as the only source for the counts.
     """
-    monkeypatch.setattr(xai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage()))
+    monkeypatch.setattr(xai_images.RequestUsage, 'extract', MagicMock(return_value=zeroed_usage))
     mock_client = AsyncMock()
     mock_client.image.sample.return_value = _xai_image_responses(b'first-image')[0]
     model = XaiImageGenerationModel(
@@ -3483,8 +3490,13 @@ async def test_openai_media_type_reflects_actual_bytes(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    'zeroed_usage',
+    [RequestUsage(), RequestUsage(unmeasured_requests=1)],
+    ids=['missing-from-snapshot', 'extraction-failed'],
+)
 async def test_openai_image_generation_usage_falls_back_to_sdk_totals(
-    monkeypatch: pytest.MonkeyPatch, openai_mock_client: AsyncMock
+    monkeypatch: pytest.MonkeyPatch, openai_mock_client: AsyncMock, zeroed_usage: RequestUsage
 ):
     openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
@@ -3496,7 +3508,7 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(
             total_tokens=8,
         ),
     )
-    monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage()))
+    monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=zeroed_usage))
     model = OpenAIImageGenerationModel(
         'gpt-image-1',
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),

@@ -5107,13 +5107,13 @@ class ModelResponse:
         """Calculate the cost of the usage.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices). Raises `ValueError` when the response
-        omitted usage information, since its cost would be incomplete.
+        omitted usage information or it could not be extracted, since its cost would be incomplete.
         """
         assert self.model_name, 'Model name is required to calculate price'
         if self.usage.unmeasured_requests:
             raise ValueError(
-                'Cannot calculate the price of a response that omitted usage information '
-                '(`usage.unmeasured_requests` is non-zero)'
+                'Cannot calculate the price of a response that omitted usage information or whose usage could not '
+                'be extracted (`usage.unmeasured_requests` is non-zero)'
             )
         return calculate_price_for_usage(
             self.usage,

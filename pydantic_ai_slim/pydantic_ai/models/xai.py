@@ -1632,6 +1632,8 @@ def _extract_usage(
         extracted.input_tokens = usage_data['prompt_tokens']
     if extracted.output_tokens == 0 and usage_data['completion_tokens']:
         extracted.output_tokens = usage_data['completion_tokens']
+    # The raw totals are the provider's report, so a failed extraction doesn't leave this response unmeasured.
+    extracted.unmeasured_requests = 0
 
     return extracted
 
