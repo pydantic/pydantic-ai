@@ -18,7 +18,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -40,6 +40,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import DetectLoops
 from pydantic_ai_harness.detect_loops import (
     DetectedLoop,
@@ -760,6 +761,17 @@ class TestLoopJudge:
                 'Your response kept repeating itself without making progress. Change your approach, or explain what is blocking you.',
             )
         )
+
+    async def test_the_judge_counts_against_the_runs_usage_limits(self):
+        verdicts = [False] * 20
+        judge = LoopJudge[object](model=_judge(verdicts), every=256)
+        agent = _agent(_script([PROGRESS]), DetectLoops(stream_detector=judge))
+
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run('Explain', event_stream_handler=_drain, usage_limits=UsageLimits(request_limit=2))
+
+        # The run's request is reserved, so the judge gets one request before the limit stops the run.
+        assert 20 - len(verdicts) == 1
 
     async def test_a_failing_judge_falls_back_to_the_heuristic(self):
         def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

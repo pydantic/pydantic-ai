@@ -10,10 +10,12 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._usage import reserved_usage_limits
 
 __all__ = ['LoopDetector', 'LoopJudge', 'Repetition', 'RepetitionDetector', 'StreamChannel', 'StreamSample']
 
@@ -269,10 +271,17 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         try:
             with anyio.fail_after(self.timeout):
                 result = await self._judge.run(
-                    prompt, output_type=_Verdict, instructions=_JUDGE_INSTRUCTIONS, usage=ctx.usage
+                    prompt,
+                    output_type=_Verdict,
+                    instructions=_JUDGE_INSTRUCTIONS,
+                    usage=ctx.usage,
+                    usage_limits=reserved_usage_limits(ctx.usage_limits),
                 )
             verdict = result.output
-        # Any failure, a timeout included, falls back to the heuristic: the judge is optional, the run isn't.
+        except UsageLimitExceeded:
+            # The run's own limits stop the run, as they would on its next request.
+            raise
+        # Any other failure, a timeout included, falls back to the heuristic: the judge is optional, the run isn't.
         except Exception as error:
             ctx.tracer.start_span('loop judge failed', attributes={'error.type': type(error).__qualname__}).end()
             return suspected
