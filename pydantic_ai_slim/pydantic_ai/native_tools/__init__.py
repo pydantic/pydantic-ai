@@ -921,7 +921,7 @@ class XaiFileSearchToolSettings(TypedDict, total=False):
     """Instructions for interpreting and ranking xAI collections search results."""
 
     retrieval_mode: Literal['hybrid', 'semantic', 'keyword']
-    """The xAI collections search retrieval strategy."""
+    """The xAI collections search retrieval strategy. xAI defaults to `'hybrid'` server-side."""
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
@@ -1003,7 +1003,7 @@ class AnthropicAdvisorToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
 
     caching: Literal['5m', '1h']
-    """The ephemeral cache TTL for the Anthropic advisor context."""
+    """The ephemeral cache TTL for the Anthropic advisor context. Maps to `caching={'type': 'ephemeral', 'ttl': ...}`."""
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
