@@ -4,8 +4,11 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
+import shlex
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -50,7 +53,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
 from .conftest import live_token
-from .fake_sprites import SpriteTransport
+from .fake_sprites import FakeExecSocket, SpriteTransport
 
 
 def context(conversation: str = 'chat') -> RunContext[None]:
@@ -1096,21 +1099,50 @@ class TestSpritesSandbox:
             skipped = 60.0
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
-    async def test_timeout_reads_stderr_back_over_a_slow_exec(self, transport: SpriteTransport) -> None:
+    async def test_timeout_reads_stderr_back_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
+        # Deadlines read the event loop's clock, which only this test moves: a slow runner cannot make the
+        # command's deadline pass before its stderr reaches the capture.
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        monkeypatch.setattr(loop, 'time', lambda: now)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal now
+            if transport.execs:
+                # Only the exec that reads the capture back pays the handshake time of a live Sprite.
+                now += 1.5
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        printed = tmp_path / 'printed'
+        os.mkfifo(printed)
         caught: list[WorkspaceTimeoutError] = []
 
         async def run() -> None:
             with pytest.raises(WorkspaceTimeoutError) as error:
-                await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.5)
+                await backend.run(
+                    f'printf ready >&2; : > {shlex.quote(str(printed))}; exec sleep 5', shell=True, timeout=0.5
+                )
             caught.append(error.value)
 
         async with anyio.create_task_group() as group:
             group.start_soon(run)
-            await transport.exec_started.wait()
-            # Only the exec that reads the capture back pays the handshake time of a live Sprite.
-            transport.exec_latency = 1.5
+            # Opening the FIFO returns once the command opens it too, after it has printed. The frozen clock
+            # cannot bound that wait, so the event's own timeout does, in real time. Hang guard only.
+            read = threading.Event()
+
+            def read_fifo() -> None:
+                printed.read_bytes()
+                read.set()
+
+            threading.Thread(target=read_fifo, daemon=True).start()
+            assert await anyio.to_thread.run_sync(read.wait, 120, abandon_on_cancel=True)
+            now += 0.5
         assert caught[0].stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
