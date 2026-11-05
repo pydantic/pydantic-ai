@@ -67,9 +67,9 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, **attrs: str | None) -> str
         **attrs: Attributes to put on the opening tag.
 
     Raises:
-        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'`, or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores. A name the earlier rule allowed but that isn't snake_case,
-            such as `_ref`, warns instead.
+        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'` or isn't registered, or an attribute
+            name isn't lowercase letters, digits and underscores. A name the earlier rule allowed but that isn't
+            snake_case, such as `_ref`, warns instead.
     """
     _refuse_framework_tag(tag)
     return _framing.wrap(tag, body, **attrs)
@@ -100,9 +100,9 @@ def open_tag(tag: DataTag | RegisteredTag, /, **attrs: str | None) -> str:
         **attrs: Attributes to put on the tag.
 
     Raises:
-        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'`, or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores. A name the earlier rule allowed but that isn't snake_case,
-            such as `_ref`, warns instead.
+        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'` or isn't registered, or an attribute
+            name isn't lowercase letters, digits and underscores. A name the earlier rule allowed but that isn't
+            snake_case, such as `_ref`, warns instead.
     """
     _refuse_framework_tag(tag)
     return _framing.open_tag(tag, **attrs)
