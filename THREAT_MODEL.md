@@ -111,6 +111,8 @@ Untrusted content can influence model decisions. Instructions, delimiters, model
 
 A `wrap_*` hook that short-circuits skips that stage's `before_*` hooks, including policy hooks. Review where a mandatory control sits in the hook order.
 
+On routes that can reach a host that encodes chat-template special tokens found in message content as control tokens, Pydantic AI breaks those tokens in user, tool and file text and in replayed model output, so that text can't open a real turn (`may_tokenize_special_tokens_in_content` in the model profile). It's an opt-out default. It doesn't cover system prompts, instructions or tool definitions, including tool descriptions from an MCP server, nor files a provider fetches itself, and it doesn't stop a model from following text shaped like a turn. See [Special tokens in content](docs/message-history.md#special-tokens-in-content).
+
 Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools-advanced.md), [deferred tools](docs/deferred-tools.md), [dependencies](docs/dependencies.md), [hooks](docs/hooks.md#wrap-hooks), [Tool Call Judge](docs/harness/tool-call-judge.md#safety-boundary), [Approval Reviewer](docs/harness/approval-reviewer.md#safety-boundary), and [Code Mode](docs/harness/code-mode.md).
 
 ### MCP connections and agent configuration

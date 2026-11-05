@@ -77,9 +77,12 @@ _LITERAL_TOKEN_TAILS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 """The fixed tokens, as their first character and the rest."""
 
 _NAMED_TOKEN_TAILS: Final = (
-    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{1,64}\|>|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{1,64}｜>'
+    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{1,64}\|>'
+    r'|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{1,64}｜>'
+    r'|\|[a-z_]{1,32}>'
+    r'|[a-z_]{1,32}\|>'
 )
-"""What follows the `<` of a `<|im_start|>` or a `<｜User｜>`, whichever name a template gives it."""
+"""What follows the `<` of a `<|im_start|>`, a `<｜User｜>` or a one-sided `<|turn>` and `<turn|>`, whichever name a template gives it."""
 
 _TOKEN_SHAPES: Final[tuple[tuple[str, str], ...]] = (
     ('<', _NAMED_TOKEN_TAILS),
@@ -109,7 +112,7 @@ _POSSIBLE_JOINER_IN_JSON: Final = re.compile(
 """Where a joiner has started, also when a chunk ended partway through its escape."""
 
 _TOKEN_TAIL_PREFIX: Final = re.compile(
-    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{0,64}\|?|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{0,64}｜?|'
+    r'\|[^\s<>|\u200b-\u200d\u2060\ufeff]{0,64}\|?|｜[^\s<>｜\u200b-\u200d\u2060\ufeff]{0,64}｜?|[a-z_]{1,32}\|?|'
     + '|'.join(
         re.escape(tail[:length])
         for _, tails in _LITERAL_TOKEN_TAILS
@@ -391,16 +394,24 @@ def _break_tool_return(part: BaseToolReturnPart[Any]) -> BaseToolReturnPart[Any]
 def _break_tool_call(call: BaseToolCallPart[Any]) -> BaseToolCallPart[Any]:
     args = call.args
     if isinstance(args, str) and '\\u' in args:
-        # Adapters decode the JSON to send it canonically, which would turn an escaped token into a literal one.
-        decoded = call.args_as_dict()
-        broken = _break_value(decoded)
-        args = args if broken is decoded else broken
+        args = _break_escaped_args(call, args)
     else:
         args = _break_value(args)
     name = break_special_tokens(call.tool_name)
     if args is call.args and name == call.tool_name:
         return call
     return replace(call, args=args, tool_name=name)
+
+
+def _break_escaped_args(call: BaseToolCallPart[Any], args: str) -> str | dict[str, Any]:
+    """Adapters decode JSON arguments to send them canonically, which would turn an escaped token into a literal one."""
+    try:
+        decoded = call.args_as_dict(raise_if_invalid=True)
+    except (ValueError, AssertionError):
+        # Malformed arguments go out as they are, so only the joiner changes.
+        return break_special_tokens(args)
+    broken = _break_value(decoded)
+    return args if broken is decoded else broken
 
 
 def _break_value(value: Any) -> Any:
