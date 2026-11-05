@@ -33,11 +33,20 @@ has imported the tests, a listed mock method that's gone stops the run too. Othe
 and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape
 it.
 
+A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
+call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
+messages, model settings and model request parameters the model is handed. A model that wraps another, like
+`FallbackModel`, is recorded through the call it makes on the model it wraps. When a capture starts, it runs an agent
+over each of those models, streamed and not, and stops the run if a call on a listed method wasn't recorded, so an
+agent that stops calling a model through them fails loudly.
+
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
-sides. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each test ends. Generated
-tool call ids, UUIDs, object addresses, timestamps within a day of the capture, history digests (which hash those
-timestamps), attempt durations, local server ports and multipart boundaries are normalized, so two runs of the same
-code compare equal.
+sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
+recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
+test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses, timestamps within a
+day of the capture, history digests (which hash those timestamps), attempt durations, local server ports, multipart
+boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id` gets,
+and `PromptInjectionDefender`'s measured `latency_ms` are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -74,13 +83,15 @@ from pydantic_core import to_json
 import pydantic_ai
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelResponseStreamEvent
-from pydantic_ai.models import Model, StreamedResponse, override_allow_model_requests
+from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.settings import ModelSettings
 
 CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
@@ -107,6 +118,14 @@ GENERATED_VALUES = [
     (re.compile(r'"duration":"P[0-9DTHMS.]+"'), '"duration":"DURATION"'),
     (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
     (re.compile(r'(--|boundary=)[0-9a-f]{32}'), r'\1BOUNDARY'),
+    # Each pytest session numbers its temporary directory, and puts each `pytest-xdist` worker's in its own.
+    (re.compile(r'(pytest-of-[^/"]+/pytest-)\d+(?:/popen-gw\d+)?'), r'\1N'),
+    # `uuid4().hex` ids, like `AskUserQuestion.id`; the version and variant digits spare most other hex digests.
+    (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
+    # The key the framework gives a capability without an `id` ends in a random suffix.
+    (re.compile(r'<(\w+):[0-9a-f]{6}>'), r'<\1:ID>'),
+    # `PromptInjectionDefender` times each screening it runs.
+    (re.compile(r'"latency_ms":[0-9.eE+-]+'), '"latency_ms":"LATENCY"'),
 ]
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
 # Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
@@ -123,6 +142,11 @@ SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
     ('tests.models.test_huggingface', 'MockHuggingFace', ('chat_completions_create',)),
     ('tests.models.test_mistral', 'MockMistralAI', ('chat_completions_create',)),
     ('tests.models.test_cohere', 'MockAsyncClientV2', ('chat', 'chat_stream')),
+]
+# Models that answer in process and send no request, with the methods an agent calls them through.
+IN_PROCESS_MODELS: list[tuple[type[Model], tuple[str, ...]]] = [
+    (FunctionModel, ('request', 'request_stream')),
+    (TestModel, ('request', 'request_stream')),
 ]
 
 
@@ -165,6 +189,7 @@ class RefactorCapture:
         self.install()
         self.check_stream_hook()
         self.check_request_hook()
+        self.check_model_hook()
 
     def pytest_collection_finish(self) -> None:
         """Wrap each method `SDK_MOCKS` lists on the mocks collection imported, and stop the run if one is gone."""
@@ -197,7 +222,7 @@ class RefactorCapture:
     def install(self) -> None:
         """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined.
 
-        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s.
+        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, and each method `IN_PROCESS_MODELS` lists.
         """
         pending: list[type[StreamedResponse]] = [StreamedResponse]
         while pending:
@@ -207,15 +232,15 @@ class RefactorCapture:
         self._monkeypatch.setattr(StreamedResponse, '__init_subclass__', classmethod(self._wrap_aiter))
         self._wrap_send(httpx.AsyncClient)
         self._wrap_send(httpx2.AsyncClient)
+        for model_class, method_names in IN_PROCESS_MODELS:
+            for name in method_names:
+                self._wrap_model(model_class, name)
 
     def check_stream_hook(self) -> None:
         """Stop the run unless the stream an agent iterates is recorded."""
 
-        async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            yield 'canary'
-
         async def run() -> None:
-            async with Agent(FunctionModel(stream_function=stream_text)).run_stream('canary') as result:
+            async with Agent(FunctionModel(stream_function=stream_canary)).run_stream('canary') as result:
                 await result.get_output()
 
         asyncio.run(run())
@@ -266,6 +291,30 @@ class RefactorCapture:
             raise pytest.UsageError(
                 f'The request a canary agent run sent with {" and ".join(missed)} was not recorded, so the capture '
                 'would miss requests. Update `tests/refactor_capture.py` to the HTTP client the SDK sends with now.'
+            )
+
+    def check_model_hook(self) -> None:
+        """Stop the run unless a canary agent run's call on each method `IN_PROCESS_MODELS` lists is recorded."""
+
+        async def run() -> None:
+            text_canary = FunctionModel(
+                lambda messages, info: ModelResponse(parts=[TextPart('canary')]), stream_function=stream_canary
+            )
+            for model in (text_canary, TestModel()):
+                await Agent(model).run('canary')
+                async with Agent(model).run_stream('canary') as result:
+                    await result.get_output()
+
+        asyncio.run(run())
+        recorded = {record['target'] for record in self.records if record['kind'] == 'request'}
+        self.clear()
+        targets = [method_target(model_class, name) for model_class, names in IN_PROCESS_MODELS for name in names]
+        if missed := [target for target in targets if target not in recorded]:
+            self._monkeypatch.undo()
+            raise pytest.UsageError(
+                f'The calls a canary agent run made on `{"`, `".join(missed)}` were not recorded, so the capture would '
+                'miss what in-process models are handed. Update `tests/refactor_capture.py` to the methods an agent '
+                'calls them through now.'
             )
 
     def write(self, node: str) -> None:
@@ -360,7 +409,7 @@ class RefactorCapture:
 
     def _wrap_mock(self, mock: type, name: str) -> None:
         original: Callable[..., object] = vars(mock)[name]
-        target = f'{mock.__module__}.{mock.__qualname__}.{name}'
+        target = method_target(mock, name)
 
         # Whatever the method returns, a coroutine, an async generator or a plain value, is handed back as is.
         def recording_method(client: object, *args: object, **kwargs: object) -> object:
@@ -376,6 +425,42 @@ class RefactorCapture:
             return original(client, *args, **kwargs)
 
         self._monkeypatch.setattr(mock, name, recording_method)
+
+    def _wrap_model(self, model_class: type[Model], name: str) -> None:
+        original: Callable[..., object] = vars(model_class)[name]
+        target = method_target(model_class, name)
+
+        # `request` returns a coroutine and `request_stream` an async context manager; either is handed back as is.
+        def recording_method(
+            model: Model,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            self.records.append(
+                {
+                    'kind': 'request',
+                    'node': self.node,
+                    'target': target,
+                    'messages': normalized(messages),
+                    'model_settings': normalized(model_settings),
+                    'model_request_parameters': normalized(model_request_parameters),
+                }
+            )
+            return original(model, messages, model_settings, model_request_parameters, *args, **kwargs)
+
+        self._monkeypatch.setattr(model_class, name, recording_method)
+
+
+async def stream_canary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'canary'
+
+
+def method_target(owner: type, name: str) -> str:
+    """The request target of a call on `owner`'s method `name`."""
+    return f'{owner.__module__}.{owner.__qualname__}.{name}'
 
 
 def normalized(value: object) -> object:
@@ -486,7 +571,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     for side, sources in (('base', [out / 'base-src' / root for root in roots]), ('head', [])):
         pythonpath = os.pathsep.join([*map(str, sources), *filter(None, [os.environ.get('PYTHONPATH')])])
         command = ['-m', 'pytest', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={out / side}', *args.pytest_args]
-        env = os.environ | {'PYTHONPATH': pythonpath}
+        env = os.environ | {'PYTHONPATH': pythonpath, 'PYTHONHASHSEED': '0'}
         code = subprocess.run([sys.executable, *command], cwd=repo, env=env).returncode
         print(f'{side} capture: pytest exited {code}')
         failed = failed or code != 0
