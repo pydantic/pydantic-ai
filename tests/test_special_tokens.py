@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -747,7 +748,12 @@ def test_parts_the_restore_leaves_alone():
             f'{{"q": "\\u003C{Z}start_of_turn\\u003E"}}', '{"q": "\\u003Cstart_of_turn\\u003E"}', id='escaped-upper'
         ),
         pytest.param('not json \\u0041', 'not json \\u0041', id='escape-in-malformed-args'),
-        pytest.param('{"q": "<\\u200d\\uff5cUser\\uff5c>"}', {'q': '<｜User｜>'}, id='the-rest-of-the-token-escaped'),
+        pytest.param('{"q": "\\uzzzz <\\u200d|end|>"}', '{"q": "\\uzzzz <|end|>"}', id='malformed-escape'),
+        pytest.param(f'{{"q": "<{Z}{Z}|end|>"}}', f'{{"q": "<{Z}{Z}|end|>"}}', id='a-joiner-after-a-joiner'),
+        pytest.param('{"q": "<\\u200d|a\\nb|>"}', '{"q": "<\\u200d|a\\nb|>"}', id='an-escaped-newline-in-the-name'),
+        pytest.param(
+            '{"q": "<\\u200d\\uff5cUser\\uff5c>"}', '{"q": "<\\uff5cUser\\uff5c>"}', id='the-rest-of-the-token-escaped'
+        ),
         pytest.param(
             {'q': [f'<{Z}|end|>', 1], f'<{Z}|k|>': {'n': f'<{Z}|end|>'}},
             {'q': ['<|end|>', 1], '<|k|>': {'n': '<|end|>'}},
@@ -805,7 +811,7 @@ def test_streamed_json_with_escaped_angle_brackets_split_anywhere(size: int):
 @pytest.mark.parametrize('size', range(1, 12))
 async def test_streamed_tool_args_split_anywhere(size: int):
     seen: list[str] = []
-    args = f'{{"query": "<{Z}|im_start|> <\\u200d|end|>"}}'
+    args = f'{{"query": "<{Z}|im_start|> <\\u200d|end|> <\\u200d\\uff5cUser\\uff5c>"}}'
     deltas: Any = [
         {0: DeltaToolCall(name='look_up', json_args=chunk if i == 0 else None)}
         for i, chunk in enumerate(_chunks(args, size)[:1])
@@ -828,7 +834,7 @@ async def test_streamed_tool_args_split_anywhere(size: int):
 
     async with agent.run_stream_events('Go') as stream:
         events = [event async for event in stream]
-    assert seen == ['<|im_start|> <|end|>']
+    assert seen == ['<|im_start|> <|end|> <｜User｜>']
     streamed = ''.join(
         event.delta.args_delta
         for event in events
@@ -840,7 +846,31 @@ async def test_streamed_tool_args_split_anywhere(size: int):
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     )
     assert isinstance(start.args, str | None)
-    assert (start.args or '') + streamed == '{"query": "<|im_start|> <|end|>"}'
+    restored = '{"query": "<|im_start|> <|end|> <\\uff5cUser\\uff5c>"}'
+    assert (start.args or '') + streamed == restored
+    result = events[-1]
+    assert isinstance(result, AgentRunResultEvent)
+    call = result.result.all_messages()[1].parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert call.args == restored
+
+
+@pytest.mark.parametrize('size', range(1, 16))
+def test_an_escaped_backslash_does_not_start_an_escape(size: int):
+    """`\\\\u003c` is a backslash and the text `u003c`, not `<`, so the joiner after it isn't in a token."""
+    args = f'{{"q": "\\\\u003c{Z}|end|> \\\\u003c\\u200d|end|> \\\\\\u003c{Z}|end|> <{Z}｜User\\\\uff5c>"}}'
+    expected = f'{{"q": "\\\\u003c{Z}|end|> \\\\u003c\\u200d|end|> \\\\\\u003c|end|> <{Z}｜User\\\\uff5c>"}}'
+    assert json.loads(expected)['q'] == f'\\u003c{Z}|end|> \\u003c{Z}|end|> \\<|end|> <{Z}｜User\\uff5c>'
+    restorer = StreamRestorer()
+    streamed = ''
+    for chunk in _chunks(args, size):
+        event = restorer.restore(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=chunk)))
+        assert isinstance(event, PartDeltaEvent)
+        assert isinstance(event.delta, ToolCallPartDelta)
+        streamed += str(event.delta.args_delta)
+    assert restorer.flush() == []
+    assert streamed == expected
+    assert restore_special_tokens_in_parts([ToolCallPart('t', args)])[0].args == expected
 
 
 def test_a_joiner_is_released_where_its_json_string_closes():

@@ -26,8 +26,6 @@ from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeVar, cast
 
-import pydantic_core
-
 from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
@@ -89,62 +87,38 @@ _FULL_WIDTH_NAME: Final = r'[^\s<>｜"\u200b-\u200d\u2060\ufeff]'
 
 _ZERO_WIDTH_CHARACTER: Final = '[\u200b\u200c\u200d\u2060\ufeff]'
 """What a model writes for the joiner when it copies it: some families reach for another invisible character instead."""
-_ZERO_WIDTH_ESCAPE: Final = r'\\u(?:200[bcdBCD]|2060|[fF][eE][fF][fF])'
-"""The same characters, as a model can write them in a tool call's JSON arguments."""
-_JSON_ZERO_WIDTH: Final = f'(?:{_ZERO_WIDTH_CHARACTER}|{_ZERO_WIDTH_ESCAPE})'
-_JSON_GT: Final = r'(?:>|\\u003[eE])'
-"""Some servers re-encode JSON arguments with `<` and `>` escaped, as Go's `json.Marshal` does."""
-_JSON_LT_LOOKBEHINDS: Final = (r'(?<=<)', r'(?<=\\u003c)', r'(?<=\\u003C)')
+_ZERO_WIDTH_CHARACTERS: Final = frozenset('\u200b\u200c\u200d\u2060\ufeff')
+_JSON_STRING_SPECIAL: Final = re.compile(r'["\\\u200b-\u200d\u2060\ufeff]')
+"""What ends a run of a JSON string's characters that decode to themselves and can't be a joiner."""
+_JSON_ESCAPES: Final = {'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'}
 
 
-def _token_shapes(gt: str) -> tuple[tuple[str, str], ...]:
-    """Each token's first character and what can follow it, with `gt` matching a `>`."""
+def _token_shapes() -> tuple[tuple[str, str], ...]:
+    """Each token's first character and what can follow it."""
     named = (
-        rf'\|{_NAME}{{1,64}}\|{gt}',  # `<|im_start|>`
-        rf'｜{_FULL_WIDTH_NAME}{{1,64}}｜{gt}',  # `<｜User｜>`
-        rf'\|[a-z_]{{1,32}}{gt}',  # `<|turn>`
-        rf'[a-z_]{{1,32}}\|{gt}',  # `<turn|>`
+        rf'\|{_NAME}{{1,64}}\|>',  # `<|im_start|>`
+        rf'｜{_FULL_WIDTH_NAME}{{1,64}}｜>',  # `<｜User｜>`
+        r'\|[a-z_]{1,32}>',  # `<|turn>`
+        r'[a-z_]{1,32}\|>',  # `<turn|>`
     )
     return (
         ('<', '|'.join(named)),
-        *(
-            (re.escape(first), '|'.join(re.escape(tail).replace('>', gt) for tail in tails))
-            for first, tails in _LITERAL_TOKEN_TAILS
-        ),
+        *((re.escape(first), '|'.join(re.escape(tail) for tail in tails)) for first, tails in _LITERAL_TOKEN_TAILS),
     )
 
 
-_SPECIAL_TOKEN_START: Final = re.compile('|'.join(f'{first}(?={tails})' for first, tails in _token_shapes('>')))
+_SPECIAL_TOKEN_START: Final = re.compile('|'.join(f'{first}(?={tails})' for first, tails in _token_shapes()))
 """Only the token's first character is consumed, so overlapping tokens, as in `]~b]~b]`, each get a joiner."""
 
 _JOINER_IN_TEXT: Final = re.compile(
-    '|'.join(f'(?<={first}){_ZERO_WIDTH_CHARACTER}(?={tails})' for first, tails in _token_shapes('>'))
+    '|'.join(f'(?<={first}){_ZERO_WIDTH_CHARACTER}(?={tails})' for first, tails in _token_shapes())
 )
-_JOINER_IN_JSON: Final = re.compile(
-    '|'.join(
-        f'{lookbehind}{_JSON_ZERO_WIDTH}(?={tails})'
-        for first, tails in _token_shapes(_JSON_GT)
-        for lookbehind in (_JSON_LT_LOOKBEHINDS if first == '<' else (f'(?<={first})',))
-    )
-)
-
 _POSSIBLE_JOINER_IN_TEXT: Final = re.compile(rf'(?<=[<\[\]]){_ZERO_WIDTH_CHARACTER}')
-_POSSIBLE_JOINER_IN_JSON: Final = re.compile(
-    '|'.join(
-        rf'{lookbehind}(?:{_JSON_ZERO_WIDTH}|\\(?:u[0-9a-fA-F]{{0,3}})?$)'
-        for lookbehind in (r'(?<=[<\[\]])', *_JSON_LT_LOOKBEHINDS[1:])
-    )
-)
-"""Where a joiner has started, also when a chunk ended partway through its escape."""
-
-_LONGEST_TOKEN_START: Final = len(r'\u003c')
+_TOKEN_START_LENGTH: Final = 1
 """How much emitted text the joiner's check has to look back on."""
 
-_PARTIAL_ESCAPE: Final = r'(?:\\(?:u[0-9a-fA-F]{0,3})?)?'
-
 _TOKEN_TAIL_PREFIX: Final = re.compile(
-    rf'\|{_NAME}{{0,64}}(?:\|{_PARTIAL_ESCAPE})?|｜{_FULL_WIDTH_NAME}{{0,64}}(?:｜{_PARTIAL_ESCAPE})?'
-    rf'|[a-z_]{{1,32}}(?:\|{_PARTIAL_ESCAPE})?|(?:start|end)_of_turn{_PARTIAL_ESCAPE}|'
+    rf'\|{_NAME}{{0,64}}\|?|｜{_FULL_WIDTH_NAME}{{0,64}}｜?|[a-z_]{{1,32}}\|?|'
     + '|'.join(
         re.escape(tail[:length])
         for _, tails in _LITERAL_TOKEN_TAILS
@@ -153,7 +127,7 @@ _TOKEN_TAIL_PREFIX: Final = re.compile(
     )
     + '|'
 )
-"""The start of what can follow a joiner in a token, including nothing yet, up to an escaped `>` still arriving."""
+"""The start of what can follow a joiner in a token, including nothing yet."""
 
 _PartT = TypeVar('_PartT')
 
@@ -206,15 +180,8 @@ def _restore_part(part: _PartT) -> _PartT:
 def _restore_args(args: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
     if not isinstance(args, str):
         return None if args is None else _restore_value(args)
-    restored = _JOINER_IN_JSON.sub('', args)
-    if '\\u' not in restored:
-        return restored
-    # The rest of the token can be escaped too, which only shows once the JSON is decoded.
-    try:
-        decoded = pydantic_core.from_json(restored)
-    except ValueError:
-        return restored
-    return restored if (fully_restored := _restore_value(decoded)) == decoded else fully_restored
+    restorer = _StreamedArgsRestorer()
+    return restorer.feed(args) + restorer.flush()
 
 
 def _restore_value(value: Any) -> Any:
@@ -236,17 +203,15 @@ class _StreamedTextRestorer:
     without one goes out as it arrives.
     """
 
-    joiner_inside_token: re.Pattern[str]
-    possible_joiner: re.Pattern[str]
     previous: str = ''
     held: str = ''
 
     def feed(self, chunk: str) -> str:
-        restored = self.joiner_inside_token.sub('', self.previous + self.held + chunk)
+        restored = _JOINER_IN_TEXT.sub('', self.previous + self.held + chunk)
         hold_from = self._hold_from(restored)
         text = restored[len(self.previous) : hold_from]
         self.held = restored[hold_from:]
-        self.previous = (self.previous + text)[-_LONGEST_TOKEN_START:]
+        self.previous = (self.previous + text)[-_TOKEN_START_LENGTH:]
         return text
 
     def flush(self) -> str:
@@ -256,7 +221,7 @@ class _StreamedTextRestorer:
 
     def _hold_from(self, text: str) -> int:
         start = None
-        for start in self.possible_joiner.finditer(text):
+        for start in _POSSIBLE_JOINER_IN_TEXT.finditer(text):
             pass
         if start is None:
             return len(text)
@@ -266,10 +231,115 @@ class _StreamedTextRestorer:
 
 
 @dataclass
+class _StreamedArgsRestorer:
+    """Removes the joiner from the tokens in the strings of JSON arguments that arrive in chunks.
+
+    It reads each string as the JSON decoder would, escapes included, so it finds the same tokens a tool receives, and
+    only drops the joiner's own characters, so everything else goes out as the model wrote it. Only a joiner and an
+    escape still arriving are held back.
+    """
+
+    in_string: bool = False
+    previous: str = ''
+    """The last character of the string so far, decoded."""
+    pending: str = ''
+    """An escape still arriving."""
+    held_units: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    """A possible joiner and what follows it so far, each as its decoded character and its JSON text."""
+
+    @property
+    def held(self) -> str:
+        return ''.join(raw for _, raw in self.held_units) + self.pending
+
+    def feed(self, chunk: str) -> str:
+        text, self.pending = self.pending + chunk, ''
+        out: list[str] = []
+        position = 0
+        while position < len(text):
+            if not self.in_string:
+                end = text.find('"', position)
+                if end < 0:
+                    out.append(text[position:])
+                    break
+                out.append(text[position : end + 1])
+                self.in_string, self.previous = True, ''
+                position = end + 1
+            elif not self.held_units and text[position] not in '"\\' and text[position] not in _ZERO_WIDTH_CHARACTERS:
+                match = _JSON_STRING_SPECIAL.search(text, position)
+                end = len(text) if match is None else match.start()
+                out.append(text[position:end])
+                self.previous = text[end - 1]
+                position = end
+            elif text[position] == '"':
+                out.append(self._release() + '"')
+                self.in_string = False
+                position += 1
+            elif (unit := _read_json_string_unit(text, position)) is None:
+                self.pending = text[position:]
+                break
+            else:
+                out.append(self._push(unit))
+                position += len(unit[1])
+        return ''.join(out)
+
+    def flush(self) -> str:
+        """What's still held, when no more text is coming: a joiner that didn't end up in a token stays as written."""
+        held, self.pending = self._release() + self.pending, ''
+        return held
+
+    def _release(self) -> str:
+        held, self.held_units = self.held_units, []
+        if held:
+            self.previous = held[-1][0]
+        return ''.join(raw for _, raw in held)
+
+    def _push(self, unit: tuple[str, str]) -> str:
+        character, raw = unit
+        if not self.held_units:
+            if character in _ZERO_WIDTH_CHARACTERS and self.previous and self.previous in '<[]':
+                self.held_units = [unit]
+                return ''
+            self.previous = character
+            return raw
+        self.held_units.append(unit)
+        tail = ''.join(character for character, _ in self.held_units[1:])
+        if _JOINER_IN_TEXT.match(self.previous + self.held_units[0][0] + tail, 1):
+            token_rest = self.held_units[1:]
+            self.held_units, self.previous = [], tail[-1]
+            return ''.join(raw for _, raw in token_rest)
+        if _TOKEN_TAIL_PREFIX.fullmatch(tail):
+            return ''
+        # Not a token: the joiner goes out as written, and what followed it is read again, as it can hold one itself.
+        (joiner, joiner_raw), *rest = self.held_units
+        self.held_units, self.previous = [], joiner
+        return joiner_raw + ''.join(self._push(item) for item in rest)
+
+
+def _read_json_string_unit(text: str, position: int) -> tuple[str, str] | None:
+    """The character at `position` in a JSON string, decoded, and its JSON text, or `None` if its escape is cut off."""
+    if text[position] != '\\':
+        return text[position], text[position]
+    if position + 1 == len(text):
+        return None
+    escaped = text[position + 1]
+    if escaped != 'u':
+        return _JSON_ESCAPES.get(escaped, escaped), text[position : position + 2]
+    raw = text[position : position + 6]
+    if len(raw) < 6:
+        return None
+    try:
+        return chr(int(raw[2:], 16)), raw
+    except ValueError:
+        return raw, raw
+
+
+@dataclass
 class StreamRestorer:
     """Applies the joiner's removal to a response's stream events, one text per part."""
 
-    restorers: dict[int, _StreamedTextRestorer] = field(default_factory=dict[int, _StreamedTextRestorer])
+    restorers: dict[int, _StreamedTextRestorer | _StreamedArgsRestorer] = field(
+        default_factory=dict[int, _StreamedTextRestorer | _StreamedArgsRestorer]
+    )
     args_parts: set[int] = field(default_factory=set[int])
 
     def restore(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
@@ -304,11 +374,17 @@ class StreamRestorer:
         return event
 
     def _text_restorer(self, index: int) -> _StreamedTextRestorer:
-        return self.restorers.setdefault(index, _StreamedTextRestorer(_JOINER_IN_TEXT, _POSSIBLE_JOINER_IN_TEXT))
+        restorer = self.restorers.get(index)
+        if not isinstance(restorer, _StreamedTextRestorer):
+            restorer = self.restorers[index] = _StreamedTextRestorer()
+        return restorer
 
-    def _args_restorer(self, index: int) -> _StreamedTextRestorer:
+    def _args_restorer(self, index: int) -> _StreamedArgsRestorer:
         self.args_parts.add(index)
-        return self.restorers.setdefault(index, _StreamedTextRestorer(_JOINER_IN_JSON, _POSSIBLE_JOINER_IN_JSON))
+        restorer = self.restorers.get(index)
+        if not isinstance(restorer, _StreamedArgsRestorer):
+            restorer = self.restorers[index] = _StreamedArgsRestorer()
+        return restorer
 
     def restore_part_so_far(self, index: int, part: _PartT) -> _PartT:
         """`part` as the stream's events have delivered it, so a snapshot and later deltas never overlap."""
