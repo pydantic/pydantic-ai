@@ -176,6 +176,12 @@ class WorkspaceBackendSuite:
             expected = f'{await workspace.realpath(root)}\n'
             assert (await workspace.run(['sh', '-c', 'pwd -P'], cwd=posixpath.basename(root))).stdout == expected
             assert (await workspace.run('pwd -P', shell=True, cwd=root)).stdout == expected
+            with pytest.raises(FileNotFoundError):
+                await workspace.run(['pwd'], cwd=posixpath.join(root, 'missing'))
+            file = posixpath.join(root, 'file')
+            await workspace.write_bytes(file, b'')
+            with pytest.raises(NotADirectoryError):
+                await workspace.run(['pwd'], cwd=file)
 
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
