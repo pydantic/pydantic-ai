@@ -49,6 +49,12 @@ Not to be confused with `Pydantic AI UI Security Review`, a separate narrow revi
 audits the UI-adapter trust boundary. It always submits a `COMMENT` review and never owns the
 merge-gate verdict (`shared/prompts/pydantic-ai-ui-security-review.md`).
 
+A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
+variable skips this review, and the skipped check reports as success. `main`'s copy reads the
+same variable, so one entry skips the review for that branch on either base. Separate branch
+names with commas and no spaces. Remove a branch from the list once its PR merges or closes: an
+entry left in the list also exempts any later branch with that name, compared case-insensitively.
+
 ## A custom job named in `if:` must also appear in the prompt
 
 When a workflow's top-level `if:` references a custom job's output
