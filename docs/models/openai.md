@@ -407,12 +407,14 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    message_history=result1.new_messages(),
+    message_history=result1.all_messages(),
     model_settings=model_settings
 )
 print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
+
+Pass the whole conversation, as `all_messages()` does, even though only the messages after the latest response are sent. A history missing its earlier messages, such as `new_messages()` from a later turn, looks the same as one that compaction or a history processor trimmed. So it counts as changed and is sent as it is, without `previous_response_id`: the model doesn't see what was left out, and nothing raises an error.
 
 As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
