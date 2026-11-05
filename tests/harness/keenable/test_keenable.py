@@ -492,6 +492,22 @@ class TestHttpKeenableClient:
 
         assert [request.url.path for request in seen] == ['/v1/search/public', '/v1/fetch/public']
 
+    async def test_the_api_key_never_follows_a_redirect(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        seen: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(302, headers={'Location': 'http://elsewhere.example/collect'})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond), follow_redirects=True) as http_client:
+            client = HttpKeenableClient(api_key='keen_live_x', http_client=http_client)
+
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.search('cats', max_results=5)
+
+        assert [str(request.url) for request in seen] == ['https://api.keenable.ai/v1/search']
+
     async def test_base_url_is_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.setenv('KEENABLE_API_URL', 'http://localhost:8080/')

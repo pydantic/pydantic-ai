@@ -157,10 +157,18 @@ class HttpKeenableClient:
             else httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS)
         )
         with anyio.fail_after(self._TIMEOUT_SECONDS):
+            # An injected client may follow redirects, and httpx keeps the
+            # `X-API-Key` header on a redirect to another host, so the key would
+            # reach wherever the server points.
             async with (
                 client_context as client,
                 client.stream(
-                    method, f'{self._base_url}{path}', json=payload, params=params, headers=self._headers()
+                    method,
+                    f'{self._base_url}{path}',
+                    json=payload,
+                    params=params,
+                    headers=self._headers(),
+                    follow_redirects=False,
                 ) as response,
             ):
                 response.raise_for_status()

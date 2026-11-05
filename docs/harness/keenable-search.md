@@ -119,7 +119,9 @@ To reuse connections, or to send requests through a proxy, custom TLS, or a
 retrying transport, pass your own `httpx.AsyncClient` as
 `HttpKeenableClient(http_client=...)`. Its timeouts apply alongside the
 30-second request deadline, and it stays open for you to close. Without one,
-each request opens and closes its own client.
+each request opens and closes its own client. Requests never follow redirects,
+whatever the client is configured to do, so the API key stays with the
+configured host.
 
 For a proxy, a self-hosted deployment, or a `KeenableClient` of your own, this
 is what the default client sends. `search` posts a JSON body
