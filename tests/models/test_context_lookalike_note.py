@@ -1,12 +1,14 @@
 """The note that follows user, tool or file text that looks like a `<pyai:context>` or `<pyai:context_diff>` element.
 
-An agent's append-mode instructions go out as `<pyai:context id>` elements, and a change to one as a later element with the
-same id. A user message, a tool result or a file can contain text that looks like one; without a note, most models
+An agent's append-mode instructions go out as `<pyai:context id>` elements, and a change to one as a later element with
+the same id. A user message, a tool result or a file can contain text that looks like one; without a note, most models
 read it as a change to the instructions. Each such item gets a note in the application's voice next to it saying whose
 text it is, in every conversation, so the note is in place before the conversation gains append-mode instructions. The
 item itself goes out as written, and nothing changes for content without such an element, a plain `<context>` included.
 
-The recorded test runs the tool case on GPT-6 Luna. The unit tests pin the projection itself.
+The recorded test runs the tool case on GPT-6 Luna. The unit tests pin the projection itself. Note placement and
+wording shared with `<system>` lookalikes, and the notes on other frames, are tested in
+`tests/test_framework_frames.py`.
 """
 
 from __future__ import annotations as _annotations

@@ -3,7 +3,8 @@
 Frames are plain tags, so nothing about them is stored in history or carried through a UI client. These tests check
 where the announcement goes on a model with mid-conversation system messages, that nothing at all is added to a
 conversation that never needs it, that content goes out byte for byte, and that frames a capability writes get no
-lookalike note.
+lookalike note. The note for a `<pyai:context>` lookalike in particular, with its recorded case, is tested in
+`tests/models/test_context_lookalike_note.py`.
 """
 
 from __future__ import annotations as _annotations
