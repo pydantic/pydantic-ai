@@ -1558,7 +1558,7 @@ async def test_continuation_scopes_automatic_server_state_by_endpoint(
         base_url='https://api.openai.com/v1' if same_endpoint else 'https://gateway-a.example/v1',
     )
     first = await Agent(OpenAIResponsesModel('gpt-4o', provider=provider)).run(
-        'first', model_settings={'openai_previous_response_id': 'auto'}
+        'first', model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto')
     )
     settings: OpenAIResponsesModelSettings = {
         'openai_previous_response_id': previous_response_id,

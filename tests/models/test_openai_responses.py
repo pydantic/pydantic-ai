@@ -5323,7 +5323,7 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
         ),
         ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
     ]
-    history = cast(list[ModelRequest | ModelResponse], with_history_digests(history))
+    history = with_history_digests(history)
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
@@ -5404,9 +5404,9 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id(
+    previous_response_id, messages = model._resolve_previous_response_id(  # pyright: ignore[reportPrivateUsage]
         'resp_seed_from_prior_turn', with_history_digests(history)
-    )  # pyright: ignore[reportPrivateUsage]
+    )
     assert previous_response_id == 'resp_from_first_call'
     assert messages == snapshot(
         [
