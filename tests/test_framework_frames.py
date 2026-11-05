@@ -1094,6 +1094,66 @@ _THINKING_NOTE = (
 )
 
 
+_EARLIER_THINKING_NOTE = _THINKING_NOTE.replace(
+    'The following <assistant_thinking>', 'The preceding <assistant_thinking>'
+)
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        pytest.param(
+            [
+                ModelResponse(parts=[ThinkingPart(_QUOTED_LOOKALIKE), TextPart('Hello.')]),
+                ModelRequest(parts=[UserPromptPart('Hi.')]),
+            ],
+            id='opening-reply',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('Hi.')]),
+                ModelResponse(parts=[TextPart('Hello.')]),
+                ModelResponse(parts=[ThinkingPart(_QUOTED_LOOKALIKE), TextPart('Anything else?')]),
+                ModelRequest(parts=[UserPromptPart('No.')]),
+            ],
+            id='second-of-two-replies',
+        ),
+    ],
+)
+@pytest.mark.parametrize('inline_system', [True, False], ids=['native', 'fallback'])
+def test_reasoning_in_a_reply_with_no_request_right_before_it_gets_its_note_in_the_next_request(
+    history: list[ModelMessage], inline_system: bool
+):
+    """No request before it can hold the note, so the next one does, worded "preceding": it hasn't gone out yet."""
+    prepared = carrying_model(inline_system=inline_system).prepare_messages(history, ModelRequestParameters())
+
+    *earlier, last = prepared
+    assert earlier == history[:-1]
+    assert isinstance(last, ModelRequest)
+    note = last.parts[-1]
+    assert isinstance(note, SystemPromptPart | UserPromptPart)
+    assert str(note.content).removeprefix('<system>').removesuffix('</system>') == _EARLIER_THINKING_NOTE
+    assert sum('<assistant_thinking> reasoning contains' in text for text in request_texts(prepared)) == 1
+    if inline_system:
+        assert lookalike_note_announcement(system_role=True) in request_texts([last])
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_sends_an_opening_replys_note_after_its_reasoning():
+    """The opening reply's reasoning goes out first, in a user turn of its own, and the note comes after it."""
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ThinkingPart(_QUOTED_LOOKALIKE), TextPart('Hello.')]),
+        ModelRequest(parts=[UserPromptPart('Hi.')]),
+    ]
+
+    texts = _wire_texts(await _anthropic_wire('claude-sonnet-4-5', history))
+
+    carried = texts.index(f'<assistant_thinking>\n{_QUOTED_LOOKALIKE}\n</assistant_thinking>')
+    [note] = [i for i, text in enumerate(texts) if 'reasoning contains' in text]
+    assert carried < note
+    assert texts[note] == f'<system>{_EARLIER_THINKING_NOTE}</system>'
+
+
 @pytest.mark.parametrize('inline_system', [True, False], ids=['native', 'fallback'])
 def test_carried_reasoning_with_a_lookalike_gets_a_note_ahead_of_it(inline_system: bool):
     """The note ends the request before the reply, right ahead of where the reasoning is carried, which stays as written."""

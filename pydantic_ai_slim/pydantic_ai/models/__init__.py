@@ -2006,8 +2006,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Retry feedback gets the same for the text it quotes and a compaction summary for its text, not for the frame
         around either. So does reasoning this adapter
         carries into a user turn, with its note last in the request before that reply: the request has gone out by the
-        time the reply is replayed, so anywhere earlier in it would move the prompt cache's prefix. Only an opening
-        reply has no request to hold a note, so its reasoning goes without one.
+        time the reply is replayed, so anywhere earlier in it would move the prompt cache's prefix. A reply with no
+        request right before it, such as one that opens the history, gets its note in the next request instead.
 
         On a model with inline system messages, the first request with a frame on the user channel or a note also
         gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it opens the
@@ -2033,7 +2033,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 original, message, first_request=index == first_request_index
             )
             following = messages[index + 1 : index + 2]
-            frame_at = self._frame_index_with_thinking(parts, frame_at, following=following)
+            earlier = _replies_noted_later(messages, index)
+            frame_at = self._frame_index_with_thinking(parts, frame_at, following=[*following, *earlier])
             if frame_at is not None and pending_announcement:
                 pending_announcement = False
                 announcement = _FrameworkNote(
@@ -2041,8 +2042,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     timestamp=message.timestamp or _utils.now_utc(),
                 )
                 parts.insert(frame_at, announcement)
-            if note := self._carried_thinking_note(message, following):
-                parts.append(note)
+            parts.extend(self._carried_thinking_notes(message, following=following, earlier=earlier))
             if _parts_changed(parts, message.parts):
                 message = replace(message, parts=parts)
                 changed = True
@@ -2297,17 +2297,25 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if isinstance(part, ThinkingPart) and self._carries_thinking_in_user_turn(response, part)
         ]
 
-    def _carried_thinking_note(self, request: ModelRequest, following: list[ModelMessage]) -> _FrameworkNote | None:
-        """The note for lookalikes in the reasoning in `following` this adapter replays in a user turn, if any.
+    def _carried_thinking_notes(
+        self, request: ModelRequest, *, following: list[ModelMessage], earlier: list[ModelMessage]
+    ) -> list[_FrameworkNote]:
+        """The notes `request` gets for lookalikes in reasoning this adapter replays in a user turn.
 
-        One note covers all of a reply's reasoning, which goes out in one user turn.
+        Reasoning in the reply right after `request` gets a note last in it, worded "following": the request has gone
+        out by the time the reply is replayed, so anywhere earlier would move the prompt cache's prefix. Reasoning in
+        replies with no request right before them (`earlier`, such as a reply that opens the history) gets its note in
+        `request`, worded "preceding", since that request hasn't gone out yet.
         """
-        tags = [tag for part in self._carried_thinking(following) for tag in lookalike_tags(part.content)]
-        if not tags:
-            return None
+        inline_system = self.profile.get('supports_inline_system_prompts', False)
         # Where system messages follow the user content, the reasoning is that content.
-        preceding = self.profile.get('supports_inline_system_prompts', False) and self._system_entries_follow_user_turn
-        return self._lookalike_note(request, 'thinking', tags, preceding=preceding, genuine_change=False)
+        follows_turn = inline_system and self._system_entries_follow_user_turn
+        notes: list[_FrameworkNote] = []
+        for replies, preceding in ((following, follows_turn), (earlier, True)):
+            # One note covers all of a reply's reasoning, which goes out in one user turn.
+            if tags := [tag for part in self._carried_thinking(replies) for tag in lookalike_tags(part.content)]:
+                notes.append(self._lookalike_note(request, 'thinking', tags, preceding=preceding, genuine_change=False))
+        return notes
 
     def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
         """Whether this adapter replays `part` of `message` as an `<assistant_thinking>` frame in a user turn.
@@ -4365,6 +4373,18 @@ def _tool_results_first(
 def _parts_changed(parts: Sequence[ModelRequestPart], original: Sequence[ModelRequestPart]) -> bool:
     """Whether `parts` differs from `original` in length or in any part's identity."""
     return len(parts) != len(original) or any(new is not old for new, old in zip(parts, original))
+
+
+def _replies_noted_later(messages: list[ModelMessage], index: int) -> list[ModelMessage]:
+    """The replies before the request at `index` that the request before them doesn't hold the reasoning note for.
+
+    That's every reply since the previous request but the one right after it, or every reply before `index` when no
+    request came before.
+    """
+    start = index
+    while start > 0 and not isinstance(messages[start - 1], ModelRequest):
+        start -= 1
+    return messages[start + 1 if start > 0 else 0 : index]
 
 
 def _leading_system_prompt_count(request: ModelRequest) -> int:
