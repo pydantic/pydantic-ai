@@ -1627,7 +1627,12 @@ def _extract_usage(
         details=details or None,
     )
 
-    # Ensure token counts are set even if genai-prices extraction failed
+    _backfill_raw_totals(extracted, usage_data)
+    return extracted
+
+
+def _backfill_raw_totals(extracted: RequestUsage, usage_data: dict[str, int]) -> None:
+    """Ensure token counts are set even if genai-prices extraction failed."""
     if extracted.input_tokens == 0 and usage_data['prompt_tokens']:
         extracted.input_tokens = usage_data['prompt_tokens']
     if extracted.output_tokens == 0 and usage_data['completion_tokens']:
@@ -1635,8 +1640,6 @@ def _extract_usage(
     # The raw totals are the provider's report, so a failed extraction doesn't leave this response unmeasured.
     if usage_data['prompt_tokens'] or usage_data['completion_tokens']:
         extracted.unmeasured_requests = 0
-
-    return extracted
 
 
 def _attach_encrypted_result(part: NativeToolReturnPart, encrypted_result: str) -> None:
