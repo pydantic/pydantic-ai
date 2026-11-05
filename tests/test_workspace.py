@@ -217,20 +217,28 @@ async def test_run_rejects_an_empty_argv(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
 async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
-    (tmp_path / 'sub' / 'dir').mkdir(parents=True)
+    odd = "-d $x 'q'"
+    (tmp_path / 'sub' / odd).mkdir(parents=True)
     (tmp_path / 'file.txt').write_text('x')
     backend = LocalWorkspaceBackend(tmp_path)
     workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
     root = tmp_path.resolve()
 
     assert (await workspace.run(['pwd'], cwd='sub')).stdout == f'{root / "sub"}\n'
-    assert (await workspace.run('pwd', shell=True, cwd=str(root / 'sub' / 'dir'))).stdout == f'{root / "sub/dir"}\n'
+    assert (await workspace.run('pwd', shell=True, cwd=str(root / 'sub' / odd))).stdout == f'{root / "sub" / odd}\n'
     assert (await workspace.run(['pwd'])).stdout == f'{root}\n'
     assert (await WrapperWorkspace(workspace).run(['pwd'], cwd='sub')).stdout == f'{root / "sub"}\n'
+    assert (await workspace.run(['sh', '-c', 'exit 7'], cwd='sub')).exit_code == 7
+    missing = await workspace.run(['pydantic-ai-missing-program'], cwd='sub', env={'PATH': '/usr/bin:/bin'})
+    assert missing.exit_code == 127
     with pytest.raises(FileNotFoundError):
         await workspace.run(['pwd'], cwd='missing')
     with pytest.raises(NotADirectoryError):
         await workspace.run(['pwd'], cwd='file.txt')
+    with pytest.raises(TypeError):
+        await workspace.run('pwd', cwd='missing')
+    with pytest.raises(TypeError):
+        await workspace.run(['pwd'], shell=True, cwd='missing')
 
 
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

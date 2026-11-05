@@ -256,7 +256,8 @@ For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `work
 [reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
 change, and call `self.wrapped` for the rest. `run()` bypasses file-method policies (including
-shell/grep tools built on it) unless the wrapper also overrides or refuses commands. Symlinks can
+shell/grep tools built on it) unless the wrapper also overrides or refuses commands; a `run()` override
+takes and forwards `cwd` too. Symlinks can
 also lead outside a file root; check `realpath` before a write, for example:
 
 ```python

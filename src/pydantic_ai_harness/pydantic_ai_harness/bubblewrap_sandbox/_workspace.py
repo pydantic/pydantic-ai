@@ -307,8 +307,6 @@ class BubblewrapWorkspace(WrapperWorkspace):
         cwd: str | None = None,
     ) -> CommandResult:
         check_timeout(timeout)
-        if cwd is not None:
-            command = await self._command_in(cwd, command)
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
@@ -320,6 +318,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         else:
             # Through `sh`, a missing program exits 127 as the contract says, not with `bwrap`'s own 1.
             argv = ['sh', '-c', 'exec "$@"', 'sh', *command]
+        if cwd is not None:
+            argv = [*await self._command_in(cwd, argv, shell=False)]
         sandbox = await self._sandbox()
         # Set inside the sandbox, not on the host launcher, so a call `env` cannot swap out `bwrap`.
         env_args = [arg for name, value in (env or {}).items() for arg in ('--setenv', name, value)]

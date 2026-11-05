@@ -546,16 +546,21 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, Workspace):
             # Passed on, so wrappers (durable execution, sandboxes) see it.
             return await backend.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
-        return await backend.run(await self._command_in(cwd, command), shell=shell, env=env, timeout=timeout)
+        return await backend.run(
+            await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
+        )
 
-    async def _command_in(self, cwd: str, command: WorkspaceCommand) -> WorkspaceCommand:
+    async def _command_in(self, cwd: str, command: WorkspaceCommand, *, shell: bool) -> WorkspaceCommand:
         """`command` changed to start in `cwd`, through the shell, so it works on any backend."""
+        if isinstance(command, str) != shell:
+            # Checked before the directory, so a mismatch is reported as one, as without `cwd`.
+            raise TypeError('a string command requires `shell=True`, and an argv sequence `shell=False`')
         cwd = await self.resolve(cwd)
         if not (await self.stat(cwd)).is_dir:
             raise NotADirectoryError(cwd)
         if isinstance(command, str):
             return f'cd -- {shlex.quote(cwd)} || exit\n{command}'
-        return ['sh', '-c', 'cd -- "$1" || exit; shift; exec "$@"', 'sh', cwd, *command]
+        return ['/bin/sh', '-c', 'cd -- "$1" || exit; shift; exec "$@"', 'sh', cwd, *command]
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
