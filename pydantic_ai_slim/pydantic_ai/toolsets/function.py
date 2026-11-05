@@ -102,11 +102,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Defaults to None (no timeout).
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added with `add_function()` or the `@tool` / `@tool_plain` decorators;
+                a pre-built [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was constructed with.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added with `add_function()` or the `@tool` / `@tool_plain` decorators;
+                a pre-built [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was constructed with.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added with `add_function()` or the `@tool` / `@tool_plain` decorators;
+                a pre-built [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was constructed with.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
