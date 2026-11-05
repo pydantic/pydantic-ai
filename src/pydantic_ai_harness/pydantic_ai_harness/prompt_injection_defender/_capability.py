@@ -77,6 +77,26 @@ def _payload(value: object) -> object:
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
 
 
+def _model_visible_values(result: object) -> list[object]:
+    """The parts of a tool result the model sees, each classified on its own."""
+    if not isinstance(result, ToolReturn):
+        return [result]
+    values: list[object] = [result.return_value]
+    if isinstance(result.content, str):
+        # Tier 1 classifies strings under risky field names, so preserve the model-facing
+        # `content` field when projecting this separate message part.
+        values.append({'content': result.content})
+    elif result.content is not None:
+        text = '\n'.join(
+            item if isinstance(item, str) else item.content
+            for item in result.content
+            if isinstance(item, str | TextContent)
+        )
+        if text:
+            values.append({'content': text})
+    return values
+
+
 @dataclass
 class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """Classify tool results for indirect prompt injection and withhold the risky ones.
@@ -219,26 +239,12 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         """Classify each model-visible part; withhold the whole result when any part is blocked."""
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return result
-        # Keep the original result; the `isinstance` check below narrows `result` to a type pyright rejects on return.
-        unchanged = result
-        values: list[object]
-        if isinstance(result, ToolReturn):
-            values = [result.return_value]
-            if isinstance(result.content, str):
-                # Tier 1 classifies strings under risky field names, so preserve the model-facing
-                # `content` field when projecting this separate message part.
-                values.append({'content': result.content})
-            elif result.content is not None:
-                text = '\n'.join(
-                    item if isinstance(item, str) else item.content
-                    for item in result.content
-                    if isinstance(item, str | TextContent)
-                )
-                if text:
-                    values.append({'content': text})
+        payloads = [_payload(value) for value in _model_visible_values(result)]
+        # A supplied defense may run Tier 2 or Tier 3, which can't run in workflow code either.
+        if self.semantic_detection or self.defense is not None:
+            verdicts = await self._classify(ctx, payloads, call.tool_name)
         else:
-            values = [result]
-        verdicts = await self._verdicts(ctx, [_payload(value) for value in values], call.tool_name)
+            verdicts = await self._defend(payloads, call.tool_name)
         blocking = next((verdict for verdict in verdicts if not verdict.allowed), None)
         blocked: ToolReturn[str] | None = None
         if blocking is not None:
@@ -247,16 +253,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         for verdict in verdicts:
             if _flagged(verdict):
                 await self._notify(ctx, call, verdict)
-        return unchanged if blocked is None else blocked
-
-    async def _verdicts(
-        self, ctx: RunContext[AgentDepsT], payloads: list[object], tool_name: str
-    ) -> list[DefenseResult]:
-        """Pick where to classify; kept out of `after_tool_execute`, which is over the complexity limit."""
-        # A supplied defense may run Tier 2 or Tier 3, which can't run in workflow code either.
-        if self.semantic_detection or self.defense is not None:
-            return await self._classify(ctx, payloads, tool_name)
-        return await self._defend(payloads, tool_name)
+        return result if blocked is None else blocked
 
     @durable_operation('classify')
     async def _classify(

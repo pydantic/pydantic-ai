@@ -80,6 +80,7 @@ from .._instructions import (
     window_boundary_index,
 )
 from .._json_schema import (
+    InlinedSchemaTooLargeError,
     JsonSchemaTransformer,
     JsonSchemaTransformerWithOutputOverride,
 )
@@ -1779,15 +1780,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
         # Asked before the instruction state is projected, which drops the records it's read from.
         first_context_request = _first_context_request(messages, prefix)
-        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
                 prefix=prefix,
             )
+        messages = _drop_capability_load_deltas(messages)
 
         messages = _render_system_prompt_contexts(
             messages,
@@ -3119,8 +3123,18 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
-    parameters_json_schema = schema_transformer.walk()
+    try:
+        schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+        # Walking can also raise, e.g. for a malformed node only reachable through a `$ref`.
+        parameters_json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError(
+            f'The JSON schema of tool {tool_def.name!r}',
+            'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
+            'or a `FilteredToolset`.',
+        ) from None
+    except UserError as e:
+        raise UserError(f'Tool {tool_def.name!r}: {e}') from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -3132,7 +3146,10 @@ def _customize_output_object(
     transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
 ) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
-    json_schema = schema_transformer.walk()
+    try:
+        json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError('The output JSON schema') from None
     return replace(
         output_object,
         json_schema=json_schema,
