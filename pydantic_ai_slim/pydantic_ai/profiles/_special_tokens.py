@@ -49,7 +49,11 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
         'zai',
     }
 )
-"""Routes that only serve open-weight models. Every other route gets the flag for names `_is_closed_model` doesn't match."""
+"""Routes that only serve open-weight models. Every other route listed gets the flag for names `_is_closed_model` doesn't match.
+
+A provider that isn't in `_SpecialTokenRoute` keeps the default: a lab's own API, or a host that has sent these tokens as
+text wherever we've checked. A host that starts tokenizing them only needs a line here.
+"""
 
 _CLOSED_MODEL_PREFIXES: Final = (
     # Served by the lab's own API, whichever route reaches it, which doesn't render a public chat template.

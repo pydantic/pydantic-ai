@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, BinaryContent, DocumentUrl, ModelMessage, ModelRetry, TextContent
+from pydantic_ai import Agent, BinaryContent, DocumentUrl, ImageUrl, ModelMessage, ModelRetry, TextContent, UploadedFile
 from pydantic_ai._special_tokens import (
     ZERO_WIDTH_JOINER as Z,
     StreamRestorer,
@@ -345,6 +345,28 @@ def test_reasoning_signed_by_another_provider_goes_out_as_text_so_it_is_broken()
     assert isinstance(broken_foreign, ThinkingPart)
     assert (broken_foreign.content, broken_foreign.signature) == (f'<{Z}|end|>', 'sig')
     assert kept_native is native
+
+
+def test_items_of_a_structured_value_are_separate():
+    """They keep their JSON punctuation on the wire, so they never join into a token, and the restore couldn't undo it."""
+    messages: list[ModelMessage] = [ModelResponse(parts=[ToolCallPart('t', {'xs': ['<', '|im_start|>']})])]
+    assert break_special_tokens_in_messages(messages, _ON, 'p') is messages
+
+
+@pytest.mark.parametrize(
+    'file',
+    [
+        pytest.param(BinaryContent(b'x', media_type='text/plain', identifier='<|end|>'), id='binary'),
+        pytest.param(ImageUrl('https://example.com/a.png', identifier='<|end|>'), id='url'),
+        pytest.param(UploadedFile(file_id='f', provider_name='openai', identifier='<|end|>'), id='uploaded'),
+    ],
+)
+def test_a_file_identifier_is_sent_in_text(file: Any):
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart('t', file, tool_call_id='c')])]
+    part = break_special_tokens_in_messages(messages, _ON, 'p')[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.model_response_str_and_user_content()[0] == f'See file <{Z}|end|>.'
+    assert file.identifier == '<|end|>'
 
 
 def test_a_file_between_text_items_separates_them():

@@ -21,6 +21,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
@@ -361,7 +362,7 @@ def _break_message(message: ModelMessage, system: str) -> ModelMessage:
 def _break_part(part: _PartT, system: str) -> _PartT:
     new_part: Any = part
     if isinstance(part, UserPromptPart):
-        content = _break_value(part.content)
+        content = _break_content(part.content)
         if content is not part.content:
             new_part = replace(part, content=content)
     elif isinstance(part, BaseToolReturnPart):
@@ -380,7 +381,7 @@ def _break_part(part: _PartT, system: str) -> _PartT:
 
 
 def _break_tool_return(part: BaseToolReturnPart[Any]) -> BaseToolReturnPart[Any]:
-    content = _break_value(part.content)
+    content = _break_content(part.content)
     name = break_special_tokens(part.tool_name)
     if content is part.content and name == part.tool_name:
         return part
@@ -405,8 +406,8 @@ def _break_tool_call(call: BaseToolCallPart[Any]) -> BaseToolCallPart[Any]:
 def _break_value(value: Any) -> Any:
     """`value` with the special tokens in its text broken, or `value` itself when it has none.
 
-    Strings, text content and the strings in lists and dicts are broken in place, files are left for the adapter that
-    inlines them, and any other value, which the adapter sends as its JSON text, is replaced by its broken JSON form.
+    Strings, text content and the strings in lists and dicts are broken in place, a file's text is left for the adapter
+    that inlines it, and any other value, which the adapter sends as its JSON text, is replaced by its broken JSON form.
     """
     if isinstance(value, str):
         broken = break_special_tokens(value)
@@ -414,18 +415,44 @@ def _break_value(value: Any) -> Any:
     if isinstance(value, TextContent):
         return _break_adjacent_text([value])[0]
     if isinstance(value, list | tuple):
-        return _break_sequence(cast('list[Any] | tuple[Any, ...]', value))
+        return _break_items(cast('list[Any] | tuple[Any, ...]', value))
     if isinstance(value, dict):
         return _break_mapping(cast('dict[Any, Any]', value))
-    if value is None or isinstance(value, bool | int | float | CachePoint) or is_multi_modal_content(value):
+    if is_multi_modal_content(value):
+        return _break_file_identifier(value)
+    if value is None or isinstance(value, bool | int | float | CachePoint):
         return value
     dumped = tool_return_ta.dump_python(value, mode='json', by_alias=True)
     broken = _break_value(dumped)
     return value if broken is dumped else broken
 
 
+def _break_items(sequence: list[Any] | tuple[Any, ...]) -> Any:
+    items = [_break_value(item) for item in sequence]
+    return sequence if all(new is old for new, old in zip(items, sequence)) else items
+
+
+def _break_file_identifier(file: Any) -> Any:
+    """The file with its identifier broken: it's sent in text, which adapters build from it after this pass."""
+    identifier = break_special_tokens(file.identifier)
+    if identifier == file.identifier:
+        return file
+    # Not `replace`: these classes have `__init__`s of their own, which read the `identifier` alias.
+    broken = copy(file)
+    broken._identifier = identifier
+    return broken
+
+
+def _break_content(content: Any) -> Any:
+    """Break a message's content, whose list items an adapter sends as separate text parts.
+
+    Hosts join those before tokenizing, unlike the items of a structured value, which keep their JSON punctuation.
+    """
+    return _break_sequence(content) if isinstance(content, list | tuple) else _break_value(content)
+
+
 def _break_sequence(sequence: list[Any] | tuple[Any, ...]) -> Any:
-    """Break each item, treating adjacent text as one text: hosts join a message's text parts before tokenizing."""
+    """Break each item, treating adjacent text as one text."""
     items: list[Any] = []
     for is_text, group in groupby(sequence, key=lambda item: isinstance(item, str | TextContent | CachePoint)):
         items.extend(_break_adjacent_text(list(group)) if is_text else [_break_value(item) for item in group])
