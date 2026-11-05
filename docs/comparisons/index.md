@@ -1,6 +1,6 @@
 ---
 title: Pydantic AI comparisons
-description: "Pydantic AI compared with LangChain, LangGraph, CrewAI, Claude Agent SDK, OpenAI Agents SDK, Google ADK, Microsoft Agent Framework, Vercel AI SDK, Mastra, Agno, LiveKit, Pipecat and Pi."
+description: "Pydantic AI compared with LangChain, LangGraph, CrewAI, Claude Agent SDK, OpenAI Agents SDK, Google ADK, Microsoft Agent Framework, OpenHands Software Agent SDK, Vercel AI SDK, Mastra, Agno, LiveKit, Pipecat and Pi."
 ---
 
 # Pydantic AI comparisons
@@ -13,6 +13,7 @@ These pages put Pydantic AI side by side with the frameworks people ask us about
 - [vs OpenAI Agents SDK](vs-openai-agents-sdk.md)
 - [vs Google ADK](vs-google-adk.md)
 - [vs Microsoft Agent Framework](vs-microsoft-agent-framework.md)
+- [vs OpenHands Software Agent SDK](vs-openhands.md)
 - [vs Mastra](vs-mastra.md)
 - [vs LiveKit Agents](vs-livekit.md)
 - [vs Pipecat](vs-pipecat.md)
