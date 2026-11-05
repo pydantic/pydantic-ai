@@ -3992,13 +3992,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._history_to_record(history, settings, model_request_parameters)
 
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response`, or `history`, the messages before it, changed since the response was created.
+        """Whether `response`'s recorded digest no longer matches `history`, the messages before it.
 
-        A response with no recorded digest has nothing to compare, so it doesn't count as changed here. Whether to
-        continue from a response needs `_history_known_unchanged`, which gates that case.
+        Only meaningful for a response that has a digest: `_history_known_unchanged`, the only caller, gates those.
         """
-        if response.history_digest is None:
-            return False
         return all(
             response.history_digest
             != _continuation_digest(
