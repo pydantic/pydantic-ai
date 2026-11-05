@@ -263,6 +263,21 @@ class TestKeenableSearchToolset:
             ]
         }
 
+    async def test_web_search_bounds_titles_and_drops_overlong_urls(self):
+        # Neither field is capped by `max_snippet_chars`, and a third-party page
+        # controls both.
+        client = FakeClient(
+            results=[
+                _result('https://example.com/' + 'u' * 3000, 'Dropped'),
+                _result('https://example.com/one', 'T' * 1000, 'x'),
+            ]
+        )
+
+        returned = await _toolset(client).web_search('cats')
+
+        assert _text(returned) == f'1. {"T" * 300}\n   https://example.com/one\n   x'
+        assert returned.metadata == {'sources': [KeenableSource(url='https://example.com/one', title='T' * 300)]}
+
     async def test_web_search_reports_no_results(self):
         client = FakeClient(results=[])
 

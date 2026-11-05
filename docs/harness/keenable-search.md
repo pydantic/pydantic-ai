@@ -47,7 +47,8 @@ print(result.output)
 The capability adds two tools:
 
 - `web_search(query)`: the matching pages, each with title, URL, and a short
-  excerpt.
+  excerpt. Titles are cut at 300 characters, and a result whose URL is longer
+  than 2,048 characters is left out.
 - `get_page(url)`: one page as markdown.
 
 Both return a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose

@@ -215,6 +215,12 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     records instead of making the request again on recovery.
     """
 
+    # Titles and URLs come from third-party pages, so they are bounded like
+    # excerpts. A cut URL would name a different page, so a result whose URL is
+    # longer is dropped rather than cut.
+    _MAX_TITLE_CHARS = 300
+    _MAX_URL_CHARS = 2048
+
     def __init__(
         self,
         *,
@@ -299,11 +305,15 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return raise_retry(await self._operations.web_search(query))
-        # A result without a URL is unusable, so it is dropped before the limit
-        # is applied rather than after; otherwise one malformed entry would cost
-        # a slot and `web_search` would return fewer results than asked for.
+        # A result without a usable URL is dropped before the limit is applied
+        # rather than after; otherwise one malformed entry would cost a slot and
+        # `web_search` would return fewer results than asked for.
         found = await self._client.search(query, max_results=self._num_results)
-        results = [(url, result) for result in found if (url := self._one_line(result.get('url') or ''))]
+        results = [
+            (url, result)
+            for result in found
+            if (url := self._one_line(result.get('url') or '')) and len(url) <= self._MAX_URL_CHARS
+        ]
         results = results[: self._num_results]
         if not results:
             return ToolReturn(f'No results found for {query!r}.', metadata={'sources': []})
@@ -311,7 +321,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         lines: list[str] = []
         sources: dict[str, str | None] = {}
         for index, (url, result) in enumerate(results, start=1):
-            title = self._one_line(result.get('title') or '') or None
+            title = self._one_line(result.get('title') or '')[: self._MAX_TITLE_CHARS] or None
             sources[url] = title
             lines.append(f'{index}. {title or url}\n   {url}')
             excerpt = self._one_line(result.get('snippet') or '')[: self._max_snippet_chars]
