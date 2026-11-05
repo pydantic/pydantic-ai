@@ -42,7 +42,8 @@ if __name__ == '__main__':
 - `LocalWorkspace('.')` gives every run the current directory. Commands start there, and relative
   paths resolve against it.
 - `ctx.workspace.run(...)` returns the command's `exit_code`, `stdout` and `stderr`. A failing command
-  is a normal result, so the model sees what went wrong and can fix it.
+  is a normal result, so the model sees what went wrong and can fix it. Pass `cwd='subdir'` to start a
+  command in another directory, relative to the working directory; it must already exist.
 - `timeout=60` stops a stuck command with a
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. Turning any
   [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model try

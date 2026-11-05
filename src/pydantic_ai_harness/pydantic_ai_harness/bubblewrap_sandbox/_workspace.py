@@ -304,8 +304,11 @@ class BubblewrapWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         check_timeout(timeout)
+        if cwd is not None:
+            command = await self._command_in(cwd, command)
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
