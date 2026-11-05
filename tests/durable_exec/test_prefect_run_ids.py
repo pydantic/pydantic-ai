@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -40,6 +40,7 @@ def blockbuster_excluded_modules() -> tuple[str, ...]:
     [
         ('prompt', False),
         ('prompt', True),
+        ('binary', True),
         ('deps', True),
         ('metadata', True),
         ('history', True),
@@ -79,8 +80,12 @@ async def test_flow_retry_preserves_default_ids_after_branch_reordering(input_ki
             def metadata_fn(ctx: RunContext[str]) -> dict[str, object]:
                 return {'derived_run_id': ctx.run_id}
 
+            prompt: str | list[str | BinaryContent] = label if input_kind == 'prompt' else 'same prompt'
+            if input_kind == 'binary':
+                prompt = ['same prompt', BinaryContent(data=b'\xff\xfe' + label.encode(), media_type='image/png')]
+
             result = await agent.run(
-                label if input_kind == 'prompt' else 'same prompt',
+                prompt,
                 deps=label if input_kind == 'deps' else 'same deps',
                 metadata=metadata_fn if input_kind == 'spec_metadata_factory' else branch_metadata,
                 message_history=history,
