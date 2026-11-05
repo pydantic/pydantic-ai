@@ -34,8 +34,8 @@ To use the provider's native search where the model has one and Exa or You.com e
 `ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
 native search, or whose native search can't apply the `include_domains`/`exclude_domains` filters, like Gemini's;
 `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
-`WebSearch`'s native options. `KeenableSearch().web_search_tool()` works as that keyless fallback too;
-`KeenableSearch` has no `native` flag.
+`WebSearch`'s native options. `KeenableSearch().web_search_tool()` works as that keyless fallback too, with `web_search` only (no
+`get_page`); `KeenableSearch` has no `native` flag.
 
 ## Researcher
 

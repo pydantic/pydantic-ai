@@ -134,9 +134,10 @@ have two tools with the same name, so adding one of them next to
 `KeenableSearch` fails on the agent's first run. Give an agent one web search
 capability, or wrap the extra one in `PrefixTools` to rename its tools.
 
-To use Keenable where the model has no native web search and the provider's
-search elsewhere, pass its tool to core `WebSearch` instead of adding the
-capability:
+To use the provider's native search where there is one and Keenable's
+elsewhere, pass its tool to core `WebSearch` instead of adding the capability.
+This adds only `web_search`, not `get_page`, so the agent needs another tool to
+read the pages it finds.
 
 ```python {title="keenable_fallback.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
