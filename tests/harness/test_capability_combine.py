@@ -77,7 +77,7 @@ from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.subagents import AgentOverride, DelegationTasks
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -384,6 +384,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
+    ),
+    'TeamMessages': Narrows(
+        "one team's `send_message` per agent; two owners would mix two teams' messages",
+        lambda cls: (cls(DelegationTasks()), cls(DelegationTasks())),
     ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',

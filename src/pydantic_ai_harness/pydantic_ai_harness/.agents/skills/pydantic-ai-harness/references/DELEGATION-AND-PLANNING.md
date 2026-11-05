@@ -239,6 +239,24 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
   the reports reach the first model request with no synthetic user prompt.
 - Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
 
+### TeamMessages and team members
+
+A bound owner can run named, long-lived members for a lead conversation. Register
+`DelegationTasks(member_runner=...)`, a host function that runs each turn with
+`tasks.member_run(record, self_agent=lead).run(model=...)`, so a member never borrows the run that started it.
+
+- `await tasks.start(name='alice', agent_name='self', prompt=..., conversation_id=...)` returns at once.
+  One-shot agents are refused. Members are top-level (`parent_id=None`); their reports go to
+  `tasks.lead_inbox(conversation_id)`, not `reports`.
+- `await tasks.send(text_or_AgentMessage, to=task_id | None, conversation_id=...)` saves the message, then
+  delivers it at the member's next model request or wakes an idle member. A `str` is the user's words and
+  clears a user stop; an `AgentMessage` arrives as framed `<peer_message>` data and never wakes a member
+  the user stopped. `to=None` is the lead, which takes agent messages only.
+- `TeamMessages(tasks)` on the lead's agent gives the lead and members `send_message(to, text)`; members'
+  sub-agents get no team tools. `delegate_task(resume=<member>)` is refused; use `send_message`.
+- `lead_waker=` gives an idle lead one automated turn per `lead_wake_delay`, or once every member is idle.
+  `claims=` hands a stopped, failed or interrupted member's in-progress board items back to `pending`.
+
 ## DynamicWorkflow
 
 The model gets one `run_workflow` tool and writes Python (Monty sandbox) in which each sub-agent is an
