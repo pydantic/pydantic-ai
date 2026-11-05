@@ -3754,6 +3754,39 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'TieredCompaction'
 
+    async def test_tiered_reports_a_target_its_tiers_cannot_reach(
+        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # #12335: the window keeps the first user message and the request being answered, and the
+        # summarizer may summarize neither, so it makes no call and the history stays over target.
+        summarized: list[list[ModelMessage]] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(messages)  # pragma: no cover
+            return ModelResponse(parts=[TextPart('Summary.')])  # pragma: no cover
+
+        comp: TieredCompaction[None] = TieredCompaction(
+            tiers=[
+                SlidingWindowCompaction(max_tokens=1, keep_tokens=5),
+                SummarizingCompaction(model=FunctionModel(summarize), max_tokens=1, keep_tokens=5),
+            ],
+            target_tokens=5,
+        )
+        messages: list[ModelMessage] = [_user(f'm{i} ' + 'x' * 396) for i in range(5)]
+        result = await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        assert result.messages == [messages[0], messages[-1]]
+        assert summarized == []
+        attributes = _compact_spans(capfire)[0]['attributes']
+        assert attributes['compaction.target_unreached'] is True
+        assert attributes['compaction.target_tokens'] == 5
+        assert attributes['compaction.estimate'] == 199
+        assert caplog.messages == snapshot(
+            [
+                '`TieredCompaction` ran every tier and left the history at an estimated 199 tokens, above its target of 5. The messages its tiers keep cost more than the target.'
+            ]
+        )
+
     async def test_no_span_when_compaction_is_noop(self, capfire: CaptureLogfire) -> None:
         # DeduplicateFileReads has no threshold, so its trigger always fires, but with no
         # superseded reads `compact` returns the history unchanged and no span should be emitted.

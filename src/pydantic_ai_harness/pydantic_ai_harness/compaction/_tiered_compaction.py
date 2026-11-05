@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
@@ -19,12 +20,15 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_context_tokens,
     estimate_token_count,
     record_compaction_reclaim,
+    record_span_attributes,
     resolve_token_trigger,
     validate_token_trigger,
 )
 
 if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -168,6 +172,22 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             # flooring the result at 0 would then report the history the tier just rewrote as fitting while
             # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
             estimate = max(baseline - reclaimed, after)
+        if estimate > target:
+            # Every tier ran and the history is still over target: what the tiers keep (a `keep_tokens`
+            # floor, the first user message, the current turn) costs more than the target allows.
+            record_span_attributes(
+                {
+                    'compaction.target_unreached': True,
+                    'compaction.target_tokens': target,
+                    'compaction.estimate': estimate,
+                }
+            )
+            _logger.warning(
+                '`TieredCompaction` ran every tier and left the history at an estimated %d tokens, above its '
+                'target of %d. The messages its tiers keep cost more than the target.',
+                estimate,
+                target,
+            )
         return messages
 
     async def compact(
