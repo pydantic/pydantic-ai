@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 from prompt_toolkit.input import create_pipe_input
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_clai2 import app
 from pydantic_clai2.cli import cli
@@ -22,6 +23,7 @@ from pydantic_clai2.runtime import worktrees
 from pydantic_clai2.runtime.worktrees import Worktree, current_worktree, offer_worktree_cleanup, open_worktree
 from pydantic_clai2.ui.menus import worktree_cleanup
 from pydantic_clai2.ui.menus.question_menu import QuestionMenu
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
@@ -829,11 +831,34 @@ async def test_exit_picker(keys: str, expected: str, monkeypatch: pytest.MonkeyP
 
 
 async def test_exit_picker_accepts_long_details(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Local cleanup details are not subject to the model's question-length limit."""
+    """Complete cleanup details are inspectable in the transcript before a choice can execute them."""
     output = io.StringIO()
-    monkeypatch.setattr(worktree_cleanup, 'Console', lambda: Console(file=output))
+    monkeypatch.setattr(worktree_cleanup, 'Console', lambda: Console(file=output, width=80, height=24))
+    original_paint = PromptSurface.paint
+    transcripts: list[str] = []
+
+    def paint(surface: PromptSurface, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
+        transcripts.append(
+            '\n'.join(
+                Text.from_ansi(row).plain
+                for item in surface.transcript.ids()
+                for row in surface.transcript.rows(item, width=80)
+            )
+        )
+        original_paint(surface, rows, select_pinned=select_pinned)
+
+    monkeypatch.setattr(PromptSurface, 'paint', paint)
+    details = (
+        '/tmp/checkout\nRegistered removal command: '
+        + ' '.join(f'argument-{index:02d}' for index in range(80))
+        + ' last-argument\x1b[2J\nIt may delete the branch and uncommitted files.'
+    )
     with create_pipe_input() as pipe:
         monkeypatch.setattr('pydantic_clai2.ui.prompt.question_input.create_input', lambda: pipe)
         pipe.send_text('\r')
-        assert await worktree_cleanup.ask_removal('/tmp/checkout\n' + 'argument ' * 80 + '\x1b[2J') == 'keep'
+        assert await worktree_cleanup.ask_removal(details) == 'keep'
+    assert '/tmp/checkout' in transcripts[0]
+    assert transcripts[0].count('argument-') == 80
+    assert 'last-argument\\x1b[2J' in transcripts[0]
+    assert 'It may delete the branch and uncommitted files.' in transcripts[0]
     assert '\\x1b[2J' in output.getvalue()

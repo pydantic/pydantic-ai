@@ -2623,7 +2623,9 @@ asking.
 
 If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
 **Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
-The path and removal details appear dimmed below the question. Enter on **No**,
+The path and removal details appear dimmed below the question. The complete
+details are also available in the transcript before you choose; use PageUp and
+PageDown to inspect long commands. Enter on **No**,
 Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
 keeps it and saves the preference in your settings database for this checkout.
 A new checkout at the same path is asked again. By default, removal keeps

@@ -169,6 +169,9 @@ class QuestionMenu:
             surface = PromptSurface(output=surface, size=lambda: console.size)
             console = Console(file=surface, width=console.width, height=console.height)
         try:
+            if self.details is not None:
+                # Details can outgrow the pinned rows; keep them scrollable before confirmation.
+                console.print(Text(self.details, style=theme.color(theme.MUTED)))
             with raw_mode():
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height), select_pinned=True)
@@ -184,11 +187,8 @@ class QuestionMenu:
                         return result
         finally:
             # The panel showed the question while it was open; the transcript keeps it above the answer.
-            console.print(
-                Text(self.details, style=theme.color(theme.MUTED))
-                if self.details is not None
-                else Text(self.question.question, style=theme.color(theme.ACCENT))
-            )
+            if self.details is None:
+                console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             if owned:
                 surface.restore()
             else:
