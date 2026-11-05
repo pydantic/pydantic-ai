@@ -272,13 +272,17 @@ class SqlitePlanStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database)
         if not self._ready:
-            connection.execute(
-                f'CREATE TABLE IF NOT EXISTS {self._table} ('
-                'session TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, '
-                'content TEXT NOT NULL, status TEXT NOT NULL, active_form TEXT NOT NULL, '
-                'parent_id TEXT, depends_on TEXT NOT NULL, PRIMARY KEY (session, id))'
-            )
-            connection.commit()
+            try:
+                connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._table} ('
+                    'session TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, '
+                    'content TEXT NOT NULL, status TEXT NOT NULL, active_form TEXT NOT NULL, '
+                    'parent_id TEXT, depends_on TEXT NOT NULL, PRIMARY KEY (session, id))'
+                )
+                connection.commit()
+            except BaseException:
+                connection.close()
+                raise
             self._ready = True
         return connection
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -223,6 +226,33 @@ class TestSqliteSpecifics:
     def test_invalid_table_name_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match='invalid table name'):
             SqlitePlanStore(str(tmp_path / 'p.db'), table='bad name;drop')
+
+    async def test_a_connection_whose_schema_setup_fails_is_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A database another writer holds locked can't get its table, and the connection opened for it is closed.
+
+        Left open, it would be garbage-collected later, as an unclosed-database `ResourceWarning` in whatever test is
+        running then.
+        """
+        database = tmp_path / 'p.db'
+        opened: list[sqlite3.Connection] = []
+        connect = sqlite3.connect
+
+        def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            connection = connect(*args, **{**kwargs, 'timeout': 0, 'check_same_thread': False})
+            opened.append(connection)
+            return connection
+
+        with closing(connect(database, isolation_level=None)) as writer:
+            writer.execute('CREATE TABLE unrelated (x)')
+            writer.execute('BEGIN IMMEDIATE')
+            monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await SqlitePlanStore(str(database)).get_items()
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match='closed database'):
+            opened[0].execute('SELECT 1')
 
 
 class TestValidateTableName:
