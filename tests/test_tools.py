@@ -2169,7 +2169,11 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
 
 @pytest.mark.parametrize('added_with', ['constructor', 'add_tool'])
 def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructor', 'add_tool']):
-    """All four toolset defaults reach a `Tool` added directly, whether via the constructor or `add_tool`."""
+    """All four toolset defaults reach a `Tool` added directly, whether via the constructor or `add_tool`.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
 
     def my_tool() -> str:  # pragma: no cover
         return 'hello'
@@ -2198,6 +2202,9 @@ def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
     """Toolset `sequential`/`defer_loading=True` wins over a raw `Tool`'s plain `False`.
 
     An explicit `False` passed to `add_function` survives the toolset default.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
     """
 
     def plain_tool() -> str:  # pragma: no cover
@@ -2225,7 +2232,11 @@ def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
 
 
 def test_function_toolset_strict_include_return_schema_fill_when_none():
-    """The nullable defaults fill `Tool` instances that leave them unset and preserve explicit `Tool` values."""
+    """The nullable defaults fill `Tool` instances that leave them unset and preserve explicit `Tool` values.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
 
     def unset_tool() -> str:
         return 'unset'
@@ -2248,6 +2259,31 @@ def test_function_toolset_strict_include_return_schema_fill_when_none():
     assert tool_defs['unset_tool'].include_return_schema is True
     assert tool_defs['explicit_tool'].strict is False
     assert tool_defs['explicit_tool'].include_return_schema is False
+
+
+def test_function_toolset_include_return_schema_false_overrides_capability_for_tool():
+    """A toolset's `include_return_schema=False` beats `IncludeToolReturnSchemas` for a `Tool`, as for a function.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+
+    def tool_instance() -> str:
+        return 'tool'
+
+    def plain_function() -> str:
+        return 'function'
+
+    toolset = FunctionToolset([Tool(tool_instance), plain_function], include_return_schema=False)
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset], capabilities=[IncludeToolReturnSchemas()])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_defs = {tool_def.name: tool_def for tool_def in test_model.last_model_request_parameters.function_tools}
+    assert tool_defs['tool_instance'].include_return_schema is False
+    assert tool_defs['plain_function'].include_return_schema is False
 
 
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
