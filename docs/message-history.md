@@ -1160,6 +1160,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     the model call, etc. — hook the event directly via
     `capabilities=[Hooks(before_model_request=fn)]`.
 
+!!! note "Clear the ID when you edit a response's text"
+    If a processor changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content`, set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too. The OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the text sent alongside, so otherwise the model never sees the edit.
+
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.

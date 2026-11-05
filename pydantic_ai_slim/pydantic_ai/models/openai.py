@@ -1391,7 +1391,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     chosen while it and those messages are unchanged: each response created with this setting, or with
     `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
-    history processor or compaction has changed either since, the full history is sent instead.
+    history processor or compaction has changed either since, the full history is sent instead. The same goes
+    for a response without a digest, as there's no telling whether it has changed.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -3991,8 +3992,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
         """Whether `response`, or `history`, the messages before it, changed since the response was created.
 
-        A response with no recorded digest, from before it was recorded or from a request that didn't
-        continue server-side state, is trusted as before.
+        A response with no recorded digest has nothing to compare, so it doesn't count as changed: that's for a
+        background response being retrieved. Continuing from a response needs `_history_known_unchanged`.
         """
         if response.history_digest is None:
             return False
@@ -4003,6 +4004,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
             for with_instructions in (False, True)
         )
+
+    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `response` has a digest that shows it and `history` are as they were: there's no telling without one."""
+        return response.history_digest is not None and not self._history_changed(response, history)
 
     async def count_tokens(
         self,
@@ -5364,7 +5369,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
-                if self._history_changed(m, messages[:index]):
+                if not self._history_known_unchanged(m, messages[:index]):
                     return None, messages, True
                 # A response cached only on another socket, or one that's gone, means replaying the history.
                 if not self._is_response_id_reachable(m, store, websocket_mode=websocket_mode):
