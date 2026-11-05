@@ -200,28 +200,12 @@ class JsonSchemaTransformer(ABC):
         if isinstance(schema, bool):
             return schema
 
-        if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
-            key = (
-                ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
-                if ref.startswith('#/$defs/')
-                else ref
-            )
-            if key in self.refs_stack:
-                if key not in self.defs:
-                    # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
-                    raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
-                # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
-                self.recursive_refs.add(key)
-            elif key not in self.recursive_refs:
-                # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
-                # or `default`) are part of the field's own schema and must survive
-                # inlining, so merge them over the referenced definition.
-                if siblings := {k: v for k, v in schema.items() if k != '$ref'}:
-                    # `transform()` sees the merged schema, so the result is specific to this reference
-                    # site and can't come from (or go into) the shared walked-definition cache.
-                    return self._walk_def(key, siblings)
-                return self._copy_walked_def(key)
+        if (
+            self.prefer_inlined_defs
+            and (ref := schema.get('$ref'))
+            and (inlined := self._inlined_ref(schema, ref)) is not None
+        ):
+            return inlined
 
         # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
@@ -229,14 +213,17 @@ class JsonSchemaTransformer(ABC):
         # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
         # on a `$ref` it can't resolve.
         type_ = schema.get('type')
-        if type_ == 'object':
-            schema = self._handle_object(schema)
-        elif type_ == 'array':
-            schema = self._handle_array(schema)
-        elif type_ is None:
-            schema = self._handle_union(schema, 'allOf')
-            schema = self._handle_union(schema, 'anyOf')
-            schema = self._handle_union(schema, 'oneOf')
+        match type_:
+            case 'object':
+                schema = self._handle_object(schema)
+            case 'array':
+                schema = self._handle_array(schema)
+            case None:
+                schema = self._handle_union(schema, 'allOf')
+                schema = self._handle_union(schema, 'anyOf')
+                schema = self._handle_union(schema, 'oneOf')
+            case _:
+                pass
 
         if type_ is not None:
             for union_kind in ('allOf', 'anyOf', 'oneOf'):
@@ -244,6 +231,30 @@ class JsonSchemaTransformer(ABC):
                     schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         return self.transform(schema)
+
+    def _inlined_ref(self, schema: JsonSchema, ref: str) -> JsonSchema | None:
+        """The walked definition `ref` points at, with the other keywords of `schema` merged over it.
+
+        `None` when the `$ref` stays, as a recursive one does.
+        """
+        # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
+        key = ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~') if ref.startswith('#/$defs/') else ref
+        if key in self.refs_stack:
+            if key not in self.defs:
+                # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
+                raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
+            # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
+            self.recursive_refs.add(key)
+        elif key not in self.recursive_refs:
+            # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
+            # or `default`) are part of the field's own schema and must survive
+            # inlining, so merge them over the referenced definition.
+            if siblings := {k: v for k, v in schema.items() if k != '$ref'}:
+                # `transform()` sees the merged schema, so the result is specific to this reference
+                # site and can't come from (or go into) the shared walked-definition cache.
+                return self._walk_def(key, siblings)
+            return self._copy_walked_def(key)
+        return None
 
     def _copy_walked_def(self, key: str) -> JsonSchema:
         """A copy of the definition `key` refers to, walked once per transformer and cached.
