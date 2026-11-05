@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -23,10 +23,17 @@ report what you actually verified, assumptions, and remaining limitations.
 """
 
 _REPO_FILES = """\
-Repository instruction files (AGENTS.md, CLAUDE.md) in the project directory are
-already loaded into your context when they exist; do not search for them.
+Repository instruction files ({names}) that apply to the project
+directory are already loaded into your context when they exist; do not search for them.
 """
-"""Only with `RepoContext`, which loads those files from the working directory alone (`Coder` sets no `home_dir`)."""
+"""Only with `RepoContext`, which loads them from the repository root (or the working directory alone) down."""
+
+_NESTED_REPO_FILES = """\
+A subdirectory's instruction files are added to your context the first time you
+read or list something in it.
+"""
+"""Only with `RepoContext`'s default `nested_traversal=True, nested_inject='contents'`; a pointer note
+already tells the model to read the file."""
 
 _READING = """\
 Before editing, read the code and data files the task names, and the source you
@@ -81,11 +88,18 @@ readiness is verified; shut them down when no longer needed.
 """
 
 
-def coder_instructions(*, repo_context: bool, delegate_tool: str | None) -> str:
-    """`Coder`'s default guidance, naming only the instruction files and delegation tool it has."""
+def coder_instructions(
+    *, repo_files: Sequence[str] | None, nested_instructions: bool, delegate_tool: str | None
+) -> str:
+    """`Coder`'s default guidance, naming only the instruction files and delegation tool it has.
+
+    `repo_files` names the instruction files loaded at run start (`None` when none are);
+    `nested_instructions` means a subdirectory's files are inlined when the model first touches it.
+    """
     sections = [
         _INTRO,
-        *([_REPO_FILES] if repo_context else []),
+        *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
+        *([_NESTED_REPO_FILES] if nested_instructions else []),
         _READING,
         *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
         _FINISHING,

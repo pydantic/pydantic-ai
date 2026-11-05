@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 import anyio
 from dbos import DBOS
+from pydantic import ConfigDict, with_config
 from typing_extensions import TypedDict
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
@@ -17,6 +18,17 @@ class StepConfig(TypedDict, total=False):
     interval_seconds: float
     max_attempts: int
     backoff_rate: float
+
+
+@with_config(ConfigDict(extra='forbid'))
+class ChildWorkflowConfig(TypedDict, total=False):
+    """Configuration for a tool call run as a DBOS child workflow."""
+
+    workflow_timeout_sec: float
+    """Passed to DBOS's `SetWorkflowTimeout` when the child workflow starts.
+
+    When it expires, DBOS cancels the child workflow and the tool call raises `DBOSAwaitedWorkflowCancelledError`.
+    """
 
 
 def guard_enqueue_in_workflow(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

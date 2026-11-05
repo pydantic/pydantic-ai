@@ -3682,6 +3682,13 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
     assert sent['metadata'] == {'test': 'websocket'}
 
 
+async def test_openai_service_tier_ultrafast(allow_model_requests: None, recorded_responses: RecordedResponses):
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=recorded_responses.provider)
+    settings: OpenAIResponsesModelSettings = {'openai_transport': 'websocket', 'openai_service_tier': 'ultrafast'}
+    result = await Agent(model).run('Say hi.', model_settings=settings)
+    assert (result.response.provider_details or {}).get('service_tier') == 'ultrafast'
+
+
 async def test_credential_callbacks_refresh_over_http(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):

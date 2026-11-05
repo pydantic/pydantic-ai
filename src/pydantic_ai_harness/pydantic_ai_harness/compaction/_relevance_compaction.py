@@ -41,7 +41,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -244,8 +244,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     preserve_loaded_capabilities: bool = True
     """Keep a deferred capability loaded when the step that loaded it is summarized or dropped.
 
-    Core counts a capability as loaded while its `load_capability` exchange is after the latest
-    compaction, so removing the step would unload it. Each such load is recorded again ahead of the
+    Core counts a capability as loaded while the record of its load is after the latest compaction,
+    so removing the step would unload it. Each such load is recorded again ahead of the
     kept steps instead, and the capability's tools and current instructions are sent again. When
     `False`, those capabilities are unloaded, and a note names them so the model can load the ones
     it still needs.
@@ -514,7 +514,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             protected_tail=len(tail),
             insert_at=len(head) + len(added),
         )
-        return keep_capability_loads(
+        return keep_loaded_state(
             messages,
             compacted,
             kept_from=len(compacted) - len(tail),

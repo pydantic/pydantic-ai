@@ -345,8 +345,9 @@ cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a 
 `'navigation'`, `'subframe'`, `'data'` (fetch, XHR, WebSocket, beacon) and `'subresource'`
 (images, scripts, fonts). `refuse(request)` checks in order: private IP literal, host that did not
 resolve, private resolved address, `blocked_domains`, then `allowed_domains` only for kinds in
-`allowlist_reach`. Add `'subframe'` or `'subresource'` to `allowlist_reach` to bound those too, or
-subclass and override `refuse` (call `super().refuse(request)` for the default verdict).
+`allowlist_reach`. A host the domain lists refuse is not looked up. Add `'subframe'` or
+`'subresource'` to `allowlist_reach` to bound those too, or subclass and override `refuse` (call
+`super().refuse(request)` for the default verdict).
 
 ```python {test="skip"}
 from pydantic_ai_harness.playwright import EgressPolicy, EgressRequest
@@ -363,7 +364,8 @@ print(policy.refuse(EgressRequest('https://evil.test/', 'subframe', resolved_add
 Gotchas:
 
 - Without network, every hostname is refused as unresolved when `block_private_addresses=True`
-  (the browser resolves names first). Test the allowlist by calling `policy.refuse(...)` with
+  (the browser resolves names first), except one the domain lists refuse, which gets the
+  domain-list reason without a lookup. Test the allowlist by calling `policy.refuse(...)` with
   `resolved_addresses`, as above.
 - `policy` together with `allowed_domains` or `block_private_addresses=False` raises `UserError`; put
   those on the `EgressPolicy` instead. A wildcard entry like `'*.example.com'` raises.
