@@ -199,7 +199,7 @@ def _strip_cache_excluded_fields(
                 ):
                     value = '<framework-generated>'
                 result[f.name] = _strip_cache_excluded_fields(value)
-        return _hash_binary_values(result)
+        return _project_dict(result, lambda item: item)
     elif _is_dict(obj):
         return _map_container(obj, _strip_cache_excluded_fields)
     elif _is_list(obj):
