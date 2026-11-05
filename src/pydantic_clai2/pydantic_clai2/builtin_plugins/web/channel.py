@@ -197,11 +197,7 @@ class SessionChannel:
             self._usage = usage
         if isinstance(event, EnqueuedMessagesEvent):
             # Steering, from here or the terminal, shows once the run's model receives it.
-            for part in delivered_steering(event):
-                self._steered += 1
-                # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
-                self._prompt_images += user_images(part)
-                self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
+            self._show_steering(event)
         for message in self._translator.translate(event):
             if by_user:
                 # Only the cell itself: the scripted model's closing text is not the user's.
@@ -212,6 +208,13 @@ class SessionChannel:
             self._show(message)
         if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
             self.publish_status()
+
+    def _show_steering(self, event: EnqueuedMessagesEvent) -> None:
+        for part in delivered_steering(event):
+            self._steered += 1
+            # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
+            self._prompt_images += user_images(part)
+            self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
 
     def _show(self, message: ItemMessage) -> None:
         self._turn.apply(message)

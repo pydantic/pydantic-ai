@@ -107,6 +107,7 @@ from ..models.openai import (
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
+from ..providers.azure import AzureProvider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -123,6 +124,7 @@ from ._openai_protocol import (
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
+    InstructionChangeContext,
     SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
@@ -839,8 +841,12 @@ class OpenAILiveConnection(RealtimeConnection):
         reattach: _LiveReattach | None = None,
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
+        backend: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
+        # The delegation backend's configuration as the session started it, which a redial starts the new session
+        # with: an instruction change updates its `instructions` in place, so the new session has them too.
+        self._backend: dict[str, Any] = backend if backend is not None else {}
         self._idle_audio = idle_audio
         # Re-opening the session after a drop: by forking it, which Live can only do for a stored
         # session, or else by starting a new one seeded with the history so far.
@@ -1027,6 +1033,21 @@ class OpenAILiveConnection(RealtimeConnection):
             except BaseException:
                 del self._unacknowledged_text[event_id]
                 raise
+            return True
+        if isinstance(content, InstructionChangeContext):
+            # The agent's instructions are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
+            # the backend's settings can be updated once the session has started. Its instructions can only be
+            # replaced, so the change is appended to them, as a standard model would receive it after its prefix.
+            instructions = '\n\n'.join(
+                text for text in (self._backend.get('instructions'), content.system_prompt) if text
+            )
+            await self._send_event(
+                {
+                    'type': _SESSION_UPDATE_EVENT,
+                    'session': {'delegation': {'type': 'responses', 'responses': {'instructions': instructions}}},
+                }
+            )
+            self._backend['instructions'] = instructions
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1472,6 +1493,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 delegation.continuation_resent = False
         self._socket_change_settled()
         return True
+
+    @property
+    def _replays_instruction_changes(self) -> bool:
+        # They went to the backend, whose instructions a redial starts the new session with, not to Live.
+        return False
 
     def _seen_before(self, event_id: str) -> bool:
         """Whether this sideband already handled the event with this id, and remember it if not.
@@ -2385,7 +2411,8 @@ class OpenAILiveModel(RealtimeModel):
         self._backend_model = backend_model or None
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if provider.name == 'azure':
+        # By type, so a renamed `AzureProvider` is caught, and by name, for another provider pointed at Azure.
+        if isinstance(provider, AzureProvider) or provider.name == 'azure':
             raise UserError(
                 'Azure OpenAI does not serve GPT-Live. Use `AzureRealtimeModel` (or the `azure:` prefix) '
                 'for Azure OpenAI realtime models.'
@@ -2412,8 +2439,8 @@ class OpenAILiveModel(RealtimeModel):
 
         The backend runs the agent's instructions and calls its tools, so it is the agent doing its work,
         and an agent built on an OpenAI model has already said which model that should be. It has to be
-        an OpenAI model at this model's base URL, so both go to OpenAI directly or both through the same
-        gateway route; anything else can't serve as this session's backend.
+        a model of this model's provider at its base URL, so both go to OpenAI directly or both through the
+        same gateway route; anything else can't serve as this session's backend.
 
         Read from the current run context: a session opened with
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] is an agent run, so its run context is
@@ -2425,7 +2452,13 @@ class OpenAILiveModel(RealtimeModel):
         agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
         if isinstance(agent_model, str):
             agent_model = _resolve_openai_model(agent_model)
-        if isinstance(agent_model, Model) and agent_model.system == 'openai' and agent_model.base_url == self.base_url:
+        # The provider as well as the URL: an `OpenAIProvider` subclass with its own name is taken to be another
+        # service, as its `canonical_system` says, so its models aren't reused at the same URL either.
+        if (
+            isinstance(agent_model, Model)
+            and agent_model.system == self.system
+            and agent_model.base_url == self.base_url
+        ):
             return agent_model.model_name
         return None
 
@@ -2707,6 +2740,11 @@ class OpenAILiveModel(RealtimeModel):
                 forwards_output_audio=False,
                 reattach=attach,
                 reconnect=settings.get('reconnect'),
+                backend=(
+                    {'instructions': delegation.responses.instructions}
+                    if delegation and delegation.type == 'responses' and delegation.responses.instructions
+                    else None
+                ),
             )
             yield connection
         finally:
@@ -2781,6 +2819,7 @@ class OpenAILiveModel(RealtimeModel):
                 reconnect=settings.get('reconnect'),
                 # Only a stored session can be forked. Storing it is the user's call, never made for them.
                 forks=bool(settings.get('openai_live_store')),
+                backend=session_config['delegation']['responses'],
             )
             yield connection
         finally:

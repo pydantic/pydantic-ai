@@ -408,6 +408,7 @@ def test_agent_from_spec_mcp():
                         'native': True,
                         'id': 'search-mcp',
                         'description': 'Search MCP server.',
+                        'include_instructions': False,
                         'defer_loading': True,
                     }
                 }
@@ -421,6 +422,7 @@ def test_agent_from_spec_mcp():
     assert cap.tool_prefix is True
     assert cap.id == 'search-mcp'
     assert cap.description == 'Search MCP server.'
+    assert cap.include_instructions is False
     assert cap.defer_loading is True
 
 
@@ -2331,6 +2333,17 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Working Dir',
                         },
                         'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                        'path_authority': {
+                            'anyOf': [
+                                {
+                                    'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                    'type': 'object',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Path Authority',
+                        },
                         'env': {
                             'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
                             'title': 'Env',
@@ -2587,6 +2600,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Tool Prefix',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'include_instructions': {'title': 'Include Instructions', 'type': 'boolean'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'required': ['url'],
