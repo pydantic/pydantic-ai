@@ -464,7 +464,10 @@ def for_tool_result_text(
 
 
 def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`, rebuilding it when either changed."""
+    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`.
+
+    The `ToolReturn` is rebuilt when either changed.
+    """
     # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
     assert isinstance(result.return_value, str)
     verdict = detector(result.return_value)

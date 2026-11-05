@@ -494,7 +494,10 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: ModelRetry | ToolFailed | ToolRetryError | ToolFailedError,
     ) -> Exception | None:
-        """The error a failed tool should raise instead, carrying its screened message, or `None` to re-raise `error`."""
+        """The error a failed tool should raise instead, carrying its screened message.
+
+        `None` re-raises `error` unchanged.
+        """
         match error:
             case ModelRetry():
                 if _is_verdict_retry(error) or id(call) not in self._running:
