@@ -1,27 +1,38 @@
-"""Pin which restricting native tool settings each model adapter sends, and what happens to the others.
+"""Pin which native tool settings each model adapter sends, and what happens to the others.
 
 A setting such as `WebSearchTool.allowed_domains` is usually there for compliance or cost reasons, so a model
 that would send the tool without it treats the tool as unsupported for the request: the local fallback runs
 instead, or the request is rejected. These are not VCR tests: the rejection and the swap are pre-request
 guards that never reach the provider, and a cassette would keep matching a request body that silently lost a
 setting.
+
+Options in a tool's `provider_settings` are covered at the end: each one has to reach its own model's request, and
+unknown ones are ignored, like model settings.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
+from typing import Any
 
 import pytest
+from typing_extensions import get_type_hints
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, resolve_request_tools
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
+    AdvisorProviderSettings,
     AdvisorTool,
     CodeExecutionTool,
     MemoryTool,
+    WebFetchProviderSettings,
     WebFetchTool,
+    WebSearchProviderSettings,
     WebSearchTool,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -30,14 +41,30 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as openai_available:
+    from openai.types.chat import ChatCompletionMessage
+
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+    from .mock_openai import (
+        MockOpenAI,
+        completion_message as openai_completion,
+        get_mock_chat_completion_kwargs as openai_request_kwargs,
+    )
+
 with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .test_anthropic import (
+        MockAnthropic,
+        completion_message as anthropic_completion,
+        get_mock_chat_completion_kwargs as anthropic_request_kwargs,
+    )
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
@@ -301,3 +328,118 @@ def test_openrouter_web_search_without_external_web_access_raises():
     params = ModelRequestParameters(native_tools=[WebSearchTool(external_web_access=False)])
     with pytest.raises(UserError, match=r'`WebSearchTool.external_web_access` not supported'):
         model.prepare_request(None, params)
+
+
+# `provider_settings`: each option reaches its own model's request, and unknown ones are ignored.
+
+
+def _anthropic_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
+    text = BetaTextBlock(text='ok', type='text')
+    client = MockAnthropic.create_mock(anthropic_completion([text], BetaUsage(input_tokens=1, output_tokens=1)))
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    return anthropic_request_kwargs(client)[0]['tools'][0]
+
+
+def _openrouter_request_parameters(tool: AbstractNativeTool) -> dict[str, Any]:
+    completion = openai_completion(ChatCompletionMessage(content='ok', role='assistant'))
+    completion.provider = 'test'  # pyright: ignore[reportAttributeAccessIssue]  # OpenRouter responses always carry it
+    client = MockOpenAI.create_mock(completion)
+    model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=client))
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    return openai_request_kwargs(client)[0]['tools'][0]['parameters']
+
+
+ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
+    (
+        WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
+        'response_inclusion',
+        'excluded',
+    ),
+    (
+        WebFetchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
+        'response_inclusion',
+        'excluded',
+    ),
+    (WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}), 'use_cache', False),
+]
+OPENROUTER_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
+    (WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}), 'engine', 'exa'),
+    (WebSearchTool(provider_settings={'openrouter': {'mode': 'fast'}}), 'mode', 'fast'),
+    (WebSearchTool(provider_settings={'openrouter': {'max_results': 3}}), 'max_results', 3),
+    (WebSearchTool(provider_settings={'openrouter': {'max_total_results': 9}}), 'max_total_results', 9),
+    (WebSearchTool(provider_settings={'openrouter': {'max_characters': 100}}), 'max_characters', 100),
+    (
+        AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+        'forward_transcript',
+        True,
+    ),
+]
+
+
+UNKNOWN_SETTINGS: Any = {
+    'madeup': {},
+    'anthropic': {'typo': 1},
+    'openrouter': {'typo': 1, 'allowed_domains': ['example.com']},
+}
+
+
+@pytest.mark.skipif(not (openai_available() and anthropic_available()), reason='openai or anthropic not installed')
+@pytest.mark.usefixtures('allow_model_requests')
+class TestProviderSettings:
+    @pytest.mark.parametrize(('tool', 'option', 'value'), ANTHROPIC_OPTIONS)
+    def test_anthropic_option_reaches_the_request(self, tool: AbstractNativeTool, option: str, value: Any) -> None:
+        assert _anthropic_request_tool(tool)[option] == value
+
+    @pytest.mark.parametrize(('tool', 'option', 'value'), OPENROUTER_OPTIONS)
+    def test_openrouter_option_reaches_the_request(self, tool: AbstractNativeTool, option: str, value: Any) -> None:
+        assert _openrouter_request_parameters(tool)[option] == value
+
+    def test_every_declared_option_is_covered(self) -> None:
+        """Adding an option without covering it above fails here, rather than silently doing nothing for users."""
+        settings_types: dict[type[AbstractNativeTool], Any] = {
+            WebSearchTool: WebSearchProviderSettings,
+            WebFetchTool: WebFetchProviderSettings,
+            AdvisorTool: AdvisorProviderSettings,
+        }
+        declared = {
+            (tool_type, provider, option)
+            for tool_type, settings_type in settings_types.items()
+            for provider, options in get_type_hints(settings_type).items()
+            for option in get_type_hints(options)
+        }
+        covered = {(type(tool), 'anthropic', option) for tool, option, _ in ANTHROPIC_OPTIONS} | {
+            (type(tool), 'openrouter', option) for tool, option, _ in OPENROUTER_OPTIONS
+        }
+        assert declared == covered
+
+    def test_each_model_reads_only_its_own_settings(self) -> None:
+        tool = WebSearchTool(
+            provider_settings={'anthropic': {'response_inclusion': 'excluded'}, 'openrouter': {'engine': 'exa'}}
+        )
+
+        anthropic_tool = _anthropic_request_tool(tool)
+        assert anthropic_tool['response_inclusion'] == 'excluded'
+        assert 'engine' not in anthropic_tool
+        openrouter_parameters = _openrouter_request_parameters(tool)
+        assert openrouter_parameters['engine'] == 'exa'
+        assert 'response_inclusion' not in openrouter_parameters
+
+    @pytest.mark.parametrize('option', ['engine', 'mode'])
+    def test_value_openrouter_adds_later_is_forwarded(self, option: str) -> None:
+        tool = WebSearchTool(provider_settings={'openrouter': {option: 'added-later'}})  # pyright: ignore[reportArgumentType]
+
+        assert _openrouter_request_parameters(tool)[option] == 'added-later'
+
+    @pytest.mark.parametrize(
+        ('read_request', 'make_tool'),
+        [
+            (_anthropic_request_tool, WebSearchTool),
+            (_anthropic_request_tool, WebFetchTool),
+            (_openrouter_request_parameters, WebSearchTool),
+            (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
+        ],
+    )
+    def test_unknown_settings_are_ignored(self, read_request: Any, make_tool: Any) -> None:
+        """Like model settings, an unknown option is never sent, so it can't override a field like `allowed_domains`."""
+        assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())

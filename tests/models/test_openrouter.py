@@ -1870,7 +1870,7 @@ async def test_openrouter_advisor_tool_request(
     """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request
-    body, so a VCR test wouldn't pin the mapped payload. `tests/test_native_tool_provider_settings.py`
+    body, so a VCR test wouldn't pin the mapped payload. `tests/models/test_native_tool_settings_support.py`
     pins the provider-specific `forward_transcript` option.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
