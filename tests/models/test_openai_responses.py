@@ -5915,26 +5915,34 @@ async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block
     ]
 
 
-async def test_background_response_without_a_digest_records_one_when_retrieved(allow_model_requests: None):
-    """A retrieved response continues the suspended one, so that having no digest doesn't count as a changed history."""
+async def test_background_response_without_a_digest_is_not_continued_from_when_retrieved(allow_model_requests: None):
+    """The history may have changed while it ran, and with no digest on the suspended response there's no telling."""
     mock_client = MockOpenAIResponses(
         response=_text_response('', status='queued', background=True),
-        retrieve_responses=[_text_response('The answer is 42.', background=True)],
+        retrieve_responses=[_text_response('You said secret.', background=True)],
     )
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
     parameters = ModelRequestParameters()
-    request = ModelRequest.user_text_prompt('What is the meaning of life?')
 
-    suspended = await model.request([request], OpenAIResponsesModelSettings(openai_background=True), parameters)
+    suspended = await model.request(
+        [ModelRequest.user_text_prompt('secret')], OpenAIResponsesModelSettings(openai_background=True), parameters
+    )
     assert suspended.state == 'suspended'
     assert suspended.history_digest is None
 
+    redacted = ModelRequest.user_text_prompt('[redacted]')
     resumed = await model.request(
-        [request, suspended],
+        [redacted, suspended],
         OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto'),
         parameters,
     )
-    assert resumed.history_digest is not None
+    merged = merge_responses(suspended, resumed)
+    assert merged.history_digest is None
+
+    history: list[ModelMessage] = [redacted, merged, ModelRequest.user_text_prompt('Again')]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    assert previous_response_id is None
+    assert messages is history
 
 
 @pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])

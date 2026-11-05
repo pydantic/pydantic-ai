@@ -3982,32 +3982,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
         The server created it from the history the suspended response recorded, so if that, or the suspended response,
-        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
-        matches, so it isn't continued from.
+        has changed since, or it recorded none, none is returned: the merged response keeps the suspended one's digest,
+        if any, which no longer matches, so it isn't continued from.
         """
-        if self._history_changed(suspended, history):
+        if not self._history_known_unchanged(suspended, history):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
-    def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response`, or `history`, the messages before it, changed since the response was created.
+    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `response`, and `history`, the messages before it, are as they were when the response was created.
 
-        A response with no recorded digest has nothing to compare, so it doesn't count as changed: that's for a
-        background response being retrieved. Continuing from a response needs `_history_known_unchanged`.
+        Without a recorded digest there's no telling, so a response that has none doesn't count.
         """
         if response.history_digest is None:
             return False
-        return all(
+        return any(
             response.history_digest
-            != _continuation_digest(
+            == _continuation_digest(
                 _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
             )
             for with_instructions in (False, True)
         )
-
-    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response` has a digest that shows it and `history` are as they were: there's no telling without one."""
-        return response.history_digest is not None and not self._history_changed(response, history)
 
     async def count_tokens(
         self,
