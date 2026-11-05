@@ -430,13 +430,13 @@ workflow requires to run its agent and publish results. After the corrected work
 is deployed, complete the existing UI Security review Environment approval for the
 fresh PR run.
 
-For workflow and task incidents, inspect the affected host stage and output, link that
-evidence to the incident, and close it manually. A green run that skips the model or
-affected stage is not proof.
+For workflow incidents, and task incidents the hourly run does not retire, inspect the
+affected host stage and output, link that evidence to the incident, and close it manually.
+A green run that skips the model or affected stage is not proof.
 
 The hourly scheduled run retires a task incident whose pull request head can no longer run.
 That is the case when the pull request is merged or closed, or its head moved off the SHA in
-the key. The run comments the pull request state it read, then closes the incident. A
+the key. The run comments the pull request state it read once, then closes the incident. A
 retired incident records no recovery. Do not describe a retired task as a same-target
 recovery. Close a task incident manually when its key names no pull request head, such as
 a manual dispatch's key.
