@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Concatenate, ParamSpec, Protocol, TypeVar, cast
 
+import anyio
 import httpx
 from typing_extensions import TypedDict
 
@@ -22,12 +23,16 @@ KEENABLE_DEFAULT_BASE_URL = 'https://api.keenable.ai'
 """Base URL of the hosted Keenable API."""
 
 KEENABLE_REQUEST_TIMEOUT_SECONDS = 30.0
-"""Per-request timeout for Keenable HTTP calls."""
+"""Absolute per-request deadline for Keenable HTTP calls."""
+
+KEENABLE_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+"""Maximum Keenable response body size accepted before JSON parsing."""
 
 _API_KEY_ENV = 'KEENABLE_API_KEY'
 _BASE_URL_ENV = 'KEENABLE_API_URL'
 _CLIENT_TITLE = 'Pydantic AI Harness'
 _TRUNCATION_MARKER = '\n\n[truncated]'
+_SHORT_TRUNCATION_MARKER = '…'
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -103,26 +108,58 @@ class HttpKeenableClient:
 
     async def search(self, query: str) -> list[dict[str, Any]]:
         """Search the web via `POST /v1/search`, or `/v1/search/public` when keyless."""
-        async with httpx.AsyncClient(timeout=KEENABLE_REQUEST_TIMEOUT_SECONDS) as client:
-            response = await client.post(
+        timeout = httpx.Timeout(KEENABLE_REQUEST_TIMEOUT_SECONDS)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            payload = await _request_json(
+                client,
+                'POST',
                 f'{self._base_url}{self._path("/v1/search", "/v1/search/public")}',
                 json={'query': query},
                 headers=self._headers(),
             )
-        response.raise_for_status()
-        return _search_results(response.json())
+        return _search_results(payload)
 
     async def fetch(self, url: str) -> dict[str, Any]:
         """Retrieve a page via `GET /v1/fetch`, or `/v1/fetch/public` when keyless."""
-        async with httpx.AsyncClient(timeout=KEENABLE_REQUEST_TIMEOUT_SECONDS) as client:
-            response = await client.get(
+        timeout = httpx.Timeout(KEENABLE_REQUEST_TIMEOUT_SECONDS)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            payload = await _request_json(
+                client,
+                'GET',
                 f'{self._base_url}{self._path("/v1/fetch", "/v1/fetch/public")}',
                 params={'url': url},
                 headers=self._headers(),
             )
-        response.raise_for_status()
-        payload: object = response.json()
         return _string_keyed(payload)
+
+
+async def _read_limited_body(response: httpx.Response, *, limit: int) -> bytes:
+    """Read a streaming response body, failing once `limit` bytes have arrived."""
+    parts: list[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes():
+        size += len(chunk)
+        if size > limit:
+            raise httpx.ReadError(f'response body exceeds {limit} bytes')
+        parts.append(chunk)
+    return b''.join(parts)
+
+
+async def _request_json(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    max_bytes: int | None = None,
+    **kwargs: Any,
+) -> object:
+    """Issue one Keenable request under an absolute deadline and response-size cap."""
+    limit = KEENABLE_MAX_RESPONSE_BYTES if max_bytes is None else max_bytes
+    with anyio.fail_after(KEENABLE_REQUEST_TIMEOUT_SECONDS):
+        async with client.stream(method, url, **kwargs) as response:
+            response.raise_for_status()
+            body = await _read_limited_body(response, limit=limit)
+    return json.loads(body)
 
 
 def _string_keyed(payload: object) -> dict[str, Any]:
@@ -181,7 +218,7 @@ def validated_budget(name: str, value: object) -> int:
     worse than useless here: they slice from the end, so they would silently
     return the wrong text rather than fail.
     """
-    if not isinstance(value, int) or value < 1:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f'{name} must be a positive integer, got {value!r}')
     return value
 
@@ -213,6 +250,8 @@ def _recoverable(
             ) from error
         except httpx.HTTPError as error:
             raise ModelRetry(f'Keenable request failed: {error}') from error
+        except TimeoutError as error:
+            raise ModelRetry(f'Keenable request timed out after {KEENABLE_REQUEST_TIMEOUT_SECONDS} seconds.') from error
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             # `Response.json()` decodes the bytes before parsing them, so a body
             # in a broken encoding fails as a decode error, not a JSON one.
@@ -326,8 +365,13 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         title = page.get('title') or None
         resolved = str(page.get('url') or url)
         if len(content) > self._max_page_chars:
-            # The marker counts against the budget, so make room for it; a
-            # budget too small to hold it is truncated without one.
+            # The marker counts against the budget, so make room for it; when
+            # the full marker cannot fit, a one-character ellipsis still signals
+            # truncation.
             keep = self._max_page_chars - len(_TRUNCATION_MARKER)
-            content = f'{content[:keep]}{_TRUNCATION_MARKER}' if keep > 0 else content[: self._max_page_chars]
+            if keep > 0:
+                content = f'{content[:keep]}{_TRUNCATION_MARKER}'
+            else:
+                short_keep = self._max_page_chars - len(_SHORT_TRUNCATION_MARKER)
+                content = f'{content[:short_keep]}{_SHORT_TRUNCATION_MARKER}'
         return ToolReturn(content, metadata={'sources': _source_list({resolved: str(title) if title else None})})

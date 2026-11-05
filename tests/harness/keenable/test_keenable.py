@@ -195,12 +195,13 @@ async def test_get_page_truncates_and_marks_long_pages():
     assert returned.metadata['sources'][0] == KeenableSource(url='https://example.com/one', title=None)
 
 
-async def test_get_page_drops_the_marker_when_the_budget_cannot_hold_it():
+async def test_get_page_uses_an_ellipsis_when_the_budget_cannot_hold_the_full_marker():
     client = FakeClient(page={'content': 'x' * 100})
 
     returned = await _toolset(client, max_page_chars=5).get_page('https://example.com/one')
 
-    assert _text(returned) == 'x' * 5
+    assert _text(returned) == f'{"x" * 4}…'
+    assert len(_text(returned)) == 5
 
 
 async def test_get_page_retries_on_empty_content():
@@ -278,6 +279,8 @@ def test_guidance_overrides_and_disables_instructions():
         # or a string, which would otherwise only fail later as a slice bound.
         ({'num_results': 1.5}, 'num_results must be a positive integer, got 1.5'),
         ({'max_page_chars': '10'}, "max_page_chars must be a positive integer, got '10'"),
+        ({'max_page_chars': True}, 'max_page_chars must be a positive integer, got True'),
+        ({'num_results': True}, 'num_results must be a positive integer, got True'),
     ],
 )
 def test_budgets_are_validated(kwargs: dict[str, Any], message: str):
@@ -448,6 +451,37 @@ async def test_http_client_parses_search_and_fetch(monkeypatch: pytest.MonkeyPat
     page = await client.fetch('https://example.com/one')
     assert page == {'content': '# A page'}
     assert seen['url'] == 'https://api.keenable.ai/v1/fetch/public?url=https%3A%2F%2Fexample.com%2Fone'
+
+
+async def test_oversized_http_responses_become_retries(monkeypatch: pytest.MonkeyPatch):
+    import pydantic_ai_harness.keenable._toolset as keenable_toolset
+
+    monkeypatch.setattr(keenable_toolset, 'KEENABLE_MAX_RESPONSE_BYTES', 32)
+    monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+    _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=b'{"results":[]}' + b'x' * 64))
+    toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+
+    with pytest.raises(ModelRetry, match='Keenable request failed'):
+        await toolset.web_search('cats')
+
+
+async def test_slow_http_responses_hit_the_absolute_deadline(monkeypatch: pytest.MonkeyPatch):
+    import anyio
+
+    import pydantic_ai_harness.keenable._toolset as keenable_toolset
+
+    monkeypatch.setattr(keenable_toolset, 'KEENABLE_REQUEST_TIMEOUT_SECONDS', 0.05)
+    monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+
+    async def slow(_request: httpx.Request) -> httpx.Response:
+        await anyio.sleep(0.2)
+        return httpx.Response(200, json={'results': []})
+
+    _capture_requests(monkeypatch, slow)
+    toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+
+    with pytest.raises(ModelRetry, match=r'timed out after 0\.05 seconds'):
+        await toolset.web_search('cats')
 
 
 @pytest.mark.parametrize(
