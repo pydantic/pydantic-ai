@@ -2933,7 +2933,8 @@ async def cancel_own_workflow() -> str:
     workflow_id = DBOS.workflow_id
     assert workflow_id is not None
     await DBOS.cancel_workflow_async(workflow_id)
-    return 'workflow cancelled'
+    # Reached on `dbos` 2.x only: on 3.x, a workflow cancelling itself doesn't return from `cancel_workflow_async`.
+    return 'workflow cancelled'  # pragma: lax no cover
 
 
 async def test_dbos_durability_workflow_cancellation_carries_run_state(dbos: DBOS) -> None:
