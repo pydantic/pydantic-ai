@@ -134,6 +134,22 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
             return None
         return clamped
 
+    def _clamp_part(self, part: ModelResponsePart) -> ModelResponsePart | None:
+        """The clamped copy of *part*, or `None` if it is not clamped."""
+        if isinstance(part, TextPart):
+            clamped = self._clamp(part.content)
+            return None if clamped is None else replace(part, content=clamped)
+        # Exact type, not `isinstance`: typed `ToolCallPart` subclasses such as
+        # `ToolSearchCallPart` and `LoadCapabilityCallPart` narrow `args` to a typed shape
+        # that `ModelMessagesTypeAdapter` validates when persisted history is restored
+        # (e.g. a `StepPersistence` resume). Replacing that shape with the `_clamped`
+        # object keeps the concrete class but fails the round-trip, so only plain tool
+        # calls are clamped.
+        if type(part) is ToolCallPart and self.clamp_tool_call_args:
+            clamped = self._clamp(part.args_as_json_str())
+            return None if clamped is None else replace(part, args={_CLAMP_ARGS_KEY: clamped})
+        return None
+
     async def compact(
         self,
         messages: list[ModelMessage],
@@ -149,25 +165,12 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
             new_parts: list[ModelResponsePart] = []
             changed = False
             for part in msg.parts:
-                if isinstance(part, TextPart):
-                    clamped = self._clamp(part.content)
-                    if clamped is not None:
-                        new_parts.append(replace(part, content=clamped))
-                        changed = True
-                        continue
-                # Exact type, not `isinstance`: typed `ToolCallPart` subclasses such as
-                # `ToolSearchCallPart` and `LoadCapabilityCallPart` narrow `args` to a typed shape
-                # that `ModelMessagesTypeAdapter` validates when persisted history is restored
-                # (e.g. a `StepPersistence` resume). Replacing that shape with the `_clamped`
-                # object keeps the concrete class but fails the round-trip, so only plain tool
-                # calls are clamped.
-                elif type(part) is ToolCallPart and self.clamp_tool_call_args:
-                    clamped = self._clamp(part.args_as_json_str())
-                    if clamped is not None:
-                        new_parts.append(replace(part, args={_CLAMP_ARGS_KEY: clamped}))
-                        changed = True
-                        continue
-                new_parts.append(part)
+                clamped_part = self._clamp_part(part)
+                if clamped_part is None:
+                    new_parts.append(part)
+                else:
+                    new_parts.append(clamped_part)
+                    changed = True
             out.append(replace(msg, parts=new_parts) if changed else msg)
         return out
 
