@@ -1,6 +1,12 @@
 """Planning capability: model-owned task planning, with the plan returned in the plan tools' results."""
 
 from pydantic_ai_harness.planning._capability import Planning
+from pydantic_ai_harness.planning._claimable import (
+    ClaimablePlanStore,
+    FileClaimablePlanStore,
+    InMemoryClaimablePlanStore,
+    SqliteClaimablePlanStore,
+)
 from pydantic_ai_harness.planning._events import (
     PLANNING_EVENTS,
     EventCallback,
@@ -13,15 +19,30 @@ from pydantic_ai_harness.planning._events import (
     PlanStatusChangedEvent,
     PlanUpdatedEvent,
 )
-from pydantic_ai_harness.planning._postgres import PostgresConnection, PostgresPlanStore, PostgresPool
-from pydantic_ai_harness.planning._redis import RedisClient, RedisPlanStore
+from pydantic_ai_harness.planning._postgres import (
+    PostgresClaimablePlanStore,
+    PostgresConnection,
+    PostgresPlanStore,
+    PostgresPool,
+)
+from pydantic_ai_harness.planning._redis import (
+    ClaimableRedisClient,
+    RedisClaimablePlanStore,
+    RedisClient,
+    RedisPlanStore,
+)
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore, SqlitePlanStore
 from pydantic_ai_harness.planning._toolset import PlanningToolset, render_plan
-from pydantic_ai_harness.planning._types import PlanItem, PlanStatusUpdate, TaskStatus
+from pydantic_ai_harness.planning._types import OwnedPlanItem, PlanItem, PlanStatusUpdate, TaskStatus
 
 __all__ = [
+    'ClaimablePlanStore',
+    'ClaimableRedisClient',
     'EventCallback',
+    'FileClaimablePlanStore',
+    'InMemoryClaimablePlanStore',
     'InMemoryPlanStore',
+    'OwnedPlanItem',
     'PLANNING_EVENTS',
     'PlanCompletedEvent',
     'PlanCreatedEvent',
@@ -36,11 +57,14 @@ __all__ = [
     'PlanUpdatedEvent',
     'Planning',
     'PlanningToolset',
+    'PostgresClaimablePlanStore',
     'PostgresConnection',
     'PostgresPlanStore',
     'PostgresPool',
+    'RedisClaimablePlanStore',
     'RedisClient',
     'RedisPlanStore',
+    'SqliteClaimablePlanStore',
     'SqlitePlanStore',
     'TaskStatus',
     'render_plan',

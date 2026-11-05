@@ -130,6 +130,47 @@ The executor starts with no `message_history`, so it never pays for the planner'
 
 The planner's read-only discipline is a property of how you configure that agent (which toolsets it gets, and what its instructions say), not something the capability enforces.
 
+### Shared boards with claims
+
+When several agents work one plan at once, each needs to take a step without another agent taking the same one. A `ClaimablePlanStore` is a `PlanStore` whose steps (`OwnedPlanItem`) carry an `owner`, with two atomic operations:
+
+- `claim(item_id, owner=...)` takes `item_id`, or with `None` the first available step, and moves it to `in_progress`. A step is available when it is `pending`, unowned or already owned by the claimer, and every step in its `depends_on` is resolved (completed or cancelled). It returns the claimed step, or `None` when nothing could be claimed.
+- `release(item_id, owner=..., status=...)` moves the owner's step to `status` and, in the same operation, moves its dependents into or out of `blocked`, as `enable_subtasks=True` does. `completed` and `cancelled` keep the owner as a record of who finished the step; `pending` and `blocked` clear it. It returns every step that changed.
+
+Racing claimers get exactly one winner, and a dependent is unblocked by exactly one release, because each operation reads, decides and writes the whole board as one atomic step. The inherited `PlanStore` methods keep the owner of every step id they leave in place, so a `set_items` racing a claim can't undo it; read owners with `get_owned_items()` or `get_owned_item()`.
+
+```python
+from pydantic_ai_harness.planning import InMemoryClaimablePlanStore, PlanItem, TaskStatus
+
+
+async def main() -> None:
+    board = InMemoryClaimablePlanStore()
+    await board.set_items(
+        [
+            PlanItem(id='schema', content='Write the migration'),
+            PlanItem(id='api', content='Add the endpoint', depends_on=['schema'], status=TaskStatus.blocked),
+        ]
+    )
+
+    step = await board.claim(None, owner='alice')  # takes 'schema'; 'api' is blocked
+    assert step is not None
+    changed = await board.release(step.id, owner='alice', status=TaskStatus.completed)
+    print([(item.id, item.status.value) for item in changed])
+    #> [('schema', 'completed'), ('api', 'pending')]
+```
+
+| Store | Atomicity |
+|---|---|
+| `InMemoryClaimablePlanStore()` | Each operation runs without awaiting, so it is atomic on one event loop. |
+| `SqliteClaimablePlanStore(database, *, session, table='claimable_plan_items')` | One `BEGIN IMMEDIATE` transaction, which serializes writers across threads and processes. |
+| `PostgresClaimablePlanStore(pool, *, session, table='claimable_plan_items')` | One transaction under a `pg_advisory_xact_lock` on the table and session. |
+| `RedisClaimablePlanStore(client, *, session, key_prefix='claimable-plan', expire_seconds=None)` | An optimistic write: a Lua compare-and-set that retries if another writer changed the board first. |
+| `FileClaimablePlanStore(path)` | One JSON file, written under an OS file lock and replaced atomically. |
+
+Each store uses its own table or key, so an existing `SqlitePlanStore`, `PostgresPlanStore` or `RedisPlanStore` database is left as it is. `RedisClaimablePlanStore` takes a client with `get` and `eval`, which `redis.asyncio.Redis` provides.
+
+`claim` and `release` are store operations, not tools. The `Planning` tools write through `set_items` and `update_item` and then reconcile dependencies in separate calls, so they are not the way agents should claim steps on a shared board. Store calls emit no run events; a caller that wants to report board changes emits one `BoardItemChangedEvent` (from `pydantic_ai_harness.teams`) per step that `claim` or `release` returns. It carries `OwnedPlanItem`, which the `Plan*Event`s, declared with `PlanItem`, would drop `owner` from when serialized.
+
 ## Events
 
 Subscribe to typed plan events to react to changes made through the `Planning` tools:
