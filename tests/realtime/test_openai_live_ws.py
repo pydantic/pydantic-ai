@@ -1146,3 +1146,136 @@ async def test_text_sent_mid_reply_is_answered_by_that_reply(
             ['Actually, what is 2 plus 2?'],
         ]
     )
+
+
+def _delegation_timeline(cassette: RealtimeCassette) -> list[str]:
+    """What the recording says about the delegations, in order: who asked, which results went out, and when each
+    delegation opened, called a tool and had a backend response complete."""
+    delegations: dict[str, int] = {}
+    timeline: list[str] = []
+    for interaction in cassette.interactions:
+        if not isinstance(interaction, CassetteMessage):
+            continue
+        data = interaction.data
+        if data['type'] == 'session.input_transcript.delta' and 'Paris' in data['delta']:
+            timeline.append('user asks about Paris')
+        elif data['type'] == 'response.item.create' and data['item']['type'] == 'function_call_output':
+            timeline.append(f'result sent: {data["item"]["output"]}')
+        elif data['type'] == 'session.delegation.created':
+            delegations[data['delegation']['id']] = len(delegations) + 1
+            timeline.append(f'delegation {len(delegations)} opens')
+        elif data['type'] == 'response.event' and data['event']['type'] in (
+            'response.completed',
+            'response.output_item.done',
+        ):
+            item = data['event'].get('item', {})
+            if data['event']['type'] == 'response.completed':
+                timeline.append(f'delegation {delegations[data["delegation_id"]]} backend response completes')
+            elif item['type'] == 'function_call':
+                timeline.append(
+                    f'delegation {delegations[data["delegation_id"]]} calls {item["name"]}({item["arguments"]})'
+                )
+    return timeline
+
+
+async def test_a_question_asked_while_a_tool_runs_is_delegated_once_the_round_settles(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """Live works on one delegation at a time: a question asked while a tool round waits is delegated once it settles.
+
+    The user asks about Paris while the Amsterdam forecast's result is still out. Live opens the Paris delegation only
+    once the Amsterdam one has its result and settles, so the Paris delegation can't settle first and end the wait for
+    the round's answer: the wait ends with the reply that speaks both.
+
+    The session runs at 16 kHz, the rate both recorded questions are in.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=_FAST_TURN,
+        profile={'audio_input_sample_rate': 16000, 'audio_output_sample_rate': 16000},
+    )
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    asked = anyio.Event()
+    release = anyio.Event()
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up the weather forecast for a city."""
+        if 'amsterdam' in city.lower():
+            asked.set()
+            await release.wait()
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    frame_bytes = 3200  # 100 ms at 16 kHz
+
+    def frames(pcm: bytes) -> list[bytes]:
+        return [pcm[start : start + frame_bytes] for start in range(0, len(pcm), frame_bytes)]
+
+    silence = b'\x00' * frame_bytes
+    first = frames(assets_path.joinpath('weather_question_16khz.pcm').read_bytes())
+    second = frames(assets_path.joinpath('weather_in_paris_16khz.pcm').read_bytes())
+    microphone = [*first, *[silence] * 80, *second, *[silence] * 250]
+    # The Amsterdam result goes out 4 s after the Paris question. Released at a microphone frame, it goes out at the
+    # same point in the recording on replay.
+    released_after = len(first) + 80 + len(second) + 40
+
+    async def speak(session: RealtimeSession) -> None:
+        for index, frame in enumerate(microphone):
+            await cassette.before_audio_send()
+            await session.send_audio(frame)
+            if index == released_after:
+                release.set()
+            if realtime_recording:  # pragma: no branch
+                await anyio.sleep(0.1)  # pragma: no cover
+
+    messages: list[ModelMessage] = []
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(speak, session)
+        with anyio.fail_after(60):
+            await asked.wait()
+            await session.wait_for_reply()
+        messages = session.all_messages()
+
+    # The Paris delegation opens only once the Amsterdam one, its result in, has settled.
+    assert _delegation_timeline(cassette) == snapshot(
+        [
+            'delegation 1 opens',
+            'delegation 1 calls lookup_forecast({"city":"Amsterdam"})',
+            'delegation 1 backend response completes',
+            'user asks about Paris',
+            'result sent: Amsterdam: 14 degrees Celsius, light rain.',
+            'delegation 1 backend response completes',
+            'delegation 2 opens',
+            'delegation 2 calls lookup_forecast({"city":"Paris"})',
+            'result sent: Paris: 14 degrees Celsius, light rain.',
+            'delegation 2 backend response completes',
+            'delegation 2 backend response completes',
+        ]
+    )
+    assert [
+        [
+            f'{part.part_kind}: {part.tool_name} {part.args}'
+            if isinstance(part, ToolCallPart)
+            else f'{part.part_kind}: {part.content}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}: {part.transcript}'
+            if isinstance(part, SpeechPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in messages
+    ] == snapshot(
+        [
+            ['speech: What will the weather be in Amsterdam tomorrow? Please look it up'],
+            ['speech:  Mhm, sure. Checking.', 'tool-call: lookup_forecast {"city":"Amsterdam"}'],
+            ['tool-return: Amsterdam: 14 degrees Celsius, light rain.'],
+            ["speech: What's the weather like in Paris right now"],
+            ["speech:  Okay, I've got Amsterdam. Checking Paris now.", 'tool-call: lookup_forecast {"city":"Paris"}'],
+            ['tool-return: Paris: 14 degrees Celsius, light rain.'],
+            [
+                'speech:  Amsterdam tomorrow is about fourteen degrees with light rain. Paris right now is fourteen degrees with light rain.'
+            ],
+        ]
+    )
