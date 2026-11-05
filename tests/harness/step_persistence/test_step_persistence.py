@@ -873,6 +873,47 @@ class TestStepPersistenceCapability:
         assert {e.run_id for e in events} == {rid}
         assert {e.agent_name for e in events} == {'librarian'}
 
+    async def test_tool_effect_finished_when_tool_raises_model_retry(self) -> None:
+        """A tool that raises ``ModelRetry`` must not leave its effect ``started``.
+
+        ``ToolManager`` treats retries as control flow and re-raises without
+        calling ``on_tool_execute_error`` or ``after_tool_execute``. The
+        ``wrap_tool_execute`` override closes the effect as ``failed`` so
+        ``list_unresolved_tool_effects`` does not report the retried call.
+        """
+        store = InMemoryStepStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call-1')])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'y'}, tool_call_id='call-2')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model),
+            capabilities=[StepPersistence(store=store, agent_name='repro')],
+        )
+
+        @agent.tool_plain
+        def lookup(q: str) -> str:
+            if q == 'x':
+                raise ModelRetry('try another query')
+            return 'found'
+
+        result = await agent.run('go')
+        assert result.output == 'done'
+
+        rid = await first_run_id(store)
+        unresolved = await store.list_unresolved_tool_effects(run_id=rid)
+        assert unresolved == []
+
+        # The retried call was finished as 'failed', the successful one as 'completed'.
+        effect1 = await store.get_tool_effect(run_id=rid, tool_call_id='call-1')
+        effect2 = await store.get_tool_effect(run_id=rid, tool_call_id='call-2')
+        assert effect1 is not None and effect1.status == 'failed'
+        assert effect2 is not None and effect2.status == 'completed'
+
     async def test_agent_name_falls_back_to_agent_name_without_changing_run_id(self) -> None:
         """An unset `agent_name` records the running `Agent.name`; the store key stays `ctx.run_id`."""
         store = InMemoryStepStore()

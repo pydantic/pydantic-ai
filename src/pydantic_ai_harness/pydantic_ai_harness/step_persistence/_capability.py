@@ -13,7 +13,8 @@ import anyio
 
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler, WrapToolExecuteHandler
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
@@ -607,6 +608,43 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         """
         await self._record_event(ctx, kind='model_request_failed', error=repr(error))
         raise error
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Finish the tool effect when the tool raises a retry or failure signal.
+
+        ``ToolManager`` treats ``ModelRetry`` and ``ToolFailed`` as control flow
+        and re-raises them without calling ``on_tool_execute_error`` or
+        ``after_tool_execute``, so the effect recorded in
+        ``before_tool_execute`` would stay ``started`` forever. This override
+        closes that gap: the effect is finished as ``failed`` before the
+        exception propagates, so ``list_unresolved_tool_effects`` stops
+        returning the call. Only an effect that is still ``started`` is
+        finished, so a prior terminal write (e.g. ``on_tool_execute_error``
+        for a plain exception) is not double-recorded.
+        """
+        try:
+            return await handler(args)
+        except (ToolRetryError, ToolFailedError, ModelRetry, ToolFailed) as e:
+            run_id = self._effective_run_id(ctx)
+            prior = await self.store.get_tool_effect(run_id=run_id, tool_call_id=call.tool_call_id)
+            if prior is not None and prior.status == 'started':
+                await self._finish_tool_effect(run_id, call.tool_call_id, tool_def.name, 'failed', repr(e))
+                await self._record_event(
+                    ctx,
+                    kind='tool_call_failed',
+                    tool_call_id=call.tool_call_id,
+                    tool_name=tool_def.name,
+                    error=repr(e),
+                )
+            raise
 
     async def before_tool_execute(
         self,
