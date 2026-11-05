@@ -3787,6 +3787,38 @@ class TestCompactionSpan:
             ]
         )
 
+    async def test_nested_tiered_target_does_not_leak_into_a_successful_outer_chain(
+        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        comp: TieredCompaction[None] = TieredCompaction(
+            tiers=[
+                TieredCompaction(tiers=[_RecordingTier('inner', calls, drop=1)], target_tokens=5),
+                _RecordingTier('outer', calls, drop=3),
+            ],
+            target_tokens=15,
+        )
+        messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
+
+        result = await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        assert calls == ['inner', 'outer']
+        assert result.messages == messages[-1:]
+        assert 'compaction.target_unreached' not in _compact_spans(capfire)[0]['attributes']
+        assert caplog.messages == []
+
+    async def test_direct_tiered_compact_logs_an_unreachable_target_without_a_span_scope(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        comp: TieredCompaction[None] = TieredCompaction(tiers=[_RecordingTier('only', calls)], target_tokens=1)
+        messages: list[ModelMessage] = [_user('x' * 40)]
+
+        assert await comp.compact(messages, _make_ctx(messages)) == messages
+        assert calls == ['only']
+        assert len(caplog.messages) == 1
+        assert 'estimated 10 tokens' in caplog.messages[0]
+
     async def test_no_span_when_compaction_is_noop(self, capfire: CaptureLogfire) -> None:
         # DeduplicateFileReads has no threshold, so its trigger always fires, but with no
         # superseded reads `compact` returns the history unchanged and no span should be emitted.

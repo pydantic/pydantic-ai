@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
 
 _logger = logging.getLogger(__name__)
+_escalating: ContextVar[bool] = ContextVar('pydantic_ai_harness.compaction.escalating', default=False)
 
 
 @dataclass
@@ -158,21 +160,26 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         baseline = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=model_request_parameters)
         heuristic_baseline = estimate_token_count(messages, self.tokenizer)
         estimate = baseline
-        for tier in self.tiers:
-            if estimate <= target:
-                break
-            messages = await tier.compact(messages, ctx)
-            # Before the next stop decision, so escalation measures the history it would return.
-            messages = reinject_pinned(original, messages)
-            after = estimate_token_count(messages, self.tokenizer)
-            reclaimed = heuristic_baseline - after
-            # The two counts are on different bases, and the anchor's can be the smaller one: content a
-            # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
-            # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
-            # flooring the result at 0 would then report the history the tier just rewrote as fitting while
-            # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
-            estimate = max(baseline - reclaimed, after)
-        if estimate > target:
+        nested = _escalating.get()
+        token = _escalating.set(True)
+        try:
+            for tier in self.tiers:
+                if estimate <= target:
+                    break
+                messages = await tier.compact(messages, ctx)
+                # Before the next stop decision, so escalation measures the history it would return.
+                messages = reinject_pinned(original, messages)
+                after = estimate_token_count(messages, self.tokenizer)
+                reclaimed = heuristic_baseline - after
+                # The two counts are on different bases, and the anchor's can be the smaller one: content a
+                # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
+                # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
+                # flooring the result at 0 would then report the history the tier just rewrote as fitting while
+                # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
+                estimate = max(baseline - reclaimed, after)
+        finally:
+            _escalating.reset(token)
+        if estimate > target and not nested:
             # Every tier ran and the history is still over target: what the tiers keep (a `keep_tokens`
             # floor, the first user message, the current turn) costs more than the target allows.
             record_span_attributes(

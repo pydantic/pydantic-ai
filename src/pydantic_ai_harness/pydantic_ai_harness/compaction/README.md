@@ -594,8 +594,9 @@ whole current turn, the first user message under `preserve_first_user_message`, 
 Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it
 can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are
 messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier
-leaves the history above the target, `TieredCompaction` logs a warning and sets
-`compaction.target_unreached` on its [span](#tracing). Pass `preserve_first_user_message=False` to a
+leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt
+and sets `compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier
+changes the history, no span is emitted; the warning still reports the estimate and target. Pass `preserve_first_user_message=False` to a
 tier that may drop or summarize the first user message.
 
 ## Cache tradeoff (read before using `ClearToolResults`)
