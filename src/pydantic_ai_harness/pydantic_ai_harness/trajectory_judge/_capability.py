@@ -512,15 +512,21 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
         if isinstance(message, ModelResponse):
             user_lines = lines
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and (judge := _steering_judge(part)) is not None:
-                lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
-            elif isinstance(part, UserPromptPart):
-                text = user_prompt_text(part)
-                if text:
-                    user_lines.append(f'user: {text}')
+            if isinstance(part, UserPromptPart):
+                _render_user_prompt(part, user_lines, lines)
             elif (line := render_part(part)) is not None:
                 # A tool return or retry is the agent's activity, so it ends the opening request.
                 if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
                     user_lines = lines
                 (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
     return request, lines
+
+
+def _render_user_prompt(part: UserPromptPart, user_lines: list[str], lines: list[str]) -> None:
+    """Render a user prompt as a judge's steering in `lines`, or as the user's words in `user_lines`."""
+    if (judge := _steering_judge(part)) is not None:
+        lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
+        return
+    text = user_prompt_text(part)
+    if text:
+        user_lines.append(f'user: {text}')
