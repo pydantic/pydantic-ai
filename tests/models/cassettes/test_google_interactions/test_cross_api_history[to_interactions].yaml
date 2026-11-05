@@ -1,0 +1,280 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1849"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Look up the secret phrase.
+          name: get_secret
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Call get_secret to get the secret phrase.
+        - type: thought
+          signature: >-
+            ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M/CiIUBN4DwHUh7Lo/j+ae74lxGF+BS3wtK3DUreC0j+6mS4Vs+SfKORI7FhW/m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz/ZJuB0fxbyHVj/ALai/p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB/go5DVc31V+/4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ//j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u/8zUFOASfRxUGlY+kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N/FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX+DyEOUe0TT/OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO/u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt+9QTt/IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP/h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+        - type: function_call
+          id: call_386216
+          name: get_secret
+          arguments: {}
+        - type: function_result
+          name: get_secret
+          call_id: call_386216
+          is_error: false
+          result:
+          - type: text
+            text: emerald tiger
+        - type: thought
+          signature: >-
+            ErwBCrkBAWkUfRNguauzWgItwfYZ8+ulUqsIsaOHZoEnycmt8colsLCUFzF3hKcI0tPoCNOqBQ64t4PsMJF/3IU/PLVx8/rHkrxVHuJaQMACGb5wswOwH4b/CvRYl36LM133WBst952vdK52Cuz1YQEoJydAgpb76UK6oxlkc3l1T/qJ5HXSJApQRwKh0Ndh9LQ4XgQB3Mc8v/tQmMr5/sAnVmiG2G65bn0gOdQWFTY+2lYb9etS1F7MukZ0Mbs=
+        - type: model_output
+          content:
+          - type: text
+            text: The secret phrase is **emerald tiger**.
+        - type: user_input
+          content:
+          - type: text
+            text: Repeat the secret phrase.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1925
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 243
+          total_input_tokens: 207
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 207
+          total_cached_tokens: 0
+          total_output_tokens: 8
+          total_tool_use_tokens: 0
+          total_thought_tokens: 28
+          initial_input_tokens: 195
+        created: 2026-11-05T15:43:28Z
+        updated: 2026-11-05T15:43:28Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EukBCuYBAWkUfRNG0cWmALjRzGs/B+GhOsmdpWHqWvEddzQgsFrCzbjTBOm8VTvNVIbaMZPI/5/vARevNn7kN1ajBt1m1E6ibchvZPH6iWAVUVuct2bGQs6dBxfgEJuczpRna3uOl/xmoRnXcJHTXcp8kojUDet8OaghXPjHqxoJMqC9AxyJL124+X+qHEvhmLSCBrEqYr2q5lC1aCMGOJpUBm5PmqgQ6mUSPRg7WuKD94sTWam+Ox4jJTQeHwEDW9vjpbmd7SdyDClIHWDLaq9JxqQQ4WuNqi61MZSl7zVaPh2YmjnFR0ygmqY=
+          type: thought
+        - content:
+          - text: The secret phrase is **emerald tiger**.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:43:28.130616+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "419"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call get_secret to get the secret phrase.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Look up the secret phrase.
+            name: get_secret
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7716
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: get_secret
+                args: {}
+                id: call_386216
+              thoughtSignature: >-
+                ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M/CiIUBN4DwHUh7Lo/j+ae74lxGF+BS3wtK3DUreC0j+6mS4Vs+SfKORI7FhW/m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz/ZJuB0fxbyHVj/ALai/p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB/go5DVc31V+/4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ//j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u/8zUFOASfRxUGlY+kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N/FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX+DyEOUe0TT/OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO/u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt+9QTt/IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP/h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 38
+          candidatesTokenCount: 10
+          totalTokenCount: 168
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 38
+          thoughtsTokenCount: 120
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: FKTsavXtGsnT0_gPquqOuA8
+  recorded_at: 2026-11-05T15:43:24.019848+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1443"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call get_secret to get the secret phrase.
+          role: user
+        - parts:
+          - functionCall:
+              id: call_386216
+              args: {}
+              name: get_secret
+            thoughtSignature: >-
+              ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M_CiIUBN4DwHUh7Lo_j-ae74lxGF-BS3wtK3DUreC0j-6mS4Vs-SfKORI7FhW_m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz_ZJuB0fxbyHVj_ALai_p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB_go5DVc31V-_4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ__j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u_8zUFOASfRxUGlY-kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N_FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX-DyEOUe0TT_OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO_u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt-9QTt_IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP_h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+          role: model
+        - parts:
+          - functionResponse:
+              id: call_386216
+              name: get_secret
+              response:
+                return_value: emerald tiger
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Look up the secret phrase.
+            name: get_secret
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2109
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: The secret phrase is **emerald tiger**.
+              thoughtSignature: >-
+                ErwBCrkBAWkUfRNguauzWgItwfYZ8+ulUqsIsaOHZoEnycmt8colsLCUFzF3hKcI0tPoCNOqBQ64t4PsMJF/3IU/PLVx8/rHkrxVHuJaQMACGb5wswOwH4b/CvRYl36LM133WBst952vdK52Cuz1YQEoJydAgpb76UK6oxlkc3l1T/qJ5HXSJApQRwKh0Ndh9LQ4XgQB3Mc8v/tQmMr5/sAnVmiG2G65bn0gOdQWFTY+2lYb9etS1F7MukZ0Mbs=
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 185
+          candidatesTokenCount: 8
+          totalTokenCount: 209
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 185
+          thoughtsTokenCount: 16
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: HKTsaozVDbDGiLMPkumgmAc
+  recorded_at: 2026-11-05T15:43:26.158103+00:00

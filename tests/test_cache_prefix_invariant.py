@@ -484,3 +484,20 @@ def test_anthropic_deferred_tail_must_be_append_only(tmp_path: Path) -> None:
         ],
     )
     assert list(iter_cassette_prefix_violations(new_conversation)) == []
+
+
+@pytest.mark.parametrize(
+    'endpoint',
+    [
+        'https://generativelanguage.googleapis.com/v1beta/interactions',
+        'https://aiplatform.googleapis.com/v1beta1/interactions',
+        'https://proxy.example/v1/interactions',
+    ],
+)
+def test_interactions_prefix_blocks(endpoint: str) -> None:
+    """Interactions uses signed steps in `input`, including on custom endpoints."""
+    first = {'type': 'user_input', 'content': [{'type': 'text', 'text': 'Hello'}]}
+    shape = canonical_prefix_blocks({'system_instruction': 'Be helpful.', 'input': [first]}, endpoint)
+    assert shape == ('google-interactions', [('system', json.dumps('Be helpful.')), ('messages', json.dumps(first))])
+    assert is_new_user_turn(json.dumps(first))
+    assert not is_new_user_turn(json.dumps({'type': 'function_result', 'call_id': 'call', 'result': 'ok'}))

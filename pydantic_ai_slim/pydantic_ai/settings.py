@@ -108,14 +108,15 @@ Values:
 
 Per-provider mapping:
 
-| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud |
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud (GenerateContent) |
 |---|---|---|---|---|---|
 | `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
 | `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
 | `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
 | `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
 
-On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
+Google Interactions uses the Gemini API column on both Gemini API and Google Cloud transports.
+On Google Cloud's GenerateContent API the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
@@ -123,7 +124,7 @@ with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not 
 routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
-`google_cloud_service_tier`) always take precedence over this unified field when set.
+`google_service_tier`, `google_cloud_service_tier`) always take precedence over this unified field when set.
 """
 
 
@@ -254,7 +255,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic
-    * Google
+    * Google GenerateContent
     * Cohere
     * Bedrock (Anthropic and Amazon Nova models only)
     """
@@ -279,7 +280,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
-    * Google (numeric seconds only, not `httpx.Timeout`)
+    * Google (GenerateContent accepts numeric seconds only; Interactions also accepts `httpx.Timeout`)
     * Groq
     * Mistral (numeric seconds only, not `httpx.Timeout`)
     * Cerebras
@@ -354,7 +355,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
-    * Google (keeps the delays and status codes of the provider's `retry_options`)
+    * Google GenerateContent (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
     * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
       warning)
@@ -465,7 +466,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google
+    * Google GenerateContent
     * Groq
     * Cohere
     * Mistral
@@ -487,7 +488,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google
+    * Google GenerateContent
     * Groq
     * Cohere
     * Mistral
@@ -681,7 +682,7 @@ class ModelSettings(TypedDict, total=False):
 
     See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
     the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
-    `anthropic_service_tier`, `bedrock_service_tier`, `google_cloud_service_tier`)
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_service_tier`, `google_cloud_service_tier`)
     take precedence over this unified field when set.
 
     Supported by:
@@ -710,6 +711,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Google Interactions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex

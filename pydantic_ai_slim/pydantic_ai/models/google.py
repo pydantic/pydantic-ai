@@ -82,6 +82,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _google_common,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -2307,21 +2308,10 @@ def _process_part(
     return item, code_execution_tool_call_id
 
 
-def _character_index(text: str, byte_index: int) -> int | None:
-    """Convert a Gemini UTF-8 byte offset to a Python string index."""
-    encoded = text.encode()
-    if not 0 <= byte_index <= len(encoded):
-        return None
-    try:
-        return len(encoded[:byte_index].decode())
-    except UnicodeDecodeError:
-        return None
-
-
 def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
     """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
-    start = _character_index(text, (segment.start_index or 0) - byte_offset)
-    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    start = _google_common.character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _google_common.character_index(text, (segment.end_index or 0) - byte_offset)
     if start is not None and end is not None and start < end and text[start:end] == segment.text:
         return ContentCitationAnchor(start=start, end=end)
     return None

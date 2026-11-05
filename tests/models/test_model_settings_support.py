@@ -113,6 +113,7 @@ with try_import() as google_available:
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_available:
@@ -707,6 +708,10 @@ def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _google_interactions(client: httpx2.AsyncClient) -> Model:
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _typesafe(client: httpx2.AsyncClient) -> Model:
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -770,7 +775,13 @@ CASES = [
     Case('GroqModel', ('Groq',), legacy_http_probe(_groq), _needs(groq_available, 'groq')),
     Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
     Case('CohereModel', ('Cohere',), legacy_http_probe(_cohere), _needs(cohere_available, 'cohere')),
-    Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
+    Case(
+        'GoogleInteractionsModel',
+        ('Google', 'Google Interactions'),
+        http_probe(_google_interactions),
+        _needs(google_available, 'google'),
+    ),
+    Case('GoogleModel', ('Google', 'Google GenerateContent'), http_probe(_google), _needs(google_available, 'google')),
     Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
@@ -1082,7 +1093,7 @@ RETRY_CASES = [
     # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
     RetryCase(
         'GoogleModel',
-        ('Google',),
+        ('Google GenerateContent',),
         _google,
         (1, 1, 2),
         sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
@@ -1092,7 +1103,7 @@ RETRY_CASES = [
     # because the provider's `retry_options` say so.
     RetryCase(
         'GoogleModel[retry_options]',
-        ('Google',),
+        ('Google GenerateContent',),
         _google_with_client_retries,
         (4, 1, 2),
         status=418,

@@ -878,7 +878,8 @@ but can result in optimized context use and caching, and faster performance due 
 | OpenAI Responses | ✅ | Full feature support. [Connectors](https://platform.openai.com/docs/guides/tools-connectors-mcp#connectors) can be used by specifying a special `x-openai-connector:<connector_id>` URL.  |
 | Anthropic | ✅ | Full feature support |
 | xAI | ✅ | Full feature support |
-| Google  | ❌ | Not supported |
+| Google Interactions | ✅ | Limited parameter support: headers, authorization and allowed tools. Server descriptions are ignored. |
+| Google GenerateContent | ❌ | Not supported |
 | Groq  | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |

@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
@@ -34,6 +35,7 @@ with try_import() as imports_successful:
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
+    GoogleInteractionsModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     OpenAIDecisionsModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
@@ -66,6 +68,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
+    'google-interactions': GoogleInteractionsModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,

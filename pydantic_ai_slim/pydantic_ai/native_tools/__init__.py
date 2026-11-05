@@ -568,7 +568,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
-    * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
+    * Google GenerateContent (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
+    * Google Interactions. Supports 'png' (default) and 'jpeg'.
     """
 
     partial_images: int = 0
@@ -630,6 +631,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     id: str
@@ -649,6 +651,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     description: str | None = None
@@ -668,6 +671,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     headers: dict[str, str] | None = None
@@ -679,6 +683,7 @@ class MCPServerTool(AbstractNativeTool):
 
     * OpenAI Responses
     * xAI
+    * Google Interactions
     """
 
     kind: str = 'mcp_server'
@@ -728,6 +733,7 @@ class FileSearchTool(AbstractNativeTool):
 
     Supported by:
 
+    * Google Interactions (maps to `top_k`)
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """
 

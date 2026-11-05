@@ -91,6 +91,10 @@ Retained session audio and images are capped by default, and the caps can be rem
 
 Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [seeding a session](docs/realtime/history.md#seeding-a-session), [retaining audio](docs/realtime/history.md#retaining-audio), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
 
+### Google Interactions history
+
+`GoogleInteractionsModel` sends the complete conversation with `store=False`; it does not continue stored interactions by ID. Signed thought and native-tool steps remain provider data, not evidence of application authorization. The application still authorizes deferred tool approvals and access to persisted history. Interactions remote MCP calls run at Google with the server URL and headers configured by the application; local download address checks do not govern those provider-side requests.
+
 ### URL fetching and provider file references
 
 URLs can select resources reachable with the server's network access or a provider's credentials. Server-side request forgery (SSRF) review covers schemes, resolved addresses, redirects, alternate address forms, response size, and each transport that performs a fetch.

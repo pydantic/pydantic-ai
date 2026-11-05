@@ -1,0 +1,94 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "461"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: any
+        input:
+        - content:
+          - text: Name the capital city of France and its country.
+            type: text
+          type: user_input
+        store: false
+        stream: true
+        tools:
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              name:
+                type: string
+              country:
+                type: string
+            required:
+            - name
+            - country
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=2226
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"Es0CCsoCAWkUfROtQYvhbQCUMLSYgzwWfdFNrm7ISzXYYod2kDfpZrNY4QQWt7jTAWmpo3bIclUm+AJ+kJFI7BuM9A5Wl0qTOzSkOqwWqi05iTRFnimyTYeaFVvEi/GhLCKgdG/Ro0ZkJBsnysdsHn/fo+Bk1GUXdC8m0mFFBC3MfTezfpaP+g31sye0nJRBtO2K5lIIL7XudKDFk0uiOESNVc0hHy6ROGmSNxGWzs8N36/jZoyBn0f51tEyakMyQSjVyIYD0TPM+K0ZX1mY7SwaY0nBv1JKXYo2zQTVyOzNfIpCWkrT2YW6MxK15GgX3lxRYWSlrYrPE/kqm9Hy9Tv0M9svKxnClyA1uyoUXZZr6s2yRlpRvA6aC5KcVIFiPKD46O+NUphEocC2L7aOPdsFtlseObKnd3I1q47+E16S2OSzcdS8yVZTTTjhpnm8","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"id":"call_352375","type":"function_call","name":"final_result","arguments":{}},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"arguments":"{\"country\":\"France\",\"name\":\"Paris\"}","type":"arguments_delta"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"requires_action","usage":{"total_tokens":140,"total_input_tokens":67,"input_tokens_by_modality":[{"modality":"text","tokens":67}],"total_cached_tokens":0,"total_output_tokens":22,"total_tool_use_tokens":0,"total_thought_tokens":51,"initial_input_tokens":38},"created":"2026-11-05T15:00:53Z","updated":"2026-11-05T15:00:53Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:00:53.865484+00:00

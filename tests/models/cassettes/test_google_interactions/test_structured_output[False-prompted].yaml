@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "560"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: Name the capital city of France and its country.
+            type: text
+          type: user_input
+        response_format:
+          mime_type: application/json
+          type: text
+        store: false
+        system_instruction: |
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"name": {"type": "string"}, "country": {"type": "string"}}, "required": ["name", "country"], "type": "object", "title": "City"}
+
+          Don't include any text or Markdown fencing before or after.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3397
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 320
+          total_input_tokens: 86
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 86
+          total_cached_tokens: 0
+          total_output_tokens: 12
+          total_tool_use_tokens: 0
+          total_thought_tokens: 222
+          initial_input_tokens: 83
+        created: 2026-11-05T15:00:47Z
+        updated: 2026-11-05T15:00:47Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EtwGCtkGAWkUfRMz7cHr8qYiE09LdG90iBmROYXItEv2soX+UozCP7HsK8/2k26ERhh5gFuiC5J06eXNdamjCAzCXiBclgwOraAqo3cad2P7f1aqrWS+Gts6/QNhp0dy21lG8zIaCen4DQ5QOIU8KkDwbQUCG/kcaoY1KmLmVSmTQ2ACzzmNq8amgDpyZWwFb1+XYsnz72LFIG4jt0vcgUMNQxiZFZP/REELO7PukASrLFqTxi1onrDridULDRWa6kv6WGuP3RS1ODJs6MLLaEkcaQoVPWsEet2AG15UoTj3BQ5/dJOr/LQATa75b57ZH5cDt/ddyXbXIo1AefWRpiyGZUr2cpAg8ywer4P3ZUTH4Ix3xe+DLaN9ObdVxg36EoNoYXLVZzCOKj3OoyyixuWfRL3xlZg9Aqy0oPxJ+JZDxqX/nanNq+kk7ijSNQNSV5fc8vji7DFJfE9P0P127PDplFfV7UzPIMPL5Hge5EUHOzZOkxpmZXpFFpG9WP1o/zaVTy0GM5s3K/jmcN+9mGuueNbY5yIXY8cydE5K9nQ39qiSaniInyXfsrok1cVb7jt8IBai8VfMPB9DsUEyRnvt0vgunZFBvQ/jGtk6GZQa1/cRniHq9Xblb7ajueKk5JisksvgdD35wtJdmOEu4x1Q5TPB74+qnZid3H9MEk7qUAQLqmVWwzqgtPXEpEXUuonDSCpIzSxPzto2R4WYTZMMLIKrxMYJ1F6xnezwb16C0xcmiciQ1Ny14xOdNioLLPbeZFL6NMVX96FccYH9nZTSllb/RdxZTaMCVcXY/faYgp8t39g7Vwq8qgH/iF0nQ0A2OPGMwfFzRUGhscTpKcGY0cQqsQSXZqPsuyq5nGKugXZCQopuF/RxJ1hHXUUsw3hhh/udoyaYCkLqPwMgtN3Ezg0hDZpckqFB9wi7jp3MgCG3ucX3sKmSEYR3wbwqV/U0AjZJWfJuMwavhLTIY22L5uQEtq7QBstUvplcg3IGeePLcedDQXN68NgrEbh+/lwA0hALRu2lM7PbUUN+CERCssbCsaO/1RCR7ihhV4zIPu9N46vf+deF/KUmJE9e3oML5AHGC3jMm46L/5YkghNf+/6pJpmDil0TppxDOr7WvIpYV9v3/9bgKUA/cDQ=
+          type: thought
+        - content:
+          - text: "{\"name\": \"Paris\", \"country\": \"France\"}"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:00:47.079909+00:00
