@@ -2080,7 +2080,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
         leading = _leading_system_prompt_count(request) if first_request else 0
-        has_genuine = any(isinstance(part, SystemPromptPart) for part in request.parts[leading:])
+        has_genuine = _has_lasting_system_prompt(request.parts[leading:])
         genuine_change = has_genuine and not _has_user_lookalike(all_sources)
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
@@ -4392,6 +4392,15 @@ def _replies_noted_later(messages: list[ModelMessage], index: int) -> list[Model
     while start > 0 and not isinstance(messages[start - 1], ModelRequest):
         start -= 1
     return messages[start + 1 if start > 0 else 0 : index]
+
+
+def _has_lasting_system_prompt(parts: Sequence[ModelRequestPart]) -> bool:
+    """Whether `parts` hold a system prompt that stays in later requests, which a note can name.
+
+    A request-scoped prompt doesn't count: it leaves later requests, and a note, sent unchanged with them so the cached
+    prefix stays put, would then name a block that isn't there.
+    """
+    return any(isinstance(part, SystemPromptPart) and not _is_request_scoped(part) for part in parts)
 
 
 def _leading_system_prompt_count(request: ModelRequest) -> int:

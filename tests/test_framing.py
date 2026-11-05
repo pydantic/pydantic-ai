@@ -621,3 +621,17 @@ def test_the_framework_can_write_its_own_prefixed_tag() -> None:
     assert frame(CONTEXT_TAG, 'body', id='a') == '<pyai:context id="a">body</pyai:context>'
     assert MODEL_VISIBLE_NAME.fullmatch('pyai_context')
     assert not MODEL_VISIBLE_NAME.fullmatch('pyai:context')
+
+
+@pytest.mark.parametrize('tag', ['pyai:context', 'pyai:context_diff', 'PYAI:Context'])
+def test_the_public_framing_functions_refuse_the_frameworks_own_tags(tag: str) -> None:
+    """Only Pydantic AI renders its prefixed tags: the public functions refuse them, registered or not."""
+    reserved = RegisteredTag(tag)
+    with pytest.raises(UserError, match='reserved for it'):
+        framing.open_tag(reserved)
+    with pytest.raises(UserError, match='reserved for it'):
+        framing.close_tag(reserved)
+    with pytest.raises(UserError, match='reserved for it'):
+        framing.wrap(reserved, 'body')
+    # Core still writes them.
+    assert frame(CONTEXT_TAG, 'body') == '<pyai:context>body</pyai:context>'

@@ -297,9 +297,9 @@ The two tie at 24/24 on the other 13 measures in this set, including changes aft
 |---|---|---|
 | Earlier thinking blocks dropped, over two 5-step runs † | 0 | 20 |
 | Follows a reminder next to a user lookalike, agent with a tool | 24/24 | not measured |
-| Follows a reminder next to a user lookalike, agent without tools | 12/24 | 24/24 † |
+| Follows a reminder next to a user lookalike, agent without tools | 12/24, 8/24 and 5/24, in three runs | 24/24 † |
 | Follows a reminder in a later turn, after a tool result | 20/24 † | 24/24 † |
-| Follows a reminder next to a lookalike in a tool result | 20/24 † | 24/24 † |
+| Follows a reminder next to a lookalike in a tool result | 24/24 | 24/24 † |
 
 Claude Sonnet 5.5 makes the same trade at no measured cost: 24/24 on all of these †, and 8 thinking blocks dropped with the block in the user turn † against none.
 
