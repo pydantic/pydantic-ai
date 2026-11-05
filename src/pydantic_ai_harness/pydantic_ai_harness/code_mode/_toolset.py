@@ -71,6 +71,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
@@ -980,7 +981,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return the `run_code` tool plus any native (non-sandboxed) tools."""
         wrapped_tools = await self.wrapped.get_tools(ctx)
 
-        # Split tools into sandboxed vs native based on the selector.
         placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
             tool_def = tool.tool_def
@@ -1163,10 +1163,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=tool.wrapped_tools,
         )
 
-        # Determine execution mode for sandbox tool calls:
-        # - global_sequential: selected through the parallel execution mode context var.
-        # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
-        #   These tools are rendered as `def` (sync) and resolved inline.
+        # Tools flagged `sequential` are rendered as `def` (sync) and resolved inline.
         global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
         sequential_tools = {name for name, td in callable_defs.items() if td.sequential}
 
@@ -1282,15 +1279,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             await run_state.reset()
             raise ModelRetry(f'Type error in code:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
-            # Exceptions raised inside dispatch_tool_call (e.g. UserError from
-            # ApprovalRequired, or ModelRetry from a wrapped tool) are passed
-            # back into Monty via ExternalException. Monty re-raises them at the
-            # await site; if the sandbox code doesn't catch them, they bubble up
-            # as MontyRuntimeError. The original exception message is preserved
-            # in the display string, so the model sees a useful error. This means
-            # ModelRetry from a wrapped tool gets double-wrapped
-            # (ModelRetry → MontyRuntimeError → ModelRetry), but the retry
-            # semantics are the same -- the model gets another chance.
+            # Tool errors (e.g. a wrapped tool's `ModelRetry`) re-raise in the sandbox and surface
+            # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
+            # and the model still gets a retry.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
             duration_spent = _is_duration_exhausted(e)
             if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None:
@@ -1387,15 +1378,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
     ) -> tuple[dict[str, ToolDefinition], dict[str, str]]:
-        """Return tool definitions that can be called from inside the sandbox.
-
-        Tool names that are not valid Python identifiers (e.g. MCP tools with
-        hyphens or dots like `get-weather`, `api.call`) are sanitized to
-        underscored forms and mapped back to their original names for dispatch.
-
-        Returns:
-            A tuple of `(callable_defs, sanitized_to_original)`.
-        """
+        """Partition via `partition_callable_tools`, warning once per tool lacking a return schema."""
         callable_defs, sanitized_to_original = partition_callable_tools(
             wrapped_tools, owner='CodeMode', reserved_name=RUN_CODE_TOOL_NAME
         )
@@ -1480,7 +1463,7 @@ def _model_safe_result(value: object) -> object:
         return repr(value)
     if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
         return value
-    if _is_mapping(value):
+    if is_mapping(value):
         rendered = {
             key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()
         }
@@ -1491,10 +1474,6 @@ def _model_safe_result(value: object) -> object:
         items = [_model_safe_result(item) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
     return value if _serializes(value) else repr(value)
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
 
 
 def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:

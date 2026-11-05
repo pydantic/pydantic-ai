@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import re
 import sys
+import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
@@ -82,13 +83,16 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelNotFoundError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
     ModelTimeoutError,
@@ -880,6 +884,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'quota':
+        raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
+    if prompt.content == 'request_timeout':
+        raise ModelRequestTimeout('test-model', 1.0, setting='first_event_timeout')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -902,12 +910,27 @@ non_retryable_agent = Agent(
 )
 
 
+default_non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_default_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
 @workflow.defn
 class NonRetryableModelErrorWorkflow:
     @workflow.run
-    async def run(self, error_kind: str) -> str:
+    async def run(self, error_kind: str, default: bool = False) -> str:
+        agent = default_non_retryable_agent if default else non_retryable_agent
         try:
-            return (await non_retryable_agent.run(error_kind)).output
+            return (await agent.run(error_kind)).output
         except ModelAPIError as error:
             activity_error = error.__cause__
             assert isinstance(activity_error, ActivityError)
@@ -965,6 +988,48 @@ async def test_durability_non_retryable_model_errors(client: Client, error_kind:
     assert _non_retryable_attempts == [error_kind] * attempts
 
 
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='context-window',
+        ),
+        pytest.param(
+            'authentication', 1, 'ModelAuthenticationError ModelHTTPError non_retryable=True', id='authentication'
+        ),
+        pytest.param('not_found', 1, 'ModelNotFoundError ModelHTTPError non_retryable=True', id='not-found'),
+        pytest.param('quota', 1, 'ModelQuotaExceededError ModelHTTPError non_retryable=True', id='quota'),
+        pytest.param('request_timeout', 1, 'ModelRequestTimeout ModelRequestTimeout non_retryable=True', id='timeout'),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='rate-limit'),
+        pytest.param('overloaded', 3, 'ModelOverloadedError ModelAPIError non_retryable=False', id='overloaded'),
+    ],
+)
+async def test_durability_default_non_retryable_model_errors(
+    client: Client, error_kind: str, attempts: int, expected: str
+):
+    """By default, a model error another attempt can't fix (a rejected request, an exhausted quota, or a request that
+    ran out of its deadline) fails the activity on its first attempt, while a transient one is retried as the retry
+    policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(default_non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind, True],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_default_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
+
+
 async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):
     async with Worker(
         client,
@@ -979,6 +1044,194 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- A model error's `retry_after` is the delay before Temporal's next attempt ---
+
+_retry_after_attempts: list[float] = []
+
+
+def _retry_after_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    _retry_after_attempts.append(time.monotonic())
+    raise ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='test-model', retry_after=float(prompt.content)
+    )
+
+
+def _retry_after_agent(name: str, retry_policy: RetryPolicy) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_retry_after_model_fn),
+        name=name,
+        capabilities=[
+            TemporalDurability(
+                activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60), retry_policy=retry_policy)
+            )
+        ],
+    )
+
+
+# The retry policy's own backoff would wait 30 seconds before the second attempt.
+retry_after_agent = _retry_after_agent(
+    'durability_retry_after', RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=30))
+)
+# `maximum_interval` caps the delay a provider asks for.
+capped_retry_after_agent = _retry_after_agent(
+    'durability_capped_retry_after',
+    RetryPolicy(
+        maximum_attempts=2, initial_interval=timedelta(milliseconds=10), maximum_interval=timedelta(milliseconds=100)
+    ),
+)
+
+
+@workflow.defn
+class RetryAfterWorkflow:
+    @workflow.run
+    async def run(self, capped: bool, retry_after: str) -> str:
+        agent = capped_retry_after_agent if capped else retry_after_agent
+        try:
+            return (await agent.run(retry_after)).output
+        except ModelRateLimitError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{error.retry_after} {application_error.next_retry_delay}'
+
+
+@pytest.mark.parametrize(
+    ('capped', 'retry_after', 'expected'),
+    [
+        pytest.param(False, '0.05', '0.05 0:00:00.050000', id='retry-after'),
+        # Too large for a `timedelta`, which the cap keeps from failing the conversion.
+        pytest.param(True, '1e15', '1000000000000000.0 0:00:00.100000', id='capped-at-maximum-interval'),
+    ],
+)
+async def test_durability_model_error_retry_after_delays_next_attempt(
+    client: Client, capped: bool, retry_after: str, expected: str
+):
+    """Temporal waits a model error's `retry_after`, up to the retry policy's `maximum_interval`, before attempting
+    the model request again, rather than the retry policy's backoff, and the workflow still receives the error as its
+    own class."""
+    _retry_after_attempts.clear()
+    agent = capped_retry_after_agent if capped else retry_after_agent
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[RetryAfterWorkflow], plugins=[AgentPlugin(agent)]):
+        output = await client.execute_workflow(
+            RetryAfterWorkflow.run,
+            args=[capped, retry_after],
+            id=f'{RetryAfterWorkflow.__name__}_{capped}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert len(_retry_after_attempts) == 2
+    # Well before the 30-second backoff of the uncapped policy, and well before the requested delay of the capped one.
+    assert _retry_after_attempts[1] - _retry_after_attempts[0] < 10
+
+
+# --- Subclasses of the framework's non-retryable errors aren't retried either ---
+
+
+class _AppConfigError(UserError):
+    """An application's own `UserError`, which a retry policy can't name in advance."""
+
+
+_subclass_attempts: list[str] = []
+
+
+def _raise_framework_error(kind: str) -> None:
+    _subclass_attempts.append(kind)
+    if kind == 'unexpected_model_behavior':
+        raise UnexpectedModelBehavior('Unexpected response.')
+    if kind == 'content_filter':
+        raise ContentFilterError('Content filter triggered.')
+    if kind == 'incomplete_tool_call':
+        raise IncompleteToolCall('Token limit exceeded while generating a tool call.')
+    raise _AppConfigError('The app is misconfigured.')
+
+
+def _subclass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    kind, _, where = prompt.content.partition(':')
+    if where == 'model':
+        _raise_framework_error(kind)
+    return ModelResponse(parts=[ToolCallPart('raise_framework_error', {'kind': kind})])
+
+
+def raise_framework_error(kind: str) -> str:
+    _raise_framework_error(kind)
+    return 'unreachable'  # pragma: no cover
+
+
+subclass_error_agent = Agent(
+    FunctionModel(_subclass_model_fn),
+    name='durability_non_retryable_subclasses',
+    toolsets=[FunctionToolset(tools=[raise_framework_error], id='subclass_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableSubclassWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            return (await subclass_error_agent.run(prompt)).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{application_error.type}: {application_error.message}'
+
+
+@pytest.mark.parametrize('where', ['model', 'tool'])
+@pytest.mark.parametrize(
+    ('kind', 'error_type', 'message'),
+    [
+        pytest.param('unexpected_model_behavior', 'UnexpectedModelBehavior', 'Unexpected response.', id='listed-class'),
+        pytest.param(
+            'content_filter', 'ContentFilterError', 'Content filter triggered.', id='unexpected-model-behavior-subclass'
+        ),
+        pytest.param(
+            'incomplete_tool_call',
+            'IncompleteToolCall',
+            'Token limit exceeded while generating a tool call.',
+            id='incomplete-tool-call',
+        ),
+        pytest.param('app_config', '_AppConfigError', 'The app is misconfigured.', id='user-error-subclass'),
+    ],
+)
+async def test_durability_non_retryable_error_subclasses(
+    client: Client, where: str, kind: str, error_type: str, message: str
+):
+    """An activity that raises a subclass of an error the retry policy lists as non-retryable, like a
+    `ContentFilterError` or an application's own `UserError`, fails on its first attempt, as the listed class does.
+
+    Temporal's `non_retryable_error_types` matches the error's exact type name, which a subclass doesn't have. The
+    error keeps its own type name and message.
+    """
+    _subclass_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableSubclassWorkflow],
+        plugins=[AgentPlugin(subclass_error_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableSubclassWorkflow.run,
+            args=[f'{kind}:{where}'],
+            id=f'{NonRetryableSubclassWorkflow.__name__}_{kind}_{where}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == f'{error_type}: {message}'
+    assert _subclass_attempts == [kind]
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---

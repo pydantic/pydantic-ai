@@ -247,37 +247,39 @@ class SessionView:
 
     def apply(self, message: ServerMessage) -> None:
         """Change the view as the page changes on `message`."""
-        if isinstance(message, Snapshot):
-            self.session, self.running = message.session, message.running
-            self.questions = {questions.id: questions for questions in message.questions}
-            self.dialogs = {dialog.id: dialog for dialog in message.dialogs}
-            self._log.clear()
-            self._log.items.update((item.id, item) for item in message.items)
-            self._ready.set()
-        elif isinstance(message, TurnStarted):
-            self.running = True
-            self._dequeue(command=False)
-            if message.item is not None:
-                self._log.items[message.item.id] = message.item
-        elif isinstance(message, TurnEnded):
-            self.running, self.last_turn = False, message
-        elif isinstance(message, QuestionAsked):
-            self.questions[message.questions.id] = message.questions
-        elif isinstance(message, QuestionClosed):
-            self.questions.pop(message.id, None)
-        elif isinstance(message, DialogOpened):
-            self.dialogs[message.dialog.id] = message.dialog
-        elif isinstance(message, DialogClosed):
-            self.dialogs.pop(message.id, None)
-        elif isinstance(message, Notice):
-            self.notices.append(message)
-        elif isinstance(message, PluginsChanged):
-            self._dequeue(command=True)  # The page hears this once every command ends.
-        elif isinstance(message, TitleChanged):
-            if self.session is not None:
-                self.session.title = message.title
-        elif isinstance(message, ItemMessage):
-            self._log.apply(message)
+        match message:
+            case Snapshot():
+                self.session, self.running = message.session, message.running
+                self.questions = {questions.id: questions for questions in message.questions}
+                self.dialogs = {dialog.id: dialog for dialog in message.dialogs}
+                self._log.clear()
+                self._log.items.update((item.id, item) for item in message.items if isinstance(item, Item))
+                self._ready.set()
+            case TurnStarted():
+                self.running = True
+                self._dequeue(command=False)
+                if message.item is not None:
+                    self._log.items[message.item.id] = message.item
+            case TurnEnded():
+                self.running, self.last_turn = False, message
+            case QuestionAsked():
+                self.questions[message.questions.id] = message.questions
+            case QuestionClosed():
+                self.questions.pop(message.id, None)
+            case DialogOpened():
+                self.dialogs[message.dialog.id] = message.dialog
+            case DialogClosed():
+                self.dialogs.pop(message.id, None)
+            case Notice():
+                self.notices.append(message)
+            case PluginsChanged():
+                self._dequeue(command=True)  # The page hears this once every command ends.
+            case TitleChanged():
+                if self.session is not None:
+                    self.session.title = message.title
+            case _:
+                if isinstance(message, ItemMessage):
+                    self._log.apply(message)
         self._changed.set()
         self._changed = anyio.Event()
 

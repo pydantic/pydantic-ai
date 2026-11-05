@@ -1,17 +1,4 @@
-"""Track what an agent spends, and stop it when a budget is gone.
-
-`UsageLimits` in Pydantic AI caps tokens, requests and cost for the duration of
-one run. `SpendLimits` covers what that leaves: periods longer than a run,
-partitioning by tenant or user, and a counter that several worker processes
-share. It prices each model response it records with
-[`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], adds it to every
-configured window, and refuses the next request once a window is spent.
-
-The gate is local and immediate. Provider usage APIs and observability backends
-aggregate after the fact and are read by polling, so a number there moves only
-once the requests behind it have already been made -- enough to reconcile a
-counter, not enough to stop the request a runaway loop is about to make.
-"""
+"""The `SpendLimits` capability: per-window spend budgets that refuse requests once spent."""
 
 from __future__ import annotations
 
@@ -90,8 +77,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     Once a recorded response spends a window, `SpendLimits` refuses the next
     request. It does not guarantee that spend stays under the ceiling: the request
     that crosses the line completes, and concurrent runs can each pass the check
-    before any of them records anything. This is a brake on a runaway loop, not an
-    accounting ledger.
+    before any of them records anything. Reconcile against the provider's billing
+    when exact totals matter.
 
     State lives across runs on purpose, so `for_run` is left alone: a daily
     budget that reset every run would not be a daily budget. Per-run isolation
@@ -179,11 +166,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     """`store` as something that takes every window at once, adapting a legacy one."""
 
     def __post_init__(self) -> None:
-        """Reject an `on_unpriced` that arrived as plain data and is not one of the two policies.
-
-        Anything other than `'raise'` behaves as `'zero'`, so a typo in a spec
-        would quietly turn unpriced responses free instead of failing the run.
-        """
+        """Validate the configuration and adapt `store` to `BatchSpendStore`."""
         if self.on_spend is not None:
             warnings.warn(
                 '`SpendLimits.on_spend` is deprecated; subscribe to `SpendRecordedEvent` with `@agent.on_event` '
@@ -192,16 +175,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 stacklevel=2,
             )
 
-        # Budgets sharing a name, window and scope share a counter deliberately, which is how
-        # one window carries a USD and a token ceiling. Two ceilings of the SAME kind on one
-        # counter is not that: it reads as two independent limits and behaves as the smaller
-        # one. Comparing against a single remembered budget per slot missed any collision a
-        # later budget displaced, so the slot carries every attribute the counter key does.
         if self.defer_loading is True:
-            # Both hooks are skipped while a deferred capability is unloaded, so an
-            # exhausted budget would let requests through until the model happened to
-            # load it, and the responses it missed would never be counted. A brake that
-            # the thing being braked decides when to apply is not a brake.
             raise UserError(
                 '`defer_loading` is not supported on `SpendLimits`: the enforcement and accounting '
                 'hooks do not run until the capability is loaded, so an exhausted budget would not '
@@ -229,9 +203,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         # Budgets sharing a key share one counter, and one counter has one expiry: the accrual
         # writes whichever `retain` the first of them carries, so declaration order would decide
-        # when a `'forever'` ceiling quietly rolls over. Rejected rather than reconciled -- taking
-        # the longest would silently extend the shorter budget's horizon, which is the same class
-        # of surprise pointing the other way.
+        # when a `'forever'` ceiling rolls over. Rejected rather than reconciled: taking the
+        # longest would extend the shorter budget's horizon instead.
         retention: dict[tuple[str, str, bool], Budget[AgentDepsT]] = {}
         for budget in self.budgets:
             counter = (budget.name, budget.window, budget.scope is None)
@@ -245,6 +218,19 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 )
             retention[counter] = budget
 
+        self._check_duplicate_ceilings()
+        # A spec delivers `on_unpriced` as plain data, and anything but `'raise'` would behave as `'zero'`.
+        if self.on_unpriced not in _UNPRICED_POLICIES:
+            raise UserError(
+                f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
+            )
+        # Resolved once, and last, so a configuration that was going to be refused is
+        # refused before a deprecated store is reported.
+        self._store = as_batch_store(self.store)
+
+    def _check_duplicate_ceilings(self) -> None:
+        # One counter can carry a USD and a token ceiling, but two ceilings of the same kind
+        # on one counter would behave as the smaller one, not as two independent limits.
         seen: set[tuple[str, str, str, int]] = set()
         for budget in self.budgets:
             for kind, ceiling in (('usd', budget.usd), ('tokens', budget.tokens)):
@@ -258,13 +244,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         'Give them different `name`s.'
                     )
                 seen.add(slot)
-        if self.on_unpriced not in _UNPRICED_POLICIES:
-            raise UserError(
-                f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
-            )
-        # Resolved once, and last, so a configuration that was going to be refused is
-        # refused before a deprecated store is reported.
-        self._store = as_batch_store(self.store)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -429,47 +408,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """
         usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
-        applied_usd, applied_tokens = Decimal(0), 0
-        accrued: Mapping[str, Spent] | None = None
-        for boundary, boundary_token in (*boundaries, (response, token)):
-            boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
-            with money_precision():
-                usd_growth = max(Decimal(0), boundary_usd - applied_usd)
-            tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
-            # Never the first write, even with nothing to add: see above.
-            if accrued is not None and not (usd_growth or tokens_growth):
-                continue
-            first = accrued is None
-            entries: dict[str, SpendEntry] = {}
-            for budget, key in keyed:
-                # Budgets sharing a name, window, and scope share a counter, which is
-                # how one window carries both a USD and a token ceiling. Adding the
-                # response once per budget would double-count it and halve them both.
-                if key not in entries:
-                    entries[key] = SpendEntry(
-                        key=key,
-                        usd=usd_growth,
-                        tokens=tokens_growth,
-                        requests=1 if first else 0,
-                        unpriced=0 if priced or not first else 1,
-                        ttl=budget.ttl,
-                        token=boundary_token(),
-                    )
-            # Every window in one call, so a failure cannot leave the response counted
-            # against the day and not the month. Nothing to apply is not a call: see `_read`.
-            accrued = await self._accrue(list(entries.values()))
-            missing = sorted({key for _, key in keyed} - accrued.keys())
-            if missing:
-                raise UserError(
-                    f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
-                    'mean a `Budget.scope` callable returned a different value on replay; scope and price callables '
-                    'must be deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted '
-                    'key.'
-                )
-            with money_precision():
-                applied_usd += usd_growth
-            applied_tokens += tokens_growth
-        assert accrued is not None
+        accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
         error: Exception | None = None
@@ -528,6 +467,63 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             error = self._handle_unpriced(response, usd)
         return error
 
+    async def _accrue_boundaries(
+        self,
+        keyed: Sequence[tuple[Budget[AgentDepsT], str]],
+        response: ModelResponse,
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]],
+        *,
+        usd: Decimal,
+        priced: bool,
+    ) -> Mapping[str, Spent]:
+        """Accrue each boundary's growth and then `response`'s, returning the totals after the last accrual.
+
+        `_accrue_response` describes how the growth is computed and when a boundary is skipped.
+        """
+        applied_usd, applied_tokens = Decimal(0), 0
+        accrued: Mapping[str, Spent] | None = None
+        for boundary, boundary_token in (*boundaries, (response, token)):
+            boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
+            with money_precision():
+                usd_growth = max(Decimal(0), boundary_usd - applied_usd)
+            tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
+            # Never the first write, even with nothing to add: see `_accrue_response`.
+            if accrued is not None and not (usd_growth or tokens_growth):
+                continue
+            first = accrued is None
+            entries: dict[str, SpendEntry] = {}
+            for budget, key in keyed:
+                # Budgets sharing a name, window, and scope share a counter, which is
+                # how one window carries both a USD and a token ceiling. Adding the
+                # response once per budget would double-count it and halve them both.
+                if key not in entries:
+                    entries[key] = SpendEntry(
+                        key=key,
+                        usd=usd_growth,
+                        tokens=tokens_growth,
+                        requests=1 if first else 0,
+                        unpriced=0 if priced or not first else 1,
+                        ttl=budget.ttl,
+                        token=boundary_token(),
+                    )
+            # Every window in one call, so a failure cannot leave the response counted
+            # against the day and not the month. Nothing to apply is not a call: see `_read`.
+            accrued = await self._accrue(list(entries.values()))
+            missing = sorted({key for _, key in keyed} - accrued.keys())
+            if missing:
+                raise UserError(
+                    f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
+                    'mean a `Budget.scope` callable returned a different value on replay; scope and price callables '
+                    'must be deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted '
+                    'key.'
+                )
+            with money_precision():
+                applied_usd += usd_growth
+            applied_tokens += tokens_growth
+        assert accrued is not None
+        return accrued
+
     def _handle_unpriced(self, response: ModelResponse, usd: Decimal) -> Exception | None:
         """Apply `on_unpriced` to a response whose full price is unknown, returning the error to raise, if any."""
         model = response.model_name or '<unnamed>'
@@ -574,18 +570,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[BudgetStatus, ...]:
         """Where each budget stands.
 
-        Inside a run, pass `ctx` and every budget resolves. Without one -- the
-        reading a cost display wants, and the check to make before starting a
-        durable workflow -- budgets on a
-        `run` or `conversation` window are omitted, since those periods have no
-        meaning outside a run, and a budget declaring a `scope` is omitted
-        unless `scope` names the partition to read, since its callable has no
-        run context to resolve against.
+        Inside a run, pass `ctx` and every budget resolves. Without one, budgets on a
+        `run` or `conversation` window are omitted, since those periods have no meaning
+        outside a run, and a budget declaring a `scope` is omitted unless `scope` names
+        the partition to read.
 
-        Reach for [`exhausted`][pydantic_ai_harness.spend.SpendLimits.exhausted] when the
-        answer gates something: `any(s.exhausted for s in ...)` over a tuple that happens to
-        be empty is a brake that reads as enforcement and inspects nothing, and a `SpendLimits`
-        whose budgets are all scoped returns exactly that tuple.
+        Use [`exhausted`][pydantic_ai_harness.spend.SpendLimits.exhausted] when the answer
+        gates something.
         """
         statuses, _ = await self._resolve(ctx, scope)
         return statuses
@@ -595,9 +586,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[tuple[BudgetStatus, ...], tuple[str, ...]]:
         """The readable budgets, and the names of the ones this call cannot resolve.
 
-        `ctx` and `scope` are two answers to the same question, so supplying both is refused
-        rather than resolved by precedence: a run's own scope silently winning would report
-        one tenant's money under another tenant's name, and the caller has no way to tell.
+        `ctx` and `scope` both name the partition, so supplying both is refused rather than
+        resolved by precedence, which would report one tenant's spend under another's name.
         """
         if ctx is not None and scope is not None:
             raise UserError(
@@ -622,17 +612,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         *,
         scope: str | None = None,
     ) -> bool:
-        """Whether any budget this call can read is exhausted, refusing to guess about the rest.
+        """Whether any budget is exhausted, raising if some budget cannot be read.
 
-        An admission check, and only that. It reads the counters; it reserves nothing and
-        records nothing, so work started on the strength of it is measured only if the agent
-        also carries this capability. Under durable execution, the agent's clock reads,
-        counter reads, and accruals are journaled. The store still has to survive worker
-        replacement for a budget shared across those workers.
+        An admission check: it reads the counters and reserves or records nothing, so work
+        started after it is measured only if the agent also carries this capability.
 
-        `status()` omits what it cannot resolve, and `any(...)` over the remainder is a brake
-        that silently checks nothing when every budget is scoped -- so this raises instead,
-        naming the budgets that need a `scope` or a `ctx`.
+        `status()` omits the budgets it cannot resolve, so `any(s.exhausted for s in ...)`
+        returns `False` without checking anything when every budget is scoped. This raises
+        `UserError` instead, naming the budgets that need a `scope` or a `ctx`.
         """
         statuses, unresolved = await self._resolve(ctx, scope)
         if unresolved:
@@ -664,10 +651,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         `budgets` arrive as mappings and become `Budget` instances, with `usd`
         accepted as a string so YAML cannot round a price through a float. The
         callables and the store have no spec representation and are rejected
-        rather than dropped: a spec that promises per-tenant scoping and does
-        not deliver it is worse than a spec that refuses to load. `**unsupported`
-        stays so that rejection keeps naming the field; core drops it from the schema,
-        so it costs nothing there.
+        rather than dropped. `**unsupported` keeps that rejection naming the field;
+        core drops it from the schema.
         """
         callables = sorted({'store', 'price', 'on_spend', 'clock'} & unsupported.keys())
         if callables:
@@ -690,17 +675,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     async def _now(self) -> datetime:
         """Read the clock durably, naming the remedy when Temporal runs it in orchestration.
 
-        These hooks run in workflow code, and the default clock calls `datetime.now`, which
-        Temporal's workflow sandbox restricts. The sandbox's own error names
-        `datetime.datetime.now` and not what it means here, so it is translated. Matched by
-        class name rather than by importing `temporalio`, which this package does not depend
-        on, and which core's own `pydantic_ai/durable_exec/AGENTS.md` rules out: "Prefer generic
-        capabilities/toolsets/models extension points over engine-specific escape hatches."
-
-        A durability capability dispatches this method to an activity, step, or task. The
-        translation remains for an agent run directly inside a Temporal workflow without
-        durability attached, where the decorator deliberately calls through to this method.
-        Passing the module through the sandbox would only silence the useful symptom.
+        Without a durability capability, an agent run inside a Temporal workflow reads the clock in
+        the workflow sandbox, whose `RestrictedWorkflowAccessError` (matched by class name, since
+        `temporalio` is not a dependency) is translated into advice to attach `TemporalDurability`.
         """
         try:
             return self.clock()
@@ -783,12 +760,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     @durable_operation('read')
     async def _read(self, keys: Sequence[str]) -> Mapping[str, Spent]:
-        """What each key holds, without asking the store about none of them.
+        """What each key holds, skipping the store when there are no keys.
 
-        A `SpendLimits` configured to report rather than enforce, or one whose budgets this
-        call cannot resolve, has no key to read. Asking anyway spends a round trip on a
-        store that answers it and fails outright on one that treats an empty batch as a
-        caller error, and neither buys anything. `add_many` is guarded the same way.
+        A store may treat an empty batch as a caller error, so neither `get_many` nor
+        `add_many` is called with one.
         """
         return await self._store.get_many(keys) if keys else {}
 
@@ -798,13 +773,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return await self._store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
-        """Each budget paired with the store key it accumulates under right now.
-
-        No collision check here. Every part of a key is fixed at construction -- `name`,
-        `window`, and the scope callable -- and `__post_init__` rejects the combinations
-        that would collide, so two budgets share a key only where sharing one is the
-        point. Checking again would repeat that work on every model request.
-        """
+        """Each budget paired with the store key it accumulates under right now."""
         now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
@@ -841,22 +810,27 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
-        known_cost = response.usage.cost
-        if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
-            known_cost = None
-        if response.usage.unmeasured_requests:
-            return known_cost or Decimal(0), False, None
-        if failed_attempt and known_cost is not None:
-            return known_cost, True, None
-        if response.model_name:
-            try:
-                return response.cost().total_price, True, None
-            except (LookupError, ValueError):
-                # LookupError: the registry has no entry. ValueError: it rejects the
-                # usage shape. Either way this is a pricing failure, and letting it
-                # escape would skip `on_unpriced` and drop the accrual with it.
-                pass
-        return Decimal(0), False, None
+        return _default_price(response, failed_attempt=failed_attempt)
+
+
+def _default_price(response: ModelResponse, *, failed_attempt: bool) -> tuple[Decimal, bool, str | None]:
+    """`SpendLimits._price_of` for a response `price` gives no amount for: its own cost, or the registry's."""
+    known_cost = response.usage.cost
+    if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
+        known_cost = None
+    if response.usage.unmeasured_requests:
+        return known_cost or Decimal(0), False, None
+    if failed_attempt and known_cost is not None:
+        return known_cost, True, None
+    if response.model_name:
+        try:
+            return response.cost().total_price, True, None
+        except (LookupError, ValueError):
+            # LookupError: the registry has no entry. ValueError: it rejects the
+            # usage shape. Either way this is a pricing failure, and letting it
+            # escape would skip `on_unpriced` and drop the accrual with it.
+            pass
+    return Decimal(0), False, None
 
 
 def _billed_attempts(

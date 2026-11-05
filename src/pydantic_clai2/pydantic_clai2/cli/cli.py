@@ -128,18 +128,21 @@ def run(*, splash: Splash | None = None) -> None:
             print(handler(store, args.arguments))
             return
         if args.update:
-            settings = _settings_for(store, model=None, request_limit=None)(load_project_settings(Path.cwd()))
+            settings = _settings_for(store, model=None, request_limit=None)(
+                load_project_settings(Path.cwd(), store=store)
+            )
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
-        project = load_project_settings(Path.cwd())
+        project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(
             store,
             model=model,
             request_limit=args.request_limit,
+            agent=agent is not None,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
             agent_model=agent is not None and agent.model is not None and not model,
         )
@@ -259,11 +262,16 @@ async def _update(channel: 'UpdateChannel') -> int:
 
 
 def _settings_for(
-    store: 'SettingsStore', *, model: str | None, request_limit: int | None, agent_model: bool = False
+    store: 'SettingsStore',
+    *,
+    model: str | None,
+    request_limit: int | None,
+    agent: bool = False,
+    agent_model: bool = False,
 ) -> 'Callable[[ProjectSettings], Settings]':
     """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
 
-    With `agent_model`, no model: the `--agent` agent's own one is used.
+    With `agent`, launched with `--agent`: code mode off. With `agent_model`, no model: the agent's own one is used.
     """
     from pydantic_clai2.config import resolve_settings
 
@@ -273,6 +281,8 @@ def _settings_for(
             overrides['model'] = model
         if request_limit is not None:
             overrides['run.request_limit'] = request_limit
+        if agent:
+            overrides |= {'run.code_mode': False, 'run.speculative_code_mode': False}
         settings = resolve_settings(overrides)
         return settings.model_copy(update={'model': None}) if agent_model else settings
 

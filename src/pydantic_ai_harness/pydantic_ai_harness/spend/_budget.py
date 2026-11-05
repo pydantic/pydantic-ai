@@ -38,7 +38,7 @@ def delimited(*parts: str) -> str:
     the boundary between two. Plain joining is enough where every part is checked for the
     separator first, as `store_key`'s are; it is not enough for a provider's response id
     or a caller's run id, where a collision would let one response be mistaken for another
-    and silently dropped as a replay.
+    and dropped as a replay.
     """
     return SEPARATOR.join(f'{len(part)}:{part}' for part in parts)
 
@@ -122,7 +122,7 @@ class Budget(Generic[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        """Reject configurations that would quietly misbehave rather than fail.
+        """Reject configurations that would misbehave rather than fail.
 
         A ceiling of zero or less makes a budget exhausted before anything is
         spent, so the first request is refused with no way to tell that from a
@@ -146,6 +146,17 @@ class Budget(Generic[AgentDepsT]):
                 raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
         if self.tokens is not None and self.tokens <= 0:
             raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
+        self._check_retain()
+        if self.warn_at is not None:
+            if not 0 < self.warn_at <= 1:
+                raise UserError(f'Budget.warn_at must be a fraction in (0, 1]; got {self.warn_at!r}.')
+            if not self.enforces:
+                raise UserError(
+                    f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
+                    'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
+                )
+
+    def _check_retain(self) -> None:
         if isinstance(self.retain, timedelta):
             if self.retain <= timedelta(0):
                 raise UserError(
@@ -159,14 +170,6 @@ class Budget(Generic[AgentDepsT]):
             raise UserError(
                 f'Budget.retain must be a timedelta or one of {sorted(_RETAIN_POLICIES)}; got {self.retain!r}.'
             )
-        if self.warn_at is not None:
-            if not 0 < self.warn_at <= 1:
-                raise UserError(f'Budget.warn_at must be a fraction in (0, 1]; got {self.warn_at!r}.')
-            if not self.enforces:
-                raise UserError(
-                    f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
-                    'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
-                )
 
     @property
     def enforces(self) -> bool:
@@ -226,7 +229,7 @@ def bucket(window: Window, ctx: RunContext[Any] | None, now: datetime) -> str | 
 
 
 def _run_identity(identity: str | None, window: Window) -> str:
-    """The run or conversation id, refusing to silently share a bucket when it is absent."""
+    """The run or conversation id, refusing to share a bucket when it is absent."""
     if identity is None:
         raise UserError(
             f"A Budget with window='{window}' needs the run's {window} id, but this run reports none. "
