@@ -7,6 +7,7 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,6 +28,89 @@ def git(directory: Path, *args: str) -> str:
 
 def no_prompt(prompt: str) -> str:
     pytest.fail('Unexpected cleanup prompt')  # pragma: no cover
+
+
+def test_suppression_follows_checkout_not_path(launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database = repo.parent / 'config.db'
+    store = SettingsStore(database)
+    picker = AsyncMock(return_value='never')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=launched, store=store)
+    assert launched.path.exists()
+
+    # A later launch sees another change, but remembers the same checkout's choice.
+    reopened = current_worktree()
+    assert reopened is not None
+    git(launched.path, 'commit', '--allow-empty', '-m', 'More work')
+    offer_worktree_cleanup(worktree=reopened, store=SettingsStore(database))
+    assert picker.await_count == 1
+
+    # Another checkout, even of the same repository, gets its own question.
+    other = repo.parent / 'other'
+    git(repo, 'worktree', 'add', '-b', 'other', str(other))
+    (other / 'unsaved').write_text('work')
+    offer_worktree_cleanup(worktree=replace(reopened, path=other), store=store)
+    assert picker.await_count == 2
+
+    # Recreate the original checkout at exactly the same path and on the same branch.
+    monkeypatch.chdir(repo)
+    git(repo, 'worktree', 'remove', str(launched.path))
+    git(repo, 'worktree', 'add', str(launched.path), 'feature')
+    (launched.path / 'unsaved').write_text('new work')
+    offer_worktree_cleanup(worktree=reopened, store=store)
+    assert picker.await_count == 3
+    assert launched.path.exists()
+    offer_worktree_cleanup(worktree=reopened, store=SettingsStore(database))
+    assert picker.await_count == 3
+
+
+@pytest.mark.parametrize('failure', ['identity', 'read', 'write'])
+def test_suppression_failure_keeps_checkout(
+    launched: Worktree,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    store = SettingsStore(repo.parent / 'config.db')
+    if failure == 'identity':
+        original_stat = Path.stat
+
+        def stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            if path == launched.path / '.git':
+                raise PermissionError('unreadable checkout identity')
+            return original_stat(path, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, 'stat', stat)
+    elif failure == 'read':
+        with closing(sqlite3.connect(store.path)) as connection, connection:
+            connection.execute('DROP TABLE kept_worktrees')
+    else:
+
+        def fail_save(path: Path, *, checkout: str) -> None:
+            raise sqlite3.OperationalError('read-only database')
+
+        monkeypatch.setattr(store, 'keep_worktree', fail_save)
+    picker = AsyncMock(return_value='never')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=launched, store=store)
+    assert launched.path.exists()
+    picker.assert_awaited_once()
+    error = capsys.readouterr().err
+    assert ('Cannot save' if failure == 'write' else 'Cannot read') in error
+
+
+def test_suppression_does_not_change_unchanged_cleanup(
+    created: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(repo.parent / 'config.db')
+    git(created.path, 'commit', '--allow-empty', '-m', 'Work')
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(return_value='never'))
+    offer_worktree_cleanup(worktree=created, store=store)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
+    unchanged = replace(created, head=git(created.path, 'rev-parse', 'HEAD'))
+    offer_worktree_cleanup(worktree=unchanged, store=store)
+    assert not created.path.exists()
 
 
 @pytest.fixture
@@ -77,19 +161,18 @@ def test_notice_names_what_exit_does(created: Worktree) -> None:
 
 def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     """A checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=replace(created, remove_if_unchanged=False))
     assert created.path.exists()
 
 
-@pytest.mark.parametrize('answer', ['', 'n', 'no', 'perhaps'])
-def test_keep_is_default(launched: Worktree, monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
+def test_keep_is_default(launched: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     def respond(prompt: str) -> str:
         assert str(launched.path) in prompt
-        assert '[y/N]' in prompt
-        return answer
+        assert 'The branch will be kept.' in prompt
+        return 'keep'
 
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=launched)
     assert launched.path.exists()
     assert Path.cwd() == launched.path
@@ -100,20 +183,19 @@ def test_cancel_keeps(launched: Worktree, monkeypatch: pytest.MonkeyPatch, error
     def respond(prompt: str) -> str:
         raise error
 
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=launched)
     assert launched.path.exists()
 
 
-@pytest.mark.parametrize('answer', ['y', ' YES '])
 def test_remove_preserves_branch(
-    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def respond(prompt: str) -> str:
-        return answer
+        return 'remove'
 
     work = git(launched.path, 'rev-parse', 'HEAD')
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=launched)
     assert not launched.path.exists()
     assert Path.cwd() == repo
@@ -132,9 +214,9 @@ def test_git_refusal_keeps_checkout(
         git(launched.path, 'worktree', 'lock', str(launched.path))
 
     def respond(prompt: str) -> str:
-        return 'yes'
+        return 'remove'
 
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=launched)
     assert launched.path.exists()
     assert Path.cwd() == launched.path
@@ -177,10 +259,10 @@ def removal_command(monkeypatch: pytest.MonkeyPatch) -> RemovalCommand:
         return subprocess.CompletedProcess(args, 0)
 
     def confirm(prompt: str) -> str:
-        return 'yes'
+        return 'remove'
 
     monkeypatch.setattr(subprocess, 'run', run)
-    monkeypatch.setattr('builtins.input', confirm)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=confirm))
     return command
 
 
@@ -202,13 +284,11 @@ def test_custom_removal_command_uses_safe_argv_and_repo_cwd(
         launched.path.rename(launched.path.with_name('removed'))
 
     def confirm(prompt: str) -> str:
-        assert prompt == (
-            f'Run registered removal command for worktree {launched.path}? '
-            'It may delete the branch and uncommitted files. [y/N] '
-        )
-        return 'yes'
+        assert prompt.startswith(f'{launched.path}\nRegistered removal command: ')
+        assert prompt.endswith('It may delete the branch and uncommitted files.')
+        return 'remove'
 
-    monkeypatch.setattr('builtins.input', confirm)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=confirm))
     removal_command.action = remove
     token = 'literal; $(not-a-shell)'
     commands = {str(repo / '.git'): ['remove', '{path}', '{repo}', '{branch}', token]}
@@ -264,9 +344,9 @@ def test_custom_removal_command_decline_keeps_checkout(
     launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
     def decline(prompt: str) -> str:
-        return ''
+        return 'keep'
 
-    monkeypatch.setattr('builtins.input', decline)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=decline))
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove', '{path}']})
     assert launched.path.exists()
     assert not removal_command.calls
@@ -312,7 +392,7 @@ def test_custom_command_preparation_failure(
         return git(Path.cwd(), *args)
 
     monkeypatch.setattr(worktrees, '_git', fail)
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove']})
     assert launched.path.exists()
     assert f'Worktree kept at {launched.path}: cannot prepare removal command' in capsys.readouterr().err
@@ -327,7 +407,7 @@ def test_custom_command_undecodable_branch_is_reported(
         return git(Path.cwd(), *args)
 
     monkeypatch.setattr(worktrees, '_git', undecodable)
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['never-run']})
     assert launched.path.exists()
     assert Path.cwd() == launched.path
@@ -340,7 +420,7 @@ def test_custom_command_not_offered_without_tty(
     launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
     monkeypatch.setattr('sys.stdin.isatty', lambda: False)
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
     assert launched.path.exists()
     assert not removal_command.calls
@@ -350,10 +430,10 @@ def test_mismatched_repository_uses_git_removal(
     launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
     def confirm(prompt: str) -> str:
-        assert prompt == f'Remove worktree {launched.path}? The branch will be kept. [y/N] '
-        return 'yes'
+        assert prompt == f'{launched.path}\nThe branch will be kept. Git refuses to remove uncommitted files.'
+        return 'remove'
 
-    monkeypatch.setattr('builtins.input', confirm)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=confirm))
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / 'other.git'): ['custom']})
     assert not launched.path.exists()
     assert git(repo, 'branch', '--list', 'feature')
@@ -363,7 +443,7 @@ def test_mismatched_repository_uses_git_removal(
 def test_unmodified_worktree_ignores_custom_command(
     created: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=created, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
     assert not created.path.exists()
     assert not removal_command.calls
@@ -412,7 +492,7 @@ def test_forced_removal_ignores_registered_command(
 
 def test_missing_git_keeps_checkout(launched: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('PATH', '')
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=launched)
     assert launched.path.exists()
 
@@ -422,9 +502,9 @@ def test_removal_os_error_keeps_checkout(
 ) -> None:
     def respond(prompt: str) -> str:
         monkeypatch.setenv('PATH', '')
-        return 'yes'
+        return 'remove'
 
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=launched)
     assert launched.path.exists()
     assert Path.cwd() == launched.path
@@ -446,13 +526,13 @@ def test_detached_checkout(checkout: Path) -> None:
 
 def test_piped_input_keeps_without_prompt(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('sys.stdin.isatty', lambda: False)
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=created)
     assert created.path.exists()
 
 
 def test_no_worktree_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=None)
 
 
@@ -471,7 +551,7 @@ def test_cli_uses_custom_command_saved_during_session(repo: Path, monkeypatch: p
         )
         git(Path.cwd(), 'commit', '--allow-empty', '-m', 'Work')
 
-    prompts = run_cli(monkeypatch, '-w', 'task', repo=repo, session=save_command, answer='yes')
+    prompts = run_cli(monkeypatch, '-w', 'task', repo=repo, session=save_command, answer='remove')
     assert len(prompts) == 1
     assert commands == [['remove', str(repo / '.worktrees/task')]]
 
@@ -525,8 +605,8 @@ def test_exit_uses_git_when_removal_setting_cannot_be_read(
                 connection.execute('DROP TABLE settings')
         git(checkout, 'commit', '--allow-empty', '-m', 'Work')
 
-    assert run_cli(monkeypatch, repo=repo, session=break_setting, answer='yes') == [
-        f'Remove worktree {checkout}? The branch will be kept. [y/N] '
+    assert run_cli(monkeypatch, repo=repo, session=break_setting, answer='remove') == [
+        f'{checkout}\nThe branch will be kept. Git refuses to remove uncommitted files.'
     ]
     assert not checkout.exists()
     assert git(repo, 'branch', '--list', 'feature')
@@ -539,7 +619,7 @@ def test_unchanged_hand_made_checkout_is_kept_silently(
     checkout: Path, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     worktree = current_worktree()
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=worktree)
     assert checkout.exists()
     assert git(repo, 'branch', '--list', 'feature')
@@ -551,7 +631,7 @@ def test_unchanged_created_checkout_is_removed_silently(
 ) -> None:
     (created.path / 'ignored.log').write_text('build output')
     (repo / '.git/info/exclude').write_text('*.log\n')
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=created)
     assert not created.path.exists()
     assert Path.cwd() == repo
@@ -584,7 +664,7 @@ def test_unchanged_locked_checkout_reports_refusal(
     created: Worktree, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     git(created.path, 'worktree', 'lock', str(created.path))
-    monkeypatch.setattr('builtins.input', no_prompt)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=created)
     assert created.path.exists()
     assert Path.cwd() == created.path
@@ -605,9 +685,9 @@ def test_changed_created_checkout_still_asks(
 
     def respond(prompt: str) -> str:
         prompts.append(prompt)
-        return ''
+        return 'keep'
 
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     offer_worktree_cleanup(worktree=created)
     assert len(prompts) == 1
     assert created.path.exists()
@@ -621,7 +701,7 @@ def run_cli(
     repo: Path,
     session: Callable[[], None] = lambda: None,
     relaunch: bool = False,
-    answer: str = '',
+    answer: str = 'keep',
 ) -> list[str]:
     """Run `clai2` with a stand-in shell; `relaunch` ends it as `/update` does. Returns the prompts asked on exit."""
     prompts: list[str] = []
@@ -641,7 +721,7 @@ def run_cli(
         pass
 
     monkeypatch.setattr(os, 'execv', execv)
-    monkeypatch.setattr('builtins.input', respond)
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     # Beside the repository: a database inside the checkout would be an untracked change.
     database = repo.parent / 'config.db'
     monkeypatch.setattr('sys.argv', ['clai2', '--database', str(database), '-m', 'test', *args])

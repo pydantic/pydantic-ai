@@ -48,6 +48,10 @@ class QuestionMenu:
     total: int
     asker: str | None = None
     """Who asks, such as `Task [1a2b3c4d]`, when it is not the run the user prompted."""
+    allow_custom: bool = True
+    """Whether a last `Other (type answer)` row takes a custom answer; without it, only the options answer."""
+    details: str | None = None
+    """Dimmed details below a title that asks the question itself, in place of the model's question text."""
     cursor: int = 0
     selected: set[int] = field(default_factory=set[int])
     custom: PromptBuffer = field(default_factory=PromptBuffer)
@@ -99,7 +103,7 @@ class QuestionMenu:
             return self.edit_custom(key)
         if isinstance(key, Paste):
             return None
-        rows = self.other + 1
+        rows = self.other + int(self.allow_custom)
         if key in ('up', 'down', 'tab', 'backtab'):
             self.cursor = (self.cursor + (-1 if key in ('up', 'backtab') else 1)) % rows
         elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
@@ -168,14 +172,17 @@ class QuestionMenu:
             choices.append(f'{index + 1}. {marker}{option.label}{description}')
         if self.question.multi_select:
             choices.append(f'{len(choices) + 1}. Done' + ('' if self.selected else ' (select at least one)'))
-        choices.append(f'{len(choices) + 1}. Other (type answer)')
+        if self.allow_custom:
+            choices.append(f'{len(choices) + 1}. Other (type answer)')
         return choices
 
     def _question_rows(self, *, width: int, limit: int) -> list[str]:
         """The question's wrapped text, cut to `limit` rows with an ellipsis so the choices keep room."""
-        rows = _wrap(self.question.question, width=width)
+        rows = _wrap(self.details if self.details is not None else self.question.question, width=width)
         if len(rows) > limit:
             rows = [*rows[: limit - 1], rows[limit - 1] + '…']
+        if self.details is not None:
+            return [theme.sgr(theme.MUTED) + truncate(row, width) + '\x1b[0m' for row in rows]
         return [truncate(row, width) for row in rows]
 
     def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
@@ -201,7 +208,11 @@ class QuestionMenu:
                         return result
         finally:
             # The panel showed the question while it was open; the transcript keeps it above the answer.
-            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
+            console.print(
+                Text(self.details, style=theme.color(theme.MUTED))
+                if self.details is not None
+                else Text(self.question.question, style=theme.color(theme.ACCENT))
+            )
             if owned:
                 surface.restore()
             else:

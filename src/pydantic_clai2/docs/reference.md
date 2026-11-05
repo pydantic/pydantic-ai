@@ -73,7 +73,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--session-id UUID` | Save a new session under this ID |
 | `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
-| `--update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
+| `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
@@ -265,7 +265,7 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
-`clai2 --update` installs the same way without starting a session: it prints uv's output
+`clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
 is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
@@ -273,6 +273,7 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
 `--session-id`, `--agent`, `--worktree`, `--model`, `--request-limit`, or
 `--fork-session`.
+Both spellings accept `--database PATH`, including after `update`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
 typed in the page or in the terminal: the page shows uv's progress, over Settings too while
@@ -2620,8 +2621,12 @@ still applies after `/update now` restarts CLAI in the worktree. An
 unchanged worktree that CLAI reopened, or one you launched inside, is kept without
 asking.
 
-If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
-or EOF keeps it; only `y` or `yes` confirms removal. By default, removal keeps
+If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
+**Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
+The path and removal details appear dimmed below the question. Enter on **No**,
+Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
+keeps it and saves the preference in your settings database for this checkout.
+A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
 with an explanation. You can register a user-only removal command for an exact
 repository in `config.db` with the `worktrees.remove_commands` user setting; when
