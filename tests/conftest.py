@@ -797,6 +797,25 @@ class UndrivableEventLoop(asyncio.AbstractEventLoop):
     """
 
 
+@pytest.fixture
+def fresh_event_loop_policy() -> Iterator[None]:
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
+
+    Policies are deprecated from Python 3.14, where the tests using this are skipped.
+    """
+    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
+    policy = asyncio.DefaultEventLoopPolicy()
+    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
+    try:
+        yield
+    finally:
+        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
+        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
+        if loop is not None:  # pragma: no branch
+            loop.close()
+        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
+
+
 @contextmanager
 def undrivable_event_loop() -> Generator[None]:
     """Make the current event loop one that can't be driven by the caller."""
