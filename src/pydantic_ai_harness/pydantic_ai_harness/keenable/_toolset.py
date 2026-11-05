@@ -6,6 +6,7 @@ import functools
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Concatenate, ParamSpec, Protocol, TypeVar
 
@@ -70,7 +71,13 @@ class HttpKeenableClient:
     _BASE_URL_ENV = 'KEENABLE_API_URL'
     _CLIENT_TITLE = 'Pydantic AI Harness'
 
-    def __init__(self, *, api_key: str | None = None, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         """Configure the client.
 
         Args:
@@ -81,6 +88,12 @@ class HttpKeenableClient:
                 environment variable, then to the hosted API. It must be
                 `https`, or plain `http` against loopback, with no query,
                 fragment, or credentials.
+            http_client: The `httpx.AsyncClient` to send every request through,
+                to reuse connections or to configure a proxy, TLS, or a retrying
+                transport. Its own timeouts apply, alongside the 30-second
+                deadline on each request. It stays open; closing it is up to
+                you. Defaults to a new client for each request, closed when the
+                request ends.
         """
         self._api_key = (api_key if api_key is not None else os.environ.get(self._API_KEY_ENV, '')).strip()
         base = (base_url if base_url is not None else os.environ.get(self._BASE_URL_ENV)) or self._DEFAULT_BASE_URL
@@ -102,6 +115,7 @@ class HttpKeenableClient:
                 f'got {base!r}'
             )
         self._base_url = base
+        self._http_client = http_client
 
     @staticmethod
     def _string_keyed(payload: object) -> dict[str, object]:
@@ -134,9 +148,17 @@ class HttpKeenableClient:
         bounds the whole exchange. `base_url` can point at any server, so the
         body is read in chunks and abandoned once it passes `_MAX_RESPONSE_BYTES`.
         """
+        # The default client lives for one request: nothing here would close a
+        # shared one, and its connections belong to the event loop that opened
+        # them, which each `run_sync` call replaces.
+        client_context = (
+            nullcontext(self._http_client)
+            if self._http_client is not None
+            else httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS)
+        )
         with anyio.fail_after(self._TIMEOUT_SECONDS):
             async with (
-                httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS) as client,
+                client_context as client,
                 client.stream(
                     method, f'{self._base_url}{path}', json=payload, params=params, headers=self._headers()
                 ) as response,

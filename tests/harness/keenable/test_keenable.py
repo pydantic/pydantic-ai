@@ -14,6 +14,7 @@ from typing_extensions import TypedDict, Unpack
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,6 +26,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.keenable import (
     HttpKeenableClient,
     KeenableSearch,
@@ -169,14 +172,41 @@ class TestKeenableSearch:
         assert '`get_page`' in instructions
         assert 'untrusted' in instructions
 
-    def test_guidance_overrides_and_disables_instructions(self):
-        # Custom guidance replaces the research advice, but the untrusted-content
-        # rule rides along: it is the only prompt-injection mitigation shipped here.
-        instructions = KeenableSearch[None](guidance='Just search.').get_instructions()
+    @pytest.mark.parametrize(('native_web_search', 'sent_tools'), [(False, ['web_search']), (True, [])])
+    async def test_web_search_tool_is_a_core_web_search_fallback(self, native_web_search: bool, sent_tools: list[str]):
+        client = FakeClient(results=[_result('https://example.com/one', 'One')])
+        keenable = KeenableSearch[object](num_results=3, client=client)
+        sent: list[list[str]] = []
 
-        assert isinstance(instructions, str)
-        assert instructions.startswith('Just search. ')
-        assert 'untrusted' in instructions
+        def search_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append([tool.name for tool in info.function_tools])
+            if len(messages) == 1 and not native_web_search:
+                return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'cats'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[WebSearchTool]]()
+        model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=supported))
+        result = await Agent(model, capabilities=[WebSearch[object](local=keenable.web_search_tool())]).run('Search.')
+
+        assert sent[0] == sent_tools
+        returns = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if native_web_search:
+            assert returns == []
+        else:
+            assert [part.metadata for part in returns] == [
+                {'sources': [{'url': 'https://example.com/one', 'title': 'One'}]}
+            ]
+            assert client.max_results == [3]
+
+    def test_guidance_overrides_and_disables_instructions(self):
+        # The same contract as `ExaSearch` and `YouSearch`, so the three swap freely.
+        assert KeenableSearch[None](guidance='Just search.').get_instructions() == 'Just search.'
         assert KeenableSearch[None](guidance='').get_instructions() is None
 
     @pytest.mark.parametrize(
@@ -443,6 +473,24 @@ class TestHttpKeenableClient:
         assert all(request.headers['x-api-key'] == 'keen_live_x' for request in seen)
         # The key travels only as a header: never in the URL, never in the body.
         assert all('keen_live_x' not in str(request.url) and b'keen_live_x' not in request.content for request in seen)
+
+    async def test_an_injected_http_client_carries_every_request_and_stays_open(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        seen: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={'results': [_result('https://example.com/one')], 'content': '# A page'})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+            client = HttpKeenableClient(http_client=http_client)
+
+            assert await client.search('cats', max_results=5) == [_result('https://example.com/one')]
+            assert (await client.fetch('https://example.com/one'))['content'] == '# A page'
+            assert not http_client.is_closed
+
+        assert [request.url.path for request in seen] == ['/v1/search/public', '/v1/fetch/public']
 
     async def test_base_url_is_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)

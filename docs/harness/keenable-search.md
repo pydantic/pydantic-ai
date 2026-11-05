@@ -80,7 +80,7 @@ agent = Agent(
 | `num_results` | `5` | How many results `web_search` returns, from 1 to 50. |
 | `max_snippet_chars` | `500` | Excerpt budget per search result. |
 | `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the page with `…` instead. |
-| `guidance` | `None` | Replaces the default research instructions, keeping the untrusted-content rule; `''` contributes none. |
+| `guidance` | `None` | Replaces the default research instructions, including their untrusted-content rule; `''` contributes none. |
 | `client` | `None` | A `KeenableClient` to use instead of the default HTTP client. |
 
 `max_snippet_chars` exists because Keenable's snippets run to thousands of
@@ -112,8 +112,14 @@ from pydantic_ai_harness.keenable import HttpKeenableClient, KeenableSearch
 KeenableSearch(client=HttpKeenableClient(api_key='keen_...'))
 ```
 
-Any object satisfying the `KeenableClient` protocol works, which is also how
+Any object satisfying the [`KeenableClient`][pydantic_ai_harness.keenable.KeenableClient] protocol works, which is also how
 tests substitute a fake.
+
+To reuse connections, or to send requests through a proxy, custom TLS, or a
+retrying transport, pass your own `httpx.AsyncClient` as
+`HttpKeenableClient(http_client=...)`. Its timeouts apply alongside the
+30-second request deadline, and it stays open for you to close. Without one,
+each request opens and closes its own client.
 
 For a proxy, a self-hosted deployment, or a `KeenableClient` of your own, this
 is what the default client sends. `search` posts a JSON body
@@ -151,6 +157,17 @@ have two tools with the same name, so adding one of them next to
 `KeenableSearch` fails on the agent's first run. Give an agent one web search
 capability, or wrap the extra one in [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] to rename its tools.
 
+To use Keenable where the model has no native web search and the provider's
+search elsewhere, pass its tool to core `WebSearch` instead of adding the
+capability:
+
+```python {title="keenable_fallback.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai_harness import KeenableSearch
+
+WebSearch(local=KeenableSearch().web_search_tool())
+```
+
 ## Durable execution
 
 Under [durable execution](../durable_execution/overview.md), each Keenable request is recorded, so a
@@ -184,7 +201,7 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[KeenableSearch])
 ```
 
 The `client` field is not spec-serializable; spec-loaded instances always
-build the default `HttpKeenableClient`, which reads `KEENABLE_API_KEY` and
+build the default [`HttpKeenableClient`][pydantic_ai_harness.keenable.HttpKeenableClient], which reads `KEENABLE_API_KEY` and
 `KEENABLE_API_URL` from the environment.
 
 ## Telemetry
@@ -195,3 +212,11 @@ search and page read.
 ## API reference
 
 ::: pydantic_ai_harness.KeenableSearch
+
+::: pydantic_ai_harness.keenable.KeenableSearchToolset
+
+::: pydantic_ai_harness.keenable.HttpKeenableClient
+
+::: pydantic_ai_harness.keenable.KeenableClient
+
+::: pydantic_ai_harness.keenable.KeenableSource

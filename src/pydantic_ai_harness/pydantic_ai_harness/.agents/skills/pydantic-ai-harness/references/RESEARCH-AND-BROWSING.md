@@ -34,7 +34,8 @@ To use the provider's native search where the model has one and Exa or You.com e
 `ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
 native search, or whose native search can't apply the `include_domains`/`exclude_domains` filters, like Gemini's;
 `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
-`WebSearch`'s native options.
+`WebSearch`'s native options. `KeenableSearch().web_search_tool()` works as that keyless fallback too;
+`KeenableSearch` has no `native` flag.
 
 ## Researcher
 
@@ -238,6 +239,10 @@ Gotchas:
 - Rate limits, 5xx, a 404, a non-JSON body, and an empty page become `ModelRetry`; 401/402/403 stop
   the run. `get_page` reads Keenable's indexed copy, and Keenable documents that an unindexed URL
   fails to fetch. For tests, pass `client=` a fake satisfying the exported `KeenableClient` protocol.
+- `HttpKeenableClient(http_client=...)` sends every request through your `httpx.AsyncClient` (connection
+  reuse, proxy, TLS, retrying transport); you close it. Without it, each request uses a fresh client.
+- A non-empty `guidance` replaces the default instructions, untrusted-content rule included, like
+  `ExaSearch` and `YouSearch`.
 - Citations under `metadata['sources']` as `KeenableSource`, like Exa.
 
 ## BrowserUse
