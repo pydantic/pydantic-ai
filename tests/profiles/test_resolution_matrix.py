@@ -60,6 +60,7 @@ with try_import() as bedrock_imports:
         # Name the concrete transformer in profile snapshots.
         _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
+        _BedrockZaiJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
 
 with try_import() as cohere_imports:
@@ -1373,6 +1374,27 @@ def test_bedrock_zai_glm():
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_leading_assistant_message': True,
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm_5_3_inline_defs():
+    """GLM-5.3 additionally requires `$defs`/`$ref` inlining (see `zai_model_profile`), kept by the Bedrock overlay."""
+    profile = BedrockProvider.model_profile('zai.glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+            'json_schema_transformer': _BedrockZaiJsonSchemaTransformer,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'supports_video_input': False,
