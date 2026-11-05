@@ -47,3 +47,25 @@ def test_get_callable_name():
     name = get_callable_name(obj)
     assert isinstance(name, str)
     assert 'object' in name
+
+
+def test_get_callable_name_does_not_stringify_when_name_is_available():
+    """The `str()` fallback must not be evaluated when `__name__` is present."""
+    calls = []
+
+    class NamedCallable:
+        __name__ = 'named_callable'
+
+        def __call__(self):
+            pass
+
+        def __str__(self):
+            calls.append('str')
+            raise RuntimeError('__str__ should not be called')
+
+        def __repr__(self):
+            calls.append('repr')
+            raise RuntimeError('__repr__ should not be called')
+
+    assert get_callable_name(NamedCallable()) == 'named_callable'
+    assert calls == []
