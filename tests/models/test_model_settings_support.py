@@ -51,6 +51,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import itertools
 import json
 import pkgutil
 import re
@@ -1005,6 +1006,16 @@ def _no_backoff(response: object, retries: int) -> float:
     return 0
 
 
+def _stepping_clock(step_seconds: float) -> object:
+    """A stand-in for the `time` module that moves `step_seconds` on every reading, whatever the machine's speed.
+
+    Mistral's retry loop stops once a failing attempt ends more than `max_elapsed_time` after the first began, so on
+    the real clock a slow first request (a cold CI runner) leaves it making a single attempt.
+    """
+    readings = itertools.count()
+    return types.SimpleNamespace(time=lambda: next(readings) * step_seconds)
+
+
 @dataclass(frozen=True)
 class RetryCase:
     """One model, the `Supported by:` names that cover it, and the attempts it makes with each `max_retries`."""
@@ -1102,6 +1113,8 @@ RETRY_CASES = [
         ('Mistral',),
         _mistral_with_client_retries,
         ('several', 1, 'several'),
+        # The retry config allows 50ms in all: every attempt is 20ms on this clock, so three are made on any machine.
+        instant_backoff=(('mistralai.client.utils.retries.time', _stepping_clock(0.02)),),
         marks=_needs(mistral_available, 'mistral'),
     ),
     RetryCase(
