@@ -20,6 +20,7 @@ wrote.
 from __future__ import annotations as _annotations
 
 import re
+from bisect import bisect_right
 from collections.abc import AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
@@ -521,7 +522,7 @@ def _break_adjacent_text(items: Sequence[str | TextContent | CachePoint]) -> lis
     offset = 0
     for item, text in zip(items, texts):
         end = offset + len(text)
-        cuts = [position - offset for position in joiners if offset < position <= end]
+        cuts = [position - offset for position in joiners[bisect_right(joiners, offset) : bisect_right(joiners, end)]]
         new_items.append(_with_joiners(item, text, cuts) if cuts else item)
         offset = end
     return new_items

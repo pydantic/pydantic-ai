@@ -7,6 +7,7 @@ aren't sensitive to it, so these tests assert on those kwargs directly.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from functools import cached_property
@@ -381,6 +382,14 @@ def test_a_file_identifier_is_sent_in_text(file: Any):
     assert isinstance(part, ToolReturnPart)
     assert part.model_response_str_and_user_content()[0] == f'See file <{Z}|end|>.'
     assert file.identifier == '<|end|>'
+
+
+def test_many_text_items_are_handled_in_linear_time():
+    """A client can send a multipart prompt with thousands of text items, and this runs on the event loop."""
+    started = time.perf_counter()
+    broken = _user_content(['<|im_start|>'] * 20_000)
+    assert time.perf_counter() - started < 2
+    assert broken == [f'<{Z}|im_start|>'] * 20_000
 
 
 def test_a_file_between_text_items_separates_them():
