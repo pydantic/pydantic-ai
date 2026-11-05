@@ -13,7 +13,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from ... import _utils
 from ...exceptions import UnexpectedModelBehavior
-from ...messages import BinaryContent, FilePart, ModelResponseStreamEvent, TextPart
+from ...messages import ModelResponseStreamEvent, TextPart
 from ...native_tools import MCPServerTool
 from .. import StreamedResponse
 from ._response import JSON_OBJECT, build_response, map_step, mark_step
@@ -35,6 +35,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _arguments: dict[int, str] = field(default_factory=dict[int, str])
     _completed: bool = False
     _server_calls: set[str] = field(default_factory=set[str])
+    _media_steps: set[int] = field(init=False, default_factory=set[int])
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._response:
@@ -121,7 +122,11 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         for index, part in enumerate(
             mark_step(await map_step(step, self.provider_name, server_calls=frozenset(self._server_calls)), event.index)
         ):
-            if isinstance(step, gi.ModelOutputStep) and isinstance(part, TextPart):
+            if (
+                isinstance(step, gi.ModelOutputStep)
+                and isinstance(part, TextPart)
+                and self._parts_manager.get_part_by_vendor_id((event.index, index)) is not None
+            ):
                 events.extend(
                     self._parts_manager.handle_text_delta(
                         vendor_part_id=(event.index, index),
@@ -182,6 +187,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         else:
             content.append({'type': 'text', 'text': delta.text})
         step['content'] = [value for value in content]
+        if index in self._media_steps:
+            return ()
         return self._parts_manager.handle_text_delta(
             vendor_part_id=(index, len(content) - 1), content=delta.text, provider_name=self.provider_name
         )
@@ -212,6 +219,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         )
 
     def _map_media(self, index: int, delta: gi.ImageDelta | gi.AudioDelta | gi.VideoDelta | gi.DocumentDelta) -> None:
+        # Files have no deltas: defer later content until the complete file can be emitted in order.
+        self._media_steps.add(index)
         content = _OBJECT_LIST.validate_python(self._steps[index].get('content', []))
         value = JSON_OBJECT.validate_python(delta.model_dump(mode='json', by_alias=True, exclude_none=True))
         if content and content[-1].get('type') == delta.type:
@@ -223,12 +232,6 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             previous.update(value)
         else:
             content.append(value)
-            self._parts_manager.handle_part(
-                vendor_part_id=(index, len(content) - 1),
-                part=FilePart(
-                    BinaryContent(b'', media_type='application/octet-stream'), provider_name=self.provider_name
-                ),
-            )
         self._steps[index]['content'] = [value for value in content]
 
     def _map_annotations(self, index: int, delta: gi.TextAnnotationDelta) -> None:

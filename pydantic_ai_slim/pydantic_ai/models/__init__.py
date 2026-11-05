@@ -183,7 +183,7 @@ from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
 
 if TYPE_CHECKING:
-    import google.genai
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -2967,7 +2967,7 @@ def infer_model(  # noqa: C901
 def _infer_google_model(
     kind: Literal['google', 'google-cloud', 'google-interactions'],
     model_name: str,
-    provider: Provider[google.genai.Client],
+    provider: Provider[Client],
 ) -> Model:
     if kind == 'google-interactions':
         from .google_interactions import GoogleInteractionsModel

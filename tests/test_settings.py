@@ -46,7 +46,8 @@ _MODEL_SETTINGS_CLASSES, _UNIMPORTABLE_MODEL_MODULES = _discover_model_settings(
 # Provider-specific settings fields are namespaced with the provider's name, which is also the name of
 # the module the provider lives in. `mcp_sampling` is not a provider integration but the MCP sampling
 # pseudo-model, so its public fields are namespaced after the protocol instead.
-_PREFIX_OVERRIDES = {'mcp_sampling': 'mcp_'}
+# Google's API adapters share the `google_` provider namespace.
+_PREFIX_OVERRIDES: dict[str, str] = {'mcp_sampling': 'mcp_', 'google_interactions': 'google_'}
 
 
 @pytest.mark.parametrize('settings_cls', _MODEL_SETTINGS_CLASSES.values(), ids=list(_MODEL_SETTINGS_CLASSES))

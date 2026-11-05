@@ -28,6 +28,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
     SpeechPart,
@@ -276,8 +278,11 @@ async def test_stream_mixed_content_and_signature_fragments():
     response = GoogleInteractionsStreamedResponse(
         ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
     )
-    async for _ in response:
-        pass
+    events = [event async for event in response]
+    starts = [(event.index, event.part.part_kind) for event in events if isinstance(event, PartStartEvent)]
+    ends = [(event.index, event.next_part_kind) for event in events if isinstance(event, PartEndEvent)]
+    assert starts == [(0, 'thinking'), (1, 'text'), (2, 'file'), (3, 'text')]
+    assert ends == [(0, 'text'), (1, 'file'), (3, None)]
     parts = response.get().parts
     assert len(parts) == 4
     assert isinstance(parts[0], ThinkingPart)
