@@ -22,6 +22,7 @@ from typing import Annotated, Literal
 from anyio import CancelScope
 from pydantic import Field, TypeAdapter, ValidationError
 
+from pydantic_ai import _utils
 from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import LiveSession
@@ -195,55 +196,67 @@ def _record_socket(record: LiveRecord) -> Path:
     return path
 
 
+# Keep user-visible failures as results so simultaneous oversized replies do not become an ExceptionGroup traceback.
+_ProbeResult = LiveProcess | ResponseTooLargeError | None
+
+
+async def _probe_record(path: Path) -> _ProbeResult:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return None
+        record = _RECORD.validate_json(path.read_bytes())
+        if path.name != f'{record.pid}.json' or record.pid <= 0:
+            return None
+        sock = _record_socket(record)
+        if not _owned_socket(sock):
+            if not sock.exists():
+                _unlink_if_unchanged(path, info.st_ino)
+            return None
+        inode = sock.lstat().st_ino
+        try:
+            os.kill(record.pid, 0)
+        except ProcessLookupError:
+            try:
+                await request(sock, HelloRequest())
+            except (ConnectionRefusedError, FileNotFoundError):
+                _unlink_if_unchanged(sock, inode)
+                _unlink_if_unchanged(path, info.st_ino)
+            return None
+        except PermissionError:
+            return None
+        try:
+            hello = await request(sock, HelloRequest())
+        except ConnectionRefusedError:
+            _unlink_if_unchanged(path, info.st_ino)
+            return None
+        except ResponseTooLargeError as exc:
+            return exc
+        except (OSError, ValueError, TimeoutError, ControlProtocolError, asyncio.LimitOverrunError):
+            return None
+        if hello.instance != record.instance:
+            _unlink_if_unchanged(path, info.st_ino)
+            return None
+        return LiveProcess(pid=record.pid, instance=record.instance, socket=record.socket, sessions=hello.sessions)
+    except ResponseTooLargeError as exc:
+        return exc
+    except (OSError, ValidationError, ValueError):
+        return None
+
+
 async def listing(*, directory: Path | None = None) -> list[LiveProcess]:
-    """Fetch current sessions from each verified process."""
+    """Fetch current sessions concurrently, retaining record order and visible oversized-reply errors."""
     directory = directory or state_dir() / 'live'
     if os.name != 'posix' or not directory.exists():
         return []
     _private_directory(directory)
+    results = await _utils.gather(*(_probe_record(path) for path in directory.glob('*.json')))
     found: list[LiveProcess] = []
-    for path in directory.glob('*.json'):
-        try:
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                continue
-            record = _RECORD.validate_json(path.read_bytes())
-            if path.name != f'{record.pid}.json' or record.pid <= 0:
-                continue
-            sock = _record_socket(record)
-            if not _owned_socket(sock):
-                if not sock.exists():
-                    _unlink_if_unchanged(path, info.st_ino)
-                continue
-            inode = sock.lstat().st_ino
-            try:
-                os.kill(record.pid, 0)
-            except ProcessLookupError:
-                try:
-                    await request(sock, HelloRequest())
-                except (ConnectionRefusedError, FileNotFoundError):
-                    _unlink_if_unchanged(sock, inode)
-                    _unlink_if_unchanged(path, info.st_ino)
-                continue
-            except PermissionError:
-                continue
-            try:
-                hello = await request(sock, HelloRequest())
-            except ConnectionRefusedError:
-                _unlink_if_unchanged(path, info.st_ino)
-                continue
-            except ResponseTooLargeError:
-                raise
-            except (OSError, ValueError, TimeoutError, ControlProtocolError, asyncio.LimitOverrunError):
-                continue
-            if hello.instance == record.instance:
-                found.append(
-                    LiveProcess(pid=record.pid, instance=record.instance, socket=record.socket, sessions=hello.sessions)
-                )
-            else:
-                _unlink_if_unchanged(path, info.st_ino)
-        except (OSError, ValidationError, ValueError):
-            continue
+    for result in results:
+        if isinstance(result, ResponseTooLargeError):
+            raise result
+        if result is not None:
+            found.append(result)
     return found
 
 
@@ -325,8 +338,10 @@ class LiveRegistry:
                     + b'\n'
                 )
             writer.write(payload)
-            await writer.drain()
-        except (OSError, ValueError, TimeoutError, asyncio.LimitOverrunError):
+            await asyncio.wait_for(writer.drain(), _TIMEOUT)
+        except TimeoutError:
+            writer.transport.abort()
+        except (OSError, ValueError, asyncio.LimitOverrunError):
             pass
         finally:
             writer.close()

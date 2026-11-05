@@ -2149,7 +2149,24 @@ See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
 
-On Unix, `clai2 sessions` lists sessions currently open in CLAI processes under your user account, including idle sessions and turns waiting for an `ask_user` answer. It prints `No live sessions.` when none are reachable. Windows reports that Unix sockets are required and exits unsuccessfully. The command does not resume, control, or message sessions. Each row starts with a live-session ID prefix, extended until it is unique across the discovered processes; the folder name is display only. A live process writes its identity and socket path once to a private state file. A same-user `hello` request checks its identity and returns its current sessions, including status transitions tracked in memory. Stale or unreachable processes are not shown; a session listing that exceeds the reply-size bound reports an error instead of silently disappearing. Saved conversations that are not open remain available through `/resume`.
+On Unix, run `clai2 sessions` to see your live CLAI sessions across processes,
+including idle sessions and those waiting for an answer.
+
+| Column | Meaning |
+|---|---|
+| `ID` | A live-session ID prefix, extended until unique across the sessions listed |
+| `Name` | The workspace folder's name, for display only |
+| `Status` | `idle`, `running`, or `waiting` for user input |
+| `Title` | The saved conversation's title |
+| `Workspace` | The folder the session works in |
+
+The command never opens, resumes, messages, or controls a session, and never starts a turn.
+It prints `No live sessions.` when none are reachable. If a process has too much session
+data to list, it reports an error instead of omitting that process silently; close some idle
+sessions and try again. On Windows, it reports that Unix sockets are required and exits
+unsuccessfully.
+
+Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 

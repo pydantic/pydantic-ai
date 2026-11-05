@@ -32,6 +32,7 @@ from pydantic_clai2.runtime.live_registry import (
 )
 
 _RECORD = TypeAdapter(LiveRecord)
+READINESS_WAIT_TIMEOUT = 10
 
 
 def subscribe(callback: Callable[[], None]) -> Callable[[], None]:
@@ -68,11 +69,61 @@ async def test_control_lifecycle_and_bounded_frames(private_runtime: Path) -> No
         writer.write(b'x' * 70_000 + b'\n')
         await writer.drain()
         with suppress(ConnectionResetError):
-            assert await asyncio.wait_for(reader.read(), 10) == b''
+            assert await asyncio.wait_for(reader.read(), READINESS_WAIT_TIMEOUT) == b''
         writer.close()
         with suppress(ConnectionResetError):
             await writer.wait_closed()
     assert not path.exists() and not record.exists()
+
+
+async def test_nonreading_client_cannot_block_shutdown(private_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    sending = asyncio.Event()
+    writers: list[asyncio.StreamWriter] = []
+
+    def large_reply() -> Hello:
+        # Expire only the write deadline, after the request was accepted, without a real timeout wait.
+        monkeypatch.setattr(live_registry, '_TIMEOUT', 0)
+        sending.set()
+        return Hello(
+            op='hello_reply',
+            instance=registry.instance,
+            sessions=[
+                LiveEntry(
+                    id='x',
+                    name='folder',
+                    conversation_id='x',
+                    title='x' * 900_000,
+                    workspace='x',
+                    model='test',
+                    status='idle',
+                )
+            ],
+        )
+
+    monkeypatch.setattr(registry, 'snapshot', large_reply)
+
+    async def serve_once() -> None:
+        async with registry.serving(subscribe):
+            assert not sending.is_set(), 'status tracking must not eagerly build the metadata reply'
+            assert registry.socket_path is not None
+            _reader, writer = await asyncio.open_unix_connection(str(registry.socket_path))
+            writers.append(writer)
+            transport = writer.transport
+            assert isinstance(transport, asyncio.Transport)
+            transport.pause_reading()
+            writer.write(b'{"op":"hello","protocol":1}\n')
+            await writer.drain()
+            await sending.wait()
+
+    try:
+        await asyncio.wait_for(serve_once(), READINESS_WAIT_TIMEOUT)
+        assert registry.socket_path is not None and not registry.socket_path.exists()
+    finally:
+        for writer in writers:
+            writer.close()
+            with suppress(ConnectionResetError):
+                await writer.wait_closed()
 
 
 @pytest.mark.parametrize(
@@ -292,6 +343,59 @@ async def test_abandoned_socket_and_dead_pid_are_cleaned(private_runtime: Path, 
     record_path = save_record(private_runtime, LiveRecord(pid=pid, instance='dead', socket=str(path)))
     assert await listing(directory=private_runtime) == []
     assert not path.exists() and not record_path.exists()
+
+
+async def test_process_probes_overlap(private_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = LiveRegistry(lambda: [], directory=private_runtime)
+    second = LiveRegistry(lambda: [], directory=private_runtime)
+    second.pid = os.getppid()
+    both_started = asyncio.Event()
+    calls = 0
+    original = request
+
+    async def gated(path: Path, frame: HelloRequest) -> Hello:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            both_started.set()
+        await both_started.wait()
+        return await original(path, frame)
+
+    monkeypatch.setattr(live_registry, 'request', gated)
+    async with first.serving(subscribe), second.serving(subscribe):
+        processes = await asyncio.wait_for(listing(directory=private_runtime), READINESS_WAIT_TIMEOUT)
+        assert {process.pid for process in processes} == {first.pid, second.pid}
+
+
+async def test_multiple_oversized_processes_keep_a_visible_error(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = LiveRegistry(lambda: [], directory=private_runtime)
+    second = LiveRegistry(lambda: [], directory=private_runtime)
+    second.pid = os.getppid()
+
+    def oversized() -> Hello:
+        return Hello(
+            op='hello_reply',
+            instance='oversized',
+            sessions=[
+                LiveEntry(
+                    id='x',
+                    name='folder',
+                    conversation_id='x',
+                    title='x' * 1_100_000,
+                    workspace='x',
+                    model='test',
+                    status='idle',
+                )
+            ],
+        )
+
+    monkeypatch.setattr(first, 'snapshot', oversized)
+    monkeypatch.setattr(second, 'snapshot', oversized)
+    async with first.serving(subscribe), second.serving(subscribe):
+        with pytest.raises(ResponseTooLargeError, match='exceeds 1 MiB'):
+            await listing(directory=private_runtime)
 
 
 async def test_second_owner_cannot_replace_live_socket(private_runtime: Path) -> None:

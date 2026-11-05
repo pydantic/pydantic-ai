@@ -33,13 +33,14 @@ In the environment, which only you can read, rather than on the command line `ps
 
 def _list_live_sessions() -> None:
     from pydantic_clai2.runtime.live_registry import ControlProtocolError, listing
+    from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
     if sys.platform == 'win32':
         raise SystemExit('`clai2 sessions` requires Unix sockets.')
     try:
         sessions = [session for record in asyncio.run(listing()) for session in record.sessions]
-    except ControlProtocolError as exc:
-        raise SystemExit(str(exc)) from exc
+    except (ControlProtocolError, OSError) as exc:
+        raise SystemExit(terminal_text(str(exc), keep='')) from exc
     identifiers = {session.id for session in sessions}
     prefixes: dict[str, str] = {}
     for identifier in identifiers:
@@ -52,7 +53,8 @@ def _list_live_sessions() -> None:
     if sessions:
         print('ID\tName\tStatus\tTitle\tWorkspace')
         for session in sessions:
-            print(f'{prefixes[session.id]}\t{session.name}\t{session.status}\t{session.title}\t{session.workspace}')
+            fields = (prefixes[session.id], session.name, session.status, session.title, session.workspace)
+            print('\t'.join(terminal_text(value, keep='') for value in fields))
     else:
         print('No live sessions.')
 

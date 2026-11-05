@@ -29,7 +29,7 @@ from pydantic_clai2.cli import cli, web as web_module
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore, state_dir
 from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, PluginHost, SessionEnd, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
 from pydantic_clai2.runtime.live_registry import (
@@ -220,12 +220,13 @@ async def test_registry_tracks_open_sessions(
     assert await live_listing() == []
 
 
+@pytest.mark.parametrize('name', ['home', '\u001b]52;c;ZXZpbA==\u0007home'])
 async def test_cli_session_id_prefixes_are_unique_across_processes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], name: str
 ) -> None:
     def session(identifier: str) -> LiveRuntime:
         host = PluginHost[None](
-            name='peer', console=Console(file=io.StringIO()), settings={}, workspace=lambda: tmp_path / 'home'
+            name='peer', console=Console(file=io.StringIO()), settings={}, workspace=lambda: tmp_path / name
         )
         return LiveRuntime(live_id=identifier, host=host, running=lambda: False)
 
@@ -235,20 +236,34 @@ async def test_cli_session_id_prefixes_are_unique_across_processes(
     monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
     async with first.serving(lambda callback: lambda: None), second.serving(lambda callback: lambda: None):
         await anyio.to_thread.run_sync(cli.run)
-        lines = capsys.readouterr().out.splitlines()
+        output = capsys.readouterr().out
+        assert '\u001b' not in output and '\u0007' not in output
+        lines = output.splitlines()
         assert lines[0] == 'ID\tName\tStatus\tTitle\tWorkspace'
         assert {line.split('\t')[0] for line in lines[1:]} == {'deadbeef0', 'deadbeef1'}
-        assert {line.split('\t')[1] for line in lines[1:]} == {'home'}
+        expected_name = name.replace('\u001b', '\\x1b').replace('\u0007', '\\x07')
+        assert {line.split('\t')[1] for line in lines[1:]} == {expected_name}
 
 
-def test_cli_listing_errors_are_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_unsafe_registry_error_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = state_dir() / 'live'
+    directory.mkdir(parents=True, mode=0o755)
+    directory.chmod(0o755)
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    with pytest.raises(SystemExit, match='Unsafe CLAI directory'):
+        cli.run()
+
+
+@pytest.mark.parametrize('message', ['Live-session response is too large', '\u001b]52;c;ZXZpbA==\u0007too large'])
+def test_cli_listing_errors_are_visible(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
     async def failed_listing() -> list[LiveProcess]:
-        raise ControlProtocolError('Live-session response is too large')
+        raise ControlProtocolError(message)
 
     monkeypatch.setattr('pydantic_clai2.runtime.live_registry.listing', failed_listing)
     monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
-    with pytest.raises(SystemExit, match='too large'):
+    with pytest.raises(SystemExit, match='too large') as error:
         cli.run()
+    assert '\u001b' not in str(error.value) and '\u0007' not in str(error.value)
 
 
 async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
