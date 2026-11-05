@@ -644,6 +644,29 @@ project
 </context-file>\
 """)
 
+    @pytest.mark.parametrize('working_dir_through_link', [False, True])
+    async def test_walk_up_stops_at_a_home_dir_spelled_through_a_symlink(
+        self, tmp_path: Path, working_dir_through_link: bool
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'above home')
+        _write(tmp_path / 'home' / 'AGENTS.md', 'home')
+        _write(tmp_path / 'home' / 'project' / 'AGENTS.md', 'project')
+        link = tmp_path / 'link'
+        link.symlink_to(tmp_path / 'home', target_is_directory=True)
+        working_dir = (link if working_dir_through_link else tmp_path / 'home') / 'project'
+        cap = RepoContext[object](home_dir=link, nested_traversal=False)
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(working_dir)))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../AGENTS.md">
+home
+</context-file>
+
+<context-file path="AGENTS.md">
+project
+</context-file>\
+""")
+
     async def test_walk_up_loads_one_file_per_directory(self, tmp_path: Path) -> None:
         (tmp_path / '.git').mkdir()
         _write(tmp_path / 'AGENTS.md', 'repo agents')
