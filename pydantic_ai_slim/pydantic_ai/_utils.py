@@ -1342,7 +1342,9 @@ def estimate_string_tokens(text: str) -> int:
     Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
     Blank text counts as one token, so a caller that wants zero for it guards the call itself.
     """
-    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+    # `re.split` yields empty strings at leading/trailing delimiters; those aren't tokens.
+    parts = [part for part in _TOKEN_SPLIT_PATTERN.split(text.strip()) if part]
+    return len(parts) or 1
 
 
 def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
