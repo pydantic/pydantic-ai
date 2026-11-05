@@ -91,7 +91,10 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+`repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
+files as the agent reads, inlining up to 32,000 characters of them per conversation before switching to pointers; pass a
+`RepoContext` to use it in place of the bundled one, whose settings it replaces entirely), `sub_agents=True`,
+`agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
 `strict=False`.
 
@@ -100,10 +103,11 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   capabilities such as approval gates), up to 3 levels deep.
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
-  working directory). Also use it when you bind your own `RepoContext`, or files load twice.
+  working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than
+  binding it next to `Coder`, which would load the files twice; that also keeps the project note.
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
-  `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
+  `FileSystem`/`Shell`/`SubAgents` yourself; `RepoContext` is configured through `repo_context=RepoContext(...)`.
 - **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
   instructions plus a growing conversation on every request, so each request reads back the previous
   one's prefix. What it does per provider and what it costs:
@@ -289,7 +293,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
@@ -359,7 +363,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 ```
 
 - **Pydantic AI never terminates the sandbox**: it bills until `await <Sandbox>().destroy(ref)` or its
-  lifetime ends. `destroy` acts by ID (any instance works; Render, Sprites, Daytona and boxd use the instance's `client=`), does
+  lifetime ends. `destroy` acts by ID (any instance works; Modal, E2B, Render, Sprites, Daytona and boxd use the instance's `client=`), does
   not wake the sandbox, returns quietly if it is gone, and raises `ValueError` for another provider's
   ref. `after_run` skips failed runs; one-shot jobs destroy `ctx.workspace.ref` in `run_error`.
 - `await BoxdSandbox().fork(ref)` copies a boxd machine, files and running processes included, into a new
@@ -545,20 +549,24 @@ every activity reattaches to that environment.
 
 ## RepoContext
 
-Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
-exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
-hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
-directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
+Loads one instruction file per directory (the first of `filenames`, `AGENTS.md` then `CLAUDE.md`) into
+instructions at run start (stable within a run; a change between runs of a conversation is appended
+rather than rewritten). With `expose_inventory_tool=True` it exposes `inventory_agent_context()`
+(locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks), which is left out when
+`FileSystem` is on the agent and its asset roots are inside the working directory (the defaults are;
+`unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext
 
-RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow traversal
+RepoContext(walk_up='repo_root')  # also load the ancestors up to the nearest `.git`
 ```
 
-`home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
-a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
+`walk_up=None` (the default) scans only the working directory; `'repo_root'` walks up to the nearest
+directory holding one of `root_markers` (`('.git',)`; `Coder` uses this); `'all'` walks every ancestor.
+`home_dir` walks up to that ancestor (and stops `'all'` there); it cannot be combined with
+`walk_up='repo_root'`. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises
+`UserError`.
 Use keyword-only `autoload_symlink_roots=()` to authorize shared instruction
 targets for autoload only; the default is empty. Authorize only a directory of
 trusted instructions, not `/` or all of home; repository links can select readable
@@ -566,12 +574,15 @@ files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
 
-`nested_traversal=True` surfaces the instruction files between the working directory and whatever
-`FileSystem` reads or lists, shallowest first, each directory once while its note is in the
-conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
-stays stable.
-With it on, the instructions also gain one static sentence: each instruction file applies to its
-subtree, the deeper file wins, and the user's direct instructions win over all of them.
+`nested_traversal=True` (the default) surfaces the instruction files between the working directory and
+whatever `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
+prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
+applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
+inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
+`None` removes the cap. It doesn't apply with
+`nested_inject='pointer'`.
 
 ## Macroscope
 
