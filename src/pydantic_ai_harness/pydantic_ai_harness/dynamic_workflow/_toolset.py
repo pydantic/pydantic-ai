@@ -31,6 +31,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.deny_unanswered import find_deny_unanswered
 
 try:
     from pydantic_monty import (
@@ -732,7 +733,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model],
+                capabilities=[serving_model, *([d] if (d := find_deny_unanswered(ctx)) else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:

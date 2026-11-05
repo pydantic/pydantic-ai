@@ -49,6 +49,7 @@ from pydantic_ai_harness._sub_agent_output import (
     resumable_output_reason,
     unresumable_output_message,
 )
+from pydantic_ai_harness.deny_unanswered import find_deny_unanswered
 from pydantic_ai_harness.subagents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -1191,6 +1192,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
         capabilities = list(self._shared_capabilities)
+        deny_unanswered = find_deny_unanswered(ctx)
+        if deny_unanswered is not None:
+            capabilities.append(deny_unanswered)
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())

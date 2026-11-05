@@ -8,7 +8,7 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool
+from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, ToolDenied
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -109,7 +109,7 @@ async def test_a_session_no_one_can_be_asked_in_denies_held_calls(tmp_path: Path
     assert await shell.run() == 'exit'
     assert ran == ([COMMAND] if runs else [])
     if not runs:
-        assert f'The user denied this command, so it did not run. {UNANSWERED}' in output.getvalue()
+        assert UNANSWERED in output.getvalue()
 
 
 async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> None:
@@ -287,7 +287,10 @@ async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: P
 
     other = DeferredToolRequests(approvals=[ToolCallPart('other', {}, tool_call_id='x')])
     [_, unanswered, _] = session_permissions(lambda: 'auto')
-    assert await unanswered.handle_deferred_tool_calls(None, requests=other) is None  # pyright: ignore[reportArgumentType]
+    results = await unanswered.handle_deferred_tool_calls(None, requests=other)  # pyright: ignore[reportArgumentType]
+    assert results is not None and list(results.approvals) == ['x']
+    denial = results.approvals['x']
+    assert isinstance(denial, ToolDenied) and denial.message == UNANSWERED
 
 
 async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> None:
