@@ -1206,6 +1206,9 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         BinaryContent(data=b'png', media_type='image/png'),
         TextContent(content='The invoice:'),
         BinaryContent(data=b'pdf', media_type='application/pdf'),
+        BinaryContent(
+            data=b'pptx', media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        ),
         CachePoint(),
         ImageUrl(url='https://example.com/kiwi.jpg'),
         DocumentUrl(url='https://example.com/terms.pdf'),
@@ -1233,6 +1236,11 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
                             'file_data': 'data:application/pdf;base64,cGRm',
                             'filename': 'filename.pdf',
                         },
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,cHB0eA==',
+                            'filename': 'filename.pptx',
+                        },
                         {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
                         {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
                         {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
@@ -1251,6 +1259,8 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
         (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
         (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        # No document either: `mimetypes` knows no extension for it
+        (BinaryContent(data=b'x', media_type='application/custom'), 'cannot send `application/custom` content'),
         (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
         (
             DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),

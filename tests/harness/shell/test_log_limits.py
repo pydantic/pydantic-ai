@@ -212,6 +212,55 @@ class _TermIgnored(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
+class _WatcherTrapsLate(LocalWorkspaceBackend):
+    """Launches jobs whose log watcher sets its `TERM` trap only once the wrapper has started to stop it.
+
+    The wrapper stops it before its trap is set, as when a loaded machine is slow to start it.
+    """
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if not isinstance(command, str) and 'wrapper=' in _script(command):
+            sh, flag, script, *arguments = command
+            late = script.replace(
+                'watch_logs() {\n  trap',
+                'watch_logs() {\n  until [ -e "$dir/watch.stop" ]; do sleep 0.01; done\n  trap',
+            )
+            assert late != script
+            command = [sh, flag, late, *arguments]
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+class _HeldAtWatcherFork(LocalWorkspaceBackend):
+    """Launches a job whose wrapper creates `forking` just before it forks the log watcher, then waits for `release`.
+
+    Serves only the launch: the test reads the job's files directly.
+    """
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert not isinstance(command, str)
+        sh, flag, script, *arguments = command
+        held = script.replace(
+            'watch_logs "$6" "$7" &',
+            ': > "$dir/forking"; until [ -e "$dir/release" ]; do sleep 0.01; done; watch_logs "$6" "$7" &',
+        )
+        assert held != script
+        return await super().run([sh, flag, held, *arguments], shell=shell, env=env, timeout=timeout)
+
+
 class _ClearedWhileCounted(_FirstReadMarked):
     """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
 
@@ -390,7 +439,7 @@ class TestShellLogLimits:
                 await toolset.stop_command(run_context(tmp_path), command_id)
 
     async def test_watcher_stops_without_its_signal(self, tmp_path: Path) -> None:
-        # A `TERM` sent as the watcher starts can be lost before its trap is set; here every one is.
+        # In a shell started with `TERM` ignored, no `TERM` stops the watcher; `watch.stop` still does.
         with anyio.fail_after(10):
             output = await call_tool(
                 [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)],
@@ -399,6 +448,41 @@ class TestShellLogLimits:
                 workspace=_TermIgnored(tmp_path),
             )
         assert '"exit_code": 0' in output
+
+    async def test_log_is_cleared_when_the_watcher_is_stopped_before_its_trap(self, tmp_path: Path) -> None:
+        # A `TERM` before the watcher's trap would end it before its last check.
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)],
+            'shell',
+            {'command': "printf '%03000d' 0", 'timeout': 30},
+            workspace=_WatcherTrapsLate(tmp_path),
+        )
+        assert '"exit_code": 0' in output
+        assert _handle(output, 'Output').read_text() == f'{NOTICE}\n'
+
+    async def test_group_term_as_the_watcher_is_forked_stops_the_job(self, tmp_path: Path) -> None:
+        # A `TERM` with no `stop` file, as the model's stop command sends, before the command starts.
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)],
+            'shell',
+            {'command': 'echo ran', 'mode': 'background'},
+            workspace=_HeldAtWatcherFork(tmp_path),
+        )
+        group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
+        status = _handle(output, 'Status')
+        try:
+            with anyio.fail_after(10):
+                while not (status.parent / 'forking').exists():
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+                os.killpg(group, signal.SIGTERM)
+                (status.parent / 'release').touch()
+                while json.loads(status.read_text())['exit_code'] is None:
+                    await anyio.sleep(0.01)
+            assert json.loads(status.read_text())['exit_code'] == 143
+            assert 'ran' not in _handle(output, 'Output').read_text()
+        finally:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, signal.SIGKILL)
 
     async def test_watcher_exits_once_the_wrapper_is_killed(self, tmp_path: Path) -> None:
         output = await shell(tmp_path, {'command': 'sleep 0.5', 'mode': 'background'}, max_log_bytes=2000)
