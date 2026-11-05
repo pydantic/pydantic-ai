@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import (
     HandleDeferredToolCalls,
     WrapperCapability,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolApprovalResult,
@@ -66,8 +67,14 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
 def find_deny_unanswered(ctx: RunContext[AgentDepsT]) -> DenyUnanswered[AgentDepsT] | None:
     """Return the run's `DenyUnanswered`, unwrapping `WrapperCapability` chains."""
+    try:
+        capabilities = ctx.capabilities
+    except UserError:
+        # A durable-run context does not carry capabilities across the engine
+        # boundary, so there is nothing to forward inside a durable unit.
+        return None
     candidate: AbstractCapability[AgentDepsT] | None
-    for candidate in ctx.capabilities.values():
+    for candidate in capabilities.values():
         while candidate is not None:
             if isinstance(candidate, DenyUnanswered):
                 return candidate

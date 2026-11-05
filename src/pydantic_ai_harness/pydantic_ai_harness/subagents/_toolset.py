@@ -1191,10 +1191,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         started = time.perf_counter()
 
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
-        capabilities = list(self._shared_capabilities)
-        deny_unanswered = find_deny_unanswered(ctx)
-        if deny_unanswered is not None:
-            capabilities.append(deny_unanswered)
+        capabilities = [
+            *self._shared_capabilities,
+            *([deny] if (deny := find_deny_unanswered(ctx)) else []),
+        ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())

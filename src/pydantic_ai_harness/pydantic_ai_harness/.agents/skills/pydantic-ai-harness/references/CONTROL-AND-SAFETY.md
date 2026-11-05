@@ -593,6 +593,19 @@ print(agent.run_sync('Set up storage').output)
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
+## Deny Unanswered
+
+`DenyUnanswered` ends the wait in an unattended run: a held approval is denied with
+`message` (`ToolDenied`) and a deferred `ask_user_question` call is answered as cancelled,
+so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
+stays deferred for its own handler.
+
+Pairs with `AskUser` for unattended runs, where deferred calls exist for a caller who
+answers them in a second run and nobody ever does. `message` changes the denial text.
+`SubAgents` delegations and `DynamicWorkflow` child runs carry the parent run's
+`DenyUnanswered` into the child, so a delegate's question or approval request is denied
+inside the child too and the delegation finishes. `find_deny_unanswered(ctx)` returns the
+run's instance, unwrapping `WrapperCapability` chains.
 ## SystemReminders
 
 By default, enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
