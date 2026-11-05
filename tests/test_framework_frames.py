@@ -1156,9 +1156,10 @@ def test_a_request_holding_both_reasoning_notes_keeps_what_it_first_sent(inline_
     before = model.prepare_messages(first_send, params)[1]
     after = model.prepare_messages(second_send, params)[1]
 
-    assert isinstance(before, ModelRequest) and isinstance(after, ModelRequest)
-    assert [part.content for part in after.parts[: len(before.parts)]] == [part.content for part in before.parts]
-    assert 'The following <assistant_thinking>' in str(after.parts[-1].content)
+    sent_before, sent_after = request_texts([before]), request_texts([after])
+    assert len(sent_after) == len(sent_before) + 1
+    assert sent_after[: len(sent_before)] == sent_before
+    assert 'The following <assistant_thinking>' in sent_after[-1]
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
