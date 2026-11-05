@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    EmbeddingResult,
     ModelRequest,
     ModelResponse,
     RequestUsage,
@@ -22,7 +23,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-from ..conftest import IsDatetime, IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import IsDatetime, IsFloat, IsList, IsStr, RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
@@ -311,7 +312,17 @@ async def test_nvidia_embeddings(
     provider = NvidiaProvider(api_key=nvidia_api_key, http_client=request_capture.client)
     embedder = Embedder(OpenAIEmbeddingModel('nvidia/nemotron-3.5-embed-1b', provider=provider))
     result = await embedder.embed_query('Hello, world!')
-    assert result == snapshot()
+    assert result == snapshot(
+        EmbeddingResult(
+            embeddings=IsList(IsList(IsFloat(), length=2048), length=1),
+            inputs=['Hello, world!'],
+            input_type='query',
+            model_name='nvidia/nemotron-3.5-embed-1b',
+            provider_name='nvidia',
+            timestamp=IsDatetime(),
+            usage=RequestUsage(input_tokens=6),
+        )
+    )
     await embedder.embed_documents(['Hello, world!'])
     await embedder.embed_query('Hello, world!', settings={'extra_body': {'input_type': 'passage'}})
     assert request_capture.paths == ['/v1/embeddings'] * 3
