@@ -822,8 +822,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
     This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
-    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
-    profile, so they're not listed here.
+    enforced by Pydantic AI for every model, `framing_announcement` is applied by it, and `thinking`, `cache` and
+    `tool_choice` are resolved through the model profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -1706,6 +1706,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
@@ -1753,7 +1755,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         the profile's `supports_inline_system_prompts` is `False`. On such a profile it also escapes every
         `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
         when the request has a standing system prompt or instructions, adds one fixed sentence saying what
-        the tag means after the first request's leading system prompts. It also converts
+        the tag means after the first request's leading system prompts: from the first request whose history
+        has a `<system>` block, unless the
+        [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says
+        otherwise. It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume, replaces each file a tool returned that the
         profile's file-input flags say the model can't read with a note naming it, and puts the
@@ -1775,6 +1780,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 the profile alone can't answer. Omitting it falls back to the adapter's effective mode,
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
+            model_settings: The settings this history will be sent with, merged over the model's own
+                `settings`. Only `framing_announcement` is read here.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
@@ -1898,14 +1905,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
+            unwrapped = messages
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
-            if (
-                self._announces_system_voice
-                and first_request is not None
-                and (
-                    standing_prompt_count
-                    or self._get_instruction_parts(messages, model_request_parameters or ModelRequestParameters())
-                )
+            if first_request is not None and self._should_announce_system_voice(
+                messages,
+                wrapped=messages is not unwrapped,
+                standing_prompt_count=standing_prompt_count,
+                model_request_parameters=model_request_parameters,
+                model_settings=model_settings,
             ):
                 messages = _announce_system_voice(messages)
 
@@ -1915,6 +1922,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _should_announce_system_voice(
+        self,
+        messages: list[ModelMessage],
+        *,
+        wrapped: bool,
+        standing_prompt_count: int,
+        model_request_parameters: ModelRequestParameters | None,
+        model_settings: ModelSettings | None,
+    ) -> bool:
+        """Whether `prepare_messages` adds `SYSTEM_VOICE_ANNOUNCEMENT` to a history whose mid-conversation system prompts it has `<system>`-wrapped.
+
+        By default (`framing_announcement='when_needed'`) the tag is announced only once the history has a `<system>`
+        block for it to explain, so an agent that never sends a mid-conversation system prompt keeps its standing
+        prompt as written. `wrapped` is decided by the messages alone, so a replay or a later run of the same history
+        renders the same. The sentence joins an existing standing prompt or instructions, never creates one.
+        """
+        if not self._announces_system_voice:
+            return False
+        mode = (merge_model_settings(self.settings, model_settings) or {}).get('framing_announcement', 'when_needed')
+        if mode == 'never' or (mode == 'when_needed' and not wrapped):
+            return False
+        return bool(
+            standing_prompt_count
+            or self._get_instruction_parts(messages, model_request_parameters or ModelRequestParameters())
+        )
 
     def _translate_legacy_tool_reveals(
         self,
@@ -3853,10 +3886,12 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Add `SYSTEM_VOICE_ANNOUNCEMENT` to the standing prompt, for a model that gets mid-conversation system prompts as `<system>`-tagged user text.
 
     Models without mid-conversation system messages follow a `<system>`-tagged change, withdrawal or new rule
-    far more reliably when the standing prompt has said what the tag is. The sentence is fixed, and is added
-    to every request whose standing prompt exists, from the first, so the prefix it's part of stays the same
-    from request to request. It goes after the first request's opening system prompts, which every adapter
-    lifts into the provider's system field, ahead of the instructions.
+    far more reliably when the standing prompt has said what the tag is. The sentence is fixed, and by default
+    (`framing_announcement='when_needed'`) is added from the first request whose history has a mid-conversation
+    system prompt, and to every request after it, since the history keeps that prompt. An agent that never sends one pays nothing for it, and one that does
+    changes its cache prefix once, at that request, and keeps it stable from then on. It goes after the first
+    request's opening system prompts, which every adapter lifts into the provider's system field, ahead of the
+    instructions.
     """
     first_request_idx, first_request = next(
         (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)

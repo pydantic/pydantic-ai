@@ -548,6 +548,8 @@ class TemporalModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
         """Pre-process messages using the currently active model's profile.
 
@@ -559,7 +561,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             return messages
-        return current.prepare_messages(messages, model_request_parameters)
+        return current.prepare_messages(messages, model_request_parameters, model_settings=model_settings)
 
     def _reprepare_messages(self, params: _RequestParams, model_for_request: Model) -> list[ModelMessage]:
         """Re-run `prepare_messages` against the concrete model, where the workflow couldn't.
@@ -579,7 +581,11 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
-        prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
+        prepared = model_for_request.prepare_messages(
+            params.messages,
+            params.model_request_parameters,
+            model_settings=cast(ModelSettings | None, params.model_settings),
+        )
         if prepared is params.messages:
             return prepared
         return repair_messages(prepared, repair_last_response=True)

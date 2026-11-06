@@ -8749,7 +8749,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
     )
-    assert system_prompt == [{'text': 'Generate a short greeting.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
+    assert system_prompt == [{'text': 'Generate a short greeting.'}]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 
