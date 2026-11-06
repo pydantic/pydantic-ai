@@ -160,7 +160,10 @@ temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
-prefect = ["prefect>=3.7.5"]
+# Prefect's server imports a `min_items` keyword that FastAPI 0.155 dropped, and prefect>=3.9.0, which
+# drops it, requires Python 3.11 while this release still supports 3.10. Cap FastAPI instead: it is
+# prefect's own dependency, and 0.154 is the newest whose keyword Prefect still passes.
+prefect = ["prefect>=3.7.5", "fastapi<0.155"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

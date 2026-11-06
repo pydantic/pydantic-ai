@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform != 'win32'",
@@ -1286,7 +1286,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.9.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../../pydantic_evals" },

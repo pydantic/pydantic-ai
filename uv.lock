@@ -6740,6 +6740,7 @@ openrouter = [
     { name = "openai" },
 ]
 prefect = [
+    { name = "fastapi" },
     { name = "prefect" },
 ]
 realtime = [
@@ -6807,6 +6808,7 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
+    { name = "fastapi", marker = "extra == 'prefect'", specifier = "<0.155" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
