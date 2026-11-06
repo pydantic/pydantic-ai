@@ -112,7 +112,7 @@ def test_frame_fits_and_handles_narrow_terminals(width: int, height: int) -> Non
 def test_focus_labels_and_persistent_project_highlight(monkeypatch: pytest.MonkeyPatch, color: str, width: int) -> None:
     monkeypatch.setenv('COLORTERM', color)
     widget, _ = browser()
-    highlight = module.theme.sgr(module.theme.INFO, bold=True)
+    highlight = module.theme.sgr(module.theme.ACCENT)
     project = f'{highlight}> /a/project (2)\x1b[0m'
     assert project in '\n'.join(widget.frame(width=120, height=24))
     assert 'SELECT PROJECT' in '\n'.join(widget.frame(width=width, height=24))
@@ -133,6 +133,25 @@ def test_focus_labels_and_persistent_project_highlight(monkeypatch: pytest.Monke
     widget.handle_key(Key.DOWN)
     assert f'{highlight}> /b/project (1)\x1b[0m' in '\n'.join(widget.frame(width=120, height=24))
     assert project not in '\n'.join(widget.frame(width=120, height=24))
+
+
+@pytest.mark.parametrize('color', ['', 'truecolor'])
+def test_headings_and_header_use_the_terminal_foreground(monkeypatch: pytest.MonkeyPatch, color: str) -> None:
+    """Bright cyan headings were nearly invisible on a light background."""
+    monkeypatch.setenv('COLORTERM', color)
+    widget, _ = browser()
+    frame = widget.frame(width=120, height=24)
+    lines = '\n'.join(frame)
+    assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
+    assert '\x1b[1mSELECT PROJECT\x1b[0m' in lines
+    assert '\x1b[1mSESSIONS' not in lines
+    widget.handle_key(Key.ENTER)
+    frame = widget.frame(width=120, height=24)
+    lines = '\n'.join(frame)
+    assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
+    assert 'PROJECTS' in lines and '\x1b[1mPROJECTS' not in lines
+    assert '\x1b[1mSELECT SESSION: /a/project | Sort: recent\x1b[0m' in lines
+    assert not any(module.theme.sgr(module.theme.INFO) in line for line in frame)
 
 
 def test_project_selection_preview_and_back() -> None:
@@ -464,7 +483,7 @@ def test_checkout_tree_and_missing_folders(tmp_path: Path) -> None:
     ]
     assert widget.checkout_label(MISSING, str(twin)) == str(twin)
     muted = module.theme.sgr(module.theme.MUTED)
-    highlight = module.theme.sgr(module.theme.INFO, bold=True)
+    highlight = module.theme.sgr(module.theme.ACCENT)
     frame = '\n'.join(widget.frame(width=120, height=24))
     assert f'{highlight}> repo (2)\x1b[0m' in frame
     assert f'{muted}  ├─ main (1)\x1b[0m' in frame

@@ -66,8 +66,10 @@ _FILTERS: tuple[SourceFilter, ...] = (None, 'clai', *IMPORT_SOURCES)
 """What `f` cycles through: every session, CLAI's own, then each agent's imports."""
 
 
-def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
-    """Use the shared brand palette, including the 16-color fallback."""
+def colored(text: str, *, role: str | None = None, bold: bool = False) -> str:
+    """Use the terminal's own foreground by default, and a brand role only where one marks state."""
+    if role is None:
+        return f'\x1b[1m{plain(text)}\x1b[0m' if bold else plain(text)
     return f'{theme.sgr(role, bold=bold)}{plain(text)}\x1b[0m'
 
 
@@ -324,7 +326,7 @@ class SessionBrowser:
         else:
             line = f'{marker}{self.project_label(project)} ({count})'
         if (project, checkout) == chosen:
-            return colored(line, bold=True)
+            return colored(line, role=theme.ACCENT)
         return colored(line, role=theme.MUTED) if checkout else plain(line)
 
     def _sessions_frame(self, *, budget: int, width: int) -> list[str]:
@@ -382,7 +384,7 @@ class SessionBrowser:
         counts = next((text for text in labelled if len(text) <= width - width // 3), counts)
         title = truncate(plain(title), max(1, width - len(counts) - 1))
         if entry == selected and self.mode == 'sessions':
-            title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
+            title = f'{theme.sgr(theme.ACCENT)}{title}\x1b[0m'
         line = title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts
         return [line, self._session_detail(entry, source=source, width=width)]
 
