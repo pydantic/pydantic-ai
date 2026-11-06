@@ -43,6 +43,10 @@ The key follows the model class you use, not who makes the underlying model: Cla
 API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
 tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
 must not run the tool without them.
+
+To keep the local fallback of a provider-adaptive capability, pass the configured tool to its `native=` argument,
+for example `WebSearch(native=WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}))`.
+
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
 [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
