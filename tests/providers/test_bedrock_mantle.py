@@ -223,7 +223,7 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 
 
 def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
-    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol on the Converse API (see
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra on the Converse API (see
     # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
     # `BedrockConverseModel`. Converse rejects their sampling settings and takes their reasoning effort in the
     # Responses API shape; GPT-6 Astra and GPT-6.1 Sol can't turn reasoning off. Bedrock documents a 30-minute
@@ -236,6 +236,7 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
         'gpt-6-luna',
         'gpt-6-astra',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     ):
         retention = {'default_cache_retention': timedelta(minutes=30)} if base_name.startswith('gpt-5.6') else {}
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
@@ -263,6 +264,8 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     # GPT-6.1 Sol is served under both Converse routing prefixes.
     assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-sol'), BedrockConverseModel)
     BedrockConverseModel('global.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-terra'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
 
 
 async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
@@ -277,6 +280,27 @@ async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
         'stopReason': 'end_turn',
         'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
         'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?')
+
+    inference_config = mock_converse.call_args.kwargs.get('inferenceConfig', {})
+    assert 'temperature' not in inference_config
+    assert 'topP' not in inference_config
+
+
+async def test_bedrock_converse_gpt_6_1_terra_drops_sampling_settings(
+    allow_model_requests: None, mocker: MockerFixture
+) -> None:
+    model = BedrockConverseModel('us.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
+    agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
     }
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
