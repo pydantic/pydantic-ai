@@ -133,7 +133,8 @@ class Instrumentation(AbstractCapability[Any]):
     `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
     conversation. An Anthropic request with cache breakpoints records the ones it asked for and the ones that
     fit the provider's limit as `pydantic_ai.cache.requested_breakpoints` and
-    `pydantic_ai.cache.applied_breakpoints`.
+    `pydantic_ai.cache.applied_breakpoints`, as paths into the request as sent to Anthropic (after consecutive
+    request parts are merged into one message), not into the message history.
     """
 
     _safe_at_runtime: ClassVar[bool] = True

@@ -3509,7 +3509,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[str]:
         """Where the request's cache breakpoints are, as `system[i]`, `tools[i]` and `messages[i].content[j]` paths.
 
-        The breakpoint Anthropic places itself under automatic caching is listed as `automatic`.
+        The paths index the request as sent to Anthropic, after consecutive request parts are merged into one
+        message, so they don't line up with the message history; a `CachePoint` is marked on the block before it. The
+        breakpoint Anthropic places itself under automatic caching is listed as `automatic`.
         """
         # A plain-string system prompt can't carry a breakpoint.
         system_blocks = system_prompt if isinstance(system_prompt, list) else []
