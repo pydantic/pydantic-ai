@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Never
+from types import TracebackType
+from typing import Any, Never, Self
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -30,7 +31,10 @@ from pydantic_monty import (
     MontySyntaxError,
     MontyTypingError,
     MountDir,
+    OSPolicy,
+    ResourceLimits,
 )
+from typing_extensions import TypedDict, Unpack
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import UserError
@@ -217,6 +221,67 @@ async def test_async_monty_sandbox_is_awaited() -> None:
             await agent.run('dial')
 
     assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-async']
+
+
+class _CheckoutOptions(TypedDict, total=False):
+    limits: ResourceLimits
+    type_check: bool
+    type_check_stubs: str | None
+    os_policy: OSPolicy
+
+
+@dataclass
+class _StructuralPool:
+    """A typed pool adapter with only the context-manager and checkout surface CodeMode uses."""
+
+    native: AsyncMonty
+    calls: list[str]
+
+    async def __aenter__(self) -> Self:
+        await self.native.__aenter__()
+        self.calls.append('enter')
+        return self
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self.calls.append('exit')
+        await self.native.__aexit__(exc_type, exc_value, traceback)
+
+    def checkout(self, **kwargs: Unpack[_CheckoutOptions]) -> AbstractAsyncContextManager[AsyncMontySession]:
+        self.calls.append('checkout')
+        return self.native.checkout(**kwargs)
+
+
+@pytest.mark.parametrize('async_factory', [False, True])
+@pytest.mark.parametrize('as_toolset', [False, True])
+async def test_structural_pool_factory_typechecks_and_runs(async_factory: bool, as_toolset: bool) -> None:
+    """Sync and async factories accept typed non-native pools on both public surfaces and keep session state.
+
+    Pyright checks these constructor calls without casts or ignores; execution also pins ownership and cleanup.
+    """
+    calls: list[str] = []
+
+    def build_pool() -> _StructuralPool:
+        calls.append('factory')
+        return _StructuralPool(AsyncMonty(), calls)
+
+    async def build_pool_async() -> _StructuralPool:
+        return build_pool()
+
+    factory = build_pool_async if async_factory else build_pool
+    model = _snippets_model('value = 40', 'value + 2')
+    if as_toolset:
+        agent = Agent(
+            model, deps_type=type(None), toolsets=[CodeModeToolset(FunctionToolset[None](), monty_sandbox=factory)]
+        )
+    else:
+        agent = Agent(model, deps_type=type(None), capabilities=[CodeMode[None](monty_sandbox=factory)])
+
+    result = await agent.run('reuse a session from a structural pool')
+
+    assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 42
+    assert calls == ['factory', 'enter', 'checkout', 'exit']
 
 
 @pytest.mark.parametrize('error_type', [RuntimeError, UserError, LogfireConfigError])

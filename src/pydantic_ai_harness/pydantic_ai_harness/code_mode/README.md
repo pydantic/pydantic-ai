@@ -603,7 +603,10 @@ them as `http://` and `https://`. Remove any path they carry, such as `/monty`.
 
 A URL connects without a key. To send metadata such as an `authorization` header, or to set other
 pool options, pass a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`
-instead; Code Mode builds a pool from it for each run:
+or a compatible pool adapter. Code Mode calls the factory for each run. The pool is an async
+context manager with `checkout` accepting `limits`, `type_check`, `type_check_stubs`, and
+`os_policy` as keyword arguments and returning an async context manager that yields a
+`pydantic_monty.AsyncMontySession`. Adapters do not need to inherit a native Monty pool class:
 
 ```python {test="skip"}
 from pydantic_monty import AsyncMontyRemote

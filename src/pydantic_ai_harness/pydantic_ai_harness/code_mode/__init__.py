@@ -1,4 +1,8 @@
-"""Code mode capability: route tool calls through a sandboxed Python environment."""
+"""Route tool calls through a sandboxed Python environment with `CodeMode` or `CodeModeToolset`.
+
+Sandbox factories return native pools or compatible adapters: an async context manager with
+`checkout` yielding native Monty sessions. Adapters do not need to inherit a native pool class.
+"""
 
 from pydantic_ai_harness._code_tools import FOLD_INTO_CODE_MODE
 from pydantic_ai_harness.code_mode._capability import CodeMode

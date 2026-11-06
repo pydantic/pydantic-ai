@@ -212,7 +212,7 @@ CodeMode(
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None,  # an http(s):// server root URL, or a function returning the pool
+    monty_sandbox=None,                    # a server root URL, or a sync or async pool factory (see below)
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = True,          # keep the tool catalog in an appending instruction block
 )
@@ -223,7 +223,8 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_secs` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header) or a compatible pool adapter, to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_secs` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- A factory pool is an async context manager with `checkout` accepting `limits`, `type_check`, `type_check_stubs`, and `os_policy` as keyword arguments and returning an async context manager yielding an `AsyncMontySession`. Adapters do not need to inherit a native Monty pool class.
 - For Logfire Agent Sandboxes, install `logfire[agent-sandboxes]>=5.4.0`. Logfire 5.4.0 and earlier still add `/monty-ws/`, so use `partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev')` with the server root for your key's region. When your release includes the gRPC default from [Logfire #2737](https://github.com/pydantic/logfire/pull/2737), pass `monty_sandbox=logfire.agent_sandboxes` directly. Configure credentials in Logfire, not in model-visible text.
 - Pool adapters can wrap Monty errors with an explicit `__cause__`. Code Mode searches a bounded cause chain to apply the underlying Monty error's recovery policy. Setup failures preserve the outer exception.
 

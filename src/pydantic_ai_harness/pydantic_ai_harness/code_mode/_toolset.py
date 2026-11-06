@@ -41,7 +41,6 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
-        AsyncMontyRemote,
         MontyCrashedError,
         MontyDisconnectError,
         MontyRuntimeError,
@@ -69,6 +68,7 @@ from pydantic_ai_harness._code_tools import (
 )
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
+    MontyPool,
     MontyRunState,
     PrintCapture,
     find_monty_error,
@@ -135,10 +135,10 @@ def _check_monty_sandbox_url(url: str) -> None:
 
 
 def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None,
+    monty_sandbox: str | Callable[[], MontyPool | Awaitable[MontyPool]] | None,
     monty_sandbox_url: str | None,
     owner: str,
-) -> str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None:
+) -> str | Callable[[], MontyPool | Awaitable[MontyPool]] | None:
     """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
     if monty_sandbox_url is None:
         return monty_sandbox
@@ -859,10 +859,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
+    monty_sandbox: str | Callable[[], MontyPool | Awaitable[MontyPool]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
+    """Where sandboxed code runs: a server-root URL, or a sync or async pool factory.
+
+    A pool is an async context manager with `checkout` accepting `limits`, `type_check`,
+    `type_check_stubs`, and `os_policy`, returning an async context manager for a native
+    `pydantic_monty.AsyncMontySession`. Native pools and compatible adapters are accepted.
+    """
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
