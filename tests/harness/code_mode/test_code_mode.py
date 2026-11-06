@@ -1614,27 +1614,15 @@ class TestCodeMode:
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMonty', failing_monty)
 
         threads_before = set(threading.enumerate())
-        threads_after_retry: list[str] = []
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(RuntimeError, match='spawn failed'):
+            await wrapper.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('run_code', {'code': '1'})])
-            # Checked while the run is still live: the run's own teardown would hide a leak.
-            # anyio's `to_thread` pool, which runs this sync function, is not the portal.
-            new_threads = set(threading.enumerate()) - threads_before
-            threads_after_retry.extend(t.name for t in new_threads if t.name != 'AnyIO worker thread')
-            return ModelResponse(parts=[TextPart('done')])
-
-        result = await Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()]).run('fail to spawn')
-
-        retry = next(
-            p
-            for m in result.all_messages()
-            for p in m.parts
-            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-        )
-        assert 'spawn failed' in str(retry.content)
-        assert threads_after_retry == []
+        new_threads = set(threading.enumerate()) - threads_before
+        assert [thread.name for thread in new_threads if thread.name != 'AnyIO worker thread'] == []
 
     async def test_agent_run_preserves_repl_between_code_calls(self) -> None:
         """Code Mode keeps one REPL across model steps in an agent run."""
@@ -3409,7 +3397,7 @@ class TestCodeMode:
         run_code = tools['run_code']
 
         await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, run_code)
-        with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
+        with pytest.raises(ModelRetry, match='ran longer than its time limit') as exc_info:
             await wrapper.call_tool(
                 'run_code', {'code': 'r = await add(a=1, b=2)\nwhile True:\n    pass'}, ctx, run_code
             )

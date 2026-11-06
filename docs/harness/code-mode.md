@@ -597,6 +597,23 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_sandbox=san
 That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
 in place of `max_duration_secs`.
 
+For Logfire Agent Sandboxes, use a Logfire version that provides `agent_sandboxes` and pass its
+pool factory without calling it:
+
+```python {test="skip"}
+import logfire
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[CodeMode(monty_sandbox=logfire.agent_sandboxes)],
+)
+```
+
+Configure the sandbox credentials in Logfire, not in the model's instructions or tool arguments.
+
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
@@ -605,6 +622,29 @@ output stay in your process, and REPL state persists across `run_code` calls as 
 
 Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
 client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+
+### Error handling
+
+Pool creation, connection, and session checkout errors propagate to the application caller. These
+include missing or invalid credentials, an invalid server URL, and exceptions raised by a pool factory.
+They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
+refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
+if it still fails, the error propagates to the caller.
+
+Errors the model can act on are returned as model retries:
+
+- Syntax, type, and ordinary runtime errors include the sandbox's diagnostic.
+- Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
+  session and ask the model to do less work per call.
+- Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
+- A remote `MemoryError` resets the session and asks the model to use less memory, for example by
+  processing smaller batches.
+- A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
+  Remote host-side error details are omitted from model retries because they can contain pool URLs
+  or credentials. The original exception remains the retry's cause for application-side diagnostics.
+
+After a reset, the model must re-run imports and recreate state. The retry lists nested calls that
+already started so the model can avoid repeating their side effects; Code Mode does not replay them.
 
 ## Temporal durability
 

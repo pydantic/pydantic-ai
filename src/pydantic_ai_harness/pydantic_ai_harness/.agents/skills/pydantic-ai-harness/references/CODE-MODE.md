@@ -122,7 +122,7 @@ CodeMode(
 )
 ```
 
-- `max_retries` (default 3): sandbox errors (including syntax/type errors) are sent back to the model to redraft, up to this many times.
+- `max_retries` (default 3): execution errors (including syntax/type errors) are sent back to the model to redraft, up to this many times. Pool creation, connection, and checkout errors propagate to the caller, not the model. Capacity refusals get one checkout retry after a short backoff before propagating.
 - `max_tool_calls` (default 100): nested calls per `run_code` call. A call past the budget fails at its call site; if uncaught, the model gets a retry listing the calls that already started.
 - The run's `UsageLimits(tool_calls_limit=...)` counts nested calls and the `run_code` call that makes them. A nested call that would exceed it ends the run with `UsageLimitExceeded`, even when the snippet catches the error. A call launched early by `speculate` counts from the moment it starts, including one the snippet never claims. A launch the limit refused runs cold if the snippet asks for it.
 - `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_secs`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_secs`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
@@ -133,6 +133,13 @@ State persists between `run_code` calls during the same agent run. Imports, vari
 functions carry over until the run ends. The model passes `restart: true` in the `run_code` arguments to
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
+
+A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
+Remote session and idle timeouts explain that state is lost. A remote `MemoryError` resets the
+session and asks the model to use smaller batches. Remote host-side error details are omitted
+from retries because they may contain pool URLs or credentials; the original exception remains
+the cause for application-side diagnostics. Retries list nested calls that already started so
+the model can avoid repeating their side effects.
 
 State does not carry over to the next agent run unless `repl_store` is set: an object with async
 `load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
@@ -212,6 +219,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- For Logfire Agent Sandboxes, pass `monty_sandbox=logfire.agent_sandboxes` without calling the factory. This requires a Logfire version that provides `agent_sandboxes`; configure credentials in Logfire, not in model-visible text.
 
 ## Durable Execution
 

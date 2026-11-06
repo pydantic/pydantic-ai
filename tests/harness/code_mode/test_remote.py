@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, Never
 
 import pytest
-from pydantic_monty import AsyncMontyRemote, MountDir
+from logfire.exceptions import LogfireConfigError
+from pydantic_monty import AsyncMontyRemote, MontyRefusedError, MountDir
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -25,11 +26,11 @@ def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
     return [part for message in messages for part in message.parts if isinstance(part, part_type)]
 
 
-def _retries(messages: list[ModelMessage]) -> list[ToolReturnPart]:
+def retry_parts(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for part in _parts(messages, ToolReturnPart) if part.outcome == 'retried']
 
 
-def _snippets_model(*snippets: str) -> FunctionModel:
+def snippets_model(*snippets: str) -> FunctionModel:
     """A model that calls `run_code` with each snippet in turn, then says 'done'."""
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -46,7 +47,7 @@ async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) 
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
     agent = Agent(
-        _snippets_model(
+        snippets_model(
             'value = await add(a=2, b=3)\nprint("remote tool result", value)',
             'from pathlib import Path\nprint(Path("/workspace/input.txt").read_text())\nvalue * 10',
             'import asyncio\nfirst, second = await asyncio.gather(add(a=1, b=1), add(a=2, b=2))\n[first, second, barrier()]',
@@ -89,14 +90,14 @@ async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) 
 )
 async def test_remote_sandbox_url_accepted(url: str) -> None:
     """A server root URL passes validation; workers dial lazily, not at enter."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
+    agent = Agent(snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
     result = await agent.run('no run_code call, so nothing dials')
     assert result.output == 'done'
 
 
 async def test_unsupported_scheme_rejected() -> None:
     """A URL Monty's remote client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='sk-live-abc123:x@sandbox.example.com')])
+    agent = Agent(snippets_model(), capabilities=[CodeMode(monty_sandbox='sk-live-abc123:x@sandbox.example.com')])
     with pytest.raises(UserError, match='must be an `http://`') as exc_info:
         await agent.run('never dials')
     assert 'sk-live-abc123' not in str(exc_info.value)
@@ -114,7 +115,7 @@ async def test_unsupported_scheme_rejected() -> None:
 )
 async def test_url_beyond_server_root_rejected(url: str) -> None:
     """The client calls one fixed method at the server root, so a path, query, or fragment fails up front."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
+    agent = Agent(snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
     with pytest.raises(UserError, match='must be the server root') as exc_info:
         await agent.run('never dials')
     assert url not in str(exc_info.value)
@@ -137,22 +138,22 @@ async def test_remote_turn_deadline_follows_max_duration(
 
     monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyRemote', recording_pool)
     agent = Agent(
-        _snippets_model('1'),
+        snippets_model('1'),
         capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com', resource_limits=resource_limits)],
     )
-    await agent.run('record the deadline')
+    with pytest.raises(RuntimeError, match='not dialing'):
+        await agent.run('record the deadline')
     assert seen == [request_timeout]
 
 
-async def test_dial_failure_redacts_sandbox_url() -> None:
-    """A failed dial's retry message must not leak the URL, which may carry credentials."""
-    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
+async def test_dial_failure_reaches_caller() -> None:
+    """Dial errors reach the caller unchanged, without adding a credential-bearing model retry."""
+    agent = Agent(snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
 
-    result = await agent.run('dial a dead worker')
-
-    (retry,) = _retries(result.all_messages())
-    assert 'hunter2' not in str(retry.content)
-    assert '<monty_sandbox>' in str(retry.content)
+    with capture_run_messages() as messages, pytest.raises(RuntimeError):
+        await agent.run('dial a dead worker')
+    assert retry_parts(messages) == []
+    assert 'hunter2' not in str(messages)
 
 
 def test_repr_hides_sandbox_url() -> None:
@@ -173,11 +174,11 @@ async def test_monty_sandbox_builds_each_run_pool() -> None:
             pools.append(AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-pool'}))
             return pools[-1]
 
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
+        agent = Agent(snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
         for _ in range(2):
-            result = await agent.run('dial')
-            (retry,) = _retries(result.all_messages())
-            assert 'UNAUTHENTICATED' in str(retry.content)
+            with capture_run_messages() as messages, pytest.raises(MontyRefusedError, match='UNAUTHENTICATED'):
+                await agent.run('dial')
+            assert retry_parts(messages) == []
 
     assert len(pools) == 2 and pools[0] is not pools[1]
     assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-pool', 'Bearer k-pool']
@@ -190,31 +191,44 @@ async def test_async_monty_sandbox_is_awaited() -> None:
         async def build_pool() -> AsyncMontyRemote:
             return AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-async'})
 
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
-        await agent.run('dial')
+        agent = Agent(snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
+        with pytest.raises(MontyRefusedError, match='UNAUTHENTICATED'):
+            await agent.run('dial')
 
     assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-async']
 
 
-async def test_failing_monty_sandbox_is_a_retry() -> None:
-    """A `monty_sandbox` function that raises becomes a retry, and the next call builds the pool again."""
+@pytest.mark.parametrize('error_type', [RuntimeError, UserError, LogfireConfigError])
+@pytest.mark.parametrize('async_factory', [False, True])
+async def test_failing_monty_sandbox_reaches_caller(error_type: type[Exception], async_factory: bool) -> None:
+    """Factory errors reach the caller on the first attempt, not the model, even with credentials in the message."""
     calls: list[None] = []
+    error = error_type('cannot connect to https://alice:factory-secret@sandbox.example.com')
 
     def build_pool() -> AsyncMontyRemote:
         calls.append(None)
-        raise RuntimeError('no sandbox for you')
+        raise error
 
-    agent = Agent(_snippets_model('1 + 1', '2 + 2'), capabilities=[CodeMode(monty_sandbox=build_pool)])
-    result = await agent.run('dial')
+    async def build_pool_async() -> AsyncMontyRemote:
+        return build_pool()
 
-    assert ['no sandbox for you' in str(retry.content) for retry in _retries(result.all_messages())] == [True, True]
-    assert len(calls) == 2
+    agent = Agent(
+        snippets_model('1 + 1', '2 + 2'),
+        capabilities=[CodeMode(monty_sandbox=build_pool_async if async_factory else build_pool)],
+    )
+    with capture_run_messages() as messages, pytest.raises(error_type) as exc_info:
+        await agent.run('dial')
+
+    assert exc_info.value is error
+    assert retry_parts(messages) == []
+    assert 'factory-secret' not in str(messages)
+    assert len(calls) == 1
 
 
 async def test_pool_instead_of_function_rejected() -> None:
     """The pool itself, instead of a function that returns it, fails as the run starts."""
     agent = Agent(
-        _snippets_model('1 + 1'),
+        snippets_model('1 + 1'),
         capabilities=[CodeMode(monty_sandbox=AsyncMontyRemote('https://sandbox.example.com'))],  # pyright: ignore[reportArgumentType]
     )
     with pytest.raises(UserError, match='not the pool itself'):
@@ -245,7 +259,7 @@ def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
 async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRelay) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
     agent = Agent(
-        _snippets_model('await drop_connection()'),
+        snippets_model('await drop_connection()'),
         capabilities=[CodeMode(monty_sandbox=monty_relay.url)],
     )
 
@@ -257,6 +271,6 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
 
     result = await agent.run('lose the worker mid-snippet')
 
-    (retry,) = _retries(result.all_messages())
-    assert 'MontyDisconnectError' in str(retry.content)
+    (retry,) = retry_parts(result.all_messages())
+    assert 'sandbox connection was lost' in str(retry.content)
     assert 'drop_connection({}) did not finish' in str(retry.content)

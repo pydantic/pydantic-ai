@@ -42,6 +42,7 @@ try:
         AbstractOS,
         AsyncMontyRemote,
         MontyCrashedError,
+        MontyDisconnectError,
         MontyRuntimeError,
         MontySyntaxError,
         MontyTypingError,
@@ -94,6 +95,10 @@ CodeModeMount = MountDir | list[MountDir]
 _RETRY_VALUE_PREVIEW_CHARS = 120
 _RETRY_PREVIEW_ITEMS = 5
 _RETRY_SUMMARY_MAX_CHARS = 2000
+_TIME_LIMIT_MESSAGE = (
+    'The code ran longer than its time limit and was stopped, so the session was reset. '
+    'Re-run any imports, recreate any state you need, and make the code do less work per call.'
+)
 
 
 # One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
@@ -1240,16 +1245,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # `run_code` executes in workflow code and Temporal replays it. An elapsed timer may make the
         # original run and replay take different branches, which Temporal cannot record.
         limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
+        if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+            # The type checker would reject the names the restored state defines.
+            fresh_repl = type_check = False
+        session = await run_state.get_session(
+            type_check=type_check,
+            type_check_stubs=type_check_stubs if type_check else None,
+            limits=limits,
+            in_temporal_workflow=in_workflow,
+        )
         try:
-            if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
-                # The type checker would reject the names the restored state defines.
-                fresh_repl = type_check = False
-            session = await run_state.get_session(
-                type_check=type_check,
-                type_check_stubs=type_check_stubs if type_check else None,
-                limits=limits,
-                in_temporal_workflow=in_workflow,
-            )
             try:
                 # Already converted in `__post_init__`; this narrows the field's type.
                 os_handler = as_os_handler(self.os_access)
@@ -1293,8 +1298,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
             # and the model still gets a retry.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
-            duration_spent = _is_duration_exhausted(e)
-            if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None:
+            reset_advice = await self._runtime_error_advice(e, run_state)
+            if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None or reset_advice:
                 # A retry is the only record the model gets of an uncaught failure, and these
                 # calls already started. Without them the model reruns their side effects when
                 # it retries. Asking which limit tripped, rather than testing one flag per limit,
@@ -1302,15 +1307,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # the duration path, which resets the session and with it the REPL state the model
                 # would otherwise reconstruct from.
                 message += started_calls()
-            if duration_spent:
-                # The limit stops the sandbox mid-operation, and Monty makes no promise about the
-                # heap it leaves behind, so the session is discarded rather than fed again.
-                await run_state.reset()
-                message += (
-                    '\n\nThe code ran longer than `max_duration_secs` and was stopped, so the '
-                    'session was reset. Re-run any imports, recreate any state you need, and make '
-                    'the code do less work per call.'
-                )
+            message += reset_advice
             if isinstance(e.exception(), RuntimeError) and re.fullmatch(
                 r'suspension limit [0-9]+ exceeded', e.display(format='msg')
             ):
@@ -1329,32 +1326,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
             raise ModelRetry(message) from e
-        except MontyCrashedError as e:
-            # The worker died mid-feed (e.g. the code exhausted its memory or hit the
-            # request timeout) and the REPL state died with it; the pool replaces the
-            # worker transparently. Reset so the retry starts from a fresh,
-            # type-checked session.
+        except (MontyCrashedError, MontyDisconnectError) as e:
             await run_state.reset()
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
-            raise ModelRetry(
-                'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
-                f'{started_calls()}'
-            ) from e
+            raise ModelRetry(f'{self._worker_failure_message(e)}{started_calls()}') from e
         except Exception as e:
             # The session may have been invalidated by a host-side binding or protocol failure.
-            # Make the reset visible so the model can rebuild state on its next attempt. Include
-            # the error text: there is no Monty `display()` for host-side failures, and the cause
-            # chain is dropped once the retry becomes a prompt part, so this message is the only
-            # record of what failed for both the model and the transcript.
+            # Make the reset visible so the model can rebuild state on its next attempt.
             await run_state.reset()
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
-            error_text = f'{type(e).__name__}: {e}'
-            if isinstance(self.monty_sandbox, str):
-                # A dial failure quotes the configured URL, which may carry credentials in its
-                # userinfo, path, or query; keep it out of the transcript-bound retry message.
-                error_text = error_text.replace(self.monty_sandbox, '<monty_sandbox>')
+            error_text = type(e).__name__ if self.monty_sandbox is not None else f'{type(e).__name__}: {e}'
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'
@@ -1384,6 +1367,40 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             result = _model_safe_result(_TOOL_RETURN_CONTENT_TA.validate_python(result))
 
         return result
+
+    async def _runtime_error_advice(self, error: MontyRuntimeError, run_state: MontyRunState) -> str:
+        if _is_duration_exhausted(error):
+            advice = _TIME_LIMIT_MESSAGE
+        elif self.monty_sandbox is not None and isinstance(error.exception(), MemoryError):
+            advice = (
+                'The code exhausted the sandbox memory and the session was reset. '
+                'Re-run any imports, recreate any state you need, and use less memory: '
+                'process smaller batches and avoid large intermediate values.'
+            )
+        else:
+            return ''
+        await run_state.reset()
+        return f'\n\n{advice}'
+
+    @staticmethod
+    def _worker_failure_message(error: MontyCrashedError | MontyDisconnectError) -> str:
+        if isinstance(error, MontyCrashedError):
+            return (
+                _TIME_LIMIT_MESSAGE
+                if error.timed_out
+                else 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+            )
+        if error.cause == 'turn_timeout':
+            return _TIME_LIMIT_MESSAGE
+        if error.cause in ('session_timeout', 'idle_timeout'):
+            return (
+                'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
+                'you need, and continue in a fresh session.'
+            )
+        return (
+            'The sandbox connection was lost and the session was reset. Re-run any imports, '
+            'recreate any state you need, and try again.'
+        )
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
