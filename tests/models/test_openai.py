@@ -2641,7 +2641,7 @@ async def test_chat_completions_function_tools_reasoning_user_error_before_send(
 
     @agent.tool_plain
     def get_temperature(city: str) -> str:
-        return f'{city}: 21°C'
+        return f'{city}: 21°C'  # pragma: no cover
 
     with pytest.raises(UserError, match='function tools while reasoning is enabled'):
         await agent.run('What is the temperature in Tokyo?')
@@ -2672,7 +2672,7 @@ async def test_chat_completions_function_tools_reasoning_error_remedy_copy_per_i
 
     @agent.tool_plain
     def echo(text: str) -> str:
-        return text
+        return text  # pragma: no cover
 
     with pytest.raises(UserError, match='OpenAIResponsesModel') as exc_info:
         await agent.run('echo')
@@ -2703,7 +2703,7 @@ async def test_chat_completions_function_tools_thinking_false_escapes_on_none_su
 
     @agent.tool_plain
     def echo(text: str) -> str:
-        return text
+        return text  # pragma: no cover
 
     if thinking_false_escapes:
         result = await agent.run('echo')
@@ -2726,7 +2726,7 @@ async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_mod
 
     @agent.tool_plain
     def echo(text: str) -> str:
-        return text
+        return text  # pragma: no cover
 
     result = await agent.run('echo')
     assert result.output == 'hello'
@@ -2761,7 +2761,7 @@ async def test_chat_completions_function_tools_recorded_provider_400_on_shared_p
 
     @agent.tool_plain
     def echo(text: str) -> str:
-        return text
+        return text  # pragma: no cover
 
     with pytest.raises(ModelHTTPError, match='Function tools with reasoning_effort') as exc_info:
         await agent.run('echo')
