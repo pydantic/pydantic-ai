@@ -201,10 +201,11 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later
   compare each step's type and name on replay, so these changes, and renaming the agent, a toolset
   `id` or a tool, or changing the id a non-default model runs under (a `models=` key or the `model=`
-  passed to `agent.run`), which is [part of its step names](#what-gets-checkpointed), fail the execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected:
-  a step is served another step's recorded result, which usually fails to decode but can return the
-  wrong data. Either way, deploy under a new published version and let in-flight executions drain
-  on the old one.
+  passed to `agent.run`), which is [part of its step names](#what-gets-checkpointed), fail the
+  execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected: a step is
+  served another step's recorded result, which usually fails to decode but can return the wrong
+  data. Either way, deploy under a new published version and let in-flight executions drain on the
+  old one.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.
