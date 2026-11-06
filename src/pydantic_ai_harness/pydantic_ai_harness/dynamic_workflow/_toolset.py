@@ -191,16 +191,6 @@ values.\
 """
 
 
-def _is_valid_sandbox_name(name: str) -> bool:
-    """Whether `name` can be exposed as a sandbox function: a non-keyword Python identifier.
-
-    `str.isidentifier()` alone is not enough -- Python keywords (`for`, `class`, `async`, ...) are
-    valid identifiers but cannot be used as function names, so the model could never call them.
-    Callers guard the empty/`None` case before this is reached.
-    """
-    return _is_python_identifier(name)
-
-
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
 # return schema. Render each catalog entry through core's `FunctionSignature` (the renderer
 # code_mode and Pydantic AI already use). This keeps the catalog format consistent across
@@ -460,7 +450,7 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
             'DynamicWorkflow sub-agent has no `name` and its agent has no `name`; '
             'set `WorkflowAgent(name=...)` so it can be exposed as a sandbox function.'
         )
-    if not _is_valid_sandbox_name(name):
+    if not _is_python_identifier(name):
         raise UserError(
             f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
             'it must be a Python identifier that is not a reserved keyword. Rename it.'
