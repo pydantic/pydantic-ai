@@ -896,11 +896,14 @@ async def test_compaction_history_uses_the_portable_summary(mock_model: GoogleIn
     ]
 
 
-@pytest.mark.parametrize('resolution', list(MediaResolution))
-async def test_video_resolution_and_per_file_overrides(
-    mock_model: GoogleInteractionsModel, resolution: MediaResolution
-):
+# Collection must work without the optional Google SDK.
+@pytest.mark.parametrize(
+    'resolution',
+    ['MEDIA_RESOLUTION_UNSPECIFIED', 'MEDIA_RESOLUTION_LOW', 'MEDIA_RESOLUTION_MEDIUM', 'MEDIA_RESOLUTION_HIGH'],
+)
+async def test_video_resolution_and_per_file_overrides(mock_model: GoogleInteractionsModel, resolution: str):
     """Inspect video wire controls and precedence without relying on model descriptions of sampled frames."""
+    resolution = MediaResolution(resolution)
     video = BinaryContent(
         b'video', media_type='video/mp4', vendor_metadata={'start_offset': '0s', 'end_offset': '1s', 'fps': 1}
     )
