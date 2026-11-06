@@ -15,7 +15,6 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
-    BaseToolCallPart,
     LoadCapabilityReturnPart,
     ToolCallPart,
     ToolReturn,
@@ -708,35 +707,21 @@ def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception)
 
 
 def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+    """Build a per-run, per-step, per-call, per-retry key so concurrent and retried calls never clash.
 
     `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
 
     A `tool_call_id` is only unique within one response, and a provider that numbers calls per
-    response (`call_0`, then `call_0` again) reuses one later in the same run, so the call's
-    position among the history's calls sharing that id keeps the two spills apart.
+    response (`call_0`, then `call_0` again) reuses one later in the same run. The step that
+    produced the call identifies its response, so keying on it keeps the two spills apart without
+    reading the history: a capability that rewrites `ctx.messages` between the two responses (a
+    compaction, say) cannot make two different calls derive the same key. A step is one model
+    request, and a response cannot reuse an id it already issued in the same step without
+    producing an unpaired call, so the step plus the id is unique per call.
     """
     run_id = ctx.run_id or 'run'
     call_id = call.tool_call_id or 'call'
-    occurrence = _call_occurrence(ctx, call)
-    prefix = f'{occurrence}/' if occurrence else ''
-    return f'{run_id}/{prefix}{call_id}.{ctx.retry}{suffix}'
-
-
-def _call_occurrence(ctx: RunContext[AgentDepsT], call: ToolCallPart) -> int:
-    """How many earlier calls in the run's history share `call`'s `tool_call_id`.
-
-    Read off the history rather than counted as calls run, so a replayed run derives the same
-    key it wrote the first time.
-    """
-    seen = 0
-    for message in ctx.messages:
-        for part in message.parts:
-            if part is call:
-                return seen
-            if isinstance(part, BaseToolCallPart) and part.tool_call_id == call.tool_call_id:
-                seen += 1
-    return seen
+    return f'{run_id}/{ctx.run_step}/{call_id}.{ctx.retry}{suffix}'
 
 
 def _with_handles(
