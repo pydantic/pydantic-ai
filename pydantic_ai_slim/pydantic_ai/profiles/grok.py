@@ -115,6 +115,10 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
 
     profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
+        # xAI rejects GIFs: 'Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image', on its own
+        # API and through OpenRouter, whose raw error is xAI's (checked live with `grok-4-1-fast-non-reasoning` and
+        # `x-ai/grok-4.3`, 2026-11-04). Hosts that run Grok themselves weren't checked.
+        supported_image_media_types=frozenset({'image/jpeg', 'image/png', 'image/webp'}),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),

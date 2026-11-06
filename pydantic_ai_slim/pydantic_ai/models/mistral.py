@@ -235,7 +235,7 @@ class MistralModel(Model[Mistral]):
 
     # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
-    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
+    _supported_media_types = {'document': frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})}
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)

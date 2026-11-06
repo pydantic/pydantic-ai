@@ -65,11 +65,11 @@ most certain. Where in a request build the trim belongs stays adapter mechanics 
 resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed view).
 
 An adapter whose message mapping refuses a kind of file (image, document, audio, video) declares it
-in `_unsupported_file_inputs`, and one that sends only some document media types declares those in
-`_supported_document_media_types`. `Model.profile` narrows the file-input flags to them after every
+in `_unsupported_file_inputs`, and one that sends only some media types of a kind declares those in
+`_supported_media_types` (OpenAI Chat Completions' WAV and MP3 audio, say). `Model.profile` narrows the file-input flags to them after every
 other layer, which is what lets `Model.prepare_messages` replace a tool's file the adapter would refuse
 with a note instead of failing the run. A refusal that depends on the model rather than the API belongs
-in the profile instead (`supports_video_input` in `google_model_profile`).
+in the profile instead (`supports_video_input` and `supported_image_media_types` in `google_model_profile`).
 
 ### Third-party model fallback
 

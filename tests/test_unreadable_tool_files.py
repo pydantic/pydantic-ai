@@ -9,7 +9,7 @@ covered by `test_multimodal_tool_return_matrix` in `tests/models/test_multimodal
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -31,6 +31,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.capabilities import FileUnderstanding
+from pydantic_ai.messages import AudioMediaType, ImageMediaType, VideoMediaType
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -161,7 +162,7 @@ async def test_tool_file_the_model_can_read_is_sent_as_it_is():
         pytest.param(
             ModelProfile(supported_document_media_types=frozenset({'application/pdf'})),
             BinaryContent(b'a,b', media_type='text/csv', identifier='table'),
-            'File table (text/csv, 3 bytes) was not sent: this model cannot read text/csv documents.',
+            'File table (text/csv, 3 bytes) was not sent: this model cannot read text/csv files.',
             id='document-media-type',
         ),
         pytest.param(
@@ -188,17 +189,125 @@ async def test_note_names_the_file_and_what_the_model_cannot_read(profile: Model
     assert tool_returns(request)[0].content == note
 
 
-async def test_document_of_unknown_media_type_is_left_to_the_adapter():
-    """Narrowing the document media types only judges the known ones; another is sent as it is."""
+async def test_text_document_of_unlisted_media_type_is_judged_as_plain_text():
+    """Adapters send a text document of a media type `DocumentMediaType` doesn't list as text, so it goes where plain text can."""
     sent: list[list[ModelMessage]] = []
     document = DocumentUrl('https://example.com/data.json')
-    profile = ModelProfile(supported_document_media_types=frozenset({'application/pdf'}))
-    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), document)
+    model = FunctionModel(
+        calls_get_file_then(sent), profile=ModelProfile(supported_document_media_types=frozenset({'text/plain'}))
+    )
+
+    await agent_with_tool_file(model, document).run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == document
+
+
+async def test_text_document_of_unlisted_media_type_is_noted_without_plain_text():
+    sent: list[list[ModelMessage]] = []
+    document = DocumentUrl('https://example.com/data.json')
+    model = FunctionModel(
+        calls_get_file_then(sent), profile=ModelProfile(supported_document_media_types=frozenset({'application/pdf'}))
+    )
+
+    await agent_with_tool_file(model, document).run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == snapshot(
+        'File f338fe (application/json) was not sent: this model cannot read application/json files.'
+    )
+
+
+async def test_document_of_unlisted_media_type_is_noted():
+    """A document whose media type the profile doesn't list counts as one the model can't read."""
+    sent: list[list[ModelMessage]] = []
+    document = DocumentUrl('https://example.com/slides.pptx')
+
+    await agent_with_tool_file(FunctionModel(calls_get_file_then(sent)), document).run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == snapshot(
+        'File b57d90 (application/vnd.openxmlformats-officedocument.presentationml.presentation) was not sent: this model cannot read application/vnd.openxmlformats-officedocument.presentationml.presentation files.'
+    )
+
+
+@pytest.mark.parametrize(
+    ('file', 'profile'),
+    [
+        pytest.param(
+            BinaryContent(b'heic', media_type='image/heic'),
+            ModelProfile(),
+            id='image-not-in-the-default-set',
+        ),
+        pytest.param(
+            BinaryContent(b'gif', media_type='image/gif'),
+            ModelProfile(supported_image_media_types=frozenset({'image/png', 'image/jpeg'})),
+            id='image',
+        ),
+        pytest.param(
+            BinaryContent(b'flac', media_type='audio/flac'),
+            ModelProfile(supported_audio_media_types=frozenset({'audio/wav', 'audio/mpeg'})),
+            id='audio',
+        ),
+        pytest.param(
+            BinaryContent(b'mkv', media_type='video/x-matroska'),
+            ModelProfile(supported_video_media_types=frozenset({'video/mp4'})),
+            id='video',
+        ),
+    ],
+)
+async def test_file_of_unlisted_media_type_is_noted(file: BinaryContent, profile: ModelProfile):
+    sent: list[list[ModelMessage]] = []
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), file)
 
     await agent.run('Get the file.')
 
     [request] = sent
-    assert tool_returns(request)[0].content == document
+    [note] = tool_returns(request)
+    assert isinstance(note.content, str)
+    assert note.content.endswith(f'this model cannot read {file.media_type} files.')
+
+
+async def test_image_of_listed_media_type_is_sent():
+    sent: list[list[ModelMessage]] = []
+    image = BinaryContent(b'heic', media_type='image/heic')
+    profile = ModelProfile(supported_image_media_types=frozenset({'image/heic', 'image/png'}))
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), image)
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == image
+
+
+@pytest.mark.parametrize(
+    'file',
+    [
+        pytest.param(BinaryContent(b'jpg', media_type='image/jpg'), id='image'),
+        pytest.param(BinaryContent(b'mp3', media_type='audio/mp3'), id='audio'),
+    ],
+)
+async def test_file_of_a_common_alias_is_judged_as_its_media_type(file: BinaryContent):
+    """OpenAI, Gemini, xAI and Mistral read `image/jpg` as JPEG, so it isn't turned into a note."""
+    sent: list[list[ModelMessage]] = []
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent)), file)
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == file
+
+
+async def test_url_without_a_media_type_is_judged_by_kind_alone():
+    sent: list[list[ModelMessage]] = []
+    image = ImageUrl('https://example.com/image')
+    profile = ModelProfile(supported_image_media_types=frozenset({'image/png'}))
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), image)
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == image
 
 
 async def test_text_like_binary_content_is_left_to_the_adapter():
@@ -307,14 +416,23 @@ Someone reading a shopping list.
 
 
 def file_input_flags(model: Model) -> dict[str, object]:
+    """The file-input flags, with the image, audio and video media types only where they differ from the default."""
     profile = model.profile
-    return {
+    flags: dict[str, object] = {
         'image': profile.get('supports_image_input'),
         'document': profile.get('supports_document_input'),
         'document_media_types': sorted(profile.get('supported_document_media_types', ())),
         'audio': profile.get('supports_audio_file_input'),
         'video': profile.get('supports_video_input'),
     }
+    for kind, media_types, default in (
+        ('image', profile.get('supported_image_media_types'), get_args(ImageMediaType)),
+        ('audio', profile.get('supported_audio_media_types'), get_args(AudioMediaType)),
+        ('video', profile.get('supported_video_media_types'), get_args(VideoMediaType)),
+    ):
+        if media_types != frozenset(default):
+            flags[f'{kind}_media_types'] = sorted(media_types or ())
+    return flags
 
 
 ALL_DOCUMENTS = [
@@ -392,6 +510,39 @@ def _google() -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test'))
 
 
+DOCUMENTS_BUT_OFFICE = ['application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain']
+GEMINI_IMAGES = [
+    'image/avif',
+    'image/bmp',
+    'image/gif',
+    'image/heic',
+    'image/heif',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+]
+GEMINI_AUDIO = [
+    'audio/aac',
+    'audio/aiff',
+    'audio/flac',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/ogg',
+    'audio/opus',
+    'audio/wav',
+]
+MISTRAL_IMAGES = [
+    'image/avif',
+    'image/bmp',
+    'image/gif',
+    'image/heic',
+    'image/jpeg',
+    'image/png',
+    'image/tiff',
+    'image/webp',
+]
+
+
 @pytest.mark.parametrize(
     ('make_model', 'expected'),
     [
@@ -411,13 +562,31 @@ def _google() -> Model:
         ),
         pytest.param(
             _openai_chat,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': False, 'video': False}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': ALL_DOCUMENTS,
+                    'audio': False,
+                    'video': False,
+                    'audio_media_types': ['audio/mpeg', 'audio/wav'],
+                }
+            ),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openai_chat',
         ),
         pytest.param(
             _openai_chat_audio,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': ALL_DOCUMENTS,
+                    'audio': True,
+                    'video': False,
+                    'audio_media_types': ['audio/mpeg', 'audio/wav'],
+                }
+            ),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openai_chat_audio_model',
         ),
@@ -430,6 +599,7 @@ def _google() -> Model:
                     'document_media_types': ['text/csv', 'text/html', 'text/markdown', 'text/plain'],
                     'audio': False,
                     'video': False,
+                    'audio_media_types': ['audio/mpeg', 'audio/wav'],
                 }
             ),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
@@ -443,7 +613,17 @@ def _google() -> Model:
         ),
         pytest.param(
             _openrouter,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': True}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': DOCUMENTS_BUT_OFFICE,
+                    'audio': True,
+                    'video': True,
+                    'audio_media_types': ['audio/mpeg', 'audio/wav'],
+                    'image_media_types': GEMINI_IMAGES,
+                }
+            ),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openrouter',
         ),
@@ -462,6 +642,7 @@ def _google() -> Model:
                     'document_media_types': ['application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'],
                     'audio': False,
                     'video': False,
+                    'image_media_types': MISTRAL_IMAGES,
                 }
             ),
             marks=pytest.mark.skipif(not mistral_available(), reason='mistral not installed'),
@@ -489,7 +670,16 @@ def _google() -> Model:
         ),
         pytest.param(
             _xai,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': False, 'video': False}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': ALL_DOCUMENTS,
+                    'audio': False,
+                    'video': False,
+                    'image_media_types': ['image/jpeg', 'image/png', 'image/webp'],
+                }
+            ),
             marks=pytest.mark.skipif(not xai_available(), reason='xai not installed'),
             id='xai',
         ),
@@ -507,7 +697,17 @@ def _google() -> Model:
         ),
         pytest.param(
             _google,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': True}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': DOCUMENTS_BUT_OFFICE,
+                    'audio': True,
+                    'video': True,
+                    'audio_media_types': GEMINI_AUDIO,
+                    'image_media_types': GEMINI_IMAGES,
+                }
+            ),
             marks=pytest.mark.skipif(not google_available(), reason='google not installed'),
             id='google',
         ),
@@ -559,7 +759,20 @@ def test_adapter_narrowing_applies_over_the_user_profile():
     assert tool_returns([request])[0].content == snapshot(
         [
             pdf,
-            'File notes (text/plain, 5 bytes) was not sent: this model cannot read text/plain documents.',
+            'File notes (text/plain, 5 bytes) was not sent: this model cannot read text/plain files.',
             'File song (audio/mpeg) was not sent: this model cannot read audio files.',
         ]
     )
+
+
+async def test_document_media_type_the_profile_adds_is_sent():
+    """A document type `DocumentMediaType` doesn't list, such as PowerPoint, can be added to the profile's set."""
+    sent: list[list[ModelMessage]] = []
+    document = DocumentUrl('https://example.com/slides.pptx')
+    pptx = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    profile = ModelProfile(supported_document_media_types=frozenset({'application/pdf', pptx}))
+
+    await agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), document).run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == document

@@ -8241,3 +8241,69 @@ async def test_non_json_response_body_raises_model_api_error(
 
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+def test_openai_chat_audio_of_other_format_in_a_user_prompt_is_refused(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError, match="takes WAV and MP3 audio only, not 'audio/flac'"):
+        Agent(model).run_sync(['Process this audio', BinaryContent(b'fLaC', media_type='audio/flac')])
+
+
+async def test_openai_chat_audio_url_of_other_format_in_a_user_prompt_is_refused(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+
+    with patch('pydantic_ai.models.openai.download_item') as mock_download:
+        mock_download.return_value = {'data': 'ZkxhQw==', 'data_type': 'flac'}
+        with pytest.raises(UserError, match="takes WAV and MP3 audio only, not 'audio/flac'"):
+            await Agent(model).run(['Process this audio url', AudioUrl('https://example.com/audio.flac')])
+
+
+def test_openai_chat_audio_of_other_format_from_a_tool_is_noted(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(
+        [
+            completion_message(
+                ChatCompletionMessage(
+                    content=None,
+                    role='assistant',
+                    tool_calls=[
+                        ChatCompletionMessageFunctionToolCall(
+                            id='call_1', function=Function(name='get_audio', arguments='{}'), type='function'
+                        )
+                    ],
+                )
+            ),
+            completion_message(ChatCompletionMessage(content='done', role='assistant')),
+        ]
+    )
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_audio() -> BinaryContent:
+        return BinaryContent(b'fLaC', media_type='audio/flac', identifier='song')
+
+    agent.run_sync('Play the song.')
+
+    tool_message = get_mock_chat_completion_kwargs(mock_client)[1]['messages'][-1]
+    assert tool_message == snapshot(
+        {
+            'role': 'tool',
+            'tool_call_id': 'call_1',
+            'content': 'File song (audio/flac, 4 bytes) was not sent: this model cannot read audio/flac files.',
+        }
+    )
+
+
+@pytest.mark.parametrize(('media_type', 'audio_format'), [('audio/mp3', 'mp3'), ('audio/x-wav', 'wav')])
+def test_openai_chat_audio_alias_is_sent_in_its_format(allow_model_requests: None, media_type: str, audio_format: str):
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='success', role='assistant')))
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(openai_client=mock_client))
+
+    Agent(model).run_sync(['Process this audio', BinaryContent(b'audio', media_type=media_type)])
+
+    user_message = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]
+    audio_part = next(part for part in user_message['content'] if part['type'] == 'input_audio')
+    assert audio_part['input_audio']['format'] == audio_format

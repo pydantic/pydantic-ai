@@ -46,7 +46,10 @@ from typing_inspection.introspection import get_literal_values
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
 from .._file_input import (
+    KNOWN_AUDIO_MEDIA_TYPES,
     KNOWN_DOCUMENT_MEDIA_TYPES,
+    KNOWN_IMAGE_MEDIA_TYPES,
+    KNOWN_VIDEO_MEDIA_TYPES,
     FileInputKind,
     SendableFile,
     unsupported_file_input,
@@ -101,7 +104,6 @@ from ..messages import (
     CachePoint,
     CapabilityLoadDeltaPart,
     CompactionPart,
-    DocumentMediaType,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -789,10 +791,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     `profile` turns the matching file-input flags off after every other layer, the user's included,
     so the profile never claims a file the mapping would refuse.
     """
-    _supported_document_media_types: ClassVar[frozenset[DocumentMediaType] | None] = None
-    """The document media types this adapter's message mapping can send, or `None` for all of them.
+    _supported_media_types: ClassVar[Mapping[FileInputKind, frozenset[str]]] = {}
+    """The media types this adapter's message mapping can send, per kind of file. A kind it doesn't list is
+    limited by the profile alone.
 
-    Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    Intersected with the profile's `supported_image_media_types` and the other per-kind sets, like
+    `_unsupported_file_inputs`.
     """
     _renders_effort_deltas: ClassVar[bool] = False
     """Whether this adapter renders a `ModelSettingsDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
@@ -2076,23 +2080,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         # Step 6: file input the model class's message mapping can't send, whatever the profile says
-        unsupported = self._unsupported_file_inputs
-        document_media_types = self._supported_document_media_types
-        if unsupported or document_media_types is not None:
-            supported_document_media_types = resolved.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            if document_media_types is not None:
-                supported_document_media_types &= document_media_types
+        if self._unsupported_file_inputs or self._supported_media_types:
             resolved = merge_profile(
-                resolved,
-                ModelProfile(
-                    supports_image_input=resolved.get('supports_image_input', True) and 'image' not in unsupported,
-                    supports_document_input=resolved.get('supports_document_input', True)
-                    and 'document' not in unsupported,
-                    supported_document_media_types=supported_document_media_types,
-                    supports_audio_file_input=resolved.get('supports_audio_file_input', True)
-                    and 'audio' not in unsupported,
-                    supports_video_input=resolved.get('supports_video_input', True) and 'video' not in unsupported,
-                ),
+                resolved, _narrowed_file_input(resolved, self._unsupported_file_inputs, self._supported_media_types)
             )
 
         return resolved
@@ -3971,6 +3961,37 @@ def _without_unsupported_files(part: ToolReturnPart, profile: ModelProfile) -> T
     if all(new is old for new, old in zip(new_items, items)):
         return part
     return replace(part, content=new_items if isinstance(part.content, list) else new_items[0])
+
+
+def _narrowed_file_input(
+    profile: ModelProfile,
+    unsupported: frozenset[FileInputKind],
+    adapter_media_types: Mapping[FileInputKind, frozenset[str]],
+) -> ModelProfile:
+    """The file-input flags of `profile` narrowed to what an adapter's message mapping can send."""
+    narrowed = ModelProfile(
+        supports_image_input=profile.get('supports_image_input', True) and 'image' not in unsupported,
+        supports_document_input=profile.get('supports_document_input', True) and 'document' not in unsupported,
+        supports_audio_file_input=profile.get('supports_audio_file_input', True) and 'audio' not in unsupported,
+        supports_video_input=profile.get('supports_video_input', True) and 'video' not in unsupported,
+    )
+    if (image_media_types := adapter_media_types.get('image')) is not None:
+        narrowed['supported_image_media_types'] = (
+            profile.get('supported_image_media_types', KNOWN_IMAGE_MEDIA_TYPES) & image_media_types
+        )
+    if (document_media_types := adapter_media_types.get('document')) is not None:
+        narrowed['supported_document_media_types'] = (
+            profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES) & document_media_types
+        )
+    if (audio_media_types := adapter_media_types.get('audio')) is not None:
+        narrowed['supported_audio_media_types'] = (
+            profile.get('supported_audio_media_types', KNOWN_AUDIO_MEDIA_TYPES) & audio_media_types
+        )
+    if (video_media_types := adapter_media_types.get('video')) is not None:
+        narrowed['supported_video_media_types'] = (
+            profile.get('supported_video_media_types', KNOWN_VIDEO_MEDIA_TYPES) & video_media_types
+        )
+    return narrowed
 
 
 def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
