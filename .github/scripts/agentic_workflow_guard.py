@@ -66,6 +66,7 @@ from typing import Any, TypeGuard, cast
 
 import yaml
 from agent_provider_health import AGENT_START_HEALTH_STEPS
+from pydantic import TypeAdapter
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -1559,13 +1560,10 @@ def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
                 )
             ]
     steps_value = forwarder.get('steps')
-    runs = (
-        ' '.join(
-            str(_as_mapping(step).get('run', '')) for step in cast(list[Any], steps_value) if isinstance(step, dict)
-        )
-        if isinstance(steps_value, list)
-        else ''
-    )
+    runs = ''
+    if isinstance(steps_value, list):
+        steps = TypeAdapter(list[dict[str, object]]).validate_python(steps_value)
+        runs = ' '.join(str(step.get('run', '')) for step in steps)
     if 'raw.githubusercontent.com' not in runs:
         return [
             Violation(
