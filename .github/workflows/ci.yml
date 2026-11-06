@@ -540,11 +540,25 @@ jobs:
       # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
+      # The pinned action's curl download reads this config; keep retries scoped to setup.
+      - name: Configure Lychee download retries
+        run: |
+          mkdir -p "$RUNNER_TEMP/lychee-curl"
+          cat > "$RUNNER_TEMP/lychee-curl/.curlrc" <<'EOF'
+          show-error
+          retry = 3
+          retry-max-time = 120
+          connect-timeout = 10
+          max-time = 60
+          EOF
+
       # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
       # `--offline` so only local files are checked: external hosts are swept weekly by
       # link-check.yml instead, where being down doesn't block a PR.
       - name: Check doc links and heading anchors
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        env:
+          CURL_HOME: ${{ runner.temp }}/lychee-curl
         with:
           args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
           fail: true
