@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from functools import partial
 from pathlib import Path
-from typing import Generic, Literal, TypeVar, cast
+from typing import Any, Generic, Literal, TypeVar, cast
 from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after, to_thread
@@ -51,7 +51,8 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTask, DelegationTasks
+from pydantic_ai_harness.teams import Team
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
@@ -459,6 +460,8 @@ class Session(Generic[DepsT, OutputT]):
         summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
+        self.team: Team[DepsT] | None = None
+        """The team the agent leads on each turn, with `team.enabled`; it needs `delegations`."""
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = summary or ConversationSummary(workspace=self.workspace)
@@ -917,6 +920,33 @@ class Session(Generic[DepsT, OutputT]):
         if script.refused is not None:
             raise ValueError(script.refused)
 
+    def _delegation_capabilities(self, *, automated: bool) -> list[AgentCapability[DepsT]]:
+        """What a turn adds to read its tasks' reports, and to lead its team; nothing without `delegations`."""
+        if self.delegations is None:
+            return []
+        reports = DelegationReports(
+            self.delegations, conversation_id=self.summary.id, priority='asap' if automated else 'when_idle'
+        )
+        return [reports] if self.team is None else [reports, self.team]
+
+    async def run_member(self, team: Team[Any], record: DelegationTask) -> str:
+        """Run a turn of the team member `record` with this session's agent, plugins and workspace.
+
+        It runs on the model it is pinned to, resolved as the session resolves model names, or else on the
+        session's model, within the session's usage limits. Its turn is no turn of the conversation's.
+        """
+        with session_context(self.summary.id):
+            run_model, capabilities = self._bind()
+            self._add_local_workspace(capabilities)
+            member = team.member_run(record, self_agent=self.agent)
+            model = run_model
+            if member.model is not None:
+                model = await resolve_model_name(self.resolve_model, member.model) or member.model
+            result = await member.run(
+                model=model, deps=self.deps, usage_limits=self.usage_limits, capabilities=capabilities
+            )
+        return str(result.output)
+
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
@@ -966,14 +996,7 @@ class Session(Generic[DepsT, OutputT]):
                         # failed or cancelled observer still finalizes the `running` head saved above.
                         await self._publish()
                         run_model, capabilities = self._bind()
-                        if self.delegations is not None:
-                            capabilities.append(
-                                DelegationReports(
-                                    self.delegations,
-                                    conversation_id=self.summary.id,
-                                    priority='asap' if text is None else 'when_idle',
-                                )
-                            )
+                        capabilities.extend(self._delegation_capabilities(automated=text is None))
                         workspace: Literal['new'] | None = None
                         if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
                             # A conversation resumed from another directory: work in this session's.

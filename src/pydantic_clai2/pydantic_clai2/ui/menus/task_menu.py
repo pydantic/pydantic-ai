@@ -11,7 +11,7 @@ from termflow.tui.terminal import terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import conversation_text
 from pydantic_ai_harness.subagents import DelegationTask
-from pydantic_clai2.runtime.tasks import Tasks, task_tree
+from pydantic_clai2.runtime.tasks import Tasks, task_label, task_tree
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -42,7 +42,7 @@ class TaskMenu:
         self.order.extend(task_id for task_id in by_id if task_id not in self.order)
         return [
             MenuItem(
-                f'{"  " * depth}{record.agent_name} [{record.id[:8]}] {record.outcome or record.status}',
+                f'{"  " * depth}{task_label(record)} [{record.id[:8]}] {record.outcome or record.status}',
                 value=record.id,
             )
             for task_id in self.order
@@ -57,8 +57,9 @@ class TaskMenu:
         if self.selected != record.id:
             self.selected, self.offset = record.id, 0
         text = (
-            f'{record.agent_name} · {record.id}\n{record.outcome or record.status} · '
+            f'{task_label(record)} · {record.id}\n{record.outcome or record.status} · '
             f'{"background" if record.background else "foreground"}\n'
+            + (f'Model: {record.model}\n' if record.model is not None else '')
             + (f'Directory: {record.working_directory}\n' if record.working_directory is not None else '')
             + f'{self.notice}\n\nTask: {record.prompt}\n\n'
             + conversation_text(record.messages)
