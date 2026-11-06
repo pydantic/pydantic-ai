@@ -232,9 +232,9 @@ async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path
     if workspace == str(await to_thread.run_sync(lambda: Path.cwd().resolve())):
         return None
     try:
-        directory = workspace_directory(workspace)
+        directory = await to_thread.run_sync(workspace_directory, workspace)
     except ValueError as exc:
         raise ValueError(
             f'{exc} Session {conversation_id} was saved there; start without --resume to read it in the sidebar.'
         ) from exc
-    return directory, load_project_settings(directory, store=store)
+    return directory, await to_thread.run_sync(lambda: load_project_settings(directory, store=store))

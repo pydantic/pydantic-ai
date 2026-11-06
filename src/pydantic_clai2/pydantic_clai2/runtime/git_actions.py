@@ -208,7 +208,7 @@ async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus
     Its paths are Git's own, with any byte that is not UTF-8 kept as a surrogate; `git_status` shows them.
     Without `pull_request`, whether one can be opened is not checked, which asks `gh`, and is `None`.
     """
-    _directory(workspace)
+    await to_thread.run_sync(_directory, workspace)
     top = await _try_git(workspace, 'rev-parse', '--show-toplevel')
     if not top:
         return None

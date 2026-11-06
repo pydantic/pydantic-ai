@@ -307,7 +307,7 @@ class WebService:
         A CLAI that opens no other sessions starts it in the default session, as `open` does.
         """
         if workspace is not None:
-            directory = workspace_directory(workspace)
+            directory = await to_thread.run_sync(workspace_directory, workspace)
         else:
             directory = None if (shown := self._default()) is None else shown.session.workspace
         try:
@@ -329,7 +329,7 @@ class WebService:
 
         New session then starts a session there, and lists it among the repository's worktrees from then on.
         """
-        directory = workspace_directory(repo)
+        directory = await to_thread.run_sync(workspace_directory, repo)
         worktree = await to_thread.run_sync(lambda: new_worktree(repo=directory, branch=branch, base=base))
         return str(worktree.path)
 
@@ -731,7 +731,7 @@ class WebService:
     async def transcript(self, conversation_id: str) -> Transcript:
         """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        continuable = self._continuable(saved.summary.workspace)
+        continuable = await self._continuable(saved.summary.workspace)
         busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
@@ -743,11 +743,11 @@ class WebService:
             owner_pid=saved.summary.owner_pid if busy else None,
         )
 
-    def _continuable(self, workspace: str) -> bool:
+    async def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        return continuable(
-            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
-        )
+        here, follows = str(self.default().session.workspace), self.catalog.follows_workspace
+        # Checking its folder stats it, so off the event loop.
+        return await to_thread.run_sync(lambda: continuable(workspace, here=here, follows=follows))
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -757,7 +757,7 @@ class WebService:
         """Copy a session and open the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
-        if self._continuable(copy.workspace):
+        if await self._continuable(copy.workspace):
             await self.open(copy.id)
         return copy.id
 

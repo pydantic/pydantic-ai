@@ -68,7 +68,7 @@ async def install_git_plugin(
     if name in names:
         raise ValueError(f'Plugin {name} already exists; choose a repository with a different name.')
     # Keep incomplete checkouts out of drop-in discovery, including in other running CLAI sessions.
-    destination = checkout_dir(plugins_dir, name)
+    destination = await to_thread.run_sync(checkout_dir, plugins_dir, name)
     try:
         await to_thread.run_sync(partial(destination.mkdir, parents=True))
     except FileExistsError as exc:
@@ -151,9 +151,10 @@ def git_executable(*, windows: bool = os.name == 'nt') -> str:
 
 async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
     """Own Git's process group until cloning finishes or cancellation cleanup completes."""
+    executable = await to_thread.run_sync(git_executable)
     spawn = asyncio.create_task(
         asyncio.create_subprocess_exec(
-            git_executable(),
+            executable,
             '-c',
             'credential.interactive=false',
             'clone',

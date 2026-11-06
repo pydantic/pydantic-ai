@@ -128,7 +128,8 @@ class WebPlugin(Plugin[WebSettings]):
             url = await self.start()
             if self.settings.open_browser:
                 # A `$BROWSER` command with `%s` runs in the foreground until the browser quits.
-                await to_thread.run_sync(open_browser, self._launcher(url).as_uri(), abandon_on_cancel=True)
+                launcher = await to_thread.run_sync(self._launcher, url)
+                await to_thread.run_sync(open_browser, launcher.as_uri(), abandon_on_cancel=True)
             return f'Web UI {"running" if started else "already running"} at {url}' + (
                 '' if self.settings.host in LOOPBACK else '\nOther machines can reach it: keep the link private.'
             )

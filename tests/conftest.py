@@ -652,37 +652,32 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 
 
 # Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
-# database call beneath them is exempt too, so never list an async function: offload its I/O instead.
+# database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
+# the event loop: offload that call instead. Listed here are functions whose callers are synchronous, such as menus that
+# run in a thread and tests that set up state, and the synchronous shell construction and plugin loading that startup
+# and `/plugins` run once.
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_clai2/config/project_settings.py', ('_present', 'load_project_settings')),
-    ('pydantic_clai2/auth.py', '_connected'),
     ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
     ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
     ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
-    ('pydantic_clai2/builtin_plugins/web/__init__.py', '_launcher'),
-    ('pydantic_clai2/mcp/form.py', 'saved_message'),
-    ('pydantic_clai2/mcp/runtime.py', ('log', '_build')),
-    ('pydantic_clai2/runtime/git_actions.py', '_directory'),
-    ('pydantic_clai2/runtime/repl_state.py', ('copy', 'delete')),
-    ('pydantic_clai2/runtime/session_workspace.py', 'workspace_directory'),
-    ('pydantic_clai2/ui/rendering/spinners.py', ('_locked', '_replace', '_user_text', 'init')),
+    ('pydantic_clai2/ui/rendering/spinners.py', ('_locked', '_replace', '_user_text')),
     # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
     ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
     # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
     (
         'pydantic_clai2/plugins/process_plugins.py',
-        ('ensure_plugins_dir', '_discover', 'project_files', 'import_module'),
+        ('_discover', 'project_files', 'import_module'),
     ),
     ('pydantic_clai2/plugins/factories.py', 'import_file'),
     ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
-    ('pydantic_clai2/plugins/git.py', ('checkout_dir', 'git_executable')),
     # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session.
     ('pydantic_clai2/cli/self_update.py', 'installed'),
     ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
-    ('pydantic_clai2/builtin_plugins/logfire.py', ('__init__', '_instrument_httpx')),
+    ('pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
     ('pydantic_clai2/ui/telemetry.py', 'log_error'),
     ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
     # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.

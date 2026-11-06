@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Callable, Iterable
 
+from anyio import to_thread
 from pydantic import ValidationError
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
@@ -114,7 +115,7 @@ async def spinner_command(
 ) -> str:
     """Apply a spinner by name or picker, saving a changed speed to `spinners.json`; cancelling changes nothing."""
     if args == ['init']:
-        if spinners.init():
+        if await to_thread.run_sync(spinners.init):
             return f'Wrote {spinners.path}. Edits show on the next frame.'
         return f'{spinners.path} already exists; edit it directly. Edits show on the next frame.'
     if len(args) > 2:

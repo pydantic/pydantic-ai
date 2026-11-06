@@ -459,7 +459,7 @@ async def install_form(store: MCPStore, dialogs: Dialogs, editor: Editor | None 
     form = ServerForm(store)
     if not await run_form(form, dialogs, editor):
         return 'Exited custom server form.'
-    return saved_message(form, store.load().servers[form.name])
+    return await to_thread.run_sync(lambda: saved_message(form, store.load().servers[form.name]))
 
 
 async def edit_form(
@@ -469,4 +469,4 @@ async def edit_form(
     form = ServerForm(store, name=name, server=store.load().servers[name])
     if not await run_form(form, dialogs, editor):
         return None
-    return form.name, saved_message(form, store.load().servers[form.name])
+    return form.name, await to_thread.run_sync(lambda: saved_message(form, store.load().servers[form.name]))

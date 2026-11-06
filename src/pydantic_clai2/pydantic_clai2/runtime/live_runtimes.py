@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from anyio import CancelScope, Event, create_task_group, sleep
+from anyio import CancelScope, Event, create_task_group, sleep, to_thread
 from anyio.abc import TaskGroup, TaskStatus
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -210,14 +210,16 @@ class LiveRuntimes(JoinedSessions):
             saved = await self._conversations.get(conversation_id=conversation_id)
             continuing = await continuing_fork(self._conversations, saved.summary)
             if continuing is None:
-                return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+                directory = await to_thread.run_sync(workspace_directory, saved.summary.workspace)
+                return await self._start(directory, resume=conversation_id)
         finally:
             del self._opening[conversation_id]
             opened.set()
         return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+        directory = None if workspace is None else await to_thread.run_sync(workspace_directory, str(workspace))
+        return await self._start(directory, resume=None)
 
     @contextmanager
     def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:

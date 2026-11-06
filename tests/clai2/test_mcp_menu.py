@@ -144,7 +144,7 @@ async def test_manage_starts_stops_and_shows_a_server(tmp_path: Path, monkeypatc
     async def listed(name: str) -> list[str]:
         return [f'{name}_ping']
 
-    command.servers.log('local', 'started with 1 tools')
+    await anyio.to_thread.run_sync(command.servers.log, 'local', 'started with 1 tools')
     monkeypatch.setattr(command.servers, 'list_tools', listed)
     dialogs = ScriptedDialogs([Pick(value='tools'), Pick(value='back'), Pick(value='logs'), Back(), Back()])
     assert await manage(dialogs) == []
