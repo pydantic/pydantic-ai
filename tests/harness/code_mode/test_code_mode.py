@@ -2818,6 +2818,58 @@ class TestCodeMode:
         )
         assert run_code_return.content == snapshot('found')
 
+    async def test_functional_typed_dicts_reference_types_defined_later(self) -> None:
+        """A functional TypedDict can name itself and types rendered after it, under the type check."""
+        received: list[dict[str, Any]] = []
+
+        def walk(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'walked'
+
+        schema = {
+            'type': 'object',
+            'properties': {'node': {'$ref': '#/$defs/Node'}},
+            'required': ['node'],
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        '@id': {'type': 'string'},
+                        'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}},
+                        'meta': {
+                            'type': 'object',
+                            'title': 'Meta',
+                            'properties': {'label': {'type': 'string'}},
+                            'required': ['label'],
+                        },
+                    },
+                    'required': ['@id'],
+                }
+            },
+        }
+        code = "await walk(node={'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(walk, name='walk', description='Walk a tree.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Walk.')
+
+        assert received == snapshot([{'node': {'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('walked')
+
     async def test_sanitized_name_collision_with_native_tool(self) -> None:
         """A sanitized name that collides with a native (already valid) tool is dropped."""
         td_native = ToolDefinition(
