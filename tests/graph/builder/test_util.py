@@ -51,7 +51,7 @@ def test_get_callable_name():
 
 def test_get_callable_name_does_not_stringify_when_name_is_available():
     """The `str()` fallback must not be evaluated when `__name__` is present."""
-    calls = []
+    calls: list[str] = []
 
     class NamedCallable:
         __name__ = 'named_callable'
