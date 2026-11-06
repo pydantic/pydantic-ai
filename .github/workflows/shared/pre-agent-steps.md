@@ -8,8 +8,10 @@
 # pre-agent-steps, so this step reads from .github/scripts/ in the workspace.
 # The launcher is staged into gh-aw's exec-able /tmp/gh-aw/bin/ path.
 #
-# Pre-warm: warms the harness's uv script environment on the open network so
-# the firewalled agent reuses a warm cache. Non-fatal on failure.
+# Pre-warm: checks out the workflow's commit at /tmp/gh-aw/runner-src, where the
+# launcher runs the shim and its library from, and fails the job if it cannot.
+# Then warms that checkout's uv script environment on the open network so the
+# firewalled agent reuses a warm cache. The warm-up is non-fatal on failure.
 #
 # Usage:
 #   imports:

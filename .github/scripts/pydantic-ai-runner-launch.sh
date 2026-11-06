@@ -5,7 +5,7 @@
 # script is installed into gh-aw's exec-able /tmp/gh-aw/bin/ by the workflow's
 # pre-step (`install -m 755 ... /tmp/gh-aw/bin/pydantic-ai-runner-launch`).
 # It is gh-aw's `engine.command` for every Pydantic AI agentic workflow and
-# `uv run --script`s the in-tree runner stub with the agent's argv. The stub
+# `uv run --script`s the staged runner stub with the agent's argv. The stub
 # (`pydantic-ai-runner`) is a tiny `runpy` shim that hands off to the
 # `pydantic_ai_gh_aw_shim` package in the same directory.
 #
@@ -30,7 +30,9 @@ export UV_TOOL_DIR=/tmp/gh-aw/uv/tool
 export XDG_DATA_HOME=/tmp/gh-aw/uv/data
 export XDG_CACHE_HOME=/tmp/gh-aw/uv/xdg-cache
 mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
-runner="${GITHUB_WORKSPACE}/.github/scripts/pydantic-ai-runner"
+# `prewarm-pydantic-ai-runner.sh` checks out the workflow's commit here, so the shim and the
+# `pydantic_ai_slim` it imports come from one commit whatever the workspace holds.
+runner="${PYDANTIC_AI_RUNNER_SRC:-/tmp/gh-aw/runner-src}/.github/scripts/pydantic-ai-runner"
 echo "[harness-launch] cwd=$(pwd) GITHUB_WORKSPACE=${GITHUB_WORKSPACE:-unset} UV_CACHE_DIR=${UV_CACHE_DIR}" >&2
 echo "[harness-launch] runner=${runner} exists=$([ -f "${runner}" ] && echo yes || echo no)" >&2
 
