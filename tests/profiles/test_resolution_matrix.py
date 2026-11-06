@@ -895,6 +895,7 @@ def test_gateway_zai_glm_5_3_inline_defs():
             'openai_supports_strict_tool_definition': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -922,6 +923,7 @@ def test_gateway_zai_glm_other_versions_unchanged():
             'openai_supports_strict_tool_definition': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-4p6')) == snapshot(
@@ -2258,6 +2260,7 @@ def test_ollama_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
             'supports_forced_tool_choice': False,
         }
@@ -2273,6 +2276,7 @@ def test_ollama_unknown_falls_back_to_overlay_only():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
         }
     )
