@@ -687,8 +687,9 @@ class TestCodeMode:
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
         assert advertised is not None
-        submodules = [module for module in re.findall(r'`([\w.]+)`', advertised.group(1)) if '.' in module]
-        candidates = sorted(sys.stdlib_module_names) + submodules
+        listed = re.findall(r'`([\w.]+)`', advertised.group(1))
+        # The listed names are probed too: Monty can import modules newer than the host Python, such as `annotationlib`.
+        candidates = sorted(set(sys.stdlib_module_names) | set(listed))
         # A first call leaves the REPL non-fresh, so the probe skips the type check that rejects unknown imports.
         await wrapper.call_tool('run_code', {'code': 'ok = []'}, ctx, tools['run_code'])
         probe = ''.join(
