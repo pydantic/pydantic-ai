@@ -23,6 +23,9 @@ class IntegrationState:
     log: list[str] = field(default_factory=list[str])
 
 
+ReachableStepAlias = int
+
+
 async def test_basenode_in_builder_graph():
     """Test using BaseNode classes in a builder graph."""
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
@@ -505,6 +508,42 @@ async def test_add_reachable_preserves_step_paths():
     state = IntegrationState()
     assert await graph.run(state=state, inputs=7) == 7
     assert state.log == ['configured']
+
+
+async def test_add_reachable_visits_new_step_path():
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    # The step's return is valid both as the initial scalar alias and as the later node alias.
+    class Finish(int, BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(self)
+
+    @g.step
+    async def shared(ctx: StepContext[None, None, int]) -> ReachableStepAlias:
+        return Finish(ctx.inputs)
+
+    @dataclass
+    class Later(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], shared]:
+            return shared.as_node(self.value)
+
+    @dataclass
+    class Root(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Later:
+            return Later(self.value)
+
+    # Discovery visits shared before Later; Later's inferred edge then reaches shared again.
+    g.add(g.edge_from(NodeStep(Root)).transform(lambda ctx: 7).to(shared, Later))
+    ReachableStepAlias = Finish
+    g.add_reachable(Root)
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
+    graph = g.build()
+    assert 'Finish' in graph.edges_by_source
+    assert await graph.run(inputs=ReachableStepAlias(7)) == 7
 
 
 @pytest.mark.parametrize('recursive', [False, True])
