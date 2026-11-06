@@ -1361,7 +1361,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         try:
             compiled = re.compile(pattern)
-        except re.error as e:
+        # A repeat count past the regex engine's limit, such as `a{99999999999}`, raises `OverflowError`.
+        except (re.error, OverflowError) as e:
             raise ValueError(f'Invalid regex pattern: {e}') from e
 
         entry = await self._stat(scope, resolved)
