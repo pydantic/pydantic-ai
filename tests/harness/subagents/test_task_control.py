@@ -2556,11 +2556,12 @@ class TestTaskControlBoundaries:
             ),
             pytest.param(controlled(auto_background_after=1), id='auto_background_after'),
             pytest.param(controlled(max_running_tasks=1), id='max_running_tasks'),
+            pytest.param(controlled(forward_events=True), id='forward_events'),
         ],
     )
     async def test_task_control_refuses_durable_execution_it_cannot_replay(self, capability: SubAgents[Any]) -> None:
         agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
-        with pytest.raises(UserError, match='with `include_self` or `remote_agents`'):
+        with pytest.raises(UserError, match='not supported under durable execution with `include_self`'):
             await agent.run('Go.')
 
     async def test_task_control_runs_each_task_in_a_durable_unit(self) -> None:

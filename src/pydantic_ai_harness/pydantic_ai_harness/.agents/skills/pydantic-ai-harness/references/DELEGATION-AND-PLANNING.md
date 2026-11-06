@@ -213,8 +213,9 @@ orchestrator = Agent(
   wrapper agents (`TemporalAgent`, ...). On Temporal and DBOS, `dynamic_agents` and task control run each
   delegation other than to `self` in a durable unit of its own; a durable task can't ask questions, take messages
   or be resumed, `cancel_task` stops it right away, and its report arrives when the run would otherwise end.
-  `UserError` under durability: task control with `include_self` or `remote_agents`, `auto_background_after` or
-  `max_running_tasks` outside Temporal, other durable engines, and a bound `DelegationTasks` owner.
+  `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
+  `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+  `DelegationTasks` owner.
 
 ## DelegationReports
 

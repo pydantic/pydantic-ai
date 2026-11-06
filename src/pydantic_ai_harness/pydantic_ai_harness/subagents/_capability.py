@@ -310,8 +310,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
     unit of its own, which can't ask questions, take messages, or be resumed. Under durable execution, `include_self`,
-    `remote_agents`, `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
-    `DelegationTasks` owner raise a `UserError`.
+    `remote_agents`, `forward_events`, `auto_background_after` or `max_running_tasks` outside Temporal, other durable
+    engines, and a bound `DelegationTasks` owner raise a `UserError`.
     """
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
@@ -552,6 +552,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if (control := self.task_control) is not None and (
             self.include_self
             or control.remote_agents
+            # A durable unit has no live link back to stream its run's events through.
+            or control.forward_events
             # Only Temporal journals when a task settles: elsewhere, a recovered task can settle before a timer fires or
             # a limit is checked, so replay would decide differently.
             or (
@@ -560,8 +562,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             )
         ):
             raise UserError(
-                '`SubAgents` `task_control` is not supported under durable execution with `include_self` or '
-                '`remote_agents`, nor with `auto_background_after` or `max_running_tasks` outside Temporal.'
+                '`SubAgents` `task_control` is not supported under durable execution with `include_self`, '
+                '`remote_agents` or `forward_events`, nor with `auto_background_after` or `max_running_tasks` outside '
+                'Temporal.'
             )
         # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
         # there, or Temporal, which honors the toolset's `{'temporal': False}`.
