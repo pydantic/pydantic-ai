@@ -219,7 +219,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
         """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
         state: str | None = None
-        recorded: str | None = None
+        recorded: str | None
         if self._persist_cwd and ctx.run_id is not None:
             state = await self._cwd_state_path(ctx)
             recorded = await self._read_cwd_state(ctx, state)

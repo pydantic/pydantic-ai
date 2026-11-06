@@ -330,6 +330,17 @@ async def _start_or_back_off(command: _ExecCommand, delay: float | None) -> bool
     return True
 
 
+def _working_dir_to_confirm(
+    code: int, directory: str | None, marker: str, command: _ExecCommand, *, check: bool
+) -> str | None:
+    """The `directory` a command that exited 1 may have failed to enter, or `None` when there is none to confirm."""
+    # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
+    # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
+    if code == 1 and check and directory is not None and marker.encode() not in command.get_stdout():
+        return directory
+    return None
+
+
 async def _close_client(client: AsyncSpritesClient | None) -> None:
     if client is not None and (error := await _cleanup_call(client.aclose, timeout=_CLOSE_TIMEOUT)) is not None:
         logger.warning('Could not close Sprites SDK client: %r', error)
@@ -689,7 +700,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
         # identifiers from the environment it passes on.
-        args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
+        args = _ending_with(marker, capture, self._command_args(command, shell, env))
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it.
         if sandbox is None:
@@ -722,44 +733,18 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             if mapped is None:
                 raise
             raise mapped from error
-        return await self._finish(
-            sandbox,
-            exec_command,
-            code,
-            marker,
-            directory,
-            timeout=timeout,
-            deadline=deadline.deadline,
-            check_working_dir=check_working_dir,
-        )
-
-    async def _finish(
-        self,
-        sandbox: AsyncSprite,
-        exec_command: _ExecCommand,
-        code: int,
-        marker: str,
-        directory: str | None,
-        *,
-        timeout: float | None,
-        deadline: float,
-        check_working_dir: bool,
-    ) -> CommandResult:
-        """Close a command that exited and build its result, confirming a missing `directory` and a deleted Sprite."""
         await _close_command(exec_command)
         stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         result = CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
-        if (
-            code == 1
-            and check_working_dir
-            and directory is not None
-            and marker.encode() not in exec_command.get_stdout()
-        ):
-            # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
-            # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
-            await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline)
-        await _check_sprite_deleted(sandbox, deadline=deadline)
+        unconfirmed = _working_dir_to_confirm(code, directory, marker, exec_command, check=check_working_dir)
+        if unconfirmed is not None:
+            await self._check_working_dir(sandbox, unconfirmed, result, timeout=timeout, deadline=deadline.deadline)
+        await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
         return result
+
+    def _command_args(self, command: WorkspaceCommand, shell: bool, env: Mapping[str, str] | None) -> list[str]:
+        """`command`'s argv, run with the backend's environment and `env` over it."""
+        return _with_env(command_argv(command, shell), {**self._env, **(env or {})})
 
     async def _timed_out(
         self, exec_command: _ExecCommand, marker: str, capture: str, timeout: float, *, capture_stderr: bool
