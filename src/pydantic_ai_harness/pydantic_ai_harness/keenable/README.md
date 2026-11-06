@@ -113,7 +113,8 @@ within 30 seconds, and a response body over 10 MiB is abandoned before parsing.
 
 Any HTTP error status other than `401`, `402`, and `403` becomes `ModelRetry`,
 as do network failures, a request past its deadline, and a `2xx` whose body is
-too large or not JSON, so the model can wait, rephrase, or try another URL
+too large, not JSON, or a search response without its `results` list, so the
+model can wait, rephrase, or try another URL
 rather than abort the run. A `get_page` call that comes back with no readable
 content is a `ModelRetry` too. `get_page`
 reads Keenable's indexed copy of a page, and Keenable documents that fetching a

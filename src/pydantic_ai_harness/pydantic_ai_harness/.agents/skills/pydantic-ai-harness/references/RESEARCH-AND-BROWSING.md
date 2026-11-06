@@ -236,9 +236,10 @@ Gotchas:
   when the capability is built.
 - `KEENABLE_API_KEY` switches to the keyed endpoints; `KEENABLE_API_URL` overrides the base URL and must
   be `https://` (plain `http` only on loopback), or `UserError` is raised.
-- Rate limits, 5xx, a 404, a non-JSON body, and an empty page become `ModelRetry`; 401/402/403 stop
-  the run. `get_page` reads Keenable's indexed copy, and Keenable documents that an unindexed URL
-  fails to fetch. For tests, pass `client=` a fake satisfying the exported `KeenableClient` protocol.
+- Rate limits, 5xx, a 404, a non-JSON body, a search body without `results`, and an empty page
+  become `ModelRetry`; 401/402/403 stop the run. `get_page` reads Keenable's indexed copy, and
+  Keenable documents that an unindexed URL fails to fetch. For tests, pass `client=` a fake
+  satisfying the exported `KeenableClient` protocol.
 - `HttpKeenableClient(http_client=...)` sends every request through your `httpx.AsyncClient` (connection
   reuse, proxy, TLS, retrying transport); you close it. Without it, each request uses a fresh client.
 - A non-empty `guidance` replaces the default instructions, untrusted-content rule included, like

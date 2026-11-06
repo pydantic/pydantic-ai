@@ -6,7 +6,7 @@ import functools
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Concatenate, ParamSpec, Protocol, TypeVar
 
@@ -148,29 +148,33 @@ class HttpKeenableClient:
         bounds the whole exchange. `base_url` can point at any server, so the
         body is read in chunks and abandoned once it passes `_MAX_RESPONSE_BYTES`.
         """
-        # The default client lives for one request: nothing here would close a
-        # shared one, and its connections belong to the event loop that opened
-        # them, which each `run_sync` call replaces.
-        client_context = (
-            nullcontext(self._http_client)
-            if self._http_client is not None
-            else httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS)
-        )
-        with anyio.fail_after(self._TIMEOUT_SECONDS):
-            # An injected client may follow redirects, and httpx keeps the
-            # `X-API-Key` header on a redirect to another host, so the key would
-            # reach wherever the server points.
-            async with (
-                client_context as client,
-                client.stream(
-                    method,
-                    f'{self._base_url}{path}',
-                    json=payload,
-                    params=params,
-                    headers=self._headers(),
-                    follow_redirects=False,
-                ) as response,
-            ):
+        # The response and the default client close in a shielded scope: an
+        # expired anyio scope, this deadline or a caller's tool timeout, cancels
+        # every await inside it, which would cut a transport's async close short.
+        stack = AsyncExitStack()
+        try:
+            # The default client lives for one request: nothing here would close
+            # a shared one, and its connections belong to the event loop that
+            # opened them, which each `run_sync` call replaces.
+            client = (
+                self._http_client
+                if self._http_client is not None
+                else await stack.enter_async_context(httpx.AsyncClient(timeout=self._TIMEOUT_SECONDS))
+            )
+            with anyio.fail_after(self._TIMEOUT_SECONDS):
+                # An injected client may follow redirects, and httpx keeps the
+                # `X-API-Key` header on a redirect to another host, so the key
+                # would reach wherever the server points.
+                response = await stack.enter_async_context(
+                    client.stream(
+                        method,
+                        f'{self._base_url}{path}',
+                        json=payload,
+                        params=params,
+                        headers=self._headers(),
+                        follow_redirects=False,
+                    )
+                )
                 response.raise_for_status()
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
@@ -179,6 +183,9 @@ class HttpKeenableClient:
                         raise httpx.ReadError(
                             f'response body exceeds {self._MAX_RESPONSE_BYTES} bytes', request=response.request
                         )
+        finally:
+            with anyio.CancelScope(shield=True):
+                await stack.aclose()
         return json.loads(content)
 
     async def search(self, query: str, *, max_results: int) -> list[dict[str, object]]:
@@ -190,7 +197,9 @@ class HttpKeenableClient:
         )
         results = self._string_keyed(found).get('results')
         if not is_object_list(results):
-            return []
+            # Keenable always sends `results` with a 2xx, so a body without the
+            # list is a gateway or proxy answering, not an empty search.
+            raise ValueError('`results` is missing or not a list')
         # `_string_keyed` maps anything that is not an object to `{}`, so filtering
         # on the result drops non-object entries without a second check.
         return [mapped for mapped in (self._string_keyed(entry) for entry in results) if mapped]
@@ -263,6 +272,27 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         id: str | None = None,
         operations: KeenableSearchOperations | None = None,
     ) -> None:
+        """Configure the tools.
+
+        Args:
+            client: The Keenable client the tools call. `None` uses an
+                `HttpKeenableClient` configured from the `KEENABLE_API_KEY` and
+                `KEENABLE_API_URL` environment variables.
+            num_results: Number of results `web_search` asks Keenable for, from
+                1 to 50.
+            max_snippet_chars: Maximum characters of excerpt `web_search`
+                returns per result.
+            max_page_chars: Maximum characters of page text `get_page` returns,
+                truncation marker included.
+            id: An optional unique ID for the toolset, which durable execution
+                needs to identify it.
+            operations: The durable operations each tool's Keenable request
+                runs through. `None` makes the request directly.
+
+        Raises:
+            ValueError: If a budget is not a positive integer, or
+                `num_results` is above 50.
+        """
         super().__init__(id=id)
         # `KeenableSearch` validates these at construction, but the toolset is
         # public too, so a direct caller gets the same guarantee. Validated
@@ -294,8 +324,8 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         Pydantic AI only feeds `ModelRetry` back to the model as a retry prompt;
         any other exception propagates and aborts the run. Rate limits, transient
         5xx, rejected parameters, a 404 on a dead URL, a request past its
-        deadline, and a 2xx whose body is too large or not JSON (a proxy or
-        gateway answering in HTML) are things a model can recover from (wait,
+        deadline, and a 2xx whose body is too large, not JSON, or a search
+        without a `results` list (a proxy or gateway answering) are things a model can recover from (wait,
         rephrase, pick another URL), so they become retries. A 401/402/403 means
         a bad key or an exhausted account, configuration the model cannot fix, so
         it propagates.
@@ -317,9 +347,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'Keenable request failed: {error}') from error
             except TimeoutError as error:
                 raise ModelRetry('Keenable request timed out.') from error
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                # `json.loads` decodes bytes before parsing them, so a body in a
-                # broken encoding fails as a decode error, not a JSON one.
+            except ValueError as error:
+                # `json.loads` raises `JSONDecodeError`, or `UnicodeDecodeError`
+                # for a body in a broken encoding; both are `ValueError`s, like
+                # the one `search` raises for a body without `results`.
                 raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
 
         return wrapper

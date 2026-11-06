@@ -105,14 +105,20 @@ def _capture_requests(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx.
     return seen
 
 
-def _research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Search, read one page, then answer: the loop the default instructions ask for."""
-    step = sum(isinstance(message, ModelResponse) for message in messages)
-    if step == 0:
-        return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'Pydantic AI agent framework'})])
-    if step == 1:
-        return ModelResponse(parts=[ToolCallPart('get_page', {'url': 'https://example.com/'})])
-    return ModelResponse(parts=[TextPart('Done.')])
+class _DrippingStream(httpx.AsyncByteStream):
+    """A body that never ends, sent a byte at a time, whose close awaits like a real transport's."""
+
+    closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while True:
+            yield b' '
+            await anyio.sleep(0.001)
+
+    async def aclose(self) -> None:
+        # Inside a cancelled anyio scope, this await would end the close early.
+        await anyio.sleep(0)
+        self.closed = True
 
 
 class TestKeenableSearch:
@@ -122,7 +128,17 @@ class TestKeenableSearch:
         # no credential. The body matcher keeps `max_results` on the wire.
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.delenv('KEENABLE_API_URL', raising=False)
-        agent = Agent(FunctionModel(_research), capabilities=[KeenableSearch(num_results=2, max_snippet_chars=80)])
+
+        def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            """Search, read one page, then answer: the loop the default instructions ask for."""
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            if step == 0:
+                return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'Pydantic AI agent framework'})])
+            if step == 1:
+                return ModelResponse(parts=[ToolCallPart('get_page', {'url': 'https://example.com/'})])
+            return ModelResponse(parts=[TextPart('Done.')])
+
+        agent = Agent(FunctionModel(research), capabilities=[KeenableSearch(num_results=2, max_snippet_chars=80)])
 
         result = await agent.run('Research Pydantic AI.')
 
@@ -538,14 +554,30 @@ class TestHttpKeenableClient:
         assert str(fetch.url) == 'https://api.keenable.ai/v1/fetch/public?url=https%3A%2F%2Fexample.com%2Fone'
 
     @pytest.mark.parametrize('payload', [{'results': 'nope'}, [], {}])
-    async def test_http_client_tolerates_unexpected_payloads(self, monkeypatch: pytest.MonkeyPatch, payload: object):
+    async def test_a_search_body_without_a_results_list_becomes_a_retry(
+        self, monkeypatch: pytest.MonkeyPatch, payload: object
+    ):
+        # Keenable always sends `results` with a 2xx, so reporting an empty
+        # search here would hand the model a false negative.
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
-        client = HttpKeenableClient()
+        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
-        assert await client.search('cats', max_results=5) == []
-        assert await client.fetch('https://example.com/one') == (payload if isinstance(payload, dict) else {})
+        with pytest.raises(ModelRetry, match=r'malformed response: `results` is missing or not a list$'):
+            await toolset.web_search('cats')
+
+    @pytest.mark.parametrize('payload', [{'results': 'nope'}, [], {}])
+    async def test_http_client_fetch_tolerates_unexpected_payloads(
+        self, monkeypatch: pytest.MonkeyPatch, payload: object
+    ):
+        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
+
+        page = await HttpKeenableClient().fetch('https://example.com/one')
+
+        assert page == (payload if isinstance(payload, dict) else {})
 
     @pytest.mark.parametrize('body', [b'', b'<html>gateway timeout</html>', b'{"results": "\xff"}'])
     async def test_malformed_2xx_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch, body: bytes):
@@ -574,19 +606,29 @@ class TestHttpKeenableClient:
     async def test_a_slow_body_hits_the_request_deadline(self, monkeypatch: pytest.MonkeyPatch):
         # Each chunk arrives well within the per-read timeout, so only the
         # deadline on the whole request stops it.
-        async def drip() -> AsyncIterator[bytes]:
-            while True:
-                yield b' '
-                await anyio.sleep(0.001)
-
+        stream = _DrippingStream()
         monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.05)
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.delenv('KEENABLE_API_URL', raising=False)
-        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=drip()))
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='timed out'):
             await toolset.web_search('cats')
+        assert stream.closed
+
+    async def test_a_caller_deadline_lets_the_response_close(self, monkeypatch: pytest.MonkeyPatch):
+        # A tool timeout is an anyio scope around the request, and it cancels
+        # the response's close too unless that close is shielded.
+        stream = _DrippingStream()
+        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
+        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+
+        with pytest.raises(TimeoutError), anyio.fail_after(0.05):
+            await toolset.web_search('cats')
+        assert stream.closed
 
     @pytest.mark.parametrize('base_url', ['http://localhost:8080', 'https://keenable.internal'])
     def test_base_url_accepts_https_and_loopback_http(self, base_url: str):
