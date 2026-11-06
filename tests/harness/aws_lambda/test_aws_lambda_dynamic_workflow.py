@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
 from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator
 
 from .conftest import FakeDurableContext
 
 
-def test_concurrent_sub_agents_replay_their_own_checkpoints() -> None:
-    orchestrator = build_orchestrator(AWSLambdaDurability)
+@pytest.mark.parametrize('durable_orchestrator', [True, False])
+def test_concurrent_sub_agents_replay_their_own_checkpoints(durable_orchestrator: bool) -> None:
+    orchestrator = build_orchestrator(AWSLambdaDurability, durable_orchestrator=durable_orchestrator)
     first = FakeDurableContext()
     assert run_durable(lambda: orchestrator.run('go'), context=first).output == EXPECTED
 

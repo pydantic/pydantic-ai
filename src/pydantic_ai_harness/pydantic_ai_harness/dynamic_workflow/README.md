@@ -443,7 +443,8 @@ The script runs in Monty, a subset of Python:
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
+- `asyncio.gather(...)` runs sub-agents concurrently (one at a time under
+  [DBOS and AWS Lambda](#running-under-other-durable-engines)) with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
 Before a script runs, it is statically type-checked against the sub-agent signatures. An ordinary,
@@ -471,9 +472,9 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 ## Running under other durable engines
 
 `DBOSDurability` and `AWSLambdaDurability` match a replayed step to its recording by the order the
-steps start, so under them the script runs sub-agents one at a time, and recovery replays each
-sub-agent's steps into the same call. An `asyncio.gather` over sub-agents then takes the sum of their
-run times rather than the longest. Under other engines, sub-agents run concurrently.
+steps start. When sub-agents carry either one, the script runs them one at a time, so recovery
+replays each sub-agent's steps into the same call. An `asyncio.gather` over sub-agents then takes the
+sum of their run times rather than the longest. Under other engines, sub-agents run concurrently.
 
 ## API
 

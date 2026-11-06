@@ -37,8 +37,10 @@ def _noop() -> str:
     return 'ok'
 
 
-def build_orchestrator(durability: Callable[[], AbstractCapability[Any]]) -> Agent[None, str]:
-    """An orchestrator whose script gathers two `summarize` sub-agents, each with its own `durability()`."""
+def build_orchestrator(
+    durability: Callable[[], AbstractCapability[Any]], *, durable_orchestrator: bool = True
+) -> Agent[None, str]:
+    """An orchestrator whose script gathers two `summarize` sub-agents, which carry `durability()`."""
     summarize = Agent(
         FunctionModel(_summarize_model),
         name='summarize',
@@ -49,5 +51,5 @@ def build_orchestrator(durability: Callable[[], AbstractCapability[Any]]) -> Age
     return Agent(
         FunctionModel(_orchestrator_model),
         name='orchestrator',
-        capabilities=[DynamicWorkflow(agents=[summarize]), durability()],
+        capabilities=[DynamicWorkflow(agents=[summarize]), *([durability()] if durable_orchestrator else [])],
     )

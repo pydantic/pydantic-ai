@@ -209,9 +209,9 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
 _START_ORDER_ENGINES = frozenset({'DBOS', 'AWS Lambda'})
 
 
-def _runs_sub_agents_sequentially(ctx: RunContext[Any]) -> bool:
-    """Whether to dispatch sub-agents one at a time, so their durable steps start in the same order on replay."""
-    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+def _records_steps_in_start_order(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the agent's durable steps are matched on replay by the order they start."""
+    durability = BaseDurabilityCapability.from_agent(agent)
     return durability is not None and durability.in_durable_context and durability.engine_name in _START_ORDER_ENGINES
 
 
@@ -823,7 +823,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
-                global_sequential=_runs_sub_agents_sequentially(ctx),
+                global_sequential=any(_records_steps_in_start_order(w.agent) for w in self._by_name.values()),
                 portal=monty.portal,
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
