@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
 
-from pydantic_ai.durable_exec import ReplayCounter, replay_scope
+from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
@@ -250,8 +250,6 @@ class StepBridge:
 
     def __init__(self, context: DurableStepContext) -> None:
         self._context = context
-        self.replay = ReplayCounter()
-        """Which steps ran and which Lambda served from the checkpoint log, so replays emit no telemetry."""
         self._queue: Queue[_StepRequest | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
@@ -325,26 +323,21 @@ class StepBridge:
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
-                self._count(executed)
+                item.context.run(record_durable_unit, executed=executed)
                 item.reply(False, exc)
             except BaseException as exc:
                 # SDK control flow (suspension, interruption). Resolve the waiting step so the agent
                 # task is not left on a future, then let it out of the handler untouched. A body that
                 # ran before the suspension (a failed attempt awaiting its retry) was real work.
                 if executed:
-                    self.replay.unit_executed()
+                    item.context.run(record_durable_unit, executed=True)
                 item.reply(False, exc)
                 raise
             else:
-                self._count(executed)
+                # In the requesting task's context, so it counts for the spans that step ran under, and
+                # before the reply, so they see it when they end.
+                item.context.run(record_durable_unit, executed=executed)
                 item.reply(True, value)
-
-    def _count(self, executed: bool) -> None:
-        # Before the reply, so the agent loop sees the count when the step's span ends.
-        if executed:
-            self.replay.unit_executed()
-        else:
-            self.replay.unit_replayed()
 
 
 def _run_step_body(
@@ -592,7 +585,7 @@ def _run_durable_on_agent_loop(
 
     async def run() -> None:
         try:
-            with replay_scope(bridge.replay):
+            with replay_scope():
                 result = await agent_run()
             bridge.finish(result=result)
         except BaseException as exc:

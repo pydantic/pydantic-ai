@@ -262,15 +262,15 @@ capability authors contribute decorated methods that arrive through the same bac
 
 A replayed run executes the agent loop again, so its instrumentation runs again too. Tell it which
 work came from the journal, so replays emit no duplicate spans and no duplicate token or cost
-metrics: install a [`DurableReplay`][pydantic_ai.durable_exec.DurableReplay] around each durable
-agent run with [`replay_scope()`][pydantic_ai.durable_exec.replay_scope]. Instrumentation snapshots it
-when it opens a span and, if [`replayed_since()`][pydantic_ai.durable_exec.DurableReplay.replayed_since]
-reports that everything since was served from the journal, drops the span and skips that model
-request's metrics. A span that covered work that ran is reported as usual.
+metrics: wrap each durable agent run in [`replay_scope()`][pydantic_ai.durable_exec.replay_scope].
 
-An engine that knows, per durable unit, whether its body ran can use
-[`ReplayCounter`][pydantic_ai.durable_exec.ReplayCounter] and call
-[`unit_executed()`][pydantic_ai.durable_exec.ReplayCounter.unit_executed] or
-[`unit_replayed()`][pydantic_ai.durable_exec.ReplayCounter.unit_replayed] for each one, as AWS Lambda
-does. An engine that instead knows whether it is replaying at a given moment implements
-`replayed_since()` from that, as Temporal does with `workflow.unsafe.is_replaying_history_events()`.
+An engine that knows, per durable unit, whether its body ran reports each one with
+[`record_durable_unit(executed=...)`][pydantic_ai.durable_exec.record_durable_unit], in the context of
+the task that requested it, as AWS Lambda does. Every span instrumentation opens counts the units that
+completed under it, so concurrent tool calls are told apart: a span whose units were all replayed is
+not reported, and neither are a replayed model request's metrics. A span that is reported keeps the
+spans around it, so live work never loses its parent.
+
+An engine that knows instead whether it is replaying at a given moment passes
+`replay_scope(is_replaying=...)`, as Temporal does with `workflow.unsafe.is_replaying_history_events()`:
+a span or model request that ends while it returns `True` is not reported.

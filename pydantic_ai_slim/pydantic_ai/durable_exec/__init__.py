@@ -14,7 +14,7 @@ capability you attach to an [`Agent`][pydantic_ai.Agent]:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .._durable_replay import DurableReplay, ReplayCounter, replay_scope
+    from .._durable_replay import record_durable_unit, replay_scope
     from ._base import BaseDurabilityCapability, conversation_id_from_run_id
     from ._capability_operation import (
         CapabilityMethodDeclaration,
@@ -117,15 +117,13 @@ __all__ = [
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
-    'DurableReplay',
-    'ReplayCounter',
+    'record_durable_unit',
     'replay_scope',
 ]
 
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
-    'DurableReplay': ('.._durable_replay', 'DurableReplay'),
-    'ReplayCounter': ('.._durable_replay', 'ReplayCounter'),
+    'record_durable_unit': ('.._durable_replay', 'record_durable_unit'),
     'replay_scope': ('.._durable_replay', 'replay_scope'),
     'conversation_id_from_run_id': ('._base', 'conversation_id_from_run_id'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),

@@ -5,104 +5,128 @@ durable unit that already completed returns its recorded result instead of runni
 instrumentation runs again too, so without this module each replay re-emits the spans of work that
 already happened, and records its token and cost metrics again.
 
-An engine installs a [`DurableReplay`][pydantic_ai.durable_exec.DurableReplay] for the run with
-[`replay_scope`][pydantic_ai.durable_exec.replay_scope]. Instrumentation takes a snapshot when it
-opens a span and asks the replay at the end whether everything in between was served from the
-journal: if so, it drops the span and skips the request's metrics.
+An engine wraps each durable agent run in [`replay_scope()`][pydantic_ai.durable_exec.replay_scope]
+and reports each durable unit with [`record_durable_unit()`][pydantic_ai.durable_exec.record_durable_unit],
+or, if it knows instead whether it is replaying at a given moment, passes `is_replaying`. Every span
+instrumentation opens keeps a tally of the units that completed under it, in the context of the task
+that requested them, so concurrent tool calls are told apart. A span whose units were all replayed is
+never ended, so never exported, and a model request's metrics are skipped the same way.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from opentelemetry.trace import Span, Tracer, use_span
 
-__all__ = ('DurableReplay', 'ReplayCounter', 'replay_scope', 'current_replay', 'start_as_current_span')
+__all__ = ('ReplaySnapshot', 'record_durable_unit', 'replay_scope', 'snapshot', 'start_as_current_span')
 
 
-class DurableReplay(ABC):
-    """What a durable engine tells instrumentation about work replayed from its journal."""
+@dataclass
+class _Tally:
+    """The durable units that completed under one span, or under the run when no span is open."""
 
-    @abstractmethod
-    def snapshot(self) -> Any:
-        """Capture the replay state when instrumentation opens a span or starts a model request."""
+    parent: _Tally | None
+    executed: int = 0
+    replayed: int = 0
 
-    @abstractmethod
-    def replayed_since(self, snapshot: Any) -> bool:
-        """Whether all durable work since `snapshot` was served from the journal rather than run.
-
-        Return `False` when nothing durable happened since the snapshot: that work ran for real.
-        """
-
-
-class ReplayCounter(DurableReplay):
-    """A [`DurableReplay`][pydantic_ai.durable_exec.DurableReplay] for engines that know, per durable unit, whether it ran.
-
-    Call [`unit_executed`][pydantic_ai.durable_exec.ReplayCounter.unit_executed] when a unit's body ran and
-    [`unit_replayed`][pydantic_ai.durable_exec.ReplayCounter.unit_replayed] when its recorded result was
-    returned instead. A span is replayed when units were replayed during it and none ran.
-    """
-
-    def __init__(self) -> None:
-        self.executed = 0
-        self.replayed = 0
-
-    def unit_executed(self) -> None:
-        """Record that a durable unit's body ran."""
-        self.executed += 1
-
-    def unit_replayed(self) -> None:
-        """Record that a durable unit returned its recorded result without running."""
-        self.replayed += 1
-
-    def snapshot(self) -> tuple[int, int]:
-        return self.executed, self.replayed
-
-    def replayed_since(self, snapshot: tuple[int, int]) -> bool:
-        executed, replayed = snapshot
-        return self.executed == executed and self.replayed > replayed
+    def credit(self, *, executed: bool) -> None:
+        tally: _Tally | None = self
+        while tally is not None:
+            if executed:
+                tally.executed += 1
+            else:
+                tally.replayed += 1
+            tally = tally.parent
 
 
-_current_replay: ContextVar[DurableReplay | None] = ContextVar('_current_replay', default=None)
+@dataclass(frozen=True)
+class _Scope:
+    is_replaying: Callable[[], bool] | None
 
 
-def current_replay() -> DurableReplay | None:
-    """The replay installed for the current run, if a durable engine installed one."""
-    return _current_replay.get()
+_scope: ContextVar[_Scope | None] = ContextVar('_durable_replay_scope', default=None)
+_tally: ContextVar[_Tally | None] = ContextVar('_durable_replay_tally', default=None)
 
 
 @contextmanager
-def replay_scope(replay: DurableReplay) -> Generator[DurableReplay]:
-    """Install `replay` for the code inside, typically one durable agent run.
+def replay_scope(*, is_replaying: Callable[[], bool] | None = None) -> Generator[None]:
+    """Keep the telemetry of work replayed during the code inside, typically one durable agent run, out of traces and metrics.
 
-    Instrumentation running inside drops spans, and skips metrics, for work `replay` reports as replayed.
+    Args:
+        is_replaying: For an engine that knows whether it is replaying at a given moment, like Temporal:
+            a span or model request that ends while it returns `True` is not reported. An engine that
+            knows instead whether each durable unit ran reports them with
+            [`record_durable_unit()`][pydantic_ai.durable_exec.record_durable_unit].
     """
-    token = _current_replay.set(replay)
+    scope_token = _scope.set(_Scope(is_replaying))
+    tally_token = _tally.set(_Tally(parent=None))
     try:
-        yield replay
+        yield
     finally:
-        _current_replay.reset(token)
+        _tally.reset(tally_token)
+        _scope.reset(scope_token)
+
+
+def record_durable_unit(*, executed: bool) -> None:
+    """Report that a durable unit completed: its body ran (`executed=True`), or its recorded result was returned.
+
+    Call it in the context of the task that requested the unit, so it is credited to the spans that
+    unit ran under. Outside a [`replay_scope()`][pydantic_ai.durable_exec.replay_scope], it does nothing.
+    """
+    tally = _tally.get()
+    if tally is not None:
+        tally.credit(executed=executed)
+
+
+@dataclass(frozen=True)
+class ReplaySnapshot:
+    """The replay state when an operation started, to tell when it ends whether it was only replayed."""
+
+    _scope: _Scope
+    _tally: _Tally
+    _executed: int
+    _replayed: int
+
+    def replayed(self) -> bool:
+        """Whether everything durable since the snapshot was replayed, so its telemetry was already recorded."""
+        if self._scope.is_replaying is not None and self._scope.is_replaying():
+            return True
+        return self._tally.executed == self._executed and self._tally.replayed > self._replayed
+
+
+def snapshot() -> ReplaySnapshot | None:
+    """The current replay state, or `None` outside a [`replay_scope()`][pydantic_ai.durable_exec.replay_scope]."""
+    tally = _tally.get()
+    if _scope.get() is None or tally is None:
+        return None
+    return _snapshot_of(tally)
 
 
 @contextmanager
 def start_as_current_span(tracer: Tracer, name: str, **kwargs: Any) -> Generator[Span]:
-    """`tracer.start_as_current_span(...)`, but a span that covered only replayed work is never ended, so never exported."""
-    replay = _current_replay.get()
-    if replay is None:
+    """`tracer.start_as_current_span(...)`, but a span that covered only replayed work is never ended, so never exported.
+
+    A span that is reported counts as work that ran for the spans around it, so they are reported too.
+    """
+    parent = _tally.get()
+    if _scope.get() is None or parent is None:
         with tracer.start_as_current_span(name, **kwargs) as span:
             yield span
         return
 
-    snapshot = replay.snapshot()
     record_exception = kwargs.pop('record_exception', True)
     set_status_on_exception = kwargs.pop('set_status_on_exception', True)
     span = tracer.start_span(
         name, record_exception=record_exception, set_status_on_exception=set_status_on_exception, **kwargs
     )
+    own = _Tally(parent=parent)
+    state = _snapshot_of(own)
+    tally_token = _tally.set(own)
     try:
         with use_span(
             span,
@@ -112,5 +136,13 @@ def start_as_current_span(tracer: Tracer, name: str, **kwargs: Any) -> Generator
         ):
             yield span
     finally:
-        if not replay.replayed_since(snapshot):
+        _tally.reset(tally_token)
+        if not state.replayed():
             span.end()
+            parent.credit(executed=True)
+
+
+def _snapshot_of(tally: _Tally) -> ReplaySnapshot:
+    scope = _scope.get()
+    assert scope is not None
+    return ReplaySnapshot(scope, tally, tally.executed, tally.replayed)

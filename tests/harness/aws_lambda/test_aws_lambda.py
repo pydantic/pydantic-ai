@@ -1749,3 +1749,57 @@ class TestReplayTelemetry:
 
         # The model request was replayed; the attempt ran, so it and its run are reported.
         assert _span_names(capfire) == snapshot(['execute_tool act', 'invoke_agent a'])
+
+    def test_a_replayed_fallback_emits_no_attempt_spans(self, capfire: CaptureLogfire) -> None:
+        """The failed attempt before a fallback was recorded when it ran."""
+
+        def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('primary', 'unavailable')
+
+        agent = Agent(
+            FunctionModel(primary, model_name='primary'),
+            name='a',
+            capabilities=[
+                ModelFallback('backup'),
+                AWSLambdaDurability(
+                    models={'backup': FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('ok')]))}
+                ),
+                Instrumentation(),
+            ],
+        )
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        assert any(name.startswith('model request attempt') for name in _span_names(capfire))
+        capfire.exporter.clear()
+
+        result = run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
+
+        assert result.output == 'ok'
+        assert _span_names(capfire) == []
+
+    def test_parallel_tools_are_told_apart(self, capfire: CaptureLogfire) -> None:
+        """A tool that runs on every invocation keeps its span while a replayed sibling's is dropped."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('durable', {}), ToolCallPart('live', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), name='a', capabilities=[AWSLambdaDurability(), Instrumentation()])
+
+        @agent.tool_plain
+        async def durable() -> str:
+            return 'checkpointed'
+
+        @agent.tool_plain(metadata={'aws_lambda': False})
+        async def live() -> str:
+            await asyncio.sleep(0)
+            return 'runs every time'
+
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        capfire.exporter.clear()
+
+        run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
+
+        assert _span_names(capfire) == snapshot(['execute_tool live', 'invoke_agent a'])

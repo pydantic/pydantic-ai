@@ -21,7 +21,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
-from ._durable_replay import current_replay, start_as_current_span
+from ._durable_replay import ReplaySnapshot, snapshot as replay_snapshot_now, start_as_current_span
 from ._genai_prices import best_effort_price
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
@@ -1014,9 +1014,7 @@ def open_model_request_span(
     prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
-    # A request a durable engine served from its journal was already recorded when it ran.
-    replay = current_replay()
-    replay_snapshot = replay.snapshot() if replay is not None else None
+    replay_snapshot: ReplaySnapshot | None = None
     previous_include_content = include_content_ctx.get()
     try:
         with (
@@ -1032,6 +1030,8 @@ def open_model_request_span(
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
             include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+            # Inside the span, so only the durable units this request ran under count.
+            replay_snapshot = replay_snapshot_now()
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
@@ -1119,7 +1119,8 @@ def open_model_request_span(
                 yield finish, prepared_request_context
     finally:
         include_content_ctx.set(previous_include_content)
-        if record_metrics and not (replay is not None and replay.replayed_since(replay_snapshot)):
+        # A request a durable engine served from its journal was already recorded when it ran.
+        if record_metrics and not (replay_snapshot is not None and replay_snapshot.replayed()):
             record_metrics()
 
 

@@ -108,43 +108,7 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/_durable_replay.py": {
-    "DurableReplay": {
-      "engines": [
-        "durable_exec",
-        "temporal"
-      ],
-      "kinds": [
-        "annotation_only",
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
-      ]
-    },
-    "DurableReplay.replayed_since": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TemporalReplay.replayed_since"
-      ]
-    },
-    "DurableReplay.snapshot": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TemporalReplay.snapshot"
-      ]
-    },
-    "ReplayCounter": {
+    "record_durable_unit": {
       "engines": [
         "aws_lambda",
         "durable_exec"
@@ -156,29 +120,6 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::<module>"
-      ]
-    },
-    "ReplayCounter.unit_executed": {
-      "engines": [
-        "aws_lambda"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::StepBridge._count",
-        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::StepBridge.consume"
-      ]
-    },
-    "ReplayCounter.unit_replayed": {
-      "engines": [
-        "aws_lambda"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::StepBridge._count"
       ]
     },
     "replay_scope": {
