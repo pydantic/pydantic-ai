@@ -6,9 +6,12 @@ request had waited. At that rate, an estimated one request in a million or fewer
 exhausts this window, so a transient rate limit gets a ten-minute window below
 the SDK instead of the SDK's own short one.
 
-The engine builds the model, so the composition installs the transport on the
-client of the run's model rather than handing one to the provider. Only an
-`anthropic/` model reaches here; every other provider keeps its own retry policy.
+The engine passes `-m`, which makes the run's model explicit, and an explicit
+model ignores a capability's model contribution. Model-ID resolution is still
+asked for a string selection, so the composition answers it for `anthropic:`
+and builds the model with the retrying client from the start. Every request the
+run then makes, including a delegate's and the history summariser's, goes
+through that one client.
 """
 
 from __future__ import annotations
@@ -16,16 +19,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import httpx2
-from anthropic import AsyncAnthropic
 from pydantic import TypeAdapter, ValidationError
 from tenacity import RetryCallState, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
-from pydantic_ai import ModelRequestContext, RunContext
+from pydantic_ai import ModelResolutionContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import Model
+from pydantic_ai.models import KnownModelName, Model, create_async_httpx2_client
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
 from ._budgets import run_seconds_left
@@ -36,7 +38,6 @@ RATE_LIMIT_RETRY_SECS = 10 * 60
 RATE_LIMIT_MIN_RETRY_SECS = 60
 
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
-_INSTALLED = 'gh_aw_rate_limit_retry'
 
 
 def _stop_rate_limit_retries(state: RetryCallState) -> bool:
@@ -65,7 +66,7 @@ async def _close_rate_limited_response(state: RetryCallState) -> None:
 
 
 def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
-    """Hand the last 429 to the SDK, marked so the SDK does not open its own window.
+    """Hand the last 429 to the SDK, marked so the SDK does not retry it again.
 
     Without the mark, each of the SDK's own retries would start a fresh ten-minute
     window here, and a persistent 429 would hold one request for much longer.
@@ -110,33 +111,16 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
     )
 
 
-def install_rate_limit_retry(model: Model) -> None:
-    """Give the run model's Anthropic client the retrying transport, once."""
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    if not isinstance(model, AnthropicModel):
-        return
-    sdk_client = model.client
-    if not isinstance(sdk_client, AsyncAnthropic):
-        return
-    # The provider owns construction and offers no client injection, and the model
-    # already exists by the time a capability runs. Keep the authenticated client
-    # and its pool; only its next-hop transport changes.
-    http_client = sdk_client._client  # pyright: ignore[reportPrivateUsage]
-    transport = http_client._transport  # pyright: ignore[reportPrivateUsage]
-    if getattr(transport, _INSTALLED, False):
-        return
-    retrying = rate_limit_retry_transport(transport)
-    setattr(retrying, _INSTALLED, True)
-    http_client._transport = retrying  # pyright: ignore[reportPrivateUsage]
-
-
 @dataclass
-class RateLimitRetry(AbstractCapability[object]):
-    """Retry transient Z.AI 429s for the transport's window before a request fails."""
+class AnthropicRetryTransport(AbstractCapability[object]):
+    """Build a selected `anthropic:` model with the retry transport already on its client."""
 
-    async def before_model_request(
-        self, ctx: RunContext[object], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        install_rate_limit_retry(request_context.model)
-        return request_context
+    async def resolve_model_id(
+        self, ctx: ModelResolutionContext[object], *, model_id: KnownModelName | str
+    ) -> Model | None:
+        del ctx
+        provider_name, separator, model_name = model_id.partition(':')
+        if provider_name != 'anthropic' or not separator or not model_name:
+            return None
+        http_client = create_async_httpx2_client(transport=rate_limit_retry_transport())
+        return AnthropicModel(model_name, provider=AnthropicProvider(http_client=http_client))

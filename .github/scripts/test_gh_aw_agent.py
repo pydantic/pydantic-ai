@@ -11,16 +11,24 @@ import httpx2
 import pytest
 from tenacity import RetryCallState, Retrying, wait_none
 
-from pydantic_ai import AgentRunResult, ModelRequestContext, RunContext, UsageLimitExceeded
+from pydantic_ai import (
+    AgentRunResult,
+    ModelRequestContext,
+    ModelResolutionContext,
+    RunContext,
+    UsageLimitExceeded,
+)
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
-from gh_aw_agent import _budgets, _compaction, _policies, _rate_limit, _result, _safe_outputs
+from gh_aw_agent import _budgets, _compaction, _policies, _rate_limit, _result, _safe_outputs, build_agent
 
 
 def _tool(name: str) -> ToolDefinition:
@@ -245,8 +253,6 @@ def test_compaction_keeps_the_prompt_and_trims_old_results(monkeypatch: pytest.M
 
 
 def test_agent_builds_for_the_engine() -> None:
-    from gh_aw_agent import build_agent
-
     agent = build_agent()
     assert agent.name == 'gh-aw-agent'
 
@@ -319,23 +325,177 @@ def test_rate_limit_stop_honours_the_window_and_the_run_reserve(monkeypatch: pyt
     assert not stop(_retry_state(61.0, 5.0))
 
 
-def test_install_rate_limit_retry_wraps_the_anthropic_client_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    from anthropic import AsyncAnthropic
+def _json_message(text: str) -> dict[str, object]:
+    return {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'glm-5.3-flash',
+        'content': [{'type': 'text', 'text': text}],
+        'stop_reason': 'end_turn',
+        'usage': {'input_tokens': 1, 'output_tokens': 1},
+    }
 
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport
 
+def _model_response(request: httpx2.Request, text: str) -> httpx2.Response:
+    """Answer the way the SDK asked: a stream for `stream: true`, one JSON body otherwise."""
+    if b'"stream": true' in request.content or b'"stream":true' in request.content:
+        return _streamed_message(text)
+    return httpx2.Response(200, json=_json_message(text))
+
+
+def _streamed_tool_call(name: str, args: dict[str, str]) -> httpx2.Response:
+    chunks: list[dict[str, object]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'glm-5.3-flash',
+                'content': [],
+                'stop_reason': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 0},
+            },
+        },
+        {
+            'type': 'content_block_start',
+            'index': 0,
+            'content_block': {'type': 'tool_use', 'id': 'toolu_1', 'name': name, 'input': {}},
+        },
+        {
+            'type': 'content_block_delta',
+            'index': 0,
+            'delta': {'type': 'input_json_delta', 'partial_json': json.dumps(args)},
+        },
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': 'tool_use'}, 'usage': {'output_tokens': 1}},
+        {'type': 'message_stop'},
+    ]
+    body = ''.join(f'event: {chunk["type"]}\ndata: {json.dumps(chunk)}\n\n' for chunk in chunks)
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+
+
+def _streamed_message(text: str) -> httpx2.Response:
+    chunks: list[dict[str, object]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'glm-5.3-flash',
+                'content': [],
+                'stop_reason': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 0},
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text}},
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+        {'type': 'message_stop'},
+    ]
+    body = ''.join(f'event: {chunk["type"]}\ndata: {json.dumps(chunk)}\n\n' for chunk in chunks)
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+
+
+def test_anthropic_models_are_built_with_the_retry_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
-    model = AnthropicModel('glm-5.3-flash')
-    assert isinstance(model.client, AsyncAnthropic)
+    capability = _rate_limit.AnthropicRetryTransport()
+    context = ModelResolutionContext[object](agent=build_agent(), deps=None)
 
-    _rate_limit.install_rate_limit_retry(model)
-    transport = model.client._client._transport  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(transport, AsyncHTTPX2TenacityTransport)
+    model = asyncio.run(capability.resolve_model_id(context, model_id='anthropic:glm-5.3-flash'))
+    assert isinstance(model, AnthropicModel)
+    assert model.model_name == 'glm-5.3-flash'
 
-    _rate_limit.install_rate_limit_retry(model)
-    assert model.client._client._transport is transport  # pyright: ignore[reportPrivateUsage]
+    assert asyncio.run(capability.resolve_model_id(context, model_id='openai-chat:gpt-5')) is None
+    assert asyncio.run(capability.resolve_model_id(context, model_id='glm-5.3-flash')) is None
 
 
-def test_install_rate_limit_retry_leaves_other_models_alone() -> None:
-    _rate_limit.install_rate_limit_retry(TestModel())
+def test_build_agent_retries_a_transient_429_through_its_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx2.Response(429, json={'error': {'code': 1302}})
+        return _model_response(request, 'done')
+
+    real_factory = _rate_limit.create_async_httpx2_client
+
+    def factory(**_: object) -> httpx2.AsyncClient:
+        return real_factory(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
+
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', factory)
+
+    result = asyncio.run(build_agent().run('hello', model='anthropic:glm-5.3-flash'))
+    assert result.output == 'done'
+    assert calls == 2
+
+
+def test_compaction_summariser_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx2.Response(429, json={'error': {'code': 1305}})
+        return _model_response(request, '## Goal\nsummarised')
+
+    http_client = _rate_limit.create_async_httpx2_client(
+        transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler))
+    )
+    model = AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(http_client=http_client))
+    prompt = ModelRequest(parts=[UserPromptPart('the task')])
+    messages: list[ModelMessage] = [
+        prompt,
+        *(ModelRequest(parts=[ToolReturnPart('read_file', 'x' * 12_000, f'call-{index}')]) for index in range(70)),
+    ]
+    context = RunContext(deps=None, model=model, usage=RunUsage())
+
+    compacted = asyncio.run(_compaction.compact_history(context, messages, preserve_prompt=True))
+    assert calls == 2
+    summaries = [
+        part.content
+        for message in compacted
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert any(_compaction.SYNTHETIC_SUMMARY_TAG in content for content in summaries)
+
+
+def test_delegated_child_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _streamed_tool_call('delegate_task', {'agent_name': 'self', 'task': 'child work'})
+        if calls == 2:
+            return httpx2.Response(429, json={'error': {'code': 1302}})
+        if calls == 3:
+            return _model_response(request, 'child done')
+        return _model_response(request, 'done')
+
+    real_factory = _rate_limit.create_async_httpx2_client
+
+    def factory(**_: object) -> httpx2.AsyncClient:
+        return real_factory(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
+
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', factory)
+
+    result = asyncio.run(build_agent().run('hello', model='anthropic:glm-5.3-flash'))
+    assert result.output == 'done'
+    # Parent call, the child's rate-limited call, its retry, then the parent's closing turn.
+    assert calls == 4
