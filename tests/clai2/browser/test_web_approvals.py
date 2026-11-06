@@ -146,6 +146,9 @@ async def test_auto_mode_holds_rm_rf_for_approval(page: Page, approvals: Approva
     assert interrupt['width'] == interrupt['height'], interrupt
     assert meter['height'] < 20, meter
     assert meter['x'] + meter['width'] <= composer['x'] + composer['width'], (meter, composer)
+    # The button stays beside the meter, on its right, when the bar wraps.
+    assert interrupt['x'] >= meter['x'] + meter['width'], (interrupt, meter)
+    assert abs(interrupt['y'] + interrupt['height'] / 2 - (meter['y'] + meter['height'] / 2)) < 8, (interrupt, meter)
     await page.get_by_role('button', name=re.compile('^Hide Monty')).click()
     await page.set_viewport_size({'width': 1280, 'height': 720})
     await card.get_by_label('Reason for denying').fill('keep it for now')
