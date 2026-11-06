@@ -209,12 +209,13 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   checkpoints by the order operations are reached, so anything that changes the number or order of
   steps breaks executions started under the old code: adding or removing a tool or MCP server,
   flipping a `metadata={'aws_lambda': False}` opt-out, or adding an `event_stream_handler` (which
-  switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later also
-  check each step's name on replay, so renaming the agent, a toolset `id` or a tool, or changing the
-  default model, breaks them too, and they fail the execution with `NonDeterministicExecutionError`.
-  On SDK 1.x a mismatch is not detected: a step is served another step's recorded result, which
-  usually fails to decode but can return the wrong data. Either way, deploy under a new published
-  version and let in-flight executions drain on the old one.
+  switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later
+  compare each step's type and name on replay, so these changes, and renaming the agent, a toolset
+  `id` or a tool, or changing the model id in a [non-default model's step name](#what-gets-checkpointed),
+  fail the execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected:
+  a step is served another step's recorded result, which usually fails to decode but can return the
+  wrong data. Either way, deploy under a new published version and let in-flight executions drain
+  on the old one.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.

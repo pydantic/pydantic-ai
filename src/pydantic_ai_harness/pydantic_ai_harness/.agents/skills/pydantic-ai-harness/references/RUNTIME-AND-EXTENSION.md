@@ -295,9 +295,9 @@ Gotchas:
 - Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
   replay matches checkpoints by position, so concurrent runs can be served each other's results.
 - Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
-  `event_stream_handler`) breaks in-flight executions. SDK 2.0+ also compares step names, so renaming
-  the agent, a toolset `id` or a tool, or changing the default model, breaks them too and fails them
-  with `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
+  `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
+  a tool, or a non-default model's id in its step name. SDK 2.0+ fails those executions with
+  `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
   version.
 - Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
