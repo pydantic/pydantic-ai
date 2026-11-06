@@ -223,7 +223,7 @@ def root(tmp_path: Path) -> Path:
     return checkout
 
 
-class FakeClient(report.attention.GitHubClient):
+class FakeClient(report.github_rest.GitHubClient):
     """GitHub issues and comments held in memory; every write is recorded."""
 
     def __init__(self) -> None:
@@ -668,7 +668,7 @@ def test_main_reports_only_failed_or_green_runs(tmp_path: Path, root: Path, monk
     def fake_client(token: str) -> FakeClient:
         return client
 
-    monkeypatch.setattr(report.attention, 'GitHubClient', fake_client)
+    monkeypatch.setattr(report.github_rest, 'GitHubClient', fake_client)
     for name, value in {
         'GITHUB_TOKEN': 'token',
         'GITHUB_REPOSITORY': REPO,

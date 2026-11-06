@@ -226,7 +226,7 @@ After the prefix, the title follows the root `AGENTS.md` convention.
 
 A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
 It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent ownership area,
-and `.github/scripts/semantic_owner_router.py` assigns maintainers from it.
+and it decides which maintainers own the work.
 
 Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
 You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.

@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-import issue_pr_attention_monitor as attention
+import github_rest
 from pydantic import BaseModel, Field, field_validator
 from triage_models import AgentItem, agent_items, item_labels
 
@@ -110,7 +110,7 @@ def eligible_query() -> str:
     )
 
 
-def _search(client: attention.GitHubClient, query: str, *, sort: str, per_page: int) -> Mapping[str, Any]:
+def _search(client: github_rest.GitHubClient, query: str, *, sort: str, per_page: int) -> Mapping[str, Any]:
     encoded = urllib.parse.quote_plus(query)
     result = client.get(f'/search/issues?q={encoded}&sort={sort}&order=desc&per_page={per_page}')
     if not isinstance(result, Mapping):
@@ -118,7 +118,7 @@ def _search(client: attention.GitHubClient, query: str, *, sort: str, per_page: 
     return cast(Mapping[str, Any], result)
 
 
-def _model_request_count(client: attention.GitHubClient, *, now: dt.datetime) -> int:
+def _model_request_count(client: github_rest.GitHubClient, *, now: dt.datetime) -> int:
     # Full timestamp: truncating to a date widens the window and double-counts across consecutive runs.
     since = (now - dt.timedelta(days=_MODEL_REQUEST_WINDOW_DAYS)).replace(microsecond=0).isoformat()
     query = f'repo:{REPO} is:issue label:"{MODEL_REQUEST_LABEL}" created:>={since}'
@@ -128,7 +128,7 @@ def _model_request_count(client: attention.GitHubClient, *, now: dt.datetime) ->
     return count
 
 
-def build_snapshot(client: attention.GitHubClient, *, now: dt.datetime) -> dict[str, Any]:
+def build_snapshot(client: github_rest.GitHubClient, *, now: dt.datetime) -> dict[str, Any]:
     """Build one immutable, demand-ranked, size-bounded candidate snapshot."""
     result = _search(client, eligible_query(), sort='interactions', per_page=_CANDIDATE_LIMIT)
     items = result.get('items')
@@ -181,7 +181,7 @@ def build_snapshot(client: attention.GitHubClient, *, now: dt.datetime) -> dict[
     return snapshot
 
 
-def write_snapshot(client: attention.GitHubClient, path: str, *, now: dt.datetime) -> list[str]:
+def write_snapshot(client: github_rest.GitHubClient, path: str, *, now: dt.datetime) -> list[str]:
     """Write the immutable candidate snapshot the agent and apply step both trust."""
     snapshot = build_snapshot(client, now=now)
     Path(path).write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding='utf-8')
@@ -209,7 +209,7 @@ def _load_snapshot(path: str) -> tuple[dict[int, _Candidate], int]:
     return candidates, loaded.model_requests_last_week
 
 
-def ensure_considered_label(client: attention.GitHubClient) -> None:
+def ensure_considered_label(client: github_rest.GitHubClient) -> None:
     """Create the `digest:considered` label if it does not exist yet."""
     encoded = urllib.parse.quote(CONSIDERED_LABEL, safe='')
     try:
@@ -226,7 +226,7 @@ def ensure_considered_label(client: attention.GitHubClient) -> None:
 
 
 def apply_picks(
-    client: attention.GitHubClient,
+    client: github_rest.GitHubClient,
     output_path: str,
     snapshot_path: str,
     *,
@@ -277,7 +277,7 @@ def apply_picks(
     return lines, '\n'.join(text_lines), surfaced
 
 
-def finalize_picks(client: attention.GitHubClient, numbers: list[int]) -> tuple[list[str], list[int]]:
+def finalize_picks(client: github_rest.GitHubClient, numbers: list[int]) -> tuple[list[str], list[int]]:
     """Mark delivered picks `digest:considered`; runs only after the Slack post succeeded.
 
     One pick failing must not leave the rest unlabeled (they were all posted), so
@@ -338,7 +338,7 @@ def main() -> int:
         if not token:
             raise ValueError('GITHUB_TOKEN or GH_TOKEN is required')
         _repository(os.environ.get('GITHUB_REPOSITORY', REPO))
-        client = attention.GitHubClient(token)
+        client = github_rest.GitHubClient(token)
         now = dt.datetime.now(dt.UTC)
         if args.mode == 'snapshot':
             lines = write_snapshot(client, args.snapshot_path, now=now)

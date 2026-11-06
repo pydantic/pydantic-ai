@@ -79,7 +79,7 @@ safe-outputs:
             persist-credentials: false
             sparse-checkout: |
               .github/scripts/feature_digest.py
-              .github/scripts/issue_pr_attention_monitor.py
+              .github/scripts/github_rest.py
               .github/scripts/triage_models.py
             sparse-checkout-cone-mode: false
         - name: Install the typed-boundary dependency

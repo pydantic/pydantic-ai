@@ -47,7 +47,7 @@ from xml.etree import ElementTree
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 sys.path.insert(0, str(Path(__file__).parent))
-import issue_pr_attention_monitor as attention
+import github_rest
 from triage_models import Account
 
 _MARKER = re.compile(r'<!-- pydantic-ai-latest-versions-canary:v1 (\{[^\n]*\}) -->')
@@ -179,7 +179,7 @@ class Run:
 class Tracked:
     """A canary issue this script filed."""
 
-    client: attention.GitHubClient
+    client: github_rest.GitHubClient
     repo: str
     issue: Issue
     body: Marker
@@ -397,14 +397,14 @@ def _counts(failure: Failure) -> str:
     return f'Python {pythons}{tests}'
 
 
-def _track(client: attention.GitHubClient, repo: str, issue: Issue) -> Tracked | None:
+def _track(client: github_rest.GitHubClient, repo: str, issue: Issue) -> Tracked | None:
     """The canary issue `issue` is, or `None` if this script did not file it."""
     if issue.pull_request is not None or not _by_bot(issue) or (body := _marker(issue.body)) is None:
         return None
     return Tracked(client, repo, issue, body)
 
 
-def _comment(client: attention.GitHubClient, run: Run, tracked: Tracked, status: Status, text: str) -> None:
+def _comment(client: github_rest.GitHubClient, run: Run, tracked: Tracked, status: Status, text: str) -> None:
     marker = Marker(run_id=run.run_id, status=status)
     path = f'/repos/{run.repo}/issues/{tracked.issue.number}/comments'
     client.post(path, {'body': f'{_hidden(marker)}\n{text}\n'})
@@ -412,7 +412,7 @@ def _comment(client: attention.GitHubClient, run: Run, tracked: Tracked, status:
 
 
 def reconcile(
-    client: attention.GitHubClient, run: Run, observation: Observation, moved: Mapping[str, list[str]]
+    client: github_rest.GitHubClient, run: Run, observation: Observation, moved: Mapping[str, list[str]]
 ) -> list[str]:
     """Comment on the canary issues and file the new signatures; return a log."""
     failures = observation.failures
@@ -479,7 +479,7 @@ def reconcile(
     return log
 
 
-def _update_open(client: attention.GitHubClient, run: Run, observation: Observation, tracked: Tracked) -> list[str]:
+def _update_open(client: github_rest.GitHubClient, run: Run, observation: Observation, tracked: Tracked) -> list[str]:
     number, signature = tracked.issue.number, tracked.signature
     failure = observation.failures.get(signature)
     if failure is None and not observation.complete:
@@ -500,7 +500,7 @@ def _update_open(client: attention.GitHubClient, run: Run, observation: Observat
     return [f'#{number}: noted that `{signature}` passes']
 
 
-def _closed_issues(client: attention.GitHubClient, repo: str) -> dict[str, Tracked]:
+def _closed_issues(client: github_rest.GitHubClient, repo: str) -> dict[str, Tracked]:
     """The most recently closed canary issue of each signature among the latest closed ones."""
     query = f'repo:{repo} is:issue is:closed author:app/github-actions in:title "{_TITLE_PREFIX}"'
     params = urllib.parse.urlencode({'q': query, 'sort': 'created', 'order': 'desc', 'per_page': _CLOSED_SEARCH_LIMIT})
@@ -514,7 +514,7 @@ def _closed_issues(client: attention.GitHubClient, repo: str) -> dict[str, Track
 
 
 def _record_recoveries(
-    client: attention.GitHubClient, run: Run, observation: Observation, closed: Mapping[str, Tracked]
+    client: github_rest.GitHubClient, run: Run, observation: Observation, closed: Mapping[str, Tracked]
 ) -> list[str]:
     log: list[str] = []
     for signature, tracked in closed.items():
@@ -592,7 +592,7 @@ def main() -> int:
     elif not observation.failures:
         # Every leg that reported claims success, so a missing leg failed: nothing here passed.
         observation = Observation(failures={'canary run fails with no readable report': Failure()}, complete=False)
-    log = reconcile(attention.GitHubClient(token), run, observation, read_moved(args.reports))
+    log = reconcile(github_rest.GitHubClient(token), run, observation, read_moved(args.reports))
     for line in log or ['nothing to report']:
         print(line)
     if summary := os.environ.get('GITHUB_STEP_SUMMARY'):

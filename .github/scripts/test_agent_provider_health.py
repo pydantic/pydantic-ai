@@ -2287,7 +2287,7 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
     _write_health(
         artifact,
         health.Health(
-            'Attention',
+            'Digest',
             'issue-42',
             'issues',
             1,
@@ -2303,7 +2303,7 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
             {
                 'type': 'result',
                 'provider_health': {
-                    'workflow': 'Attention',
+                    'workflow': 'Digest',
                     'task_key': 'issue-42',
                     'trigger_event': 'issues',
                     'run_attempt': 1,
@@ -2316,7 +2316,7 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
         {
             'name': 'safe_outputs',
             'conclusion': 'failure',
-            'steps': [{'name': 'Apply validated maintainer attention', 'conclusion': 'failure'}],
+            'steps': [{'name': 'Apply validated feature picks', 'conclusion': 'failure'}],
         }
     ]
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
@@ -2337,18 +2337,16 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
     )
 
     marker = _marker_from_payload(client.posts[0])
-    assert marker == health.IncidentMarker('task', 'Attention:issue-42', 'validation', '42', None, 'validation', 1)
+    assert marker == health.IncidentMarker('task', 'Digest:issue-42', 'validation', '42', None, 'validation', 1)
 
 
-def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The trusted post-agent decision job reports a failed allowlist restore as validation."""
+def test_monitor_classifies_allowlist_restore_as_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed candidate-allowlist restore is setup, whichever job runs it."""
     artifact = tmp_path / 'provider-health.json'
     _write_health(
         artifact,
         health.Health(
-            'Attention',
+            'Digest',
             'issue-42',
             'issues',
             1,
@@ -2364,7 +2362,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             {
                 'type': 'result',
                 'provider_health': {
-                    'workflow': 'Attention',
+                    'workflow': 'Digest',
                     'task_key': 'issue-42',
                     'trigger_event': 'issues',
                     'run_attempt': 1,
@@ -2375,7 +2373,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
     client = FakeGitHub()
     client.jobs[('42', 1)] = [
         {
-            'name': 'record_attention_decision',
+            'name': 'apply',
             'conclusion': 'failure',
             'steps': [
                 {'name': 'Checkout repository', 'conclusion': 'success'},
@@ -2402,7 +2400,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
     )
 
     marker = _marker_from_payload(client.posts[0])
-    assert marker == health.IncidentMarker('task', 'Attention:issue-42', 'validation', '42', None, 'validation', 1)
+    assert marker == health.IncidentMarker('task', 'Digest:issue-42', 'setup', '42', None, 'setup', 1)
 
 
 @pytest.mark.parametrize(
@@ -2479,7 +2477,7 @@ def test_monitor_records_trusted_pre_activation_setup_failure(job_name: str) -> 
         {'name': job_name, 'conclusion': 'failure', 'steps': [{'name': 'Setup Scripts', 'conclusion': 'failure'}]}
     ]
     gate = health.Health(
-        'Pydantic AI Attention Triage',
+        'Pydantic AI Bug Hunter',
         'task-1',
         'schedule',
         1,
