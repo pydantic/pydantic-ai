@@ -1778,12 +1778,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 include_hidden=include_hidden,
                 limit=self._max_find_results,
                 accept=functools.partial(
-                    self._authorized_entry,
+                    self._globbed_entry,
                     scope,
                     resolved,
+                    glob=glob,
                     include_hidden=include_hidden,
                     permitted=permitted,
-                    glob=glob,
                 ),
                 prepare=prepare,
             )
@@ -1944,7 +1944,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 include_hidden=include_hidden,
                 limit=self._max_search_results,
                 accept=functools.partial(
-                    self._authorized_match, scope, cwd, include_hidden=include_hidden, permitted=permitted, glob=glob
+                    self._globbed_match, scope, cwd, glob=glob, include_hidden=include_hidden, permitted=permitted
                 ),
                 prepare=prepare,
             )
@@ -2012,6 +2012,36 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('Could not resolve search paths.')
         return realpaths[:-1]
 
+    async def _globbed_entry(
+        self,
+        scope: _Scope,
+        cwd: str,
+        record: Record,
+        *,
+        glob: str | None,
+        include_hidden: bool,
+        permitted: Callable[[Record], bool],
+    ) -> str | None:
+        """The path `list_files` shows for a POSIX search entry, or `None` when `glob` or a check drops it."""
+        if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
+            return None
+        return await self._authorized_entry(scope, cwd, record, include_hidden=include_hidden, permitted=permitted)
+
+    async def _globbed_match(
+        self,
+        scope: _Scope,
+        cwd: str,
+        record: Record,
+        *,
+        glob: str | None,
+        include_hidden: bool,
+        permitted: Callable[[Record], bool],
+    ) -> str | None:
+        """The line `grep` shows for a POSIX search match, or `None` when `glob` or a check drops it."""
+        if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
+            return None
+        return await self._authorized_match(scope, cwd, record, include_hidden=include_hidden, permitted=permitted)
+
     async def _authorized_entry(
         self,
         scope: _Scope,
@@ -2020,10 +2050,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         *,
         include_hidden: bool = False,
         permitted: Callable[[Record], bool] | None = None,
-        glob: str | None = None,
     ) -> str | None:
-        if glob is not None and not fnmatch.fnmatch(posixpath.normpath(record.path), glob):
-            return None
         path = posixpath.normpath(posixpath.join(cwd, record.path))
         if not (permitted(record) if permitted is not None else await self._readable_entry(scope, path)):
             return None
@@ -2037,12 +2064,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         *,
         include_hidden: bool = False,
         permitted: Callable[[Record], bool] | None = None,
-        glob: str | None = None,
     ) -> str | None:
-        entry = await self._authorized_entry(
-            scope, cwd, record, include_hidden=include_hidden, permitted=permitted, glob=glob
-        )
-        if entry is None:
+        if await self._authorized_entry(scope, cwd, record, include_hidden=include_hidden, permitted=permitted) is None:
             return None
         return self._match_line(scope, cwd, record, include_hidden=include_hidden)
 

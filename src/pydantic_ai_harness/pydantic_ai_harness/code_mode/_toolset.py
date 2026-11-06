@@ -1373,11 +1373,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             case _:
                 # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
                 # interruptions re-raise unchanged after dropping the suspended session.
+                # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
+                # be trusted; drop it so the retry starts from a fresh, type-checked session.
                 await run_state.reset()
                 if not is_sandbox_panic(error):
                     return None
-                # The panic aborts the VM mid-execution, so the REPL's accumulated state cannot
-                # be trusted; drop it so the retry starts from a fresh, type-checked session.
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
