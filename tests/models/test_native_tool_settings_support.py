@@ -454,9 +454,13 @@ UNKNOWN_SETTINGS: Any = {
 }
 
 
-@pytest.mark.skipif(not (openai_available() and anthropic_available()), reason='openai or anthropic not installed')
+_needs_anthropic = pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
 @pytest.mark.usefixtures('allow_model_requests')
 class TestProviderSettings:
+    @_needs_anthropic
     @pytest.mark.parametrize(('tool', 'request_key', 'value'), ANTHROPIC_OPTIONS)
     def test_anthropic_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
         assert _anthropic_request_tool(tool)[request_key] == value
@@ -508,10 +512,36 @@ class TestProviderSettings:
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'model', 'gpt-image-2'),
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'partial_images', 2),
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'quality', 'high'),
-            (_anthropic_request_tool, AdvisorTool, {'model': 'advisor'}, 'anthropic', 'caching', '5m'),
-            (_anthropic_request_tool, AdvisorTool, {'model': 'advisor'}, 'anthropic', 'max_uses', 2),
-            (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'enable_citations', True),
-            (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'max_content_tokens', 1000),
+            pytest.param(
+                _anthropic_request_tool,
+                AdvisorTool,
+                {'model': 'advisor'},
+                'anthropic',
+                'caching',
+                '5m',
+                marks=_needs_anthropic,
+            ),
+            pytest.param(
+                _anthropic_request_tool,
+                AdvisorTool,
+                {'model': 'advisor'},
+                'anthropic',
+                'max_uses',
+                2,
+                marks=_needs_anthropic,
+            ),
+            pytest.param(
+                _anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'enable_citations', True, marks=_needs_anthropic
+            ),
+            pytest.param(
+                _anthropic_request_tool,
+                WebFetchTool,
+                {},
+                'anthropic',
+                'max_content_tokens',
+                1000,
+                marks=_needs_anthropic,
+            ),
             (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'instructions', 'search these'),
             (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'retrieval_mode', 'keyword'),
         ],
@@ -590,6 +620,7 @@ class TestProviderSettings:
 
         assert len(warnings) == 1
 
+    @_needs_anthropic
     def test_each_model_reads_only_its_own_settings(self) -> None:
         tool = WebSearchTool(
             provider_settings={'anthropic': {'response_inclusion': 'excluded'}, 'openrouter': {'engine': 'exa'}}
@@ -611,8 +642,8 @@ class TestProviderSettings:
     @pytest.mark.parametrize(
         ('read_request', 'make_tool'),
         [
-            (_anthropic_request_tool, WebSearchTool),
-            (_anthropic_request_tool, WebFetchTool),
+            pytest.param(_anthropic_request_tool, WebSearchTool, marks=_needs_anthropic),
+            pytest.param(_anthropic_request_tool, WebFetchTool, marks=_needs_anthropic),
             (_openrouter_request_parameters, WebSearchTool),
             (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
             (_openai_request_tool, ImageGenerationTool),
