@@ -202,7 +202,7 @@ How the agent thinks and divides the work.
 | [Dynamic Workflow](dynamic-workflow.md) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](advisor.md) | Harness | Let an executor consult a stronger model mid-run |
 | [Background Tools](background-tools.md) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
-| [Teams](teams.md) | Harness | Gates that check a team's work: keep members working, reject board tasks with feedback |
+| [Teams](teams.md) | Harness | A lead and named teammates, each on its own model, on a shared task board with atomic claims, messages and gates |
 
 ### Context management
 

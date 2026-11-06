@@ -3001,13 +3001,14 @@ prompt the keyboard does:
   such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
   `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
-  each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
+  each parent before its children: its ID, a team member's `name`, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
   `background`, whether `background(ID)` can act on it (`backgroundable`), whether it is
   `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
+  `send_input` would, except for a team member (one with a `name`), which it wakes at once with the
+  user's word to continue. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
   user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
   history with the agent, tools, and model it ran with, saves what it does there, and returns
   once the task runs, its progress arriving as `on_task_progress`. Nothing of it reaches the
@@ -3017,7 +3018,8 @@ prompt the keyboard does:
   whose delegate call fails or is denied, and
   `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
   `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
-  and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID
+  and returns `False` once it has finished, when `prompt` or `resume` is the way to go on, and for a
+  team member, which `/team msg NAME TEXT` messages instead. An ID
   from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |

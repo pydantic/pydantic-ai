@@ -48,6 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
+| `/team [spawn NAME [@MODEL] PROMPT \| msg NAME TEXT]` | List the conversation's teammates, start one on a model, or message one (`team.enabled`) |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
@@ -111,6 +112,8 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
+| `team.enabled` | `false` | Let the agent lead a team: spawn named teammates that share a task board and message each other. /team lists and spawns them. See [Teams](#teams). |
+| `team.models` | `{}` | JSON object: the model each teammate type runs on unless its spawn names one, such as {"general-purpose": "PROVIDER:MODEL"}. A type with none runs on the session model. |
 
 ### Environment variables at a glance
 
@@ -2168,6 +2171,26 @@ completed tasks for inspection. Live previews retain the latest 65,536 character
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
 terminal and identify the requesting child.
+
+### Teams
+
+With `/set team.enabled true`, the agent leads a team in the conversation: it can start named teammates
+with `spawn_teammate`, put work on a shared board, hand items out, and message teammates, which claim
+items, complete them, and message each other and the lead. A teammate is a long-lived background task: it
+goes idle when its turn ends, its report reaches the lead, and a message wakes it. When teammates report
+while you are not typing, the lead gets one automated turn for the batch.
+
+Each teammate runs on its own model: the one its spawn names, else `team.models` for its type (such as
+`/set team.models '{"general-purpose": "PROVIDER:MODEL"}'`), else the session's model. It keeps that model
+across idle, wake and restart, and `/team` and `/tasks` show it.
+
+- **`/team`** lists the teammates with their type, model, state, and the board item each holds.
+- **`/team spawn NAME [@MODEL] PROMPT`** starts a teammate yourself, on `MODEL` if given.
+- **`/team msg NAME TEXT`** sends a teammate your message; an idle one wakes to read it.
+- **`/tasks resume NAME`** wakes an idle or stopped teammate with your word to continue, and
+  **`/tasks stop NAME`** stops one; a teammate's name works wherever `/tasks` takes an ID.
+
+The board is saved beside the tasks, in `<database-name>.tasks/boards/`. With teams off, nothing changes.
 
 Task metadata and independent histories are stored beside the session database
 in `<database-name>.tasks/`. Each database has its own task directory; in-memory

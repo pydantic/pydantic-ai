@@ -203,7 +203,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 |---|---|
 | Build a coding agent, give an agent file or shell tools, run it in a Modal/E2B/Render/Sprites/Daytona/boxd/smolvm/BoxLite sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
 | Let the model run Python that calls tools, or sandbox model-written code | [Code Mode](./references/CODE-MODE.md) |
-| Add sub-agents, planning, a model-written workflow over sub-agents, an advisor model, background tools, or team gates | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
+| Add sub-agents, planning, a model-written workflow over sub-agents, an advisor model, background tools, or a team of agents on a shared board | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
 | Keep a long run within its context window, trim or summarize history, limit large tool outputs, or catch prompt-cache busts | [Context Management](./references/CONTEXT-MANAGEMENT.md) |
 | Give the agent persistent memory, Pixeltable catalog access, conversation search, `SKILL.md` skills, or Pydantic AI docs lookup | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) |
 | Add guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, loop detection, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |

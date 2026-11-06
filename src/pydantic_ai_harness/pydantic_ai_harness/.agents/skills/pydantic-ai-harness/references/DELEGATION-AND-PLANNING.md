@@ -3,8 +3,8 @@
 Capabilities that structure long or multi-part work: `Planning` (a model-owned task list),
 `SubAgents` (one `delegate_task` tool over named child agents), `DynamicWorkflow` (the model
 scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run),
-`BackgroundTools` (slow tools run while the agent keeps going), and `Team` (gates that check a
-lead's and its members' work). All import from
+`BackgroundTools` (slow tools run while the agent keeps going), and `Team` (a lead and named
+teammates, each on its own model, on a shared board, with messages and gates). All import from
 `pydantic_ai_harness`; only `DynamicWorkflow` needs an extra.
 
 ## Which one to use
@@ -17,7 +17,7 @@ lead's and its members' work). All import from
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
 | A slow tool should not block the agent | `BackgroundTools` |
-| A lead and its member agents should follow the same rules before going idle, adding a board task, or completing one | `Team` |
+| A lead spawns long-lived named teammates (each on its own model) that claim work from a shared board, message each other, and follow the same gates | `Team` |
 
 Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` catalog unchanged.
 
@@ -443,20 +443,76 @@ Gotchas:
 
 ## Team
 
-`Team(gates=[...])` installs gate listeners on the lead's run; `team.member_capability(name)` returns
-the capability for a member's run, holding the same gates plus the idle gate. Gates are capabilities
-(typically `Hooks`) listening to three immediately dispatched events from `pydantic_ai_harness.teams`:
+`Team(owner, board=..., gates=(), models={}, member_usage_limits=None, observer=None)` runs a team in a
+conversation over a `DelegationTasks` owner (runs the members) and a `ClaimablePlanStore` (the board, one store
+or `lambda conversation_id: store`). Bind it to the lead (agent or run) inside `owner.bind()`, with a
+`conversation_id`. The member runner runs each turn with `team.member_run(record, self_agent=lead)`, which adds
+the team (tools, gates, idle gate) and `member_usage_limits`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
+
+from pydantic_ai_harness import Team
+from pydantic_ai_harness.planning import InMemoryClaimablePlanStore
+from pydantic_ai_harness.subagents import (
+    DelegationTask,
+    DelegationTaskEvent,
+    DelegationTasks,
+)
+
+
+async def run_member(record: DelegationTask) -> str:
+    member = team.member_run(record, self_agent=lead)
+    # `member.model` is the member's pinned model ID: resolve it, else use the lead's model.
+    result = await member.run(model=member.model or 'test')
+    return str(result.output)
+
+
+async def observe(update: DelegationTaskEvent) -> None:
+    await team.observe(update)
+
+
+owner = DelegationTasks(member_runner=run_member, observer=observe)
+team = Team(
+    owner,
+    board=InMemoryClaimablePlanStore(),
+    models={'self': 'test'},
+    member_usage_limits=UsageLimits(request_limit=50),
+)
+owner.claims = team.claims
+lead = Agent('test', capabilities=[team])
+# async with owner.opened():
+#     with owner.bind():
+#         await lead.run('...', conversation_id='c')
+```
+
+- Lead tools: `spawn_teammate(name, prompt, agent='self', model=None)`, `assign_task(item_id, teammate)`,
+  `board_add(content, depends_on)`, `board_list`, `finish_task(item_id, status)`, `send_message(to, text)`.
+  Member tools: `claim_task(item_id=None)`, `board_add`, `board_list`, `finish_task` (own items),
+  `send_message` (`to='lead'` for the lead). Sub-agents of members get none.
+- Model pinning: spawn `model`, else `models[agent_type]` (aliases resolved), else the lead's model (or a
+  specialist's own). Saved on `DelegationTask.model`: survives idle/wake/restart; shown in the roster.
+- Events (`teams` family): `BoardItemChangedEvent(item, previous)`, `TeammateSpawnedEvent`,
+  `TeammateStateEvent(member, previous)`, `TeamMessageEvent(message)`; tool-caused ones go to the run's
+  stream, owner/host-caused ones (`team.spawn`, `team.send`, `team.stop`, claim hand-backs, state) to
+  `observer`. `await team.snapshot(conversation_id)` -> `TeamSnapshot(members, board, messages)`.
+- `owner.claims = team.claims` hands a failed/stopped member's claims back and reports the change.
+- `claim`/`release` on a `ClaimablePlanStore` return `BoardChange(item, previous)`, so board events carry the
+  before/after of the same atomic step.
+
+Gates: capabilities (typically `Hooks`) passed as `gates=[...]`, run on the lead's and every member's run:
 
 - `TeammateIdleEvent(member, final_output, truncated)`: `keep_working(feedback)` enqueues the feedback
   `asap` as the member's next user message, so the run continues instead of ending.
-- `TeamTaskCreatingEvent(item)`: `reject(feedback)` makes the board tool raise `ModelRetry`.
-- `TeamTaskCompletingEvent(item, owner)`: `reject(feedback)` makes the board tool raise `ModelRetry`.
+- `TeamTaskCreatingEvent(item)`: `reject(feedback)` makes `board_add` raise `ModelRetry`.
+- `TeamTaskCompletingEvent(item, owner)`: `reject(feedback)` makes `finish_task` raise `ModelRetry`;
+  `item.owner` holds it, `owner` completes it.
 
 ```python
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import Hooks
 
-from pydantic_ai_harness import Team
 from pydantic_ai_harness.teams import TeammateIdleEvent
 
 gates = Hooks()
@@ -466,24 +522,21 @@ gates = Hooks()
 async def require_summary(ctx: RunContext[None], event: TeammateIdleEvent) -> None:
     if 'Summary:' not in event.final_output:
         event.keep_working('End with a "Summary:" line.')
-
-
-team = Team(gates=[gates])
-lead = Agent('test', capabilities=[team])
-member = Agent('test')
-# await member.run(prompt, capabilities=[team.member_capability('alice')])
 ```
 
-Board tools call `check_task_creating(ctx, item)` / `check_task_completing(ctx, item, owner=...)`
-before storing the change; the tool must be contributed by a capability (`Capability(tools=[...])`).
+Your own board tools can call `check_task_creating(ctx, item)` / `check_task_completing(ctx, item, owner=...)`
+before storing the change; the tool must be contributed by a capability.
 
 Gotchas:
 
+- One `Team` per agent (fixed tool names); two over different owners or boards raise. Don't also bind
+  `TeamMessages`; another capability's `send_message` collides, so wrap one in `PrefixTools`.
 - Board changes made outside a run (the user or the application) are not gated.
 - The idle gate skips runs with queued messages, deferred-tool pauses and `PendingModelResponse`.
-- `run_stream()` skips the final `after_node_run`, so the idle gate needs `run()`, `iter()` or
-  `run_stream_events()`.
-- A gate that always rejects keeps a member running until its `UsageLimits` stop it.
+- `run_stream()` skips the final `after_node_run`, so members run with `run()`, `iter()` or
+  `run_stream_events()` (`MemberRun.run` uses `run()`).
+- A gate that always rejects keeps a member running until `member_usage_limits` stops it; the failed
+  member is not woken again until a new message arrives.
 - Stream consumers do not receive the `TeammateIdleEvent` of a member that does go idle; listeners do.
 
 ## See also
