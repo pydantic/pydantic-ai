@@ -117,7 +117,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
     which let Claude filter web results via code execution before they enter context. Anthropic web tool
-    `provider_settings` select the `20260318` versions instead, which also support dynamic filtering.
+    `provider_settings` can select the `20260318` versions instead, which also support dynamic filtering.
     """
 
     anthropic_supports_xhigh_effort: bool
