@@ -1129,8 +1129,8 @@ def configure_observability() -> None:
     if not (os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('GH_AW_OTLP_ENDPOINTS') or write_token):
         return
     try:
-        # The shim's sources name the code that ran. A commit SHA from the run's environment does not:
-        # under `workflow_run`, CI Review runs the shim from the pull request head it checked out.
+        # The shim's sources name the code that ran, and stay the same across commits that leave the shim
+        # unchanged, which a commit SHA from the run's environment does not.
         digest = hashlib.sha256()
         for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
             digest.update(source.name.encode() + b'\0' + source.read_bytes())

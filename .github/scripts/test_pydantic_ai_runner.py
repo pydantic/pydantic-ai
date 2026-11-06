@@ -366,31 +366,67 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
 
 
-def test_prewarm_leaves_the_runner_lock_as_checked_out(tmp_path: Path):
-    """CI Review's `git checkout --detach` of the PR head aborts if the pre-warm left the lock dirty."""
-    workspace = tmp_path / 'workspace'
-    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
-    lock.parent.mkdir(parents=True)
-    lock.write_text('checked out\n', encoding='utf-8')
-    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
-    subprocess.run([*git, 'init', '-q'], check=True)
-    subprocess.run([*git, 'add', '.'], check=True)
-    subprocess.run([*git, 'commit', '-q', '-m', 'init'], check=True)
-
-    # `uv sync --script` rewrites the adjacent lock when it is stale.
+def _fake_uv(tmp_path: Path, script: str) -> dict[str, str]:
+    """An environment whose `uv` runs `script` and whose runner source is staged under `tmp_path`."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_uv = bin_dir / 'uv'
-    fake_uv.write_text('#!/bin/sh\necho relocked > "$3.lock"\n', encoding='utf-8')
+    fake_uv.write_text(f'#!/bin/sh\n{script}\n', encoding='utf-8')
     fake_uv.chmod(0o755)
+    return {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'PYDANTIC_AI_RUNNER_SRC': str(tmp_path / 'runner-src'),
+    }
 
-    env = {**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'GITHUB_WORKSPACE': str(workspace)}
+
+def test_prewarm_stages_the_workflow_commit_whatever_the_workspace_holds(tmp_path: Path):
+    """The shim and its library come from one commit, not from a workspace holding a PR head and the base's `.github`.
+
+    Run 42064142025 ran the base's shim against an older PR head's `pydantic_ai_slim` and died at import.
+    """
+    workspace = tmp_path / 'workspace'
+    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
+    lock.parent.mkdir(parents=True)
+    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+    subprocess.run([*git, 'init', '-q'], check=True)
+    lock.write_text('workflow commit\n', encoding='utf-8')
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'workflow commit'], check=True)
+    workflow_sha = subprocess.run([*git, 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True).stdout
+    lock.write_text('pull request head\n', encoding='utf-8')
+    subprocess.run([*git, 'commit', '-q', '-am', 'pull request head'], check=True)
+
+    # `uv sync --script` rewrites the adjacent lock when it is stale.
+    env = _fake_uv(tmp_path, 'echo relocked > "$3.lock"')
+    env.update(GITHUB_WORKSPACE=str(workspace), GITHUB_SHA=workflow_sha.strip())
     script = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh')
     result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
 
-    assert result.returncode == 0
-    assert f'using uv={fake_uv}' in result.stdout
-    assert lock.read_text(encoding='utf-8') == 'checked out\n'
+    assert result.returncode == 0, result.stderr
+    runner_src = tmp_path / 'runner-src'
+    assert f'runner={runner_src}/.github/scripts/pydantic-ai-runner' in result.stdout
+    staged = subprocess.run(
+        ['git', '-C', str(runner_src), 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True
+    )
+    assert staged.stdout == workflow_sha
+    assert (runner_src / '.github' / 'scripts' / 'pydantic-ai-runner.lock').read_text(encoding='utf-8') == 'relocked\n'
+    # CI Review's `git checkout --detach` of the PR head aborts on a dirty workspace.
+    assert lock.read_text(encoding='utf-8') == 'pull request head\n'
+
+    # Without the staged source the launcher has nothing to run, so the step fails.
+    rerun = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+    assert rerun.returncode == 1
+    assert '::error::could not check out' in rerun.stdout
+
+
+def test_launcher_runs_the_staged_runner(tmp_path: Path):
+    env = _fake_uv(tmp_path, 'echo "$@"')
+    env['GITHUB_WORKSPACE'] = str(tmp_path / 'workspace')
+    launcher = Path(__file__).with_name('pydantic-ai-runner-launch.sh')
+    result = subprocess.run([launcher, '--print'], text=True, capture_output=True, check=False, env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f'run --script {tmp_path}/runner-src/.github/scripts/pydantic-ai-runner --print\n'
 
 
 @pytest.mark.parametrize(
