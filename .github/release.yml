@@ -6,7 +6,8 @@ changelog:
       - pkg:clai2
   # GitHub lists each PR only under the first category it matches, so categories are
   # change types. The release manager lists `compatibility impact` PRs again under
-  # Compatibility Notes.
+  # Compatibility Notes, and copies those notes into the "Catching up across V2 minor releases"
+  # section of docs/changelog.md.
   categories:
     - title: 🚀 Features
       labels:

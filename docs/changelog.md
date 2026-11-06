@@ -19,6 +19,177 @@ Functionality deprecated in a V2 release keeps working until V3, and using it ra
     - **What the model now sees:** a tool retry carries the serialized validation errors or the `ModelRetry` message, with no `N validation errors:` header and no `Fix the errors and try again.` suffix. One that answers no call arrives in the voice its cause calls for: validation errors and a `ModelRetry` message in the user voice, inside a `<validation_errors>` or `<retry_feedback>` fence behind one line saying the application, not the user, is speaking, and the framework's fixed request for usable output in the system voice. On providers without a native tool error channel, a retried tool call's validation errors go in the `{"error": ...}` wrapper as a JSON array rather than as a string holding one, and Anthropic and Bedrock get them as one text block. Client-returned retry feedback is kept by [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the UI adapters rather than stripped, and a `'no_output'` part among it goes out as fenced user text rather than in the system voice. Retries in a history stored before upgrading are rendered the new way too, since rendering happens when each request goes out, so a conversation's first request after upgrading misses the provider's prompt cache from its first retry onward, once. A [decision model][pydantic_ai.models.decision.DecisionModel] judges a retried tool call as that call's `tool_return`, where it had a `retry` entry. On `ag-ui-protocol` below 0.1.11, [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] now also warns on a run that retried its own output. See [Retries](retries.md#feedback-that-belongs-to-no-tool-call).
     - **Vercel AI dumps keep a request's part order:** [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] now writes a `ModelRequest` as one `UIMessage` per run of same-role parts, in the order they were authored, instead of putting every system part first. This applies with no retries at all: a request holding an enqueued `SystemPromptPart` after its `UserPromptPart` now dumps as a user message followed by a system message, and positional message ids shift with it. The request's metadata rides on its last user message, or its last message when it has none.
 
+## Catching up across V2 minor releases
+
+If you're upgrading across several V2 minor releases at once, these are the changes since v2.0.0 that can make existing code behave differently. Each one is listed under the release that shipped it, newest first, with a link to its pull request. They come from the "Compatibility Notes" section of each release's notes on [GitHub Releases](https://github.com/pydantic/pydantic-ai/releases), which also lists the bug fixes and features of each release.
+
+Releases v2.1.0 through v2.32.2, v2.34.0, v2.35.1, v2.35.3, v2.37.0, v2.39.0 through v2.41.0, v2.43.0, v2.45.0, v2.46.0, v2.48.0 and v2.49.0 have no compatibility notes.
+
+**[v2.61.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.61.0)**
+
+- Warn when a provider-specific thinking setting from a broader scope overrides `thinking` ([#10231](https://github.com/pydantic/pydantic-ai/pull/10231))
+- Send the least thinking a model accepts for `thinking=False` on models that can't turn thinking off ([#11036](https://github.com/pydantic/pydantic-ai/pull/11036))
+- Raise `NotImplementedError` for a file in a `CohereModel` tool return instead of dropping it ([#11114](https://github.com/pydantic/pydantic-ai/pull/11114))
+- Keep concurrent workspace runs attached to their own Prefect environments ([#11160](https://github.com/pydantic/pydantic-ai/pull/11160))
+- Keep `bool` and `int` inputs on separate `Literal` decision branches in `pydantic_graph` ([#9091](https://github.com/pydantic/pydantic-ai/pull/9091))
+- Deprecate `google_multi_speaker` on `GoogleRealtimeModel`, which no Gemini Live model supports ([#11064](https://github.com/pydantic/pydantic-ai/pull/11064))
+- Accept async `auth` functions in the hosted MCP capabilities ([#10835](https://github.com/pydantic/pydantic-ai/pull/10835))
+- Run the authoring checks in `CapabilityStore.load_active` and stop overwriting unreadable manifests ([#10731](https://github.com/pydantic/pydantic-ai/pull/10731))
+- Keep the last valid authored capability on a failed re-author, share the `CapabilityStore` lock per directory, and let runs cancel authoring ([#10767](https://github.com/pydantic/pydantic-ai/pull/10767))
+- Reject `BrowserUse` prohibited lists browser-use would match by exact hostname, and retry when redacted schema keys collide ([#10775](https://github.com/pydantic/pydantic-ai/pull/10775))
+- Share one `LocalStack` container inside `async with agent:`, stop service-list bypasses and `aws configure` writes to `~/.aws`, and cap `aws_cli` output ([#10828](https://github.com/pydantic/pydantic-ai/pull/10828))
+- Make `InputGuardrail` redact the user's own prompt and close fail-open paths in guardrails ([#10841](https://github.com/pydantic/pydantic-ai/pull/10841))
+- Keep `CodeMode(dynamic_catalog=True)` discoveries from rewriting the cached prompt ([#10906](https://github.com/pydantic/pydantic-ai/pull/10906))
+
+**[v2.60.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.60.0)**
+
+- Raise model error categories like `ModelRateLimitError` from embedding models ([#10804](https://github.com/pydantic/pydantic-ai/pull/10804))
+- Add `usage_limits`, `deadline`, `run_id` and `conversation_id` to `ModelSelectionContext` ([#10856](https://github.com/pydantic/pydantic-ai/pull/10856))
+- Default `BedrockConverseModel`'s `maxTokens` to Claude's maximum output, streaming such requests behind the scenes ([#10845](https://github.com/pydantic/pydantic-ai/pull/10845))
+- Deprecate `RetryPromptPart` in favor of `ToolReturnPart(outcome='retried')` and `RetryFeedbackPart` ([#8094](https://github.com/pydantic/pydantic-ai/pull/8094)). Code that finds tool errors with `isinstance(part, RetryPromptPart)` now finds none, in new runs or loaded histories: see the [`RetryPromptPart` deprecation entry](#deprecated-in-v2-to-be-removed-in-v3)
+- Summarize harness-added user-channel content as `<harness_data>` instead of user messages in `SummarizingCompaction` ([#10833](https://github.com/pydantic/pydantic-ai/pull/10833))
+- Give `AskUser`, `ConversationSearch`, `Macroscope`, `ManagedPrompt`, `PlaywrightBrowser` and `PydanticAIDocs` a stable default `id`, and append `ManagedPrompt` version changes ([#10904](https://github.com/pydantic/pydantic-ai/pull/10904))
+- Derive the `MCP` capability's default `id` from the server URL's hostname only, and reject two servers on one host without explicit ids ([#10807](https://github.com/pydantic/pydantic-ai/pull/10807))
+- Record who wrote a memory file with an opt-in `MetadataMemoryStore` and `Memory(write_metadata=...)` ([#10892](https://github.com/pydantic/pydantic-ai/pull/10892))
+- Let a named `InstructionPart` passed to a run's `instructions` opt into `on_change='append'`, keyed `run:<name>` ([#10789](https://github.com/pydantic/pydantic-ai/pull/10789))
+- Keep `SummarizingCompaction(keep_user_messages=True)` copies recognized after their request is merged ([#10914](https://github.com/pydantic/pydantic-ai/pull/10914))
+- Strip request-level `instructions` from untrusted history in `sanitize_messages` and server-managed UI adapters ([#10897](https://github.com/pydantic/pydantic-ai/pull/10897))
+- Send tool returns whose JSON form is a string, like `datetime` and `UUID`, to the model unquoted so restored histories match the first run ([#10488](https://github.com/pydantic/pydantic-ai/pull/10488))
+- Keep the ids of instructions a wrapper toolset passes on from the toolsets it wraps ([#10909](https://github.com/pydantic/pydantic-ai/pull/10909))
+- Include `settings` and `profile` in model equality and `Model` `repr` ([#9474](https://github.com/pydantic/pydantic-ai/pull/9474))
+- Deprecate `OpenAIDecisionsProvider` and let `OpenAIDecisionsModel` take `OpenAIProvider` ([#10951](https://github.com/pydantic/pydantic-ai/pull/10951))
+- Record every mid-run tool population change as a `ToolAvailabilityDeltaPart` ([#9405](https://github.com/pydantic/pydantic-ai/pull/9405))
+- Send typed text to the GPT-Live backend as a user turn, so `send(text)` runs the agent's tools ([#10960](https://github.com/pydantic/pydantic-ai/pull/10960))
+- Keep tool returns shaped like media markers from breaking `StepPersistence` snapshots, and fix `SqliteMediaStore`, `DiskMediaStore`, `MongoMediaStore` and `S3MediaStore` edge cases ([#10834](https://github.com/pydantic/pydantic-ai/pull/10834))
+- Send settings stated by either of two merged `Advisor` capabilities ([#10726](https://github.com/pydantic/pydantic-ai/pull/10726))
+- Drop client-supplied `TextContent.metadata` from user prompts in `sanitize_messages` ([#10943](https://github.com/pydantic/pydantic-ai/pull/10943))
+- Raise `ModelConnectionError` and `ModelTimeoutError` for xAI gRPC connection failures and client timeouts ([#11080](https://github.com/pydantic/pydantic-ai/pull/11080))
+- Send the agent's `system_prompt` and seeded history's system prompts to realtime sessions ([#11055](https://github.com/pydantic/pydantic-ai/pull/11055))
+- Deliver `SubAgents` background task output as framed `<task_output>` data instead of in a `SystemPromptPart` ([#10550](https://github.com/pydantic/pydantic-ai/pull/10550))
+- Keep `BrowserUse` secrets on allowlisted sites and out of tool results, and fix allowlist and `file://` gaps ([#10771](https://github.com/pydantic/pydantic-ai/pull/10771))
+- Match `FileSystem` denied and read-only patterns case-insensitively, protect `.git` files, and bound reads and Python regex searches ([#10825](https://github.com/pydantic/pydantic-ai/pull/10825))
+- Filter `GitHub` tools on `readOnlyHint` under `read_only=True`, reject `'oauth'`, and deprecate plain `http://` URLs ([#10815](https://github.com/pydantic/pydantic-ai/pull/10815))
+- Add `'max'` to unified `thinking` effort levels ([#10920](https://github.com/pydantic/pydantic-ai/pull/10920))
+
+**[v2.59.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.59.0)**
+
+- Remove shut-down Groq models `playai-tts`, `playai-tts-arabic`, `meta-llama/llama-guard-4-12b` and `meta-llama/llama-4-maverick-17b-128e-instruct` ([#10306](https://github.com/pydantic/pydantic-ai/pull/10306))
+- Distinguish omitted provider usage from reported zero and add `UsageLimitUnavailableWarning` ([#9491](https://github.com/pydantic/pydantic-ai/pull/9491))
+- Add `on_change='append'` to preserve dynamic instruction prefixes ([#8188](https://github.com/pydantic/pydantic-ai/pull/8188))
+- Stop recording that a realtime session ended when a tool raised, and document that it goes on ([#10782](https://github.com/pydantic/pydantic-ai/pull/10782))
+- Record what the user heard of ElevenLabs Agents replies they barged in on, adding the `OutputItemCut` lifecycle event ([#10739](https://github.com/pydantic/pydantic-ai/pull/10739))
+- Append the next hour to `LogfireMCP` history instead of rewriting its instructions, keeping the prompt cache ([#10543](https://github.com/pydantic/pydantic-ai/pull/10543))
+- Settle a realtime reply only with the response that answers it, adding `AnswersRevised` ([#10668](https://github.com/pydantic/pydantic-ai/pull/10668))
+- Add provider-neutral model error categories like `ModelRateLimitError`, `ModelUnavailableError`, `ModelServerError` and `ModelContextWindowExceededError`, and `ModelHTTPError.for_category` ([#9354](https://github.com/pydantic/pydantic-ai/pull/9354))
+- Frame `BackgroundTools` results as `<tool_result>` tool output instead of untagged user text ([#10548](https://github.com/pydantic/pydantic-ai/pull/10548))
+- Send `TrajectoryJudge` steering as a framework `SystemPromptPart` note plus the judge message as escaped `<judge_feedback>` data, both marked with `metadata` ([#10545](https://github.com/pydantic/pydantic-ai/pull/10545))
+- Check `tool_calls_limit` before each `CodeMode` nested tool call ([#10362](https://github.com/pydantic/pydantic-ai/pull/10362))
+- Let `GitHubCopilotProvider` send a configurable `copilot-integration-id` via `integration_id` or `GITHUB_COPILOT_INTEGRATION_ID` ([#10784](https://github.com/pydantic/pydantic-ai/pull/10784))
+
+**[v2.58.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.58.0)**
+
+- Count a resumed `'suspended'` response's usage only in the run that produced it, in `RunUsage`, `UsageLimits` and `SpendLimits` ([#10078](https://github.com/pydantic/pydantic-ai/pull/10078))
+- Make `RealtimeConnection` yield lifecycle events through a public `pydantic_ai.realtime.lifecycle` module ([#10353](https://github.com/pydantic/pydantic-ai/pull/10353))
+- Let `read_file` return images and PDFs, and describe other binary files ([#9596](https://github.com/pydantic/pydantic-ai/pull/9596))
+- Record a realtime reply the user cut off after it finished generating as interrupted, and mark interrupted speech when seeding ([#10466](https://github.com/pydantic/pydantic-ai/pull/10466))
+- Treat a native tool as unsupported when the model can't apply its `allowed_domains`, `blocked_domains`, `max_uses` or `external_web_access` setting ([#10451](https://github.com/pydantic/pydantic-ai/pull/10451))
+- Add request-scoped `SystemPromptPart(scope='request')` sent natively as Anthropic `clear_at` system messages ([#9711](https://github.com/pydantic/pydantic-ai/pull/9711))
+- Send Harness `WarnNearLimits` warnings as request-scoped system prompts ([#10561](https://github.com/pydantic/pydantic-ai/pull/10561))
+- Escape `RepoContext` `<context-file>` blocks and send the nested-directory pointer as a `SystemPromptPart` ([#10558](https://github.com/pydantic/pydantic-ai/pull/10558))
+- Make the profile's `supports_auto_cache` decide `anthropic_cache`, and use automatic caching on legacy `AsyncAnthropicBedrock` for Claude Opus 4.7 and later ([#10551](https://github.com/pydantic/pydantic-ai/pull/10551))
+- Let any module define a `ToolKind` with typed tool parts, and keep unknown kinds loadable ([#9710](https://github.com/pydantic/pydantic-ai/pull/9710))
+- Emit `Planning` status-tool events after their store reads, so DBOS recovery with an `event_stream_handler` replays in order. Existing DBOS workflows using `Planning` with an `event_stream_handler` may not recover after upgrading; let in-flight workflows finish first or deploy a new DBOS application version ([#10343](https://github.com/pydantic/pydantic-ai/pull/10343))
+- Align `RealtimeTurnCompleteEvent` with the exchange boundary that `wait_for_reply()` waits for. To react when a particular response ends, use its `PartEndEvent`s. Caption UIs should keep user parts open until their `PartEndEvent`, which can arrive after the reply completes ([#10517](https://github.com/pydantic/pydantic-ai/pull/10517))
+
+**[v2.57.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.57.0)**
+
+- Attach namespaced `origin` and `tool_call_id` metadata to `BackgroundTools` completions ([#10196](https://github.com/pydantic/pydantic-ai/pull/10196))
+- Take GPT-Live realtime history, usage, and reply waits from the session core ([#10083](https://github.com/pydantic/pydantic-ai/pull/10083))
+- Honour `disable-model-invocation` and `user-invocable` in `Skills`, and skip stray skill library paths ([#10378](https://github.com/pydantic/pydantic-ai/pull/10378))
+- Take Gemini Live realtime history, usage, and reply waits from the session core ([#10082](https://github.com/pydantic/pydantic-ai/pull/10082))
+
+**[v2.56.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.56.0)**
+
+- Run `BrowserUse` on the host model by default and make browser-use telemetry opt-in ([#9506](https://github.com/pydantic/pydantic-ai/pull/9506))
+
+**[v2.55.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.55.0)**
+
+- Require Python 3.11 or newer in every package; Python 3.10 installs resolve to 2.54.0 and earlier ([#9526](https://github.com/pydantic/pydantic-ai/pull/9526))
+- Record the tool requests of `ExaSearch`, `YouSearch`, `LocalStack` and other harness capabilities under durable execution ([#9705](https://github.com/pydantic/pydantic-ai/pull/9705))
+- Bound retained realtime audio like retained images with `retain_audio_max_seconds` ([#9702](https://github.com/pydantic/pydantic-ai/pull/9702))
+- Prefix `LogfireMCP` tool names with `logfire_` ([#9868](https://github.com/pydantic/pydantic-ai/pull/9868))
+- Serialize `FileUrl.media_type` as `null` for extensionless URLs instead of raising ([#8405](https://github.com/pydantic/pydantic-ai/pull/8405))
+- Take realtime history, usage, and reply waits from the session core on OpenAI, Azure OpenAI, and xAI ([#9612](https://github.com/pydantic/pydantic-ai/pull/9612))
+- Keep default `run_id` and `conversation_id` stable when a durable run is re-executed ([#9701](https://github.com/pydantic/pydantic-ai/pull/9701))
+- Record each failed `FallbackModel` attempt with its model, timing, error and usage, and count rejected responses in `RunUsage` ([#8745](https://github.com/pydantic/pydantic-ai/pull/8745))
+
+**[v2.54.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.54.0)**
+
+- Handle draft-7 list-form `items` in `JsonSchemaTransformer`, `TestModel` and Mistral streamed output, and make `TestModel` accept boolean subschemas and cap `prefixItems` at `maxItems` ([#9560](https://github.com/pydantic/pydantic-ai/pull/9560))
+- Fix `ImageGeneration` under `FallbackModel` and `dataclasses.replace`, and compare `Embedder` by identity ([#9477](https://github.com/pydantic/pydantic-ai/pull/9477))
+- Refuse a second durable execution engine on an agent before either binds ([#9391](https://github.com/pydantic/pydantic-ai/pull/9391))
+- Make `wrap_*` hooks enclose complete stage lifecycles ([#7053](https://github.com/pydantic/pydantic-ai/pull/7053))
+- Re-raise model errors from Temporal model activities with their original type in workflow code ([#9580](https://github.com/pydantic/pydantic-ai/pull/9580))
+- End the run when a `BackgroundTools` tool raises an unexpected exception, as a sequential tool does ([#9434](https://github.com/pydantic/pydantic-ai/pull/9434))
+- Drop the `SubAgents` `agent_folders` default-change warning: since v2.52.0 (#9023) the `agents` folder is not loaded by default, so pass `agent_folders='agents'` to keep loading it ([#9424](https://github.com/pydantic/pydantic-ai/pull/9424))
+
+**[v2.53.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.53.0)**
+
+- Add `oneOf` schema support to `TestModel`'s generated data ([#8783](https://github.com/pydantic/pydantic-ai/pull/8783))
+- Deprecate `pydantic_ai_harness.step_persistence.naming` ([#9499](https://github.com/pydantic/pydantic-ai/pull/9499))
+
+**[v2.52.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.52.0)**
+
+- Run harness capabilities in any workspace: `Coder`, `FileSystem`, `Shell` and the rest work through `ctx.workspace`, locally or in a sandbox ([#8866](https://github.com/pydantic/pydantic-ai/pull/8866))
+- Replace `ModalSandbox`'s own tools with a Modal workspace, so `Coder`, `Shell` and `FileSystem` run in the sandbox; `ModalSandboxBackend` replaces `ModalSandboxSession` ([#8867](https://github.com/pydantic/pydantic-ai/pull/8867))
+- Raise `AnthropicModel`'s default `max_tokens` from 4096 to 16384 on Claude Sonnet 4.5 and later ([#9025](https://github.com/pydantic/pydantic-ai/pull/9025))
+- Keep the prompt as a `DecisionModel`'s judged `text` after a retry ([#8967](https://github.com/pydantic/pydantic-ai/pull/8967))
+- Stop `SubAgents` loading agent files by default, and deprecate `inherit_tools` ([#9023](https://github.com/pydantic/pydantic-ai/pull/9023))
+- Default `AnthropicModel`'s `max_tokens` to the model's maximum output, streaming such requests behind the scenes ([#9298](https://github.com/pydantic/pydantic-ai/pull/9298))
+
+**[v2.51.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.51.0)**
+
+- Match dated `gemini-3.8-live` ids, reject `google_affective_dialog` on Gemini 3.1 Flash Live and 3.8 Live at connect, and raise `RealtimeError` for Gemini Live close codes ([#8761](https://github.com/pydantic/pydantic-ai/pull/8761))
+- Raise a `UserError` for a realtime `tool_choice` that forces a tool call on OpenAI, Azure OpenAI, and xAI ([#8755](https://github.com/pydantic/pydantic-ai/pull/8755))
+
+**[v2.50.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.50.0)**
+
+- Ask a `DecisionModel` which route to take by name, with one label per route ([#8733](https://github.com/pydantic/pydantic-ai/pull/8733))
+- Make `ModelSelectionContext.messages` end with the request being routed, and add `ModelSelectionContext.prompt` ([#8737](https://github.com/pydantic/pydantic-ai/pull/8737))
+- Replace the decision model's tool-call lean with an opt-in `decision_route_threshold` ([#8739](https://github.com/pydantic/pydantic-ai/pull/8739))
+
+**[v2.47.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.47.0)**
+
+- Name a `None` output route `None` rather than `NoneType` ([#8590](https://github.com/pydantic/pydantic-ai/pull/8590))
+- Raise when `UserPromptPart.content` is not a `str` or a sequence, instead of silently sending a `dict`'s keys ([#8595](https://github.com/pydantic/pydantic-ai/pull/8595))
+
+**[v2.44.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.44.0)**
+
+- Make `RunContext.enqueue()` safe from worker threads ([#7758](https://github.com/pydantic/pydantic-ai/pull/7758))
+- Require a JSON `Content-Type` on UI adapter requests ([#8396](https://github.com/pydantic/pydantic-ai/pull/8396))
+- Dispatch a capability `@durable_operation` called from a per-request hook, instead of silently running it inline ([#8395](https://github.com/pydantic/pydantic-ai/pull/8395))
+
+**[v2.42.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.42.0)**
+
+- Reject invalid `DeferredToolResults.approvals` values ([#8081](https://github.com/pydantic/pydantic-ai/pull/8081))
+
+**[v2.38.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.38.0)**
+
+- Give one-off capabilities a default `id` and a `combine` rule for repeats ([#7248](https://github.com/pydantic/pydantic-ai/pull/7248))
+
+**[v2.36.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.36.0)**
+
+- Add `--mcp-config` support and tool-call streaming to `clai` ([#1374](https://github.com/pydantic/pydantic-ai/pull/1374))
+
+**[v2.35.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.35.0)**
+
+- Deprecate `RunContext.capability_loaded` and `available_capability_ids` in favor of `capability_active` and `active_capability_ids` ([#7454](https://github.com/pydantic/pydantic-ai/pull/7454))
+- Make inclusive integer `maximum` reachable in `TestModel` ([#7697](https://github.com/pydantic/pydantic-ai/pull/7697))
+
+**[v2.33.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.33.0)**
+
+- Use `httpx2` for Anthropic clients, requiring `anthropic>=1.0.0`. An `http_client` you pass to `AnthropicProvider` must now be an `httpx2.AsyncClient` ([#7657](https://github.com/pydantic/pydantic-ai/pull/7657))
+
 ## Breaking Changes
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
