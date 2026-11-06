@@ -312,10 +312,14 @@ async def test_add_reachable_chain():
     g.add_reachable()
     g.add_reachable(First, Second, First)
     g.add_reachable(First)
-    before = str(g.build(validate_graph_structure=False))
-    assert before.count('First --> Second') == 1
-    assert before.count('Second --> [*]') == 1
-    assert '[*] -->' not in before
+    assert str(g.build(validate_graph_structure=False)) == snapshot("""\
+stateDiagram-v2
+  First
+  Second
+
+  First --> Second
+  Second --> [*]\
+""")
     g.add(g.edge_from(g.start_node).to(First))
     assert await g.build().run(inputs=First(3)) == 7
 
@@ -358,6 +362,26 @@ async def test_add_reachable_diamond_and_cycles():
     g.add_reachable(Root, Finish)
     g.add(g.edge_from(g.start_node).to(Root))
     graph = g.build()
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  state decision <<choice>>
+  Left
+  Right
+  Finish
+  state decision_2 <<choice>>
+
+  [*] --> Root
+  Root --> decision
+  decision --> Left
+  decision --> Right
+  Left --> Finish
+  Right --> Finish
+  Finish --> decision_2
+  decision_2 --> Root
+  decision_2 --> Finish
+  decision_2 --> [*]\
+""")
     assert await graph.run(inputs=Root(0)) == 3
     assert await graph.run(inputs=Root(1)) == 3
 
@@ -385,8 +409,17 @@ async def test_add_reachable_preserves_configured_paths():
     g.add(g.edge_from(NodeStep(Root)).label('configured').to(Finish), g.edge_from(unused).to(Unrelated))
     g.add_reachable(Root)
     graph = g.build(validate_graph_structure=False)
-    assert 'configured' in str(graph)
-    assert 'Unrelated' not in graph.edges_by_source
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Finish
+  Root
+  Unrelated
+  unused
+
+  Finish --> [*]
+  Root --> Finish: configured
+  unused --> Unrelated\
+""")
     g.add(g.edge_from(g.start_node).to(Root))
     assert await g.build(validate_graph_structure=False).run(inputs=Root()) == 42
 
@@ -506,7 +539,15 @@ async def test_add_reachable_preserves_step_paths():
     g.add_reachable(Root)
     g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
     graph = g.build()
-    assert 'Finish' not in graph.nodes
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  shared
+
+  [*] --> Root
+  Root --> shared
+  shared --> [*]\
+""")
     state = IntegrationState()
     assert await graph.run(state=state, inputs=7) == 7
     assert state.log == ['configured']
@@ -544,8 +585,52 @@ async def test_add_reachable_visits_new_step_path():
     g.add_reachable(Root)
     g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
     graph = g.build()
-    assert 'Finish' in graph.edges_by_source
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  state broadcast <<fork>>
+  Later
+  shared
+  Finish
+
+  [*] --> Root
+  Root --> broadcast
+  broadcast --> Later
+  broadcast --> shared
+  Later --> shared
+  shared --> Finish
+  Finish --> [*]\
+""")
     assert await graph.run(inputs=ReachableStepAlias(7)) == 7
+
+
+@pytest.mark.parametrize('recursive', [False, True])
+async def test_nested_step_local_annotations(recursive: bool):
+    g = GraphBuilder(output_type=int)
+
+    class Finish(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(42)
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, None]) -> Finish:
+        return Finish()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> Annotated[StepNode[None, None], inner]:
+        return inner.as_node(None)
+
+    class Root(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], outer]:
+            return outer.as_node(None)
+
+    if not recursive:
+        with pytest.raises(NameError, match="name 'Finish' is not defined"):
+            g.add(g.edge_from(g.start_node).to(outer))
+    else:
+        g.add_reachable(Root)
+        g.add(g.edge_from(g.start_node).transform(lambda ctx: Root()).to(Root))
+        assert await g.build().run() == 42
 
 
 @pytest.mark.parametrize('recursive', [False, True])

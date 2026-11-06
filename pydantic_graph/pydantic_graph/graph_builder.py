@@ -1518,7 +1518,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             else:
                 edge = self._edge_from_return_hint(destination, return_hint)
                 if edge is not None:
-                    self._add((edge,), parent_namespace, infer_missing=infer_missing)
+                    # Only discovery resolves nested steps against the public caller's namespace.
+                    if infer_missing:
+                        self._add((edge,), parent_namespace, infer_missing=True)
+                    else:
+                        self.add(edge)
 
     def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
         """Add a simple edge between two nodes.
