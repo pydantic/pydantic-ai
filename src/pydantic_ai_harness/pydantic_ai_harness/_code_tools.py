@@ -259,6 +259,18 @@ def record_nested_call(
         user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
 
 
+def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Key the arguments of a sandbox call by the tool's schema property names.
+
+    A schema property whose name is a Python keyword or not an identifier (e.g. `from`, `user-id`) is
+    rendered as a sanitized parameter (`from_`, `user_id`), which the code passes as a keyword argument.
+    """
+    renamed = {param.name: name for name, param in tool_def.function_signature.params.items() if param.name != name}
+    if not renamed:
+        return kwargs
+    return {renamed.get(key, key): value for key, value in kwargs.items()}
+
+
 def signatures_and_conflicts(
     callable_defs: dict[str, ToolDefinition],
 ) -> tuple[list[FunctionSignature], frozenset[str]]:

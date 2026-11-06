@@ -400,6 +400,24 @@ def book(*, trip: Trip, travellers: int) -> str:
             tools=[Tool(get_weather, name='get-weather')],
         ) == ['Sunny in Paris']
 
+    async def test_renamed_parameters_dispatch_under_their_schema_names(self, kernel: IPythonKernel) -> None:
+        def search(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        tool = Tool[None].from_schema(
+            search,
+            name='search',
+            description='Search.',
+            json_schema={
+                'type': 'object',
+                'properties': {'from': {'type': 'string'}, 'user-id': {'type': 'string'}},
+                'required': ['from', 'user-id'],
+            },
+        )
+        assert await _run(
+            IPythonCodeMode(kernel=kernel), "search(from_='me', user_id='u-1')", tools=[tool]
+        ) == snapshot([{'from': 'me', 'user-id': 'u-1'}])
+
     async def test_the_tool_selector_keeps_other_tools_native(self, kernel: IPythonKernel) -> None:
         def inside() -> str:
             return 'inside'  # pragma: no cover

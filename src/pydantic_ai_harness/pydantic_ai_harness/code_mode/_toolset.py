@@ -62,6 +62,7 @@ from pydantic_ai_harness._code_tools import (
     record_nested_call,
     run_nested_call,
     sanitize_tool_name,
+    schema_arg_names,
     signatures_and_conflicts,
 )
 from pydantic_ai_harness._monty_exec import (
@@ -1186,7 +1187,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-            call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+            call_part = ToolCallPart(
+                tool_name=original_name,
+                args=schema_arg_names(callable_defs[sandbox_name], kwargs),
+                tool_call_id=tool_call_id,
+            )
             if speculation is not None:
                 claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
                 if claimed is not None:
