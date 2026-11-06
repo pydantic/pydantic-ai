@@ -138,7 +138,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](https://pydantic.dev/docs/ai/harness/memory/) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
-| [Knowledge Base](https://pydantic.dev/docs/ai/harness/knowledge-base/) | Harness | Search and read a document corpus your application provides, with cited passages and per-tenant filters; in-memory, Amazon Bedrock, OpenAI vector store, Qdrant and pgvector backends |
+| [Knowledge Base](https://pydantic.dev/docs/ai/harness/knowledge-base/) | Harness | Search and read a document corpus your application provides, with cited passages and per-tenant filters; in-memory, Amazon Bedrock and OpenAI vector store backends |
 | [Pixeltable](https://pydantic.dev/docs/ai/harness/pixeltable/) | Harness | Query and search allowed Pixeltable tables; persist the memory notebook in Pixeltable |
 | [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
