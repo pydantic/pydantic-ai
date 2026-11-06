@@ -572,18 +572,28 @@ class WebService:
     ) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
         action = partial(run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
-        if (name, key) != ('update', VERSION):
-            return await self._edit_command(session, name, action, path)
-        # About's Update enters `/update now` in the session CLAI restarts from, which may finish before this returns.
-        self._update_asked = session
+        if (name, key) == ('update', VERSION):
+            action = partial(self._asking_update, session, action)
+        return await self._edit_command(session, name, action, path)
+
+    async def _asking_update(
+        self, session: SessionChannel, action: Callable[[SettingsMenu], Awaitable[list[str]]], menu: SettingsMenu
+    ) -> list[str]:
+        """Run About's Update, after which `session` hears how the `/update now` it entered ends.
+
+        Set before it runs, as `/update now` may end in another session first, and under the edit lock, so a
+        page's Update waiting its turn takes over no earlier page's. A cancelled or refused one enters
+        nothing, so the page that asked before keeps hearing.
+        """
+        before, self._update_asked = self._update_asked, session
         try:
-            edited = await self._edit_command(session, name, action, path)
+            messages = await action(menu)
         except BaseException:
-            self._update_asked = None
+            self._update_asked = before
             raise
-        if not edited.messages:  # Cancelled: nothing was entered.
-            self._update_asked = None
-        return edited
+        if not messages:
+            self._update_asked = before
+        return messages
 
     async def _edit_command(
         self,
