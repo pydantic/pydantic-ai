@@ -111,6 +111,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -197,6 +198,45 @@ imports:
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
+  # The agent job waits its turn in gh-aw's per-workflow agent slot (the compiled
+  # `gh-aw-<engine>-<workflow>` concurrency group, `queue: max`), which serves one
+  # review at a time across all PRs, and `eligibility` ran before that wait. A PR
+  # that has since closed or moved to a new head gets a `noop` here; gh-aw's engine
+  # harness finds it before starting the model, so the slot is held only for setup.
+  # The new head's CI run queues its own review. Any failure here fails open and the
+  # review goes ahead.
+  #
+  # This runs before the checkout below, which skips a PR this step skipped. Under
+  # `pull_request*` triggers gh-aw restores the agent config folders from base after
+  # checking out the PR branch tip, so the tree is dirty, and `git checkout` refuses a
+  # head the branch has moved past.
+  - name: Skip a PR that closed or moved on while queued
+    id: stale-pr
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
+      # gh-aw sets `GH_AW_SAFE_OUTPUTS` only on its own steps, despite its docs, so
+      # this reuses the expression it injects into the `Execute` step.
+      SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
+    run: |
+      set -uo pipefail
+      if [ -z "$SAFE_OUTPUTS" ]; then
+        echo "::warning::steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS is empty; cannot skip a stale review"
+        exit 0
+      fi
+      if ! live=$(gh api "$PR" --jq '"\(.state) at \(.head.sha)"'); then
+        echo "::warning::could not re-read the PR; reviewing ${HEAD_SHA} anyway"
+        exit 0
+      fi
+      [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
+      msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
+      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+        echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+        echo 'skipped=true' >> "$GITHUB_OUTPUT"
+      else
+        echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
+      fi
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
   # `aw_context`, so under that trigger it no-ops — without this the agent would
@@ -214,6 +254,7 @@ pre-agent-steps:
   # failed the whole run. GitHub serves any reachable commit by SHA, and the review
   # still posts on the merged PR.
   - name: Check out the PR head
+    if: steps.stale-pr.outputs.skipped != 'true'
     env:
       HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
     run: |
@@ -248,38 +289,6 @@ pre-agent-steps:
           || echo "::warning::${script} failed; reviewer will run with less context"
       else
         echo "::warning::${script} not present; reviewer will run with less context"
-      fi
-  # The agent job waits its turn in gh-aw's per-workflow agent slot (the compiled
-  # `gh-aw-<engine>-<workflow>` concurrency group, `queue: max`), which serves one
-  # review at a time across all PRs, and `eligibility` ran before that wait. A PR
-  # that has since closed or moved to a new head gets a `noop` here; gh-aw's engine
-  # harness finds it before starting the model, so the slot is held only for setup.
-  # The new head's CI run queues its own review. Any failure here fails open and the
-  # review goes ahead.
-  - name: Skip a PR that closed or moved on while queued
-    env:
-      GH_TOKEN: ${{ github.token }}
-      PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
-      HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
-      # gh-aw sets `GH_AW_SAFE_OUTPUTS` only on its own steps, despite its docs, so
-      # this reuses the expression it injects into the `Execute` step.
-      SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
-    run: |
-      set -uo pipefail
-      if [ -z "$SAFE_OUTPUTS" ]; then
-        echo "::warning::steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS is empty; cannot skip a stale review"
-        exit 0
-      fi
-      if ! live=$(gh api "$PR" --jq '"\(.state) at \(.head.sha)"'); then
-        echo "::warning::could not re-read the PR; reviewing ${HEAD_SHA} anyway"
-        exit 0
-      fi
-      [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
-      msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
-      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
-        echo "$msg" >> "$GITHUB_STEP_SUMMARY"
-      else
-        echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
       fi
 
 jobs:
