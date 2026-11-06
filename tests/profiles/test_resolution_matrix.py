@@ -3372,7 +3372,6 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             _DEEPSEEK_V4_1,
             ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
             id='deepseek-v4.1-together',
-            marks=_diverges('#12069', "Together's DeepSeek V4 guard keys on `deepseek-v4-`, which V4.1 ids miss"),
         ),
         # OpenRouter's `/models` lists both `deepseek/deepseek-v4.1-flash` and this dated id (checked 2026-11-04).
         pytest.param(
