@@ -1153,10 +1153,7 @@ def _delegation_timeline(cassette: RealtimeCassette) -> list[str]:
     delegation opened, called a tool and had a backend response complete."""
     delegations: dict[str, int] = {}
     timeline: list[str] = []
-    for interaction in cassette.interactions:
-        if not isinstance(interaction, CassetteMessage):
-            continue
-        data = interaction.data
+    for data in (interaction.data for interaction in cassette.interactions if isinstance(interaction, CassetteMessage)):
         if data['type'] == 'session.input_transcript.delta' and 'Paris' in data['delta']:
             timeline.append('user asks about Paris')
         elif data['type'] == 'response.item.create' and data['item']['type'] == 'function_call_output':
