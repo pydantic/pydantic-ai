@@ -23,6 +23,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
@@ -45,7 +46,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Install it with: uv add "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-from pydantic_ai_harness._durable import runs_function_tools_in_workflow_code
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
@@ -205,18 +205,14 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
 }
 
 
-def _runs_sub_agents_sequentially(ctx: RunContext[Any]) -> bool:
-    """Whether a durable run must dispatch sub-agents one at a time to replay their steps in order.
+# Engines that match a replayed step to its recording by the order the steps start.
+_START_ORDER_ENGINES = frozenset({'DBOS', 'AWS Lambda'})
 
-    Sub-agents make their durable steps from workflow code, so concurrent ones would record them in
-    timing order. That is the case for engines that run function tools in workflow code, like DBOS,
-    and for a run whose tool calls are sequential, as with Absurd, pgtask and AWS Lambda.
-    """
-    if not ctx.in_durable_context:
-        return False
-    tool_manager = ctx.tool_manager
-    sequential = tool_manager is not None and tool_manager.get_parallel_execution_mode() == 'sequential'
-    return sequential or runs_function_tools_in_workflow_code(ctx)
+
+def _runs_sub_agents_sequentially(ctx: RunContext[Any]) -> bool:
+    """Whether to dispatch sub-agents one at a time, so their durable steps start in the same order on replay."""
+    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+    return durability is not None and durability.in_durable_context and durability.engine_name in _START_ORDER_ENGINES
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:

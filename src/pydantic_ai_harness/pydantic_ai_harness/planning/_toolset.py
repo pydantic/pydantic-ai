@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, Generic
 from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolFuncContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
-from pydantic_ai_harness._durable import runs_function_tools_in_workflow_code
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
     PlanCreatedEvent,
@@ -246,14 +246,25 @@ def validate_hierarchy(items: list[PlanItem]) -> str | None:
     """Return an error if the plan has duplicate ids, broken/cyclic parents, or bad dependencies, else `None`."""
     if error := _duplicate_ids_error(items):
         return error
-    known = {item.id for item in items}
     by_id = {item.id: item for item in items}
+    return (
+        _unknown_reference_error(items, by_id)
+        or _parent_cycle_error(items, by_id)
+        or _dependency_cycle_error(items, by_id)
+    )
+
+
+def _unknown_reference_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     for item in items:
-        if item.parent_id is not None and item.parent_id not in known:
+        if item.parent_id is not None and item.parent_id not in by_id:
             return f"Step '{item.id}' has parent_id '{item.parent_id}', which is not in the plan."
         for dep_id in item.depends_on:
-            if dep_id not in known:
+            if dep_id not in by_id:
                 return f"Step '{item.id}' depends on '{dep_id}', which is not in the plan."
+    return None
+
+
+def _parent_cycle_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     for item in items:
         seen: set[str] = set()
         parent_id = item.parent_id
@@ -263,21 +274,25 @@ def validate_hierarchy(items: list[PlanItem]) -> str | None:
             seen.add(parent_id)
             parent = by_id.get(parent_id)
             parent_id = parent.parent_id if parent is not None else None
+    return None
+
+
+def _dependency_cycle_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     color: dict[str, int] = {}
-
-    def has_dependency_cycle(node_id: str) -> bool:
-        color[node_id] = 1
-        for dep_id in by_id[node_id].depends_on:
-            state = color.get(dep_id, 0)
-            if state == 1 or (state == 0 and has_dependency_cycle(dep_id)):
-                return True
-        color[node_id] = 2
-        return False
-
     for item in items:
-        if color.get(item.id, 0) == 0 and has_dependency_cycle(item.id):
+        if color.get(item.id, 0) == 0 and _has_dependency_cycle(by_id, color, item.id):
             return 'Plan has a dependency cycle.'
     return None
+
+
+def _has_dependency_cycle(by_id: dict[str, PlanItem], color: dict[str, int], node_id: str) -> bool:
+    color[node_id] = 1
+    for dep_id in by_id[node_id].depends_on:
+        state = color.get(dep_id, 0)
+        if state == 1 or (state == 0 and _has_dependency_cycle(by_id, color, dep_id)):
+            return True
+    color[node_id] = 2
+    return False
 
 
 def render_flat(items: list[PlanItem], *, subtasks: bool) -> str:
@@ -449,6 +464,21 @@ class _RecordedPlanStore(Generic[AgentDepsT]):
         return await self.operations.remove_item(self.ctx, item_id)
 
 
+def _runs_function_tools_in_workflow_code(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether this run is in durable workflow code under an engine that doesn't wrap function tools in units."""
+    if not ctx.in_durable_context or ctx.root_capability is None:
+        return False
+    in_workflow_code = False
+
+    def check(capability: AbstractCapability[AgentDepsT]) -> None:
+        nonlocal in_workflow_code
+        if isinstance(capability, BaseDurabilityCapability):
+            in_workflow_code = 'function' not in capability.engine_spec.wrapped_toolset_kinds
+
+    ctx.root_capability.apply(check)
+    return in_workflow_code
+
+
 class PlanningToolset(FunctionToolset[AgentDepsT]):
     """Plan tools registered against a `Planning` capability's resolved store.
 
@@ -501,7 +531,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         unit, like Temporal and Prefect, record no such steps, so tools keep running alongside each other.
         """
         tools = await super().get_tools(ctx)
-        if self._operations is None or not runs_function_tools_in_workflow_code(ctx):
+        if self._operations is None or not _runs_function_tools_in_workflow_code(ctx):
             return tools
         return {name: replace(tool, tool_def=replace(tool.tool_def, sequential=True)) for name, tool in tools.items()}
 
@@ -564,12 +594,15 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             previous = old.get(item.id)
             if previous is None:
                 await ctx.emit(PlanCreatedEvent(item=item))
-            elif item != previous:
-                await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
-                if item.status != previous.status:
-                    await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
-                    if item.status is TaskStatus.completed:
-                        await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
+                continue
+            if item == previous:
+                continue
+            await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
+            if item.status == previous.status:
+                continue
+            await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
+            if item.status is TaskStatus.completed:
+                await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
         for item in before:
             if item.id not in new:
                 await ctx.emit(PlanDeletedEvent(item=item))
@@ -585,19 +618,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         if error := _duplicate_ids_error(new_items):
             return f'Plan not updated: {error}'
         for item in new_items:
-            if not self._valid_status(item.status):
-                return f"Plan not updated: status '{item.status.value}' is only valid with subtasks enabled."
-            if not self._subtasks and (item.parent_id is not None or item.depends_on):
-                # Storing them would be a write the plan does not reflect: nothing reconciles
-                # dependencies without the subtask tools, and no view renders the hierarchy.
-                return (
-                    f"Plan not updated: step '{item.content}' sets parent_id/depends_on, which are "
-                    'only valid with subtasks enabled.'
-                )
-            if item.status is TaskStatus.blocked and not item.depends_on:
-                # Nothing would ever free it: reconciliation only touches steps that have
-                # dependencies, and `get_available_tasks` excludes `blocked`.
-                return f"Plan not updated: step '{item.content}' is blocked but depends on nothing."
+            if error := self._step_error(item):
+                return error
         if self._subtasks:
             error = validate_hierarchy(new_items)
             if error is not None:
@@ -616,6 +638,23 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         in_progress = sum(1 for item in after if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
         return self._plan_reply(f'Plan updated: {len(after)} step(s).', after, note, bare_plan=True)
+
+    def _step_error(self, item: PlanItem) -> str | None:
+        """Why `write_plan` refuses `item` under this toolset's subtask setting, or `None`."""
+        if not self._valid_status(item.status):
+            return f"Plan not updated: status '{item.status.value}' is only valid with subtasks enabled."
+        if not self._subtasks and (item.parent_id is not None or item.depends_on):
+            # Storing them would be a write the plan does not reflect: nothing reconciles
+            # dependencies without the subtask tools, and no view renders the hierarchy.
+            return (
+                f"Plan not updated: step '{item.content}' sets parent_id/depends_on, which are "
+                'only valid with subtasks enabled.'
+            )
+        if item.status is TaskStatus.blocked and not item.depends_on:
+            # Nothing would ever free it: reconciliation only touches steps that have
+            # dependencies, and `get_available_tasks` excludes `blocked`.
+            return f"Plan not updated: step '{item.content}' is blocked but depends on nothing."
+        return None
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""

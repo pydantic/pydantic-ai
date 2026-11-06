@@ -232,11 +232,10 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 ## Running under other durable engines
 
-Where sub-agents' steps are recorded in the order they start, the script runs sub-agents one at a
-time, so recovery replays each sub-agent's recorded steps into the same call. That applies under
-`DBOSDurability`, and when the run's tool calls are sequential, as they are by default with
-`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Otherwise, as under Temporal and
-Prefect by default, sub-agents run concurrently.
+`DBOSDurability` and `AWSLambdaDurability` match a replayed step to its recording by the order the
+steps start, so under them the script runs sub-agents one at a time, and recovery replays each
+sub-agent's steps into the same call. An `asyncio.gather` over sub-agents then takes the sum of their
+run times rather than the longest. Under other engines, sub-agents run concurrently.
 
 ## Observability
 

@@ -8,11 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
-from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, noop, orchestrator_model, summarize_model
+from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -43,18 +40,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
 @pytest.fixture
 def workflow(dbos: DBOS) -> Callable[[], Awaitable[str]]:
     # Built outside the event loop: registering a DBOS workflow reads its source.
-    summarize = Agent(
-        FunctionModel(summarize_model),
-        name='summarize',
-        description='Summarize a text.',
-        tools=[noop],
-        capabilities=[DBOSDurability()],
-    )
-    orchestrator = Agent(
-        FunctionModel(orchestrator_model),
-        name='dynamic_workflow_dbos',
-        capabilities=[DynamicWorkflow(agents=[summarize]), DBOSDurability()],
-    )
+    orchestrator = build_orchestrator(DBOSDurability)
 
     @DBOS.workflow(name='dynamic_workflow_dbos')
     async def run() -> str:
