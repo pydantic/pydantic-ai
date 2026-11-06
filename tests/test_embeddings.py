@@ -1476,7 +1476,7 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
-                    'operation.cost': 5e-07,
+                    'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
@@ -1919,6 +1919,10 @@ class TestGoogle:
 
         spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
         span = next(span for span in spans if 'embeddings' in span['name'])
+
+        # `genai-prices` 0.2 prices `gemini-embedding-2-preview` at 0, which the span reports as
+        # `operation.cost: 0.0`; 0.1.x has no price for it and leaves the attribute out.
+        assert span['attributes'].pop('operation.cost', 0.0) == 0.0
 
         assert span == snapshot(
             {
