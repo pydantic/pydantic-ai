@@ -9,6 +9,7 @@ announcement is not repeated, and the wait returns the decision.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterable, AsyncIterator
 from datetime import timedelta
 from typing import Any
 
@@ -21,8 +22,8 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import DurableApprovals
 from pydantic_ai.durable_exec import wait_for_external_event
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
 
@@ -48,11 +49,23 @@ class Approvals:
             self.model_calls += 1
             return delete_then_report(messages, info)
 
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            for part in model_fn(messages, info).parts:
+                if isinstance(part, TextPart):
+                    yield part.content
+                else:
+                    assert isinstance(part, ToolCallPart)
+                    yield {
+                        0: DeltaToolCall(
+                            name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id
+                        )
+                    }
+
         async def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
             self.announced.append((token, [call.tool_call_id for call in requests.approvals]))
 
         self.agent = Agent(
-            FunctionModel(model_fn),
+            FunctionModel(model_fn, stream_function=stream_fn),
             name='a',
             deps_type=type(None),
             capabilities=[AWSLambdaDurability[None](**durability), DurableApprovals[None](announce, timeout=timeout)],
@@ -175,7 +188,7 @@ def test_outside_a_durable_handler_the_wait_is_rejected() -> None:
         approvals.agent.run_sync('clean up')
 
 
-def test_waiting_inside_a_step_is_rejected() -> None:
+def test_waiting_inside_a_tool_step_is_rejected() -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('ask', {})])
 
@@ -186,5 +199,49 @@ def test_waiting_inside_a_step_is_rejected() -> None:
         await wait_for_external_event('question', announce=lambda token: None)
         raise AssertionError('unreachable')  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'An external event was awaited from inside an AWS Lambda durable step'):
+    with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call'):
         run_durable(lambda: agent.run('go'), context=FakeDurableContext())
+
+
+def test_waiting_inside_the_announce_step_is_rejected() -> None:
+    async def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        await wait_for_external_event('nested', announce=lambda nested_token: None)
+
+    agent = Agent(
+        FunctionModel(delete_then_report),
+        name='a',
+        deps_type=type(None),
+        capabilities=[AWSLambdaDurability[None](), DurableApprovals[None](announce)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete(path: str) -> str:
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    with pytest.raises(UserError, match=r'An external event was awaited from inside an AWS Lambda durable step'):
+        run_durable(lambda: agent.run('clean up'), context=FakeDurableContext())
+
+
+def test_event_stream_handler_steps_and_the_wait_replay_in_order() -> None:
+    """The `DeferredToolRequestsEvent` handler step and the wait share the bridge's queue, so replay meets them in the same order."""
+    events: list[str] = []
+
+    async def handle_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(type(event).__name__)
+
+    approvals = Approvals(event_stream_handler=handle_events)
+    first = approvals.suspend()
+    names = first.step_names
+    wait_index = names.index('a__external_event.deferred_tool_calls')
+    assert names[wait_index + 1] == 'a__external_event.deferred_tool_calls.announce'
+    assert 'DeferredToolRequestsEvent' in events
+
+    [(callback_id, _)] = approvals.announced
+    first.complete_callback(callback_id, '{"approvals": {"call-1": true}}')
+    resumed = FakeDurableContext(journal=first.operations)
+    result = run_durable(lambda: approvals.agent.run('clean up'), context=resumed)
+
+    assert result.output == 'success: deleted a.txt'
+    assert resumed.step_names[: len(names)] == names
+    assert approvals.deleted == ['a.txt']

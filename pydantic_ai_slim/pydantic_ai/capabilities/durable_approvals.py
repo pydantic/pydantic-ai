@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
 from datetime import timedelta
+from functools import partial
 
 from pydantic import TypeAdapter
 
-from pydantic_ai.durable_exec._external_events import ExternalEventError, wait_for_external_event
+from pydantic_ai.durable_exec._external_events import ExternalEventError, check_timeout, wait_for_external_event
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
 
@@ -37,7 +38,8 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
     """Hands the resume token to whoever decides, for example by posting it to Slack or writing a database row.
 
     Called with the run context, the pending requests and the token, once per decision, inside a
-    durable unit that is not run again on replay. Can be sync or async.
+    durable unit that is not run again on replay. Can be sync or async; a sync function runs in a
+    worker thread, like a sync tool.
     """
 
     _: KW_ONLY
@@ -48,6 +50,9 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
     When it elapses, or the token is resolved with a failure instead of a decision, every pending
     approval is denied and every pending external call fails, with a message to the model saying why.
     """
+
+    def __post_init__(self) -> None:
+        check_timeout(self.timeout)
 
     def get_ordering(self) -> CapabilityOrdering:
         """Ask last: every handler that can resolve a call without waiting for a person goes first."""
@@ -66,7 +71,7 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
         try:
             payload = await wait_for_external_event(
                 'deferred_tool_calls',
-                announce=lambda token: self.announce(ctx, requests, token),
+                announce=partial(self.announce, ctx, requests),
                 timeout=self.timeout,
             )
         except ExternalEventError as error:

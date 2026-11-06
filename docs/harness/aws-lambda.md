@@ -150,7 +150,7 @@ To have a person approve a tool call, attach [`DurableApprovals`](../capabilitie
 `AWSLambdaDurability`. When the model calls a tool that needs approval (`requires_approval=True` or
 `ApprovalRequired`) or external execution (`CallDeferred`), the run creates a Lambda callback, calls
 your `announce` function with the callback ID inside a step, and suspends: the invocation returns, and
-nothing is billed while the execution waits. When the decision is sent to the callback, Lambda invokes
+no compute is billed while the execution waits. When the decision is sent to the callback, Lambda invokes
 the function again, the handler replays from its checkpoints without calling the model again, and the
 run continues with the approved calls executed and the denied ones reported to the model.
 
@@ -208,8 +208,8 @@ pending call is denied with a message saying why, and the run continues.
 The callback's `timeout` is set from `DurableApprovals(timeout=...)`, rounded up to whole seconds.
 Without one, the execution waits until its `ExecutionTimeout`. The announcement is a step like any
 other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
-run it again when it fails, so make it idempotent. A tool cannot wait for a decision itself, because
-it runs inside a step; that is rejected with a `UserError`.
+run it again when it fails, so make it idempotent. A checkpointed tool cannot wait for a decision itself,
+because it runs inside a step; that is rejected with a `UserError`.
 
 This replaces ending the run with `DeferredToolRequests` output and starting a second run with the
 results, which still works and is what an agent without `DurableApprovals` does.

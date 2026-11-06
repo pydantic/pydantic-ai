@@ -289,4 +289,6 @@ AWS Lambda implementation in Pydantic AI Harness's
 is a reference.
 
 Code inside a durable unit, such as a tool, can't wait: the wait has to be recorded in the run
-itself. Reject it there with an actionable error rather than letting the engine fail or deadlock.
+itself. `wait_for_external_event` rejects a call made inside
+[`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope] before it reaches your waiter, so
+run each unit's body in that scope.

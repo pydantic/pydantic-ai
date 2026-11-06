@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import DurableApprovals, HandleDeferredToolCalls
 from pydantic_ai.durable_exec import (
     ExternalEventError,
     ExternalEventWaiter,
+    durable_unit_scope,
     external_event_scope,
     wait_for_external_event,
 )
@@ -262,6 +263,19 @@ async def test_wait_accepts_a_sync_announce() -> None:
 async def test_wait_rejects_a_timeout_that_is_not_positive() -> None:
     with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(0\)'):
         await wait_for_external_event('review', announce=lambda token: None, timeout=timedelta(0))
+    with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(days=-1'):
+        DurableApprovals[None](lambda ctx, requests, token: None, timeout=timedelta(seconds=-1))
+
+
+async def test_wait_inside_a_durable_unit_is_rejected() -> None:
+    """A tool call runs in a durable unit whose result the engine records, so a wait can't be recorded inside it."""
+    waiter = RecordingWaiter({'answer': 'yes'})
+
+    with external_event_scope(waiter), durable_unit_scope():
+        with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call'):
+            await wait_for_external_event('review', announce=lambda token: None)
+
+    assert waiter.waits == []
 
 
 def test_not_spec_serializable() -> None:

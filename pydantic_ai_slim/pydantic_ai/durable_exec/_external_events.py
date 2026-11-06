@@ -16,7 +16,6 @@ event key in the token they hand out.
 
 from __future__ import annotations
 
-import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
@@ -25,7 +24,10 @@ from datetime import timedelta
 
 from pydantic import JsonValue
 
+from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor
 from pydantic_ai.exceptions import UserError
+
+from ._operation_backend import in_durable_unit
 
 __all__ = (
     'ExternalEventError',
@@ -115,8 +117,9 @@ async def wait_for_external_event(
 
     Args:
         name: A name for the wait in the engine's history. Keep it stable across deployments.
-        announce: Sync or async function called with the token. An exception it raises fails the
-            durable unit it runs in, which the engine retries according to its policy.
+        announce: Sync or async function called with the token. A sync function runs in a worker
+            thread, like a sync tool. An exception it raises fails the durable unit it runs in,
+            which the engine retries according to its policy.
         timeout: How long to wait before giving up, or `None` to wait as long as the engine allows.
 
     Returns:
@@ -124,10 +127,16 @@ async def wait_for_external_event(
 
     Raises:
         ExternalEventError: The timeout elapsed, or the token was resolved with a failure.
-        UserError: The run is not a durable run on an engine that supports external events.
+        UserError: The run is not a durable run on an engine that supports external events, or the
+            wait was requested from inside a durable unit, such as a tool call.
     """
-    if timeout is not None and timeout <= timedelta(0):
-        raise UserError(f'`timeout` must be positive, got {timeout!r}.')
+    check_timeout(timeout)
+    if in_durable_unit():
+        raise UserError(
+            '`wait_for_external_event()` was called from inside a durable unit, such as a tool call. The wait '
+            'has to be recorded by the durable run itself, so call it from code that runs in the run, such as '
+            'a `handle_deferred_tool_calls` capability hook, or resolve the call with `DurableApprovals`.'
+        )
     waiter = _current_waiter.get()
     if waiter is None:
         raise UserError(
@@ -139,8 +148,15 @@ async def wait_for_external_event(
         )
 
     async def announce_token(token: str) -> None:
-        result = announce(token)
-        if inspect.isawaitable(result):
-            await result
+        if is_async_callable(announce):
+            await await_maybe(announce(token))
+        else:
+            await await_maybe(await run_in_executor(announce, token))
 
     return await waiter.wait(name, announce=announce_token, timeout=timeout)
+
+
+def check_timeout(timeout: timedelta | None) -> None:
+    """Reject a `timeout` that is not positive."""
+    if timeout is not None and timeout <= timedelta(0):
+        raise UserError(f'`timeout` must be positive, got {timeout!r}.')

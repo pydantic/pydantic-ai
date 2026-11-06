@@ -40,7 +40,7 @@ def issue_refund(order_id: str, amount: int) -> str:
     return f'Refunded {amount} for order {order_id}'
 ```
 
-1. `announce` runs once per decision, inside a durable unit that is not run again on replay. Like any durable unit it can be retried when it fails, so make the announcement idempotent, for example by keying the message or database row on the token.
+1. `announce` runs once per decision, inside a durable unit that is not run again on replay. Like any durable unit it can be retried when it fails, so make the announcement idempotent, for example by keying the message or database row on the token. It can be sync or async; a sync function runs in a worker thread, like a sync tool.
 
 ## The decision
 
@@ -66,6 +66,8 @@ Resolve the token with the JSON form of [`DeferredToolResults`][pydantic_ai.tool
 - An external call's result is any JSON value the model is shown, or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] (`"kind": "tool-failed"`) or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (`"kind": "model-retry"`).
 - `metadata` reaches the tool as [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata].
 
+Whoever can resolve the token decides the calls, including their arguments through `override_args`, and Pydantic AI checks only the decision's shape and that it names pending calls. Treat the token as a bearer credential, and authorize the approver in the service that resolves it.
+
 From Python, build the decision as a `DeferredToolResults` and serialize it:
 
 ```python {title="durable_approval_decision.py"}
@@ -80,7 +82,7 @@ print(TypeAdapter(DeferredToolResults).dump_json(decision).decode())
 """
 ```
 
-Calls the decision leaves out stay pending: the next [`handle_deferred_tool_calls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler gets them, and otherwise the run ends with them as its `DeferredToolRequests` output. A decision that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]: the decision is already recorded, so a replay fails the same way.
+Calls the decision leaves out stay pending, and the run ends with them as its `DeferredToolRequests` output, so include `DeferredToolRequests` in the agent's `output_type` if a decision may leave calls out. A decision that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]: the decision is already recorded, so a replay fails the same way.
 
 ## Timeouts
 
@@ -108,6 +110,6 @@ review = await wait_for_external_event(
 )
 ```
 
-It raises [`ExternalEventError`][pydantic_ai.durable_exec.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool: on engines where a tool call is itself a durable unit, the wait can't be recorded inside it, and AWS Lambda rejects it with a `UserError`.
+It raises [`ExternalEventError`][pydantic_ai.durable_exec.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there.
 
 To run an agent that uses `DurableApprovals` without a durable engine, for example in a test, install an [`ExternalEventWaiter`][pydantic_ai.durable_exec.ExternalEventWaiter] that returns a decision with [`external_event_scope`][pydantic_ai.durable_exec.external_event_scope] around the run.

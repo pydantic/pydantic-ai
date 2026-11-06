@@ -89,7 +89,8 @@ class DurableCallback(Protocol):
 
     callback_id: str
 
-    def result(self) -> Any: ...  # pragma: no cover - structural declaration, never executed
+    # Structural declaration, never executed.
+    def result(self) -> Any: ...  # pragma: no cover
 
 
 class DurableStepContext(Protocol):
@@ -106,7 +107,8 @@ class DurableStepContext(Protocol):
         config: StepConfig | None = None,
     ) -> Any: ...
 
-    def create_callback(  # pragma: no cover - structural declaration, never executed
+    # Structural declaration, never executed.
+    def create_callback(  # pragma: no cover
         self,
         name: str | None = None,
         config: CallbackConfig | None = None,
@@ -322,9 +324,9 @@ class StepBridge:
         """
         if _in_step_body.get():
             raise UserError(
-                f'An external event was awaited from inside an {ENGINE_NAME} durable step. The handler '
-                'thread is blocked servicing that step, so the wait could never start. This usually means '
-                'a tool starts a nested agent run that waits for a decision; wait in the outer run instead.'
+                f'An external event was awaited from inside an {ENGINE_NAME} durable step, such as the step '
+                'that announces another wait. The handler thread is blocked servicing that step, so the wait '
+                'could never start; wait from the run itself instead.'
             )
 
         loop = asyncio.get_running_loop()
