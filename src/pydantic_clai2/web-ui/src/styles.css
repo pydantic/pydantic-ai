@@ -445,7 +445,7 @@ pre {
   font-weight: 600;
 }
 
-/* A branch or project, and a short ID when titles repeat: muted, so the title still leads. */
+/* A branch or project, an imported session's agent, and a short ID when titles repeat: muted, so the title still leads. */
 .session-chip {
   flex: none;
   max-width: 40%;
