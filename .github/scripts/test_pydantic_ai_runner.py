@@ -18,6 +18,7 @@ import inspect
 import io
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from typing import Any, cast
 import httpcore2
 import httpx2
 import pytest
+import tenacity
 import yaml
 from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
@@ -364,31 +366,68 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
 
 
-def test_prewarm_leaves_the_runner_lock_as_checked_out(tmp_path: Path):
-    """CI Review's `git checkout --detach` of the PR head aborts if the pre-warm left the lock dirty."""
-    workspace = tmp_path / 'workspace'
-    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
-    lock.parent.mkdir(parents=True)
-    lock.write_text('checked out\n', encoding='utf-8')
-    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
-    subprocess.run([*git, 'init', '-q'], check=True)
-    subprocess.run([*git, 'add', '.'], check=True)
-    subprocess.run([*git, 'commit', '-q', '-m', 'init'], check=True)
-
-    # `uv sync --script` rewrites the adjacent lock when it is stale.
+def _fake_uv(tmp_path: Path, script: str) -> dict[str, str]:
+    """An environment whose `uv` runs `script` and whose runner source is staged under `tmp_path`."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_uv = bin_dir / 'uv'
-    fake_uv.write_text('#!/bin/sh\necho relocked > "$3.lock"\n', encoding='utf-8')
+    fake_uv.write_text(f'#!/bin/sh\n{script}\n', encoding='utf-8')
     fake_uv.chmod(0o755)
+    return {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'PYDANTIC_AI_RUNNER_SRC': str(tmp_path / 'runner-src'),
+    }
 
-    env = {**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'GITHUB_WORKSPACE': str(workspace)}
+
+def test_prewarm_stages_the_workflow_commit_whatever_the_workspace_holds(tmp_path: Path):
+    """The shim and its library come from one commit, not from a workspace holding a PR head and the base's `.github`.
+
+    Run 42064142025 ran the base's shim against an older PR head's `pydantic_ai_slim` and died at import.
+    """
+    workspace = tmp_path / 'workspace'
+    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
+    lock.parent.mkdir(parents=True)
+    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+    subprocess.run([*git, 'init', '-q'], check=True)
+    lock.write_text('workflow commit\n', encoding='utf-8')
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'workflow commit'], check=True)
+    workflow_sha = subprocess.run([*git, 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True).stdout
+    lock.write_text('pull request head\n', encoding='utf-8')
+    subprocess.run([*git, 'commit', '-q', '-am', 'pull request head'], check=True)
+
+    # `uv sync --script` rewrites the adjacent lock when it is stale.
+    env = _fake_uv(tmp_path, 'echo relocked > "$3.lock"')
+    env.update(GITHUB_WORKSPACE=str(workspace), GITHUB_SHA=workflow_sha.strip())
     script = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh')
     result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
 
-    assert result.returncode == 0
-    assert f'using uv={fake_uv}' in result.stdout
-    assert lock.read_text(encoding='utf-8') == 'checked out\n'
+    assert result.returncode == 0, result.stderr
+    runner_src = tmp_path / 'runner-src'
+    assert f'runner={runner_src}/.github/scripts/pydantic-ai-runner' in result.stdout
+    staged = subprocess.run(
+        ['git', '-C', str(runner_src), 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True
+    )
+    assert staged.stdout == workflow_sha
+    assert (runner_src / '.github' / 'scripts' / 'pydantic-ai-runner.lock').read_text(encoding='utf-8') == 'relocked\n'
+    # CI Review's `git checkout --detach` of the PR head aborts on a dirty workspace.
+    assert lock.read_text(encoding='utf-8') == 'pull request head\n'
+
+    # A checkout that fails, here because the path already holds one, fails the step:
+    # without the staged source the launcher has nothing to run.
+    rerun = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+    assert rerun.returncode == 1
+    assert '::error::could not check out' in rerun.stdout
+
+
+def test_launcher_runs_the_staged_runner(tmp_path: Path):
+    env = _fake_uv(tmp_path, 'echo "$@"')
+    env['GITHUB_WORKSPACE'] = str(tmp_path / 'workspace')
+    launcher = Path(__file__).with_name('pydantic-ai-runner-launch.sh')
+    result = subprocess.run([launcher, '--print'], text=True, capture_output=True, check=False, env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f'run --script {tmp_path}/runner-src/.github/scripts/pydantic-ai-runner --print\n'
 
 
 @pytest.mark.parametrize(
@@ -3011,6 +3050,92 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
     asyncio.run(_request())
     assert len(calls) == 2
+
+
+class _FakeClock:
+    """A monotonic clock that only `sleep` advances."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def retry_clock(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+    """One fake clock for tenacity's elapsed time and the run deadline, with every jittered wait at its upper bound."""
+    clock = _FakeClock()
+    monkeypatch.setattr(tenacity, 'time', clock)
+    monkeypatch.setattr(shim, 'time', clock)
+    monkeypatch.setattr(random, 'uniform', lambda _low, high: high)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    return clock
+
+
+def _zai_rate_limited_client(rate_limited_responses: int, calls: list[int], clock: _FakeClock) -> AsyncAnthropic:
+    """An `AsyncAnthropic` client on the shim's retry policy whose first requests receive a `1302` 429."""
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) <= rate_limited_responses:
+            return httpx2.Response(429, json=_zai_429_body('1302'))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['sleep'] = clock.sleep
+    return AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+
+def test_rate_limit_retry_rides_out_a_1302_burst_shorter_than_its_window(retry_clock: _FakeClock):
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=20, calls=calls, clock=retry_clock)
+    message = asyncio.run(
+        client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+    )
+    assert message.content[0].type == 'text'
+    assert len(calls) == 21
+    assert retry_clock.now == 271
+
+
+def test_rate_limit_retry_backs_off_exponentially_and_hands_a_longer_1302_burst_to_the_sdk(retry_clock: _FakeClock):
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=99, calls=calls, clock=retry_clock)
+    with pytest.raises(RateLimitError) as exc_info:
+        asyncio.run(
+            client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert exc_info.value.body == _zai_429_body('1302')
+    assert retry_clock.sleeps == [1, 2, 4, 8, *[16] * 36]
+    assert len(calls) == 41
+
+
+@pytest.mark.parametrize(
+    ('seconds_before_reserve', 'expected_sleeps'),
+    [
+        pytest.param(100, [1, 2, 4, 8, 16, 16, 16, 16, 16], id='stops-before-the-reserve'),
+        pytest.param(-1, [1, 2, 4, 8, 16, 16, 16], id='inside-the-reserve-retries-a-minute'),
+    ],
+)
+def test_rate_limit_retry_leaves_the_run_time_reserve_to_the_safe_output(
+    retry_clock: _FakeClock, monkeypatch: pytest.MonkeyPatch, seconds_before_reserve: int, expected_sleeps: list[int]
+):
+    monkeypatch.setattr(shim, '_run_deadline', shim.RUN_TIME_RESERVE_SECS + seconds_before_reserve)
+    calls: list[int] = []
+    client = _zai_rate_limited_client(rate_limited_responses=99, calls=calls, clock=retry_clock)
+    with pytest.raises(RateLimitError):
+        asyncio.run(
+            client.messages.create(model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}])
+        )
+    assert retry_clock.sleeps == expected_sleeps
 
 
 def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.MonkeyPatch):
