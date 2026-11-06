@@ -56,8 +56,7 @@ def main() -> None:
         raise ValueError('Review prompt is missing the head-check guidance')
     prompt = before + 'The trusted publisher checks the live PR head before publication.' + after[after.index('\n') :]
     prompt += (
-        '\n\nOpenCode has read, grep, and glob tools only. Shell, live GitHub and Git commands are unavailable. '
-        'Use the prefetched review context. The trusted publisher checks the live PR head. '
+        '\n\nOpenCode has read, grep, and glob tools only. Shell is unavailable. '
         'If missing information prevents a complete review, return INCOMPLETE. '
         'Return only one JSON object matching this schema: '
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))

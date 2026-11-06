@@ -592,7 +592,7 @@ def test_run_marker_must_have_successful_trusted_workflow_provenance(size: revie
 @pytest.mark.parametrize('latest_incomplete', [False, True])
 def test_latest_douwebot_verdict_allows_a_retry_after_an_empty_incomplete_review(latest_incomplete: bool):
     result = ReviewResult(verdict='INCOMPLETE', comments=[], discussion='')
-    body = json.loads(publication(result, HEAD, 20))['body']
+    body = json.loads(publication(result, HEAD, 20, engine=None))['body']
     incomplete = review(11 if latest_incomplete else 9, state='COMMENTED', body=body)
     assert (
         bool(verdicts(ReviewGitHub(current_reviews=[incomplete, review()]))['douwebot'].failures) is latest_incomplete
@@ -608,7 +608,7 @@ def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, l
         comments=[finding] if location == 'inline' else [],
         discussion='Finding to address' if location == 'body' else '',
     )
-    parent = review(9, state=state, body=json.loads(publication(result, HEAD, 20))['body'])
+    parent = review(9, state=state, body=json.loads(publication(result, HEAD, 20, engine=None))['body'])
     comments = (
         [
             review_gates.ReviewComment(
@@ -776,7 +776,7 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     result = ReviewResult(
         verdict='APPROVE', comments=[Finding(path='a.py', line=3, side='RIGHT', body='Optional: fix')], discussion=''
     )
-    payload = json.loads(publication(result, HEAD, 20))
+    payload = json.loads(publication(result, HEAD, 20, engine=None))
     parent = review(body=payload['body'])
     comment = review_gates.ReviewComment(
         pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=payload['comments'][0]['body']
@@ -784,11 +784,14 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     assert payload['commit_id'] == HEAD
     assert payload['event'] == 'APPROVE'
     assert verdicts(ReviewGitHub(current_reviews=[parent], comments=[comment]))['douwebot'].failures
-    assert json.loads(publication(result.model_copy(update={'verdict': 'INCOMPLETE'}), HEAD, 20))['event'] == 'COMMENT'
+    assert (
+        json.loads(publication(result.model_copy(update={'verdict': 'INCOMPLETE'}), HEAD, 20, engine=None))['event']
+        == 'COMMENT'
+    )
 
 
 @pytest.mark.parametrize('engine', ['claude', 'opencode'])
-def test_publisher_engine_attribution_preserves_the_gate(engine: str):
+def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebot_review.ReviewEngine):
     result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
     body = json.loads(publication(result, HEAD, 20, engine=engine))['body']
     assert f'engine={engine}' in body
@@ -802,7 +805,7 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: str):
     body = body.replace('\n\n' + publish_douwebot_review.REVIEW_ENGINES[engine], '')
     assert verdicts(ReviewGitHub(current_reviews=[review(body=body)]))['douwebot'].failures
     legacy = publication(
-        result.model_copy(update={'discussion': publish_douwebot_review.REVIEW_ENGINES[engine]}), HEAD, 20
+        result.model_copy(update={'discussion': publish_douwebot_review.REVIEW_ENGINES[engine]}), HEAD, 20, engine=None
     )
     assert verdicts(ReviewGitHub(current_reviews=[review(body=json.loads(legacy)['body'])]))['douwebot'].failures
 

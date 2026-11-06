@@ -15,7 +15,8 @@ APPROVAL_BODY = 'No blocking findings.'
 DOUWEBOT_MARKER = re.compile(
     r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40})(?: engine=(claude|opencode))? -->\Z'
 )
-REVIEW_ENGINES: dict[str, str] = {
+ReviewEngine = Literal['claude', 'opencode']
+REVIEW_ENGINES: dict[ReviewEngine, str] = {
     'claude': 'Reviewer: Claude Code (claude-opus-5-5)',
     'opencode': 'Reviewer: OpenCode (opencode-go/deepseek-v4.1-flash)',
 }
@@ -44,7 +45,9 @@ class ReviewResult(BaseModel):
     discussion: str
 
 
-def publication(result: ReviewResult, head: str, run_id: int, *, inline: bool = True, engine: str | None = None) -> str:
+def publication(
+    result: ReviewResult, head: str, run_id: int, *, inline: bool = True, engine: ReviewEngine | None
+) -> str:
     """Bind the formal review and all findings to this run and reviewed head."""
     body = REVIEW_BODIES[result.verdict]
     if result.verdict == 'REQUEST_CHANGES' and not inline:
@@ -72,7 +75,7 @@ def main() -> None:
     env = os.environ
     head = env['HEAD_SHA']
     engine = env['REVIEW_ENGINE']
-    if engine not in REVIEW_ENGINES:
+    if engine != 'claude' and engine != 'opencode':
         raise ValueError('Unknown review engine')
     endpoint = f'repos/{env["GITHUB_REPOSITORY"]}/pulls/{int(env["PR_NUMBER"])}'
     result: ReviewResult | None = None

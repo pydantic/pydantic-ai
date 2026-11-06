@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 import yaml
 from douwebot_opencode_run import MODEL
-from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewResult, publication
+from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -299,7 +299,7 @@ def _douwebot_review(
     *,
     head: str = REVIEWED_HEAD,
     inline: bool = True,
-    engine: str | None = None,
+    engine: ReviewEngine | None = None,
 ) -> dict[str, Any]:
     """A review as the trusted publisher posts it, so the skip filter follows the publisher's wording."""
     return {

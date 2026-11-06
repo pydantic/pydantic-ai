@@ -157,7 +157,7 @@ def douwebot_approval(
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
-            if engine := marker[3]:
+            if (engine := marker[3]) == 'claude' or engine == 'opencode':
                 suffix = '\n\n' + REVIEW_ENGINES[engine]
                 if body.endswith(suffix):
                     body = body[: -len(suffix)]
