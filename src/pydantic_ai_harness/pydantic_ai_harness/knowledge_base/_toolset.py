@@ -23,6 +23,7 @@ from pydantic_ai_harness.knowledge_base._backend import (
     SearchMode,
     is_readable,
     normalize_filter,
+    one_line,
 )
 
 FilterFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], MetadataFilter | None | Awaitable[MetadataFilter | None]]
@@ -172,9 +173,9 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         next_offset = end if len(document.text) > end else None
         if next_offset is not None:
             text += f'\n[... the document continues; call read_document with offset={next_offset}]'
-        lines = [f'Document: {_one_line(document.document_id)}']
+        lines = [f'Document: {one_line(document.document_id)}']
         if self._show_sources and document.source:
-            lines.append(f'Source: {_one_line(document.source)}')
+            lines.append(f'Source: {one_line(document.source)}')
         if offset:
             lines.append(f'From character: {offset}')
         return ToolReturn(
@@ -205,17 +206,12 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
     def _format(self, passage: Passage) -> str:
         lines: list[str] = []
         if self._show_sources:
-            source = _one_line(passage.source or '') or '(unknown)'
+            source = one_line(passage.source or '') or '(unknown)'
             score = passage.score
             lines.append(f'Source: {source}' if score is None else f'Source: {source} (score {score:.2f})')
         if self._readable and passage.document_id is not None:
-            lines.append(f'Document: {_one_line(passage.document_id)}')
+            lines.append(f'Document: {one_line(passage.document_id)}')
         return '\n'.join([*lines, passage.text])
-
-
-def _one_line(text: str) -> str:
-    """Collapse whitespace, so a source or id can't start a line that looks like the tool's own labels."""
-    return ' '.join(text.split())
 
 
 def _record(passage: Passage) -> KnowledgeBaseResult:

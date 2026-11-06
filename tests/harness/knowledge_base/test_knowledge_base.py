@@ -24,9 +24,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import FileSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import KnowledgeBase
+from pydantic_ai_harness import KnowledgeBase, knowledge_base
 from pydantic_ai_harness.knowledge_base import (
     Document,
     FilterNode,
@@ -531,8 +532,6 @@ class TestNativeFileSearch:
             )
             return ModelResponse(parts=[TextPart('done')])
 
-        from pydantic_ai.profiles import ModelProfile
-
         model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset({FileSearchTool})))
         await Agent(model, capabilities=[KnowledgeBase(_NativeCapable(), native=True)]).run('Search.')
         assert sent == [([], ['file_search'])]
@@ -549,8 +548,6 @@ class TestNativeFileSearch:
             )
             return ModelResponse(parts=[TextPart('done')])
 
-        from pydantic_ai.profiles import ModelProfile
-
         model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset()))
         await Agent(model, capabilities=[KnowledgeBase(_NativeCapable(), native=True)]).run('Search.')
         assert sent == [(['search_knowledge_base'], [])]
@@ -558,10 +555,8 @@ class TestNativeFileSearch:
 
 class TestAgentSpec:
     def test_unknown_package_attribute_raises(self) -> None:
-        import pydantic_ai_harness.knowledge_base as package
-
         with pytest.raises(AttributeError, match='has no attribute'):
-            getattr(package, 'Nope')
+            getattr(knowledge_base, 'Nope')
 
     def test_spec_schema_includes_the_capability(self) -> None:
         schema = AgentSpec.model_json_schema_with_capabilities([KnowledgeBase])

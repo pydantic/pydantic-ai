@@ -16,6 +16,9 @@ from typing_extensions import Unpack
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import KnowledgeBase
 from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase, Document, MetadataFilter, Passage, normalize_filter
 
@@ -832,10 +835,6 @@ class TestReadSourceDocuments:
         )
         backend = _reader(s3, _s3_result(_URI))
         toolset = KnowledgeBase[None](backend, filter={'tenant_id': 'acme'}, show_sources=False).get_toolset()
-        from pydantic_ai.models.test import TestModel
-        from pydantic_ai.tools import RunContext
-        from pydantic_ai.usage import RunUsage
-
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
         found = await toolset.search_knowledge_base(ctx, 'manual')
         text = str(found.return_value)

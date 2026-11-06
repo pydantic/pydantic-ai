@@ -53,7 +53,8 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
     - `BedrockKnowledgeBase`: an Amazon Bedrock Knowledge Base (needs `boto3`).
     - `OpenAIVectorStore`: an OpenAI vector store, optionally searched natively on OpenAI models (needs `openai`).
 
-    Any object with an async `search(query, *, limit, filter)` method is a backend; see `KnowledgeBaseBackend`.
+    Any object with an async `search(query, *, limit, filter, mode=None, score_threshold=None)` method is a
+    backend; see `KnowledgeBaseBackend`.
 
     ```python
     from pydantic_ai import Agent
@@ -167,8 +168,12 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
 
     def get_description(self) -> str:
         """The catalog line shown with `load_capability` when `defer_loading=True`: what to load it for."""
-        contents = f' of {self.description}' if self.description else ''
+        contents = self._contents
         return f'Search a knowledge base{contents} for passages before answering questions it could cover.'
+
+    @property
+    def _contents(self) -> str:
+        return f' of {self.description}' if self.description else ''
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static guidance: search before answering, phrase queries well, cite sources, admit misses.
@@ -177,7 +182,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         """
         if self.guidance is not None:
             return self.guidance or None
-        contents = f' of {self.description}' if self.description else ''
+        contents = self._contents
         read = _READ_INSTRUCTIONS if is_readable(self.backend) else ''
         return _INSTRUCTIONS.format(contents=contents, read=read)
 

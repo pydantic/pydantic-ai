@@ -23,7 +23,6 @@ from pydantic_ai_harness.knowledge_base._backend import (
     ReadableKnowledgeBase,
     SearchMode,
     allows_read,
-    is_readable,
     matches,
     normalize_filter,
 )
@@ -66,7 +65,6 @@ __all__ = [
     'ReadableKnowledgeBase',
     'SearchMode',
     'allows_read',
-    'is_readable',
     'matches',
     'normalize_filter',
 ]

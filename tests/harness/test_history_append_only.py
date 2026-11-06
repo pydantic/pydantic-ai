@@ -68,6 +68,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.github import GitHub
+from pydantic_ai_harness.knowledge_base import Document, InMemoryKnowledgeBase, KnowledgeBase
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
@@ -272,8 +273,6 @@ _CODE_MODE_LOADS = _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE, ('load_
 
 
 def _knowledge_base() -> AbstractCapability[Any]:
-    from pydantic_ai_harness.knowledge_base import Document, InMemoryKnowledgeBase, KnowledgeBase
-
     return KnowledgeBase(InMemoryKnowledgeBase([Document('policy', 'Items can be returned within 30 days.')]))
 
 

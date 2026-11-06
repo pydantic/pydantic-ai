@@ -173,8 +173,10 @@ backend = BedrockKnowledgeBase('KB123', region_name='eu-central-1', read_source_
 ```
 
 Other data sources (web, Confluence, SharePoint, Salesforce, custom) stay search-only. The document
-ids map to S3 locations inside the backend, in memory, so no storage path reaches the model; an id
-from another process or replica reads as unknown, and the model searches again.
+ids map to S3 locations inside the backend, in memory, so an id carries no storage path; an id
+from another process or replica reads as unknown, and the model searches again. A passage's
+`Source:` line still shows the object's S3 URI; set `show_sources=False` to keep storage paths
+away from the model.
 
 Throttling, quota, internal, dependency, gateway and model-not-ready errors and network failures
 become retry prompts; access, resource and validation errors raise.

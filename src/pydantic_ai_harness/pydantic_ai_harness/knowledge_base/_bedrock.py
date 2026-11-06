@@ -49,6 +49,7 @@ from pydantic_ai_harness.knowledge_base._backend import (
     Passage,
     SearchMode,
     allows_read,
+    one_line,
 )
 
 try:
@@ -131,7 +132,7 @@ class _Readable(Protocol):
 class S3Client(Protocol):
     """The one call `BedrockKnowledgeBase` makes on a boto3 `s3` client to read source documents."""
 
-    def get_object(self, *, Bucket: str, Key: str) -> Mapping[str, Any]:
+    def get_object(self, *, Bucket: str, Key: str) -> Mapping[str, object]:
         """Fetch an object; the response's `Body` has a `read()` method and `ContentType` names its type."""
         ...  # pragma: no cover
 
@@ -304,7 +305,7 @@ class BedrockKnowledgeBase:
         return [passage for passage in passages if passage.score is None or passage.score >= score_threshold]
 
     def _passage(self, result: KnowledgeBaseRetrievalResultTypeDef) -> Passage:
-        passage = _passage(result)
+        passage = _to_passage(result)
         location = result.get('location')
         s3 = location.get('s3Location') if location is not None else None
         uri = s3.get('uri') if s3 is not None else None
@@ -313,7 +314,7 @@ class BedrockKnowledgeBase:
         return Passage(passage.text, passage.source, passage.score, self._remember(uri), passage.metadata)
 
     def _remember(self, uri: str) -> str:
-        """A random id for `uri`, so no storage path reaches the model and ids can't be derived; kept for `read`."""
+        """A random id for `uri`, so the id carries no storage path and can't be derived; kept for `read`."""
         document_id = self._ids.pop(uri, None) or _DOCUMENT_ID_PREFIX + secrets.token_hex(12)
         self._documents.pop(document_id, None)
         self._documents[document_id] = uri
@@ -472,11 +473,7 @@ def _from_boto_filter(filter: RetrievalFilterTypeDef) -> BedrockFilter:
     return dict(filter)
 
 
-def _one_line(text: str) -> str:
-    return ' '.join(text.split())
-
-
-def _passage(result: KnowledgeBaseRetrievalResultTypeDef) -> Passage:
+def _to_passage(result: KnowledgeBaseRetrievalResultTypeDef) -> Passage:
     metadata = result.get('metadata') or {}
     return Passage(
         text=_body(result['content']),
@@ -515,7 +512,7 @@ def _body(content: RetrievalResultContentTypeDef) -> str:
         return text
     row = content.get('row') or []
     lines = [
-        f'{_one_line(column["columnName"])}: {_one_line(column.get("columnValue", ""))}'
+        f'{one_line(column["columnName"])}: {one_line(column.get("columnValue", ""))}'
         for column in row
         if 'columnName' in column
     ]

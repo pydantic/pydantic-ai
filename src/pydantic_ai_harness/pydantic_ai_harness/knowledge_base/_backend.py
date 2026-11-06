@@ -68,6 +68,11 @@ def _is_scalar(value: object) -> bool:
     return isinstance(value, str | int | float | bool)
 
 
+def one_line(text: str) -> str:
+    """Collapse whitespace, so a source or id can't start a line that looks like the tool's own labels."""
+    return ' '.join(text.split())
+
+
 def normalize_filter(filter: MetadataFilter | None) -> FilterNode | None:
     """Turn a filter into its tree form, checking its shape; `None` or an empty mapping means no filter.
 
