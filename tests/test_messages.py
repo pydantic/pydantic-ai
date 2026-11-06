@@ -642,6 +642,16 @@ def test_from_data_uri_parameterized_media_type_round_trip():
     assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
 
 
+def test_from_data_uri_default_media_type_rfc2397():
+    bc_default = BinaryContent.from_data_uri('data:;base64,SGVsbG8=')
+    assert bc_default.media_type == 'text/plain;charset=US-ASCII'
+    assert bc_default.data == b'Hello'
+
+    bc_charset = BinaryContent.from_data_uri('data:;charset=utf-8;base64,SGVsbG8=')
+    assert bc_charset.media_type == 'text/plain;charset=utf-8'
+    assert bc_charset.data == b'Hello'
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
