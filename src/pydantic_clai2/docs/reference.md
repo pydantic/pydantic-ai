@@ -293,7 +293,9 @@ run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
-**Update…** button asks before it runs `/update now`. When CLAI can't restart from that session, for
+**Update…** button asks before it runs `/update now`. Whichever session the page shows, it runs
+`/update now` in the session CLAI restarts from: the one the terminal shows, or under `clai2 --web`
+the one CLAI started with, so the restart resumes that one. When CLAI can't restart, for
 example while another live session runs a turn, **Update…** shows the reason as an error instead and
 saves nothing; in the terminal, the menu shows the reason and stays open.
 
@@ -2770,7 +2772,8 @@ many sessions run at once.
   instead of copying it; the session shown before keeps running.
 - **`/update now` and `/reload`** restart CLAI, so `/update now` runs only in the session
   the terminal shows, or under `clai2 --web` in the session it started with, and
-  `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
+  `/reload` only in the terminal. Elsewhere they refuse and say where to enter them;
+  **Update…** in the web UI's About runs `/update now` in that session from any page.
   They also refuse while another session runs a turn, saying how many run, so try
   again when they finish; bare `/update` can still show the menu in the session
   shown in the terminal. With `/web` from a terminal, CLAI restarts in the folder

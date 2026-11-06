@@ -3,7 +3,7 @@
 import io
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -594,8 +594,10 @@ def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> No
     assert (session_a.model, session_b.model) == (None, 'test')
 
 
-def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(make_fleet: MakeFleet) -> None:
-    """Settings > About in a session the browser opened: `/update`'s menu, its own description, and its refusal."""
+def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About's Update, in a session the browser opened, asks in its page and installs where CLAI restarts."""
     fleet = make_fleet()
     b = fleet.new('b')
     assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
@@ -604,7 +606,37 @@ def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(
         'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
         'Reload CLAI2 code without restarting',
     )
-    # No terminal shows it, so Update says why, as `/update now` typed there would, instead of asking first.
+    installed: list[list[str]] = []
+    done = fleet.portal.call(anyio.Event)
+
+    async def update(args: list[str]) -> str:
+        installed.append(args)
+        done.set()
+        return 'Updated.'
+
+    monkeypatch.setattr(fleet.launch.updates, 'command', update)
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, b)
+        action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
+        [*_, opened] = messages(socket, until=kind('dialog'))
+        dialog = at(opened, 'dialog')
+        assert at(dialog, 'title') == 'Update CLAI?'
+        assert fleet.post(f'/api/sessions/{b}/dialogs/{at(dialog, "id")}', {'value': 'yes'}).status_code == 204
+        response = action.result(timeout=10)
+    assert response.status_code == 200, response.text
+    assert response.json()['messages'] == ['Running /update now on the stable channel.']
+    fleet.portal.call(done.wait)
+    assert installed == [['now']]
+    assert fleet.runtimes['b'].restarter() is fleet.launch
+
+
+def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: MakeFleet) -> None:
+    """While the terminal shows a session not live here, no session restarts CLAI, so About's Update says where."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    fleet.launch.process.live.focused = 'shown-elsewhere'
+    assert fleet.runtimes['b'].restarter() is fleet.runtimes['b']
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
     assert response.status_code == 400, response.text
     assert response.json()['detail'] == (

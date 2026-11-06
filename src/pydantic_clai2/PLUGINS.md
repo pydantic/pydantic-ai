@@ -1704,7 +1704,8 @@ In a terminal, `/update now` and `/reload` are refused while other live sessions
 the restart would end; bare `/update` can still open its menu in the shown session, whose
 **Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
 page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
-instead, which the page shows as an error.
+instead, which the page shows as an error. That menu enters `/update now` in the session CLAI
+restarts from, whichever live session's page asks, and gives that session's refusal.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
