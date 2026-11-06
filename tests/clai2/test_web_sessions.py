@@ -637,34 +637,47 @@ def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
 def test_about_shows_how_an_install_in_the_launch_session_ended(
     make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The page that asked hears uv's output and the result, though `/update now` ran in the launch session."""
+    """The page whose About asked hears uv's output and the result of the `/update now` it entered, and only that.
+
+    C's Update waits behind the launch session's turn. B's cancelled Update, and the `/update now` B types
+    meanwhile, which B refuses itself, leave C the page that hears; the launch session's own later
+    `/update now` tells C nothing.
+    """
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['home'] = Gate(portal, 'home')
+        return {'home': gates['home'].agent()}
 
     def failing(*, channel: object) -> Updates:
-        return _updates(['stable'], codes=[1], lines=['Resolving'])[0]
+        return _updates(['stable'], codes=[1, 1], lines=['Resolving'])[0]
 
     monkeypatch.setattr(session_runtime, 'Updates', failing)
-    fleet = make_fleet()
+    fleet = make_fleet(agents)
     fleet.launch.updates.capture = lambda: True
-    b = fleet.new('b')
-    # As if the launch session's page had asked first: B's cancelled Update leaves it the page that hears.
-    earlier = fleet.service._update_asked = fleet.service.session(fleet.launch.session.conversation_id)  # pyright: ignore[reportPrivateUsage]
+    a, b, c = fleet.launch.session.conversation_id, fleet.new('b'), fleet.new('c')
+    assert fleet.post(f'/api/sessions/{a}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['home'].started.wait)
     with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
         connected(socket)
-        watch(socket, b)
-        for answer in ('no', 'yes'):
-            action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
+        watch(socket, a, b, c)
+        for page, answer in ((c, 'yes'), (b, 'no')):
+            action = pool.submit(fleet.post, f'/api/sessions/{page}/commands/update/fields/version/action')
             [*_, opened] = messages(socket, until=kind('dialog'))
             dialog_id = at(opened, 'dialog', 'id')
-            assert fleet.post(f'/api/sessions/{b}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
+            assert fleet.post(f'/api/sessions/{page}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
             assert action.result(timeout=10).status_code == 200
-            if answer == 'no':
-                assert fleet.service._update_asked is earlier  # pyright: ignore[reportPrivateUsage]
-        uv = messages(socket, until=kind('notice', session=b, command='uv'))[-1]
-        assert (uv['text'], uv['level']) == ('Resolving', 'error')
-        result = messages(socket, until=kind('notice', session=b, command='/update now'))[-1]
+        assert fleet.post(f'/api/sessions/{b}/input', {'text': '/update now'}).status_code == 200
+        refused = messages(socket, until=kind('notice', session=b, command='/update now'))
+        assert not [message for message in refused if kind('notice', session=c)(message)]
+        fleet.portal.call(gates['home'].release.set)
+        uv = messages(socket, until=kind('notice', session=c, command='uv'))
+        assert (uv[-1]['text'], uv[-1]['level']) == ('Resolving', 'error')
+        result = messages(socket, until=kind('notice', session=c, command='/update now'))[-1]
         assert result['text'] == 'uv exited with status 1; see its output above.'
-    # Told once: the launch session's next `/update now` is its own.
-    assert fleet.service._update_asked is None  # pyright: ignore[reportPrivateUsage]
+        assert fleet.post(f'/api/sessions/{a}/input', {'text': '/update now'}).status_code == 200
+        own = messages(socket, until=kind('notice', session=a, command='/update now'))
+        assert [message['session'] for message in own if message['type'] == 'notice'] == [a, a], 'uv, then the result'
 
 
 def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:

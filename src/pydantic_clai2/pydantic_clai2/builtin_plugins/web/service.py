@@ -135,8 +135,8 @@ class WebService:
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
-        self._update_asked: SessionChannel | None = None
-        """The page whose About entered `/update now`, maybe in another session, which hears how it ends too."""
+        self._update_asked: tuple[SessionChannel, str] | None = None
+        """The page whose About entered `/update now`, and the live session it went into: only that one's tells it."""
         self._channels: dict[str, SessionChannel] = {}
         """By `LiveSession.id`."""
         self._chosen: str | None = None
@@ -385,10 +385,11 @@ class WebService:
     def command_ended(self, event: CommandEnd) -> None:
         channel = self.current()
         channel.command_ended(event)
-        if event.text.split() == ['/update', 'now'] and (asked := self._update_asked) is not None:
+        asked = self._update_asked
+        if event.text.split() == ['/update', 'now'] and asked is not None and asked[1] == channel.session.id:
             self._update_asked = None
-            if asked is not channel:
-                asked.command_ended(event)
+            if asked[0] is not channel:
+                asked[0].command_ended(event)
         self.settings_changed(channel)
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
@@ -413,8 +414,9 @@ class WebService:
                 notice = Notice(text='\n'.join(self._uv_output), level=level, command='uv')
                 channel = self.current()
                 channel.publish(notice)
-                if (asked := self._update_asked) is not None and asked is not channel:
-                    asked.publish(notice)
+                asked = self._update_asked
+                if asked is not None and asked[1] == channel.session.id and asked[0] is not channel:
+                    asked[0].publish(notice)
             self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
         self.hub.publish(UpdateChanged(update=self.update))
 
@@ -581,11 +583,14 @@ class WebService:
     ) -> list[str]:
         """Run About's Update, after which `session` hears how the `/update now` it entered ends.
 
-        Set before it runs, as `/update now` may end in another session first, and under the edit lock, so a
-        page's Update waiting its turn takes over no earlier page's. A cancelled or refused one enters
-        nothing, so the page that asked before keeps hearing.
+        That runs in the session CLAI restarts from, as `SessionRuntime.restarter` picks it, so only its
+        `/update now` tells `session`, not one typed in another session meanwhile. Set before it runs, as
+        `/update now` may end first, and under the edit lock, so a page's Update waiting its turn takes over
+        no earlier page's. A cancelled or refused one enters nothing, so the page that asked before keeps hearing.
         """
-        before, self._update_asked = self._update_asked, session
+        restarter = self.live.restarter() if isinstance(self.live, LiveRuntimes) else None
+        entered_in = session.session.id if restarter is None else restarter.live_session.id
+        before, self._update_asked = self._update_asked, (session, entered_in)
         try:
             messages = await action(menu)
         except BaseException:
