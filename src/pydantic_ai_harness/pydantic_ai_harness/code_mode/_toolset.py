@@ -12,7 +12,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -96,11 +96,6 @@ CodeModeMount = MountDir | list[MountDir]
 _RETRY_VALUE_PREVIEW_CHARS = 120
 _RETRY_PREVIEW_ITEMS = 5
 _RETRY_SUMMARY_MAX_CHARS = 2000
-
-# Monty resolves builtins before host names, so a tool with one of these names would never run.
-# All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
-# silently take over a tool that works today.
-_BUILTIN_NAMES = frozenset(dir(builtins))
 
 
 # One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
@@ -761,6 +756,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
 
+    # Monty resolves builtins before host names, so a tool with one of these names would never run.
+    # All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
+    # take over a tool that works today.
+    _BUILTIN_NAMES: ClassVar[frozenset[str]] = frozenset(dir(builtins))
+
     tool_selector: ToolSelector[AgentDepsT] = 'all'
     """Which wrapped tools to sandbox inside `run_code`. Non-matching tools
     are exposed as native tools."""
@@ -1406,7 +1406,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
-            if safe_name in _BUILTIN_NAMES:
+            if safe_name in self._BUILTIN_NAMES:
                 raise UserError(
                     f'Tool name {name!r} is a Python builtin, so code in `run_code` would call the builtin '
                     'instead of the tool. Rename the tool, for example with `toolset.prefixed(...)` or '
