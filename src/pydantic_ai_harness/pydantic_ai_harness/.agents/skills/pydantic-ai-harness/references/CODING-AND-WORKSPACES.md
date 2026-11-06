@@ -372,8 +372,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
   named boxd network.
 - An `AgentCoreSandbox` session cannot outlive `session_timeout`: when it ends its files are gone, and
-  attaching raises `WorkspaceUnavailableError`. The ref does not record the region, so reattach with the same
-  `region_name`.
+  attaching raises `WorkspaceUnavailableError`. The ref does not record the region, so reattach and `destroy`
+  with the same `region_name`.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
