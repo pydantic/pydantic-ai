@@ -423,6 +423,44 @@ def test_a_session_that_stopped_short_is_incomplete(tmp_path: Path, root: Path):
     assert client.posted == []
 
 
+def test_a_report_cut_short_names_the_failures_before_the_cut(
+    tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    union = case('tests/models/test_anthropic.py', 'test_request', UNION_311)
+    prefect = case('tests/conftest.py', 'test_flow', PREFECT_TEXT)
+    reports = failing_reports(tmp_path, 'reports', [union, prefect])
+    junit = (reports / 'latest-versions-canary-3.11' / 'junit.xml').read_bytes()
+    cut = junit.rindex(b'<testcase')
+    # Python 3.11's report passes the read limit and 3.15's breaks off, both before the Prefect failure.
+    monkeypatch.setattr(report, '_REPORT_FILE_LIMIT', cut)
+    (reports / 'latest-versions-canary-3.15' / 'junit.xml').write_bytes(junit[:cut])
+
+    observation = report.collect(reports, root)
+    assert {signature: sorted(failure.pythons) for signature, failure in observation.failures.items()} == {
+        UNION: ['3.11', '3.15']
+    }
+    assert not observation.complete
+
+    # An open issue for a signature past the cut is not told it passes.
+    client = FakeClient()
+    run(client, root, failing_reports(tmp_path, 'prefect', [prefect]), 1)
+    assert run(client, root, reports, 2) == [f'#101: filed `{UNION}`']
+    assert client.posted == []
+
+
+def test_an_unreadable_report_is_named_as_such(tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch):
+    reports = failing_reports(tmp_path, 'reports', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+    monkeypatch.setattr(report, '_REPORT_FILE_LIMIT', 200)
+    (reports / 'latest-versions-canary-3.15' / 'junit.xml').write_bytes(b'<testsuites><testcase')
+
+    observation = report.collect(reports, root)
+    assert {signature: failure.details for signature, failure in observation.failures.items()} == {
+        'pytest fails on Python 3.11 and leaves no readable JUnit report': ['junit.xml exceeds 200 bytes'],
+        'pytest fails on Python 3.15 and leaves no readable JUnit report': ['unclosed token: line 1, column 12'],
+    }
+    assert not observation.complete
+
+
 def test_a_missing_leg_makes_the_run_incomplete(tmp_path: Path, root: Path):
     reports = tmp_path / 'reports'
     write_leg(reports, '3.11', cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
@@ -693,6 +731,6 @@ def test_main_reports_only_failed_or_green_runs(tmp_path: Path, root: Path, monk
     monkeypatch.setenv('GITHUB_RUN_ID', '8')
     assert report.main() == 0
     assert [issue['title'] for issue in client.created[1:]] == [
-        f'Latest versions canary: pytest fails on Python {python} with no failing test reported'
+        f'Latest versions canary: pytest fails on Python {python} and leaves no readable JUnit report'
         for python in ('3.11', '3.15')
     ]
