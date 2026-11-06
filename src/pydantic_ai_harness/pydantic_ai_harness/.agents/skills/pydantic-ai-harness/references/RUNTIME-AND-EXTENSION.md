@@ -296,7 +296,8 @@ Gotchas:
   replay matches checkpoints by position, so concurrent runs can be served each other's results.
 - Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
   `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
-  a tool, or a non-default model's id in its step name. SDK 2.0+ fails those executions with
+  a tool, or the id a non-default model runs under (a `models=` key or the `model=` passed to
+  `agent.run`), which is part of that model's step names. SDK 2.0+ fails those executions with
   `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
   version.
 - Checkpoints hold model responses, tool results, and step error messages for the retention period.

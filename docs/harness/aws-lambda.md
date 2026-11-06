@@ -200,8 +200,8 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   flipping a `metadata={'aws_lambda': False}` opt-out, or adding an `event_stream_handler` (which
   switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later
   compare each step's type and name on replay, so these changes, and renaming the agent, a toolset
-  `id` or a tool, or changing the model id in a [non-default model's step name](#what-gets-checkpointed),
-  fail the execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected:
+  `id` or a tool, or changing the id a non-default model runs under (a `models=` key or the `model=`
+  passed to `agent.run`), which is [part of its step names](#what-gets-checkpointed), fail the execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected:
   a step is served another step's recorded result, which usually fails to decode but can return the
   wrong data. Either way, deploy under a new published version and let in-flight executions drain
   on the old one.
