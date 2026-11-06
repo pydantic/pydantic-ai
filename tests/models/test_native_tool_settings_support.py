@@ -88,6 +88,8 @@ with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .mock_xai import MockXai, create_response, create_usage, get_mock_chat_create_kwargs
+
 
 ALL_WEB_SEARCH_RESTRICTIONS = WebSearchTool(
     allowed_domains=['pydantic.dev'], blocked_domains=['example.com'], max_uses=1, external_web_access=False
@@ -373,12 +375,6 @@ def _openai_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
 
 
 def _xai_request_search(tool: AbstractNativeTool) -> dict[str, Any]:
-    pytest.importorskip('xai_sdk')
-    from pydantic_ai.models.xai import XaiModel
-    from pydantic_ai.providers.xai import XaiProvider
-
-    from .mock_xai import MockXai, create_response, create_usage, get_mock_chat_create_kwargs
-
     client = MockXai.create_mock(
         [create_response(content='ok', usage=create_usage(prompt_tokens=1, completion_tokens=1))]
     )
@@ -455,6 +451,7 @@ UNKNOWN_SETTINGS: Any = {
 
 
 _needs_anthropic = pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+_needs_xai = pytest.mark.skipif(not xai_available(), reason='xai not installed')
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -475,6 +472,7 @@ class TestProviderSettings:
     def test_openai_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
         assert _openai_request_tool(tool)[request_key] == value
 
+    @_needs_xai
     @pytest.mark.parametrize(('tool', 'request_key', 'value'), XAI_OPTIONS)
     def test_xai_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
         assert _xai_request_search(tool)[request_key] == value
@@ -542,8 +540,24 @@ class TestProviderSettings:
                 1000,
                 marks=_needs_anthropic,
             ),
-            (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'instructions', 'search these'),
-            (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'retrieval_mode', 'keyword'),
+            pytest.param(
+                _xai_request_search,
+                FileSearchTool,
+                {'file_store_ids': ['store']},
+                'xai',
+                'instructions',
+                'search these',
+                marks=_needs_xai,
+            ),
+            pytest.param(
+                _xai_request_search,
+                FileSearchTool,
+                {'file_store_ids': ['store']},
+                'xai',
+                'retrieval_mode',
+                'keyword',
+                marks=_needs_xai,
+            ),
         ],
     )
     def test_moved_field_warns_and_sends_the_same_request_as_nested(
@@ -647,7 +661,7 @@ class TestProviderSettings:
             (_openrouter_request_parameters, WebSearchTool),
             (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
             (_openai_request_tool, ImageGenerationTool),
-            (_xai_request_search, partial(FileSearchTool, file_store_ids=['store'])),
+            pytest.param(_xai_request_search, partial(FileSearchTool, file_store_ids=['store']), marks=_needs_xai),
         ],
     )
     def test_unknown_settings_are_ignored(self, read_request: Any, make_tool: Any) -> None:
