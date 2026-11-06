@@ -2584,7 +2584,10 @@ EFFORT_MAPPINGS = [
                 'gemini-3.8-flash', provider=GoogleProvider(api_key=PROBE_KEY)
             )._generation_config({}, ModelRequestParameters(thinking=level)),
             {
-                level: {'thinking_level': 'high' if level in ('xhigh', 'max') else level, 'thinking_summaries': 'auto'}
+                level: {
+                    'thinking_level': 'high' if level in ('xhigh', 'max') else 'low' if level == 'minimal' else level,
+                    'thinking_summaries': 'auto',
+                }
                 for level in get_args(ThinkingEffort)
             },
         ),

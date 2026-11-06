@@ -70,10 +70,7 @@ from ..native_tools import (
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
-    GOOGLE_THINKING_LEVEL_SCALE,
-    GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
-    GoogleThinkingLevel,
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -138,6 +135,7 @@ try:
         Segment,
         ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
+        ThinkingLevel,
         ToolCall,
         ToolCodeExecutionDict,
         ToolConfigDict,
@@ -527,70 +525,11 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
-    """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
-        'minimal': 'MINIMAL',
-        'low': 'LOW',
-        'medium': 'MEDIUM',
-        'high': 'HIGH',
-        # Gemini has nothing above `HIGH`; map the higher levels to it.
-        'xhigh': 'HIGH',
-        'max': 'HIGH',
-    }
-    return level_by_effort[thinking]
-
-
 _GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
 """The smallest `thinking_budget` Gemini 2.5 Pro accepts, as it can't turn thinking off.
 
 See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
-
-_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
-}
-
-
-def _snap_thinking_level(
-    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
-) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
-
-    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
-    the level passes through. Shared with the Live path, which differs only in where its level set
-    comes from.
-    """
-    if levels is None:
-        return level
-    if not levels:
-        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
-        raise UserError(
-            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
-        )
-    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
-    return min(
-        levels,
-        key=lambda candidate: (
-            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
-            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
-        ),
-    )
-
-
-def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
-    """Map unified thinking to the closest thinking level the model supports."""
-    levels = profile.get('google_thinking_levels')
-    if levels is None:
-        # Sparse profile without a level set: fall back to the boolean floor flag.
-        levels = (
-            GOOGLE_THINKING_LEVELS
-            if profile.get('google_supports_minimal_thinking_level', True)
-            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
-        )
-    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 def _batch_module():
@@ -1202,7 +1141,9 @@ class GoogleModel(Model[Client]):
             if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+            return ThinkingConfigDict(
+                thinking_level=ThinkingLevel(_google_common.resolve_google_thinking_level('minimal', profile))
+            )
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
@@ -1222,7 +1163,8 @@ class GoogleModel(Model[Client]):
         if thinking is True:
             return ThinkingConfigDict(include_thoughts=True)
         return ThinkingConfigDict(
-            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+            include_thoughts=True,
+            thinking_level=ThinkingLevel(_google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
     async def _build_content_and_config(

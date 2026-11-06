@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Literal
 
@@ -20,6 +21,7 @@ from ...messages import (
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelResponse,
     ModelResponsePart,
@@ -36,6 +38,7 @@ from .. import _google_common, download_item
 
 STEP_PARAMS = TypeAdapter(list[dict[str, JsonValue]])
 JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
+_CONTENT_OBJECTS = TypeAdapter(list[dict[str, JsonValue]])
 
 NATIVE_TOOL_NAMES: dict[str, str] = {
     'google_search': 'web_search',
@@ -72,7 +75,41 @@ def mark_step(parts: list[ModelResponsePart], index: int) -> list[ModelResponseP
         }
         if isinstance(part, FilePart):
             part.provider_details['google_interactions_content_sha256'] = hashlib.sha256(part.content.data).hexdigest()
+        elif isinstance(part, TextPart):
+            part.provider_details['google_interactions_text_sha256'] = hashlib.sha256(part.content.encode()).hexdigest()
     return parts
+
+
+def step_metadata(raw: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Retain replay-only fields; normalized parts own the visible payloads."""
+    metadata: dict[str, JsonValue] = dict(raw)
+    step_type = str(raw.get('type', ''))
+    if step_type == 'function_call' or step_type.removesuffix('_call') in NATIVE_TOOL_NAMES:
+        metadata.pop('arguments', None)
+    elif step_type == 'function_result' or step_type.removesuffix('_result') in NATIVE_TOOL_NAMES:
+        metadata.pop('result', None)
+    if raw.get('type') == 'model_output':
+        content = _CONTENT_OBJECTS.validate_python(raw.get('content', []))
+        for value in content:
+            value.pop('text' if value.get('type') == 'text' else 'data', None)
+        metadata['content'] = [value for value in content]
+    return metadata
+
+
+def mcp_tool_name(server_name: str | None) -> str:
+    return f'mcp_server:{server_name}' if server_name else 'mcp_server'
+
+
+def mcp_server_names(steps: Iterable[gi.Step]) -> dict[str, str]:
+    all_steps: list[gi.Step] = list(steps)
+    executed = {step.call_id for step in all_steps if isinstance(step, gi.FunctionResultStep)}
+    names: dict[str, str] = {}
+    for step in all_steps:
+        if isinstance(step, gi.MCPServerToolCallStep):
+            names[step.id] = step.server_name
+        elif isinstance(step, gi.FunctionCallStep) and step.id in executed:
+            names[step.id] = step.name.partition(':')[0]
+    return names
 
 
 def usage_from_interaction(usage: gi.Usage | None) -> RequestUsage:
@@ -116,7 +153,7 @@ async def process_response(
     canonical_system: str | None,
 ) -> ModelResponse:
     parts: list[ModelResponsePart] = []
-    server_calls = frozenset(step.call_id for step in response.steps or [] if isinstance(step, gi.FunctionResultStep))
+    server_calls = mcp_server_names(response.steps or [])
     for index, step in enumerate(response.steps or []):
         parts.extend(mark_step(await map_step(step, provider_name, server_calls=server_calls), index))
     return build_response(response, parts, model_name, provider_name, provider_url, canonical_system)
@@ -133,7 +170,7 @@ def build_response(
     details: dict[str, JsonValue] = {
         'status': response.status,
         'google_interactions_steps': [
-            JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
+            step_metadata(JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True)))
             for step in response.steps or []
         ],
     }
@@ -145,7 +182,7 @@ def build_response(
         details['errors'] = [
             JSON_OBJECT.validate_python(error.model_dump(mode='json', exclude_none=True)) for error in response.errors
         ]
-    finish_reasons = {
+    finish_reasons: dict[str, FinishReason] = {
         'completed': 'stop',
         'requires_action': 'tool_call',
         'incomplete': 'length',
@@ -153,9 +190,6 @@ def build_response(
         'failed': 'error',
         'cancelled': 'error',
     }
-    from ...messages import FinishReason
-
-    finish_reason = TypeAdapter(FinishReason | None).validate_python(finish_reasons.get(response.status))
     return ModelResponse(
         parts=parts,
         model_name=response.model or model_name,
@@ -168,85 +202,119 @@ def build_response(
         else _utils.now_utc(),
         usage=usage_from_interaction(response.usage),
         provider_details=details,
-        finish_reason=finish_reason,
+        finish_reason=finish_reasons.get(response.status),
     )
 
 
+NativeCallStep = (
+    gi.GoogleSearchCallStep
+    | gi.URLContextCallStep
+    | gi.CodeExecutionCallStep
+    | gi.FileSearchCallStep
+    | gi.MCPServerToolCallStep
+    | gi.GoogleMapsCallStep
+    | gi.RetrievalCallStep
+    | gi.ProcessingCallStep
+)
+NativeResultStep = (
+    gi.GoogleSearchResultStep
+    | gi.URLContextResultStep
+    | gi.CodeExecutionResultStep
+    | gi.FileSearchResultStep
+    | gi.MCPServerToolResultStep
+    | gi.GoogleMapsResultStep
+    | gi.RetrievalResultStep
+    | gi.ProcessingResultStep
+)
+
+
 async def map_step(
-    step: gi.Step, provider_name: str, *, server_calls: frozenset[str] = frozenset()
+    step: gi.Step, provider_name: str, *, server_calls: Mapping[str, str] | None = None
 ) -> list[ModelResponsePart]:
     """Map one wire step, including signatures that carry no visible text."""
-    if isinstance(step, gi.ThoughtStep):
-        text = ''.join(item.text for item in step.summary or [] if isinstance(item, gi.TextContent))
-        return [ThinkingPart(text, signature=step.signature, provider_name=provider_name)]
-    elif isinstance(step, gi.FunctionCallStep):
-        return map_function_call(step, provider_name, server_calls)
-    elif isinstance(step, gi.FunctionResultStep):
-        raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
-        return [
-            NativeToolReturnPart(
-                'mcp_server', raw.get('result'), step.call_id, provider_name=provider_name, provider_details=raw
-            )
-        ]
-    elif isinstance(step, gi.ModelOutputStep):
-        return [await map_content(content, provider_name) for content in step.content or []]
-    elif isinstance(
-        step,
-        (
-            gi.GoogleSearchCallStep,
-            gi.URLContextCallStep,
-            gi.CodeExecutionCallStep,
-            gi.FileSearchCallStep,
-            gi.MCPServerToolCallStep,
-            gi.GoogleMapsCallStep,
-            gi.RetrievalCallStep,
-            gi.ProcessingCallStep,
-        ),
-    ):
-        raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
-        return [
-            NativeToolCallPart(
-                NATIVE_TOOL_NAMES[step.type.removesuffix('_call')],
-                JSON_OBJECT.validate_python(raw.get('arguments', {})),
-                step.id,
-                provider_name=provider_name,
-                provider_details=raw,
-            )
-        ]
-    elif isinstance(
-        step,
-        (
-            gi.GoogleSearchResultStep,
-            gi.URLContextResultStep,
-            gi.CodeExecutionResultStep,
-            gi.FileSearchResultStep,
-            gi.MCPServerToolResultStep,
-            gi.GoogleMapsResultStep,
-            gi.RetrievalResultStep,
-            gi.ProcessingResultStep,
-        ),
-    ):
-        raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
-        return [
-            NativeToolReturnPart(
-                NATIVE_TOOL_NAMES[step.type.removesuffix('_result')],
-                raw.get('result'),
-                step.call_id,
-                provider_name=provider_name,
-                provider_details=raw,
-            )
-        ]
-    else:
-        raise UnexpectedModelBehavior(f'Unexpected Google Interactions response step: {step.type!r}')
+    server_calls = server_calls or {}
+    match step:
+        case gi.ThoughtStep():
+            return map_thought(step, provider_name)
+        case gi.FunctionCallStep():
+            return map_function_call(step, provider_name, server_calls)
+        case gi.FunctionResultStep():
+            return map_function_result(step, provider_name, server_calls)
+        case gi.ModelOutputStep():
+            return [await map_content(content, provider_name) for content in step.content or []]
+        case _ if isinstance(step, NativeCallStep):
+            return map_native_call(step, provider_name)
+        case _ if isinstance(step, NativeResultStep):
+            return map_native_result(step, provider_name, server_calls)
+        case _:
+            raise UnexpectedModelBehavior(f'Unexpected Google Interactions response step: {step.type!r}')
+
+
+def map_thought(step: gi.ThoughtStep, provider_name: str) -> list[ModelResponsePart]:
+    text = ''.join(item.text for item in step.summary or [] if isinstance(item, gi.TextContent))
+    return [ThinkingPart(text, signature=step.signature, provider_name=provider_name)]
+
+
+def map_function_result(
+    step: gi.FunctionResultStep, provider_name: str, server_calls: Mapping[str, str]
+) -> list[ModelResponsePart]:
+    raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
+    return [
+        NativeToolReturnPart(
+            mcp_tool_name(server_calls.get(step.call_id)),
+            raw.get('result'),
+            step.call_id,
+            provider_name=provider_name,
+            provider_details=step_metadata(raw),
+        )
+    ]
+
+
+def map_native_call(step: NativeCallStep, provider_name: str) -> list[ModelResponsePart]:
+    raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
+    return [
+        NativeToolCallPart(
+            mcp_tool_name(step.server_name)
+            if isinstance(step, gi.MCPServerToolCallStep)
+            else NATIVE_TOOL_NAMES[step.type.removesuffix('_call')],
+            JSON_OBJECT.validate_python(raw.get('arguments', {})),
+            step.id,
+            provider_name=provider_name,
+            provider_details=step_metadata(raw),
+        )
+    ]
+
+
+def map_native_result(
+    step: NativeResultStep, provider_name: str, server_calls: Mapping[str, str]
+) -> list[ModelResponsePart]:
+    raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
+    return [
+        NativeToolReturnPart(
+            mcp_tool_name(step.server_name or server_calls.get(step.call_id))
+            if isinstance(step, gi.MCPServerToolResultStep)
+            else NATIVE_TOOL_NAMES[step.type.removesuffix('_result')],
+            raw.get('result'),
+            step.call_id,
+            provider_name=provider_name,
+            provider_details=step_metadata(raw),
+        )
+    ]
 
 
 def map_function_call(
-    step: gi.FunctionCallStep, provider_name: str, server_calls: frozenset[str]
+    step: gi.FunctionCallStep, provider_name: str, server_calls: Mapping[str, str]
 ) -> list[ModelResponsePart]:
     if step.id in server_calls:
         raw = JSON_OBJECT.validate_python(step.model_dump(mode='json', by_alias=True, exclude_none=True))
         return [
-            NativeToolCallPart('mcp_server', step.arguments, step.id, provider_name=provider_name, provider_details=raw)
+            NativeToolCallPart(
+                mcp_tool_name(server_calls.get(step.id)),
+                step.arguments,
+                step.id,
+                provider_name=provider_name,
+                provider_details=step_metadata(raw),
+            )
         ]
     return [ToolCallPart(step.name, step.arguments, step.id, provider_name=provider_name)]
 

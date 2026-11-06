@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, BinaryContent, ModelRetry
 from pydantic_ai.capabilities import NativeTool
@@ -12,11 +12,13 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    TextPart,
     ThinkingPart,
     ToolCallPart,
 )
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
+from pydantic_ai.settings import ThinkingEffort
 
 from ..conftest import RequestCapture, try_import
 
@@ -79,8 +81,23 @@ async def test_stateless_tool_history(
         steps = response.provider_details['google_interactions_steps']
         final_input = bodies[-1]['input']
         assert isinstance(final_input, list)
-        for step in steps:
-            assert step in final_input
+        sent_steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(final_input)
+        for step in TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps):
+            assert any(
+                all(key == 'content' or sent.get(key) == value for key, value in step.items()) for sent in sent_steps
+            )
+        for part in response.parts:
+            if isinstance(part, TextPart):
+                assert any(
+                    part.content == item.get('text')
+                    for sent in sent_steps
+                    for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(sent.get('content', []))
+                )
+            elif isinstance(part, ToolCallPart):
+                assert any(
+                    sent.get('id') == part.tool_call_id and sent.get('arguments') == part.args_as_dict()
+                    for sent in sent_steps
+                )
 
 
 class City(BaseModel):
@@ -237,7 +254,9 @@ async def test_mcp(interactions_model: GoogleInteractionsModel, stream: bool, al
         history = result.all_messages()
     assert any(
         isinstance(message, ModelResponse)
-        and any(isinstance(part, NativeToolCallPart) and part.tool_name == 'mcp_server' for part in message.parts)
+        and any(
+            isinstance(part, NativeToolCallPart) and part.tool_name == 'mcp_server:deepwiki' for part in message.parts
+        )
         for message in history
     )
     assert (await agent.run('Repeat that documentation topic without calling a tool.', message_history=history)).output
@@ -479,3 +498,28 @@ async def test_generated_media(
     assert files and files[0].content.data
     assert files[0].content.media_type.startswith('audio/' if kind == 'music' else 'video/')
     assert request_capture.body()['store'] is False
+
+
+@pytest.mark.parametrize('thinking', [False, 'minimal'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_minimal_thinking_resolves_to_supported_level(
+    interactions_model: GoogleInteractionsModel,
+    request_capture: RequestCapture,
+    thinking: ThinkingEffort | bool,
+    stream: bool,
+    allow_model_requests: None,
+):
+    # Verified against the public Interactions API: this model rejects MINIMAL and accepts LOW.
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
+
+    settings: GoogleInteractionsModelSettings = {'thinking': thinking}
+    agent = Agent(interactions_model, model_settings=settings)
+    if stream:
+        async with agent.run_stream('Reply exactly OK.') as result:
+            assert await result.get_output()
+    else:
+        assert (await agent.run('Reply exactly OK.')).output
+    assert request_capture.body()['generation_config'] == {
+        'thinking_level': 'low',
+        'thinking_summaries': 'none' if thinking is False else 'auto',
+    }

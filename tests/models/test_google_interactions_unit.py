@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import httpx2
@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import FileSearchTool, ImageGenerationTool, MCPServerTool, MemoryTool
+from pydantic_ai.settings import ThinkingEffort
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -165,7 +166,13 @@ async def test_history_edits_are_sent(
         {
             'type': 'model_output',
             'content': [
-                {'type': 'text', 'text': 'first'},
+                {
+                    'type': 'text',
+                    'text': 'first',
+                    'annotations': [
+                        {'type': 'url_citation', 'url': 'https://example.com', 'start_index': 0, 'end_index': 5}
+                    ],
+                },
                 {'type': 'image', 'mime_type': 'image/png', 'data': base64.b64encode(b'png').decode()},
                 {'type': 'text', 'text': 'last'},
             ],
@@ -176,6 +183,15 @@ async def test_history_edits_are_sent(
     response = history[0]
     assert isinstance(response, ModelResponse)
     assert isinstance(response.parts[0], TextPart)
+    assert response.provider_details is not None
+    persisted = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        response.provider_details['google_interactions_steps']
+    )
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(persisted[0]['content'])
+    assert all('data' not in item and 'text' not in item for item in content)
+    await model_request(mock_model, [*history, ModelRequest.user_text_prompt('unchanged')])
+    sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+    assert sent[0] == TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.body['steps'])[0]
     response.parts[0].content = 'edited'
     response.parts = response.parts[:-1]
     await model_request(mock_model, [*history, ModelRequest(parts=[UserPromptPart('continue')])])
@@ -292,6 +308,12 @@ async def test_stream_mixed_content_and_signature_fragments():
     assert isinstance(parts[2], FilePart) and parts[2].content.data == b'abcdef'
     assert isinstance(parts[3], TextPart) and parts[3].content == 'last'
     assert response.usage.output_tokens == 5
+    assert response.provider_details is not None
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        response.provider_details['google_interactions_steps']
+    )
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[1]['content'])
+    assert all('text' not in value and 'data' not in value for value in content)
 
 
 @pytest.mark.parametrize(
@@ -358,7 +380,7 @@ async def test_boolean_thinking_and_native_overrides(
         model_settings={'thinking': thinking},
     )
     assert mock_google.requests[-1]['generation_config'] == (
-        {'thinking_summaries': 'auto'} if thinking else {'thinking_level': 'minimal', 'thinking_summaries': 'none'}
+        {'thinking_summaries': 'auto'} if thinking else {'thinking_level': 'low', 'thinking_summaries': 'none'}
     )
     settings: GoogleInteractionsModelSettings = {
         'thinking': 'low',
@@ -764,7 +786,7 @@ async def test_streamed_namespaced_mcp_calls(
             'index': 0,
             'step': {'type': 'function_call', 'id': 'mcp-call', 'name': 'docs:lookup', 'arguments': {}},
         },
-        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'arguments_delta', 'arguments': '{"query":"test"}'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'arguments_delta', 'arguments': '{"query":'}},
         {'event_type': 'step.stop', 'index': 0},
         {
             'event_type': 'step.start',
@@ -781,6 +803,9 @@ async def test_streamed_namespaced_mcp_calls(
     ]
     if not paired:
         del values[3:5]
+    values.insert(
+        2, {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'arguments_delta', 'arguments': '"test"}'}}
+    )
     params = ModelRequestParameters(
         native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')],
         function_tools=[ToolDefinition(name='docs:lookup')] if declared else [],
@@ -797,7 +822,9 @@ async def test_streamed_namespaced_mcp_calls(
     if paired:
         call, result = parts
         assert isinstance(call, NativeToolCallPart) and call.args_as_dict() == {'query': 'test'}
+        assert call.tool_name == 'mcp_server:docs'
         assert isinstance(result, NativeToolReturnPart) and result.content == [{'type': 'text', 'text': 'found'}]
+        assert result.tool_name == 'mcp_server:docs'
         assert [event.part.part_kind for event in events if isinstance(event, PartStartEvent)] == [
             'builtin-tool-call',
             'builtin-tool-return',
@@ -814,6 +841,13 @@ async def test_streamed_namespaced_mcp_calls(
         mock_model, [ModelRequest.user_text_prompt('hello')], model_request_parameters=params
     )
     assert [part.part_kind for part in ordinary.parts] == [part.part_kind for part in parts]
+    assert [
+        part.tool_name
+        for part in ordinary.parts
+        if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart))
+    ] == [
+        part.tool_name for part in parts if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
 
 
 @pytest.mark.parametrize('cloud', [False, True])
@@ -981,3 +1015,177 @@ async def test_provider_environment_and_foreign_file_history(
         'type': 'model_output',
         'content': [{'type': 'image', 'data': 'cG5n', 'mime_type': 'image/png'}],
     }
+
+
+async def test_explicit_mcp_server_identity(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
+):
+    call: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_call',
+        'id': 'call',
+        'name': 'lookup',
+        'server_name': 'docs',
+        'arguments': {'query': 'test'},
+    }
+    result: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_result',
+        'call_id': 'call',
+        'result': [{'type': 'text', 'text': 'found'}],
+    }
+    values: list[dict[str, JsonValue]] = [
+        {'event_type': 'step.start', 'index': 0, 'step': call},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'step.start', 'index': 1, 'step': result},
+        {'event_type': 'step.stop', 'index': 1},
+        {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+    ]
+    stream = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+    )
+    async for _ in stream:
+        pass
+    mock_google.body['steps'] = [call, result]
+    ordinary = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+    for response in (stream.get(), ordinary):
+        assert all(
+            isinstance(part, (NativeToolCallPart, NativeToolReturnPart)) and part.tool_name == 'mcp_server:docs'
+            for part in response.parts
+        )
+        restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+        assert isinstance(restored[0], ModelResponse)
+        restored[0].provider_details = None
+        await model_request(mock_model, [*restored, ModelRequest.user_text_prompt('continue')])
+        sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        assert sent[:2] == [call, result]
+
+
+@pytest.mark.parametrize('thinking', [False, 'minimal'])
+async def test_budget_only_model_does_not_send_thinking_level(
+    mock_model: GoogleInteractionsModel,
+    mock_google: MockGoogle,
+    thinking: ThinkingEffort | bool,
+    allow_model_requests: None,
+):
+    model = GoogleInteractionsModel('gemini-2.5-flash', provider=GoogleProvider(client=mock_model.client))
+    settings: GoogleInteractionsModelSettings = {'thinking': thinking}
+    await model_request(model, [ModelRequest.user_text_prompt('hello')], model_settings=settings)
+    assert mock_google.requests[-1]['generation_config'] == {
+        'thinking_summaries': 'none' if thinking is False else 'auto'
+    }
+
+
+async def test_stream_chunk_work_scales_with_payload():
+    measurements: list[tuple[int, int, int]] = []
+    marker = 'review-text-chunk'
+    encoded = base64.b64encode(b'x').decode()
+    for count in (16, 32):
+        values: list[dict[str, JsonValue]] = [
+            {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}}
+        ]
+        for kind in ('text', 'image', 'text'):
+            for _ in range(count):
+                delta: dict[str, JsonValue] = (
+                    {'type': 'text', 'text': marker}
+                    if kind == 'text'
+                    else {'type': 'image', 'data': encoded, 'mime_type': 'image/png'}
+                )
+                values.append({'event_type': 'step.delta', 'index': 0, 'delta': delta})
+        values.extend(
+            [
+                {'event_type': 'step.stop', 'index': 0},
+                {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+            ]
+        )
+        response = GoogleInteractionsStreamedResponse(
+            ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+        )
+        with (
+            patch.object(
+                TypeAdapter, 'validate_python', autospec=True, side_effect=TypeAdapter[object].validate_python
+            ) as validated,
+            patch('base64.b64decode', wraps=base64.b64decode) as decoded,
+            patch('base64.b64encode', wraps=base64.b64encode) as encoded_spy,
+        ):
+            events = [event async for event in response]
+        assert [(event.index, event.part.part_kind) for event in events if isinstance(event, PartStartEvent)] == [
+            (0, 'text'),
+            (1, 'file'),
+            (2, 'text'),
+        ]
+        parts = response.get().parts
+        assert isinstance(parts[0], TextPart) and parts[0].content == marker * count
+        assert isinstance(parts[1], FilePart) and parts[1].content.data == b'x' * count
+        assert isinstance(parts[2], TextPart) and parts[2].content == marker * count
+        measurements.append(
+            (
+                sum(str(call.args[1]).count(marker) for call in validated.call_args_list if len(call.args) > 1),
+                sum(len(call.args[0]) for call in decoded.call_args_list),
+                sum(len(call.args[0]) for call in encoded_spy.call_args_list),
+            )
+        )
+    assert all(larger <= smaller * 3 for smaller, larger in zip(*measurements))
+
+
+@pytest.mark.parametrize('stop', [False, True])
+async def test_prefilled_stream_content_and_deltas(stop: bool):
+    values: list[dict[str, JsonValue]] = [
+        {
+            'event_type': 'step.start',
+            'index': 0,
+            'step': {
+                'type': 'model_output',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'first',
+                        'annotations': [{'type': 'url_citation', 'url': 'https://example.com'}],
+                    },
+                    {'type': 'image', 'data': 'YWJj', 'mime_type': 'image/png'},
+                ],
+            },
+        },
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'image', 'data': 'ZGVm'}},
+    ]
+    if stop:
+        values.append({'event_type': 'step.stop', 'index': 0})
+    values.append({'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}})
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+    )
+    async for _ in response:
+        pass
+    assert response.provider_details is not None
+    parts = response.get().parts
+    assert isinstance(parts[0], TextPart) and parts[0].content == 'first'
+    assert isinstance(parts[1], FilePart) and parts[1].content.data == b'abcdef'
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        TypeAdapter(list[dict[str, JsonValue]]).validate_python(response.provider_details['google_interactions_steps'])[
+            0
+        ]['content']
+    )
+    assert all('text' not in item and 'data' not in item for item in content)
+
+
+@pytest.mark.parametrize('thinking', [False, 'minimal'])
+async def test_shared_google_thinking_uses_profile_on_wire(
+    mock_google: MockGoogle, thinking: ThinkingEffort | bool, allow_model_requests: None
+):
+    """The common resolver preserves GenerateContent's supported-level request contract."""
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+    mock_google.body = {'candidates': [{'content': {'parts': [{'text': 'OK'}], 'role': 'model'}}]}
+    model = GoogleModel(
+        'gemini-3.8-flash',
+        provider=GoogleProvider(
+            api_key='test-key',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle), timeout=120),
+        ),
+    )
+    settings: GoogleModelSettings = {'thinking': thinking}
+    result = await model_request(model, [ModelRequest.user_text_prompt('hello')], model_settings=settings)
+    assert len(result.parts) == 1
+    assert isinstance(result.parts[0], TextPart) and result.parts[0].content == 'OK'
+    config = TypeAdapter(dict[str, JsonValue]).validate_python(mock_google.requests[-1]['generationConfig'])
+    assert config['thinkingConfig'] == (
+        {'thinking_level': 'LOW'} if thinking is False else {'thinking_level': 'LOW', 'include_thoughts': True}
+    )

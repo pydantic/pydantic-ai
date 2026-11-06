@@ -15,6 +15,7 @@ from pydantic import ConfigDict, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
 from ... import _model_errors
+from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
 from ...exceptions import UnexpectedModelBehavior, UserError
 from ...messages import (
@@ -53,12 +54,14 @@ from ...native_tools import (
     WebSearchTool,
 )
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
+from ...profiles.google import GoogleModelProfile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
 from .. import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _google_common,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -72,6 +75,8 @@ from .._tool_choice import resolve_tool_choice
 
 try:
     from google.genai import Client, interactions as gi
+
+    # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
 except ImportError as _import_error:
     raise ImportError(
@@ -98,12 +103,26 @@ _RESPONSE_FORMAT = TypeAdapter(
     gi.CreateModelInteractionResponseFormatParam, config=ConfigDict(arbitrary_types_allowed=True)
 )
 
+_GENERATION_CONFIG = TypeAdapter(gi.GenerationConfigParam)
+_EXTRA_BODY = TypeAdapter(dict[str, object])
+_ENVIRONMENT = TypeAdapter(gi.CreateModelInteractionEnvironmentParam)
+_SAFETY_SETTINGS = TypeAdapter(list[gi.SafetySettingParam])
+_LABELS = TypeAdapter(dict[str, str])
+_SERVICE_TIER = TypeAdapter(gi.ServiceTier)
+_STEPS = TypeAdapter(list[dict[str, JsonValue]])
+_THINKING_LEVEL = TypeAdapter(gi.ThinkingLevel)
+_THINKING_SUMMARIES = TypeAdapter(gi.ThinkingSummaries)
+_IMAGE_SIZE = TypeAdapter(gi.ImageResponseFormatImageSize)
+_IMAGE_MIME_TYPE = TypeAdapter(gi.ImageResponseFormatMimeType)
+_NATIVE_TOOLS = TypeAdapter(list[gi.ToolParam], config=ConfigDict(arbitrary_types_allowed=True))
+
 
 class GoogleInteractionsModelSettings(ModelSettings, total=False):
     """Settings for Google's Interactions API.
 
     Sampling settings unsupported by this API (`top_k`, penalties, `logit_bias` and
     `parallel_tool_calls`) are ignored. Explicit caching and token counting are unavailable.
+    Models that use thinking budgets retain their default effort: Interactions exposes only thinking levels.
     """
 
     google_thinking_level: gi.ThinkingLevel
@@ -193,19 +212,22 @@ class GoogleInteractionsModel(Model[Client]):
         return merge_profile(profile, ModelProfile(supports_tool_return_schema=False))
 
     @cached_property
-    def profile(self) -> ModelProfile:
-        profile = super().profile
+    def profile(self) -> GoogleModelProfile:
+        profile = GoogleModelProfile(**super().profile)
         if not profile.get('supports_image_output', False):
-            return merge_profile(
-                profile,
-                ModelProfile(
-                    supported_native_tools=profile.get('supported_native_tools', self.supported_native_tools())
-                    - {ImageGenerationTool}
-                ),
+            return GoogleModelProfile(
+                **merge_profile(
+                    profile,
+                    ModelProfile(
+                        supported_native_tools=profile.get('supported_native_tools', self.supported_native_tools())
+                        - {ImageGenerationTool}
+                    ),
+                )
             )
         return profile
 
     def _refresh_http_client(self) -> None:
+        # The SDK caches its transport on the lazy Interactions resource, so owned-client refresh must invalidate it.
         resource = self.client.aio._interactions  # pyright: ignore[reportPrivateUsage]
         previous = self.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
         super()._refresh_http_client()
@@ -234,7 +256,7 @@ class GoogleInteractionsModel(Model[Client]):
         if 'google_thinking_level' in model_settings:
             overrides.append('google_thinking_level')
         if 'google_generation_config' in model_settings:
-            config = TypeAdapter(gi.GenerationConfigParam).validate_python(model_settings['google_generation_config'])
+            config = _GENERATION_CONFIG.validate_python(model_settings['google_generation_config'])
             if 'thinking_level' in config:
                 overrides.append('google_generation_config')
         return tuple(overrides)
@@ -265,7 +287,7 @@ class GoogleInteractionsModel(Model[Client]):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: object = None,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, params = self.prepare_request(model_settings, model_request_parameters)
@@ -307,7 +329,7 @@ class GoogleInteractionsModel(Model[Client]):
                 else httpx.Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
             )
         if (extra_body := settings.get('extra_body')) is not None:
-            options['extra_body'] = TypeAdapter(dict[str, object]).validate_python(extra_body)
+            options['extra_body'] = _EXTRA_BODY.validate_python(extra_body)
         # The SDK's StepParam drops replay fields it has not typed yet, including MCP signatures.
         # Merge the validated steps after SDK serialization so every opaque field survives.
         options['extra_body'] = {**options.get('extra_body', {}), 'input': steps, 'store': False}
@@ -326,15 +348,9 @@ class GoogleInteractionsModel(Model[Client]):
         response_format: gi.CreateModelInteractionResponseFormatParam | None
         tools, response_format = self._map_tools(params)
         if 'google_native_tools' in settings:
-            tools.extend(
-                TypeAdapter(list[gi.ToolParam], config=ConfigDict(arbitrary_types_allowed=True)).validate_python(
-                    settings['google_native_tools']
-                )
-            )
+            tools.extend(_NATIVE_TOOLS.validate_python(settings['google_native_tools']))
         if 'google_environment' in settings:
-            request['environment'] = TypeAdapter(gi.CreateModelInteractionEnvironmentParam).validate_python(
-                settings['google_environment']
-            )
+            request['environment'] = _ENVIRONMENT.validate_python(settings['google_environment'])
         if tools:
             request['tools'] = tools
         config = self._generation_config(settings, params)
@@ -344,19 +360,17 @@ class GoogleInteractionsModel(Model[Client]):
         if response_format is not None:
             request['response_format'] = response_format
         if 'google_safety_settings' in settings:
-            request['safety_settings'] = TypeAdapter(list[gi.SafetySettingParam]).validate_python(
-                settings['google_safety_settings']
-            )
+            request['safety_settings'] = _SAFETY_SETTINGS.validate_python(settings['google_safety_settings'])
         if 'google_labels' in settings:
-            request['labels'] = TypeAdapter(dict[str, str]).validate_python(settings['google_labels'])
+            request['labels'] = _LABELS.validate_python(settings['google_labels'])
         tier = settings.get('google_service_tier')
         if tier is None:
             tier = {'default': 'standard', 'flex': 'flex', 'priority': 'priority'}.get(
                 settings.get('service_tier', 'auto')
             )
         if tier is not None:
-            request['service_tier'] = TypeAdapter(gi.ServiceTier).validate_python(tier)
-        return request, TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps)
+            request['service_tier'] = _SERVICE_TIER.validate_python(tier)
+        return request, _STEPS.validate_python(steps)
 
     def _response_format(
         self,
@@ -384,18 +398,16 @@ class GoogleInteractionsModel(Model[Client]):
         for key in ('temperature', 'top_p', 'max_tokens', 'stop_sequences', 'seed'):
             if key in settings:
                 native_key = 'max_output_tokens' if key == 'max_tokens' else key
-                config.update(TypeAdapter(gi.GenerationConfigParam).validate_python({native_key: settings.get(key)}))
+                config.update(_GENERATION_CONFIG.validate_python({native_key: settings.get(key)}))
         config.update(self._thinking_config(params.thinking))
         if 'google_thinking_level' in settings:
-            config['thinking_level'] = TypeAdapter(gi.ThinkingLevel).validate_python(settings['google_thinking_level'])
+            config['thinking_level'] = _THINKING_LEVEL.validate_python(settings['google_thinking_level'])
         if 'google_thinking_summaries' in settings:
-            config['thinking_summaries'] = TypeAdapter(gi.ThinkingSummaries).validate_python(
-                settings['google_thinking_summaries']
-            )
+            config['thinking_summaries'] = _THINKING_SUMMARIES.validate_python(settings['google_thinking_summaries'])
         if params.declared_tool_defs:
             config['tool_choice'] = self._tool_choice(settings, params)
         if 'google_generation_config' in settings:
-            config.update(TypeAdapter(gi.GenerationConfigParam).validate_python(settings['google_generation_config']))
+            config.update(_GENERATION_CONFIG.validate_python(settings['google_generation_config']))
         return config
 
     def _tool_choice(self, settings: ModelSettings, params: ModelRequestParameters) -> gi.ToolChoiceParam:
@@ -417,22 +429,13 @@ class GoogleInteractionsModel(Model[Client]):
 
     def _thinking_config(self, thinking: ThinkingEffort | bool | None) -> gi.GenerationConfigParam:
         config: gi.GenerationConfigParam = {}
-        if isinstance(thinking, str):
-            levels: dict[ThinkingEffort, gi.ThinkingLevel] = {
-                'minimal': 'minimal',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'high',
-                'max': 'high',
-            }
-            config['thinking_level'] = levels[thinking]
-            config['thinking_summaries'] = 'auto'
-        elif thinking is True:
-            config['thinking_summaries'] = 'auto'
-        elif thinking is False:
-            config['thinking_level'] = 'minimal'
-            config['thinking_summaries'] = 'none'
+        if thinking is None:
+            return config
+        config['thinking_summaries'] = 'none' if thinking is False else 'auto'
+        if thinking is not True and self.profile.get('google_supports_thinking_level', True):
+            effort = 'minimal' if thinking is False else thinking
+            level = _google_common.resolve_google_thinking_level(effort, self.profile)
+            config['thinking_level'] = _THINKING_LEVEL.validate_python(level.lower())
         return config
 
     def _map_tools(
@@ -491,11 +494,9 @@ class GoogleInteractionsModel(Model[Client]):
         if tool.aspect_ratio:
             image_format['aspect_ratio'] = tool.aspect_ratio
         if tool.size not in (None, 'auto'):
-            image_format['image_size'] = TypeAdapter(gi.ImageResponseFormatImageSize).validate_python(tool.size)
+            image_format['image_size'] = _IMAGE_SIZE.validate_python(tool.size)
         if tool.output_format not in (None, 'png'):
-            image_format['mime_type'] = TypeAdapter(gi.ImageResponseFormatMimeType).validate_python(
-                f'image/{tool.output_format}'
-            )
+            image_format['mime_type'] = _IMAGE_MIME_TYPE.validate_python(f'image/{tool.output_format}')
         return image_format
 
     async def _map_messages(
@@ -592,7 +593,7 @@ class GoogleInteractionsModel(Model[Client]):
             'is_error': part.outcome in ERROR_OUTCOMES,
             'result': content,
         }
-        return [TypeAdapter(dict[str, JsonValue]).validate_python(result)]
+        return [JSON_OBJECT.validate_python(result)]
 
     async def _map_model_response(self, message: ModelResponse) -> list[gi.StepParam | dict[str, JsonValue]]:
         original = replay_steps(message) if self.accepts_stateless_artifacts(message) else None

@@ -16,10 +16,19 @@ from ...exceptions import UnexpectedModelBehavior
 from ...messages import ModelResponseStreamEvent, TextPart
 from ...native_tools import MCPServerTool
 from .. import StreamedResponse
-from ._response import JSON_OBJECT, build_response, map_step, mark_step
+from ._response import JSON_OBJECT, build_response, map_step, mark_step, mcp_server_names
 
 _STEP = TypeAdapter(gi.Step)
 _OBJECT_LIST = TypeAdapter(list[dict[str, JsonValue]])
+_JSON_LIST = TypeAdapter(list[JsonValue])
+
+
+@dataclass
+class _ContentBuffer:
+    raw: dict[str, JsonValue]
+    text: list[str] = field(default_factory=list[str])
+    data: bytearray = field(default_factory=bytearray)
+    annotations: list[JsonValue] = field(default_factory=list[JsonValue])
 
 
 @dataclass
@@ -32,9 +41,12 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _steps: dict[int, dict[str, JsonValue]] = field(default_factory=dict[int, dict[str, JsonValue]])
-    _arguments: dict[int, str] = field(default_factory=dict[int, str])
+    _arguments: dict[int, list[str]] = field(init=False, default_factory=dict[int, list[str]])
     _completed: bool = False
-    _server_calls: set[str] = field(default_factory=set[str])
+    _server_calls: dict[str, str] = field(default_factory=dict[str, str])
+    _content_buffers: dict[int, list[_ContentBuffer]] = field(
+        init=False, default_factory=dict[int, list[_ContentBuffer]]
+    )
     _media_steps: set[int] = field(init=False, default_factory=set[int])
     _deferred_events: list[gi.InteractionSSEEvent] = field(init=False, default_factory=list[gi.InteractionSSEEvent])
 
@@ -54,9 +66,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         if not isinstance(event, gi.InteractionCompletedEvent):
             return ()
         self._server_calls.update(
-            value.step.call_id
-            for value in self._deferred_events
-            if isinstance(value, gi.StepStart) and isinstance(value.step, gi.FunctionResultStep)
+            mcp_server_names(value.step for value in self._deferred_events if isinstance(value, gi.StepStart))
         )
         events = self._deferred_events
         self._deferred_events = []
@@ -81,7 +91,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         elif isinstance(event, gi.StepStop):
             return await self._map_stop(event)
         elif isinstance(event, gi.InteractionCompletedEvent):
-            return self._map_completed(event)
+            return await self._map_completed(event)
         elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
             return ()
         elif isinstance(event, gi.ErrorEvent):
@@ -94,6 +104,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         self._steps[event.index] = JSON_OBJECT.validate_python(
             step.model_dump(mode='json', by_alias=True, exclude_none=True)
         )
+        if isinstance(step, gi.MCPServerToolCallStep):
+            self._server_calls[step.id] = step.server_name
         if isinstance(step, gi.FunctionCallStep):
             if step.id in self._server_calls:
                 return []
@@ -120,7 +132,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
                 self._parts_manager.handle_part(vendor_part_id=(event.index, index), part=part)
                 for index, part in enumerate(
                     mark_step(
-                        await map_step(step, self.provider_name, server_calls=frozenset(self._server_calls)),
+                        await map_step(step, self.provider_name, server_calls=self._server_calls),
                         event.index,
                     )
                 )
@@ -128,8 +140,9 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         return []
 
     async def _map_stop(self, event: gi.StepStop) -> list[ModelResponseStreamEvent]:
+        self._flush_content(event.index)
         if event.index in self._arguments:
-            self._steps[event.index]['arguments'] = JSON_OBJECT.validate_json(self._arguments[event.index])
+            self._steps[event.index]['arguments'] = JSON_OBJECT.validate_json(''.join(self._arguments.pop(event.index)))
         step = _STEP.validate_python(self._steps[event.index])
         details = {'google_interactions_step_index': event.index, 'google_interactions_content_index': 0}
         if isinstance(step, gi.ThoughtStep):
@@ -146,7 +159,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             )
         events: list[ModelResponseStreamEvent] = []
         for index, part in enumerate(
-            mark_step(await map_step(step, self.provider_name, server_calls=frozenset(self._server_calls)), event.index)
+            mark_step(await map_step(step, self.provider_name, server_calls=self._server_calls), event.index)
         ):
             if (
                 isinstance(step, gi.ModelOutputStep)
@@ -166,7 +179,10 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
                 events.append(self._parts_manager.handle_part(vendor_part_id=(event.index, index), part=part))
         return events
 
-    def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
+    async def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
+        events: list[ModelResponseStreamEvent] = []
+        for index in list(self._content_buffers):
+            events.extend(await self._map_stop(gi.StepStop(index=index)))
         raw = JSON_OBJECT.validate_python(event.interaction.model_dump(mode='json', by_alias=True, exclude_none=True))
         raw['steps'] = [self._steps[index] for index in sorted(self._steps)]
         response = build_response(
@@ -183,7 +199,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         self._usage = response.usage
         self._timestamp = response.timestamp
         self._completed = True
-        return ()
+        return events
 
     def _map_delta(self, event: gi.StepDelta) -> Iterable[ModelResponseStreamEvent]:
         delta = event.delta
@@ -205,14 +221,41 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             self._steps[event.index].update(values)
         return ()
 
+    def _content_for_step(self, index: int) -> list[_ContentBuffer]:
+        if index not in self._content_buffers:
+            buffers: list[_ContentBuffer] = []
+            for value in _OBJECT_LIST.validate_python(self._steps[index].get('content', [])):
+                buffer = _ContentBuffer(value)
+                if isinstance(text := value.get('text'), str):
+                    buffer.text.append(text)
+                if isinstance(data := value.get('data'), str):
+                    buffer.data.extend(base64.b64decode(data))
+                buffer.annotations.extend(_JSON_LIST.validate_python(value.get('annotations', [])))
+                buffers.append(buffer)
+            self._content_buffers[index] = buffers
+        return self._content_buffers[index]
+
+    def _flush_content(self, index: int) -> None:
+        buffers = self._content_buffers.pop(index, None)
+        if buffers is None:
+            return
+        content: list[JsonValue] = []
+        for buffer in buffers:
+            value = buffer.raw
+            if value.get('type') == 'text':
+                value['text'] = ''.join(buffer.text)
+            if 'data' in value:
+                value['data'] = base64.b64encode(buffer.data).decode()
+            if buffer.annotations:
+                value['annotations'] = buffer.annotations
+            content.append(value)
+        self._steps[index]['content'] = content
+
     def _map_text(self, index: int, delta: gi.TextDelta) -> Iterable[ModelResponseStreamEvent]:
-        step = self._steps[index]
-        content = _OBJECT_LIST.validate_python(step.get('content', []))
-        if content and content[-1].get('type') == 'text':
-            content[-1]['text'] = str(content[-1].get('text', '')) + delta.text
-        else:
-            content.append({'type': 'text', 'text': delta.text})
-        step['content'] = [value for value in content]
+        content = self._content_for_step(index)
+        if not content or content[-1].raw.get('type') != 'text':
+            content.append(_ContentBuffer({'type': 'text'}))
+        content[-1].text.append(delta.text)
         if index in self._media_steps:
             return ()
         return self._parts_manager.handle_text_delta(
@@ -237,7 +280,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         )
 
     def _map_arguments(self, index: int, delta: gi.ArgumentsDelta) -> Iterable[ModelResponseStreamEvent]:
-        self._arguments[index] = self._arguments.get(index, '') + (delta.arguments or '')
+        self._arguments.setdefault(index, []).append(delta.arguments or '')
         if self._steps[index].get('id') in self._server_calls:
             return ()
         return self._parts_manager.handle_tool_call_delta_events(
@@ -247,30 +290,24 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     def _map_media(self, index: int, delta: gi.ImageDelta | gi.AudioDelta | gi.VideoDelta | gi.DocumentDelta) -> None:
         # Files have no deltas: defer later content until the complete file can be emitted in order.
         self._media_steps.add(index)
-        content = _OBJECT_LIST.validate_python(self._steps[index].get('content', []))
+        content = self._content_for_step(index)
+        if not content or content[-1].raw.get('type') != delta.type:
+            content.append(_ContentBuffer({'type': delta.type}))
+        buffer = content[-1]
         value = JSON_OBJECT.validate_python(delta.model_dump(mode='json', by_alias=True, exclude_none=True))
-        if content and content[-1].get('type') == delta.type:
-            previous = content[-1]
-            if delta.data and isinstance(previous.get('data'), str):
-                value['data'] = base64.b64encode(
-                    base64.b64decode(str(previous['data'])) + base64.b64decode(delta.data)
-                ).decode()
-            previous.update(value)
-        else:
-            content.append(value)
-        self._steps[index]['content'] = [value for value in content]
+        if delta.data is not None:
+            buffer.data.extend(base64.b64decode(delta.data))
+            value['data'] = ''
+        buffer.raw.update(value)
 
     def _map_annotations(self, index: int, delta: gi.TextAnnotationDelta) -> None:
-        content = _OBJECT_LIST.validate_python(self._steps[index].get('content', []))
-        if not content or content[-1].get('type') != 'text':
+        content = self._content_for_step(index)
+        if not content or content[-1].raw.get('type') != 'text':
             raise UnexpectedModelBehavior('Google emitted citations without a text content block.')
-        previous = TypeAdapter(list[JsonValue]).validate_python(content[-1].get('annotations', []))
-        previous.extend(
+        content[-1].annotations.extend(
             JSON_OBJECT.validate_python(annotation.model_dump(mode='json', by_alias=True, exclude_none=True))
             for annotation in delta.annotations or []
         )
-        content[-1]['annotations'] = previous
-        self._steps[index]['content'] = [value for value in content]
 
     @property
     def model_name(self) -> str:

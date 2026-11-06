@@ -23,63 +23,6 @@ pip/uv-add "pydantic-ai-slim[google]"
 ```
 
 
-## Interactions API
-
-[`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] uses Google's
-[Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview).
-Select it explicitly with `google-interactions:<model>`:
-
-```python {gateway_toggle="skip"}
-from pydantic_ai import Agent
-
-agent = Agent('google-interactions:gemini-3.8-flash')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-It uses the same credentials as `GoogleModel`. To use Google Cloud or a configured proxy, pass
-an existing provider:
-
-```python {gateway_toggle="skip"}
-from pydantic_ai.models.google_interactions import GoogleInteractionsModel
-from pydantic_ai.providers.google_cloud import GoogleCloudProvider
-
-model = GoogleInteractionsModel(
-    'gemini-3.8-flash',
-    provider=GoogleCloudProvider(project='your-project', location='global'),
-)
-```
-
-The adapter always sends `store=False` and the full conversation. It preserves separate thought
-steps, their signatures, native-tool calls and results, and provider-generated function-call IDs.
-Persist and restore the [complete message history](../message-history.md#storing-and-loading-messages-to-json)
-when continuing a conversation or resuming a deferred tool call. Removing signed steps can make
-Google reject later requests.
-
-Function tools, tool retries, deferred approvals, native and prompted structured output, multimodal
-inputs, and streaming use the ordinary Pydantic AI APIs. Supported native tools include Google Search,
-URL context, code execution, file search, and remote MCP servers; availability depends on the model
-and endpoint. Image-capable models support `BinaryImage` output and `ImageGenerationTool`.
-
-[`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
-provides typed Interactions settings. `google_native_tools` exposes additional native tools, such as
-Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type. Use the shared `thinking`, `tool_choice`, and `service_tier`
-settings for portable configuration. For native audio or video output, configure
-`google_response_format` and, when needed, `google_generation_config`, and read the returned
-[`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
-
-Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
-caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
-describes them. Finish reasons are derived from interaction status, which has less detail than
-GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
-
-!!! note "Gateway support"
-    The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured
-    Google provider on the Gateway may expose it. Use a direct Gemini API or Google Cloud provider
-    unless your Gateway configuration supports this endpoint.
-
-
 ## Configuration
 
 `GoogleModel` lets you use Google's Gemini models through their [Gemini API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Google Cloud](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`, formerly known as Vertex AI).
@@ -190,6 +133,63 @@ After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse]
 #### Model Garden
 
 See [Google Cloud Model Garden](google-cloud.md#model-garden).
+
+## Interactions API
+
+[`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] uses Google's
+[Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview).
+Select it explicitly with `google-interactions:<model>`:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('google-interactions:{{ google:medium.name }}')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+It uses the same credentials as `GoogleModel`. To use Google Cloud or a configured proxy, pass
+an existing provider:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+model = GoogleInteractionsModel(
+    '{{ google:medium.name }}',
+    provider=GoogleCloudProvider(project='your-project', location='global'),
+)
+```
+
+The adapter always sends `store=False` and the full conversation. It preserves separate thought
+steps, their signatures, native-tool calls and results, and provider-generated function-call IDs.
+Persist and restore the [complete message history](../message-history.md#storing-and-loading-messages-to-json)
+when continuing a conversation or resuming a deferred tool call. Removing signed steps can make
+Google reject later requests.
+
+Function tools, tool retries, deferred approvals, native and prompted structured output, multimodal
+inputs, and streaming use the ordinary Pydantic AI APIs. Supported native tools include Google Search,
+URL context, code execution, file search, and remote MCP servers; availability depends on the model
+and endpoint. Image-capable models support `BinaryImage` output and `ImageGenerationTool`.
+
+[`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
+provides typed Interactions settings. `google_native_tools` exposes additional native tools, such as
+Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type. Use the shared `thinking`, `tool_choice`, and `service_tier`
+settings for portable configuration. For native audio or video output, configure
+`google_response_format` and, when needed, `google_generation_config`, and read the returned
+[`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
+
+Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
+caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
+describes them. Finish reasons are derived from interaction status, which has less detail than
+GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
+
+!!! note "Gateway support"
+    The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured
+    Google provider on the Gateway may expose it. Use a direct Gemini API or Google Cloud provider
+    unless your Gateway configuration supports this endpoint.
+
 
 ## Custom HTTP Client
 

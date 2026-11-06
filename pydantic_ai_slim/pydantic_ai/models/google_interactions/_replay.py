@@ -22,6 +22,8 @@ from ._response import NATIVE_TOOL_NAMES, media_kind
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _OBJECT_LIST = TypeAdapter(list[dict[str, JsonValue]])
+_JSON_VALUE = TypeAdapter(JsonValue)
+_STEP = TypeAdapter(gi.Step)
 
 
 def step_index(part: ModelResponsePart) -> int | None:
@@ -47,19 +49,18 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
     elif isinstance(part, NativeToolReturnPart):
         validate_native_step(raw, part)
         raw.update(call_id=part.tool_call_id)
-        raw['result'] = TypeAdapter(JsonValue).validate_python(part.content)
+        raw['result'] = _JSON_VALUE.validate_python(part.content)
     else:
         raise UnexpectedModelBehavior('Persisted Google Interactions step does not match its message part.')
-    TypeAdapter(gi.Step).validate_python(raw)
+    _STEP.validate_python(raw)
     return raw
 
 
 def validate_native_step(raw: dict[str, JsonValue], part: NativeToolCallPart | NativeToolReturnPart) -> None:
     step_type = raw.get('type')
     name = NATIVE_TOOL_NAMES.get(str(step_type).removesuffix('_call').removesuffix('_result'))
-    if name != part.tool_name and not (
-        part.tool_name == 'mcp_server' and step_type in ('function_call', 'function_result')
-    ):
+    tool_name = part.tool_name.partition(':')[0] if part.tool_name.startswith('mcp_server:') else part.tool_name
+    if name != tool_name and not (tool_name == 'mcp_server' and step_type in ('function_call', 'function_result')):
         raise UnexpectedModelBehavior(
             f'Missing or unsupported Google Interactions replay step for native tool {part.tool_name!r}.'
         )
@@ -85,17 +86,30 @@ def replay_content(raw: dict[str, JsonValue], parts: list[ModelResponsePart]) ->
             raise UnexpectedModelBehavior('Invalid content index in persisted Google Interactions history.')
         value = dict(original[index])
         if isinstance(part, TextPart):
-            if value.get('text') != part.content:
-                value['text'] = part.content
-                value.pop('annotations', None)
+            replay_text_content(value, part)
         elif isinstance(part, FilePart):
-            fingerprint = (part.provider_details or {}).get('google_interactions_content_sha256')
-            if 'data' in value or fingerprint != hashlib.sha256(part.content.data).hexdigest():
-                value.pop('uri', None)
-                value['data'] = base64.b64encode(part.content.data).decode()
-                value['mime_type'] = part.content.media_type
-                value['type'] = media_kind(part.content.media_type)
+            replay_file_content(value, part)
         else:
             raise UnexpectedModelBehavior('Invalid content part in persisted Google Interactions history.')
         content.append(value)
     return content
+
+
+def replay_text_content(value: dict[str, JsonValue], part: TextPart) -> None:
+    unchanged = value.get('text') == part.content or (
+        'text' not in value
+        and (part.provider_details or {}).get('google_interactions_text_sha256')
+        == hashlib.sha256(part.content.encode()).hexdigest()
+    )
+    value['text'] = part.content
+    if not unchanged:
+        value.pop('annotations', None)
+
+
+def replay_file_content(value: dict[str, JsonValue], part: FilePart) -> None:
+    fingerprint = (part.provider_details or {}).get('google_interactions_content_sha256')
+    if 'data' in value or 'uri' not in value or fingerprint != hashlib.sha256(part.content.data).hexdigest():
+        value.pop('uri', None)
+        value['data'] = base64.b64encode(part.content.data).decode()
+        value['mime_type'] = part.content.media_type
+        value['type'] = media_kind(part.content.media_type)
