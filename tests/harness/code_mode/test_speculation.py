@@ -193,7 +193,7 @@ class TestSpeculation:
         log = ToolLog()
 
         async def lookup(**kwargs: Any) -> str:
-            if not log.streaming_done:
+            if not log.streaming_done:  # pragma: no branch - speculation always launches it mid-stream
                 log.started_during_stream += 1
             log.calls.append(('lookup', json.dumps(kwargs)))
             return 'found'
