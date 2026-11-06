@@ -41,6 +41,7 @@ import logging
 import math
 import os
 import pathlib
+import shlex
 import sys
 import time
 import uuid
@@ -115,6 +116,7 @@ from . import (
     CLAUDE_CODE_TOOL_NAMES,
     MUTATING_TOOLS,
     READ_ONLY_SUBAGENT_TOOLS,
+    BashScopes,
     build_claude_code_toolset,
 )
 from ._backends import BASH_DEFAULT_TIMEOUT, local_workspace
@@ -985,6 +987,8 @@ class Args:
     prompt_positional: str | None = None
     # None = flag absent (local/dev: no restriction). A set = enforce it.
     allowed_tools: frozenset[str] | None = None
+    # None = `Bash` is unscoped or the flag is absent. Prefixes = `Bash` runs only commands they allow.
+    bash_scopes: BashScopes | None = None
     permission_mode: str | None = None
 
 
@@ -993,8 +997,8 @@ def _split_allowed_tools(value: str | None) -> frozenset[str] | None:
 
     Entries may carry a permission scope, e.g. `Edit(/tmp/*)` or
     `Bash(git:*)` — only the base name gates availability here, so the
-    parenthesised scope is stripped. Returns `None` when the flag is absent
-    so non-gh-aw/local runs keep every tool.
+    parenthesised scope is stripped; `_bash_scopes` keeps the `Bash` scopes.
+    Returns `None` when the flag is absent so non-gh-aw/local runs keep every tool.
     """
     if value is None:
         return None
@@ -1005,6 +1009,29 @@ def _split_allowed_tools(value: str | None) -> frozenset[str] | None:
             continue
         names.add(entry.split('(', 1)[0].strip())
     return frozenset(names)
+
+
+def _bash_scopes(value: str | None) -> BashScopes | None:
+    """Token prefixes of the scoped `Bash(...)` entries in `--allowed-tools`.
+
+    `Bash(git add:*)` and `Bash(git)` both allow commands starting with their tokens; gh-aw compiles a source's
+    `git *` to `Bash(git)`. Returns `None`, leaving `Bash` unrestricted, when the flag is absent or grants plain `Bash`.
+    """
+    if value is None:
+        return None
+    scopes: list[tuple[str, ...]] = []
+    for raw in value.split(','):
+        entry = raw.strip()
+        if entry == 'Bash':
+            return None
+        if entry.startswith('Bash(') and entry.endswith(')'):
+            try:
+                tokens = tuple(shlex.split(entry[len('Bash(') : -1].removesuffix(':*')))
+            except ValueError:
+                continue
+            if tokens:
+                scopes.append(tokens)
+    return tuple(scopes)
 
 
 def parse_args(argv: Sequence[str]) -> Args:
@@ -1028,6 +1055,7 @@ def parse_args(argv: Sequence[str]) -> Args:
         prompt_file=known.prompt_file,
         prompt_positional=positionals[-1] if positionals else None,
         allowed_tools=_split_allowed_tools(known.allowed_tools),
+        bash_scopes=_bash_scopes(known.allowed_tools),
         permission_mode=known.permission_mode,
     )
 
@@ -1202,9 +1230,12 @@ def select_claude_code_toolset(
     permission_mode: str | None,
     *,
     task: TaskCallable | None,
+    bash_scopes: BashScopes | None = None,
 ) -> AbstractToolset[object]:
     """Build the Claude Code toolset; `task=None` for sub-agents so they can't recurse."""
-    return build_claude_code_toolset(task=task).filtered(_claude_code_tool_predicate(allowed, permission_mode))
+    return build_claude_code_toolset(task=task, bash_scopes=bash_scopes).filtered(
+        _claude_code_tool_predicate(allowed, permission_mode)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1697,7 +1728,9 @@ def main() -> int:
             return 1
         model, label = build_model(args)
         task_tool = None if _is_attention_run() else task
-        claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
+        claude_code_toolset = select_claude_code_toolset(
+            args.allowed_tools, args.permission_mode, task=task_tool, bash_scopes=args.bash_scopes
+        )
         mcp_servers = build_mcp_servers(args)
         logger.info(
             'model=%s permission_mode=%s request_limit=%d claude_code_tool_names=%s mcp_servers=%d prompt_chars=%d',

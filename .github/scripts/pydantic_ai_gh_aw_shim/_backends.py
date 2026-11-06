@@ -86,7 +86,9 @@ def shell() -> ShellToolset[object]:
     """`ShellToolset` running in the workspace's working directory, PATH augmented for the sandbox.
 
     Command/operator denylists are left empty to preserve the old `Bash` tool's
-    "run anything" contract; the AWF sandbox is the security boundary. The full
+    "run anything" contract; the AWF sandbox is the security boundary. A workflow
+    that grants only scoped `Bash(...)` entries is checked by `bash.scoped_bash`
+    before its command reaches this toolset. The full
     process environment is passed on top of the workspace's own (which carries only
     `PATH`/`HOME`/locale), as the hand-rolled `Bash` did.
     """

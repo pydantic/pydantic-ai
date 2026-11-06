@@ -500,6 +500,91 @@ def test_plan_mode_and_allowlist_compose():
     assert names == ['Read']  # Bash dropped by plan mode
 
 
+# `Bash` entries gh-aw compiles from a scoped `bash:` source, here the Weekly Agent Instructions Audit's.
+SCOPED_BASH_TOOLS = (
+    'Bash(cat),Bash(gh:*),Bash(git add:*),Bash(git status),Bash(git),Bash(grep),'
+    'Bash(python3 .github/scripts/weekly_ce_audit.py prepare-review),Bash(safeoutputs:*),Bash(sort),BashOutput,Read'
+)
+
+
+def _call_bash(
+    allowed_tools: str, command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[object, list[str]]:
+    """Call the agent's `Bash` tool as `parse_args` configures it, recording the commands that reach the shell."""
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    reached: list[str] = []
+
+    async def _run_shell(_ctx: RunContext[object], shell_command: str, *, timeout_seconds: float) -> str:
+        reached.append(shell_command)
+        return 'ran'
+
+    monkeypatch.setattr(sys.modules['pydantic_ai_gh_aw_shim.bash'], 'run_shell', _run_shell)
+    args = shim.parse_args(['--allowed-tools', allowed_tools, 'p'])
+    toolset = shim.select_claude_code_toolset(
+        args.allowed_tools, args.permission_mode, task=None, bash_scopes=args.bash_scopes
+    )
+
+    async def _call() -> object:
+        ctx = _ctx()
+        tools = await toolset.get_tools(ctx)
+        return await toolset.call_tool('Bash', {'command': command}, ctx, tools['Bash'])
+
+    return asyncio.run(_call()), reached
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'git status',
+        'git add -A && git commit -m "trim CE"',
+        'git log --oneline -5 | grep fix | sort',
+        'python3 .github/scripts/weekly_ce_audit.py prepare-review --out /tmp/x',
+        'gh pr list',
+        'cat AGENTS.md; git status',
+        'grep -n "a|b" AGENTS.md',
+    ],
+)
+def test_scoped_bash_runs_the_commands_its_grants_allow(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    assert _call_bash(SCOPED_BASH_TOOLS, command, monkeypatch, tmp_path) == ('ran', [command])
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'touch marker',
+        'python3 -c "print(1)"',
+        'python3 .github/scripts/weekly_ce_audit.py validate',
+        'git status; touch marker',
+        'git status && touch marker',
+        'cat AGENTS.md | sh',
+        'git status\ntouch marker',
+        'git status a#; touch marker',
+        'cat AGENTS.md > copy',
+        'git status &',
+        'git commit -m "$(touch marker)"',
+        'git commit -m `touch marker`',
+        '(touch marker)',
+        'GIT_DIR=x git status',
+        'git status "unterminated',
+    ],
+)
+def test_scoped_bash_refuses_commands_outside_its_grants(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Scoped `Bash(...)` grants scope the shell tool to the source's declared commands."""
+    result, reached = _call_bash(SCOPED_BASH_TOOLS, command, monkeypatch, tmp_path)
+
+    assert reached == []
+    assert isinstance(result, str) and result.startswith(
+        'error: this workflow allows only Bash commands that start with'
+    )
+
+
+def test_plain_bash_grant_keeps_the_unrestricted_shell(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    command = 'git status; touch marker > log'
+
+    assert shim.parse_args(['--allowed-tools', f'Bash,{SCOPED_BASH_TOOLS}', 'p']).bash_scopes is None
+    assert _call_bash('Bash,BashOutput,Read', command, monkeypatch, tmp_path) == ('ran', [command])
+
+
 def test_claude_code_tool_names():
     # `WebFetch` is wired separately via a `NativeTool(WebFetchTool())`
     # capability — it's not in the callable Claude Code tool list.
