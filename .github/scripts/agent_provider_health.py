@@ -938,13 +938,15 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
             ):
                 return 'setup'
             if name == 'Restore exact candidate allowlist':
+                if _string(job.get('name')) == 'record_attention_decision':
+                    return 'validation'
                 return 'setup'
             if execution is not None and index < execution:
                 return 'setup'
             if name is None:
                 continue
             low = name.lower()
-            if any(word in low for word in ('validat', 'schema')):
+            if any(word in low for word in ('validat', 'schema', 'attention')):
                 return 'validation'
             if any(word in low for word in ('publish', 'output', 'post agent', 'ingest')):
                 return 'publication'

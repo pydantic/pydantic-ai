@@ -47,7 +47,7 @@ def pick(number: int, *, reason: str = 'Widely requested and unlocks a new capab
     return {'type': 'record_feature_pick', 'item_number': str(number), 'reason': reason}
 
 
-class FakeClient(digest.github_rest.GitHubClient):
+class FakeClient(digest.attention.GitHubClient):
     def __init__(
         self,
         *,
@@ -348,7 +348,7 @@ def test_apply_with_no_picks_posts_nothing(tmp_path: Path):
 def test_cli_apply_writes_the_workflow_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     client = FakeClient(issues={7: issue(7)})
-    monkeypatch.setattr(digest.github_rest, 'GitHubClient', lambda token: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(digest.attention, 'GitHubClient', lambda token: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', digest.REPO)
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))

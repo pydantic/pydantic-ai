@@ -1199,7 +1199,7 @@ def test_main_exits_nonzero_and_prints_each_violation(
 def test_zai_workflow_requires_logfire_import(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
-        workflows / 'pydantic-ai-bug-hunter.md',
+        workflows / 'pydantic-ai-attention-triage.md',
         '---\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
     )
     lock = _write(source.with_suffix('.lock.yml'), 'env: {}\n')

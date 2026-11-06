@@ -5,5 +5,10 @@
 // `make typecheck-pyright` runs it with `pyright -p .github/scripts`.
 {
   "extends": "../../pyproject.toml",
-  "include": ["."]
+  "include": ["."],
+  "exclude": [
+    // These tests deliberately exercise private helpers and loose GitHub webhook dictionaries
+    // through monkeypatching; pytest covers them, while the module they test stays checked.
+    "test_issue_pr_attention_monitor.py"
+  ]
 }

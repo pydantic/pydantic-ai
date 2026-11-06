@@ -48,14 +48,14 @@ from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, 
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import Annotated, Any, ClassVar, TypeAlias, cast
 
 import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
@@ -287,9 +287,15 @@ class _RecordRunTotals(AbstractCapability[object]):
 # pydantic-ai's built-in request_limit default of 50 is too low for the
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
 REQUEST_LIMIT = 400
+ATTENTION_REQUEST_LIMIT = 50
 SUBAGENT_REQUEST_LIMIT = 150
+ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 CI_REVIEW_WORKFLOW = 'CI Review'
 REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW, 'Pydantic AI UI Security Review'})
+
+
+def _is_attention_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
 
 
 def _is_review_run() -> bool:
@@ -301,7 +307,9 @@ def _is_ci_review_run() -> bool:
 
 
 def run_request_limit() -> int:
-    """Return the cap on model requests."""
+    """Return the workflow-specific cap on model requests."""
+    if _is_attention_run():
+        return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
 
 
@@ -343,34 +351,80 @@ def _safe_output_entries(contents: str) -> Iterator[dict[str, object]]:
             continue
 
 
-def _safe_output_status() -> bool:
-    """Return whether the run is still missing its safe output."""
+def _safe_output_status() -> tuple[bool, list[int] | None]:
+    """Return whether output is pending and any Attention candidate IDs still missing decisions."""
+    is_attention = _is_attention_run()
     is_review = _is_review_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        if is_review:
-            raise ValueError('Review safe-output sink is not configured')
-        return False
+        if is_attention or is_review:
+            workflow_kind = 'Attention' if is_attention else 'Review'
+            raise ValueError(f'{workflow_kind} safe-output sink is not configured')
+        return False, None
     sink = pathlib.Path(path)
     contents = sink.read_text(encoding='utf-8') if sink.is_file() else ''
+    sink_empty = not contents.strip()
     if is_review:
-        return not any(entry.get('type') == 'submit_pull_request_review' for entry in _safe_output_entries(contents))
-    return not contents.strip()
+        review_submitted = any(
+            entry.get('type') == 'submit_pull_request_review' for entry in _safe_output_entries(contents)
+        )
+        return not review_submitted, None
+    if not is_attention or sink_empty:
+        return sink_empty, None
+
+    workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+    snapshot_path = workspace / 'attention-candidates.json'
+    if not snapshot_path.is_file():
+        raise ValueError('Attention candidate snapshot is missing')
+
+    snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+    candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+    candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+        [candidate['number'] for candidate in candidate_rows]
+    )
+    if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+        raise ValueError('Attention snapshot contains too many or duplicate candidates')
+    candidates = set(candidate_numbers)
+    if not candidates:
+        return sink_empty, []
+
+    recorded: set[int] = set()
+    for entry in _safe_output_entries(contents):
+        item_number = entry.get('item_number')
+        if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+            try:
+                parsed_number = int(item_number)
+            except ValueError:
+                continue
+            if parsed_number > 0 and str(parsed_number) == item_number:
+                recorded.add(parsed_number)
+    missing = sorted(candidates - recorded)
+    return bool(missing), missing
 
 
 def safe_output_pending() -> bool:
-    """Whether a gh-aw run is missing its safe output."""
+    """Whether a gh-aw run is missing safe output or Attention decisions."""
     try:
-        return _safe_output_status()
-    except (OSError, ValueError):
-        if _is_review_run():
+        output_pending, _ = _safe_output_status()
+    except (KeyError, OSError, ValueError):
+        if _is_attention_run() or _is_review_run():
             return True
         raise
+    return output_pending
 
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    if not _safe_output_status():
+    output_pending, missing = _safe_output_status()
+    if missing:
+        missing_ids = ', '.join(str(number) for number in missing)
+        logger.warning('attention decisions missing for candidate IDs %s; requesting completion', missing_ids)
+        raise ModelRetry(
+            'Record an attention decision for each missing candidate ID: '
+            f'{missing_ids}. Keep the decisions already recorded and call '
+            '`record_attention_decision` only for these missing IDs.'
+        )
+    if not output_pending:
         return output
     if _is_review_run():
         raise ModelRetry(
@@ -1130,12 +1184,13 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
     """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
+    attention_read_only = _is_attention_run()
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
-        if plan and name in MUTATING_TOOLS:
+        if (plan or attention_read_only) and name in MUTATING_TOOLS:
             return False
         return True
 
@@ -1641,7 +1696,8 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task)
+        task_tool = None if _is_attention_run() else task
+        claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(
             'model=%s permission_mode=%s request_limit=%d claude_code_tool_names=%s mcp_servers=%d prompt_chars=%d',

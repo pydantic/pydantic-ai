@@ -13,6 +13,9 @@ approved:ci-config	Maintainer approval for changes to CI config (workflows, acti
 approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
 area:ui-adapters
 asyncio
+attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup
+attention-escalated	The maintainer attention request is cooling down after escalation
+attention-pinged	The assigned maintainer has received one reminder
 awaiting author revision
 azure
 bedrock
@@ -95,6 +98,7 @@ native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
 needs-confirmation
 needs-durable-exec-review	Touches a core definition a durable engine depends on (scripts/durable_exec_contract.json)
+needs-maintainer-action	The next meaningful action must come from a maintainer
 needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
 needs-reproduction
 new models	Support for new model(s)
