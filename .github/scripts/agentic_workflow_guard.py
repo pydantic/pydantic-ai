@@ -1535,6 +1535,48 @@ def changed_files(base_ref: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
+def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
+    """The credentialed span forwarder must run outside the agent job and its PATH."""
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    jobs = _as_mapping(workflow.get('jobs'))
+    forwarder = _as_mapping(jobs.get('forward_agent_spans'))
+    if not forwarder:
+        return [
+            Violation(
+                str(lock),
+                'trace-forwarder-isolation',
+                'the lock has no `forward_agent_spans` job; the OTLP credential would stay in the agent job.',
+            )
+        ]
+    agent = _as_mapping(jobs.get('agent'))
+    for raw_step in cast(list[Any], agent.get('steps')) if isinstance(agent.get('steps'), list) else []:
+        if 'forward_agent_traces.py' in str(_as_mapping(raw_step).get('run', '')):
+            return [
+                Violation(
+                    str(lock),
+                    'trace-forwarder-isolation',
+                    'the agent job runs the span forwarder with the OTLP credential in its PATH.',
+                )
+            ]
+    steps_value = forwarder.get('steps')
+    runs = (
+        ' '.join(
+            str(_as_mapping(step).get('run', '')) for step in cast(list[Any], steps_value) if isinstance(step, dict)
+        )
+        if isinstance(steps_value, list)
+        else ''
+    )
+    if 'raw.githubusercontent.com' not in runs:
+        return [
+            Violation(
+                str(lock),
+                'trace-forwarder-isolation',
+                'the forwarder job must fetch its script from the default branch, not the checkout.',
+            )
+        ]
+    return []
+
+
 def check_job_timeout_headroom(source: Path) -> list[Violation]:
     """Job caps must leave room for setup and post-steps beyond the step budget."""
     frontmatter = parse_frontmatter(source)
@@ -1616,6 +1658,7 @@ def run_checks(
         violations += check_compiled_engine_contract(lock)
         violations += check_ai_credits_accounting(lock)
         violations += check_daily_aic_guardrail(lock)
+        violations += check_trace_forwarder_isolation(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)

@@ -43,6 +43,7 @@ from agentic_workflow_guard import (
     check_safe_output_job_max,
     check_shell_exposure,
     check_timeout_declared,
+    check_trace_forwarder_isolation,
     run_checks,
 )
 
@@ -686,6 +687,53 @@ def test_shell_exposure_matches_tools_bash(tmp_path: Path):
         "---\ntools:\n  bash: ['git *']\nenv:\n  PYDANTIC_AI_SHELL_DISABLED: '1'\n---\nprompt\n",
     )
     assert [v.check for v in check_shell_exposure(allowed_shell)] == ['shell-exposure']
+
+
+def test_trace_forwarder_must_run_in_a_separate_job(tmp_path: Path):
+    isolated = _write(
+        tmp_path / 'a.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: echo agent
+  forward_agent_spans:
+    needs: [agent]
+    steps:
+      - run: curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py
+""",
+    )
+    assert check_trace_forwarder_isolation(isolated) == []
+
+    missing = _write(tmp_path / 'b.lock.yml', 'jobs:\n  agent:\n    steps: []\n')
+    assert [v.check for v in check_trace_forwarder_isolation(missing)] == ['trace-forwarder-isolation']
+
+    in_agent = _write(
+        tmp_path / 'c.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: python3 .github/scripts/forward_agent_traces.py
+  forward_agent_spans:
+    steps:
+      - run: curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py
+""",
+    )
+    assert [v.check for v in check_trace_forwarder_isolation(in_agent)] == ['trace-forwarder-isolation']
+
+    checkout = _write(
+        tmp_path / 'd.lock.yml',
+        """
+jobs:
+  agent:
+    steps: []
+  forward_agent_spans:
+    steps:
+      - run: python3 .github/scripts/forward_agent_traces.py
+""",
+    )
+    assert [v.check for v in check_trace_forwarder_isolation(checkout)] == ['trace-forwarder-isolation']
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------
