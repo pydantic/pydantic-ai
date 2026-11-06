@@ -35,6 +35,8 @@ pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
 ```
 
 ```python {title="production_service.py" test="skip"}
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import logfire
@@ -47,8 +49,19 @@ from pydantic_ai.durable_exec.dbos import DBOSDurability
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-app = FastAPI()
-DBOS(fastapi=app, config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+DBOS(config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    DBOS.launch()  # after the module has registered every workflow
+    try:
+        yield
+    finally:
+        DBOS.destroy()
+
+
+app = FastAPI(lifespan=lifespan)
 
 agent = Agent(
     '{{ anthropic:medium }}',

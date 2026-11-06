@@ -136,16 +136,7 @@ def agent_run_result(
     output = run.output
     body = (output.text or '') if output is not None else ''
     if output is not None and output.structured is not None:
-        structured: object = output.structured
-        if isinstance(output_schema, type):
-            try:
-                body = output_schema.model_validate(structured).model_dump_json()
-            except ValidationError as error:
-                raise ModelRetry(
-                    f'Exa agent run {run.id} output did not match the configured schema: {error}'
-                ) from error
-        else:
-            body = json.dumps(structured, ensure_ascii=False)
+        body = _structured_body(run.id, output.structured, output_schema)
     if not body:
         body = '(no text output)'
     grounding = output.grounding if output is not None and output.grounding else []
@@ -155,6 +146,16 @@ def agent_run_result(
         with_sources(text, sources),
         metadata={RUN_ID_METADATA_KEY: run.id, 'sources': source_list(sources)},
     )
+
+
+def _structured_body(run_id: str, structured: object, output_schema: type[BaseModel] | dict[str, object] | None) -> str:
+    """A completed run's structured output as JSON, validated when `output_schema` is a model class."""
+    if isinstance(output_schema, type):
+        try:
+            return output_schema.model_validate(structured).model_dump_json()
+        except ValidationError as error:
+            raise ModelRetry(f'Exa agent run {run_id} output did not match the configured schema: {error}') from error
+    return json.dumps(structured, ensure_ascii=False)
 
 
 async def _create_run(

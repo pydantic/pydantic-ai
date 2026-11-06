@@ -236,6 +236,16 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   contents (read through `host.settings_database`), stopping a `before_tool`
   call on a mismatch. `approve` refuses a file it cannot read, so an empty
   digest never matches.
+- **Project settings beyond display wait for approval.** `.clai/settings.json`
+  keys in `SAFE_PROJECT_KEYS` (`display.*`) apply at once; every other key is
+  `pending` until `/project approve` stores that exact value for the project
+  root in the store's `approved_project_settings` table, so a changed value
+  waits again. A new `Settings` field waits too unless added there on purpose.
+  A `run.permissions` no wider than the user's own applies at once, since it
+  cannot widen anything. `update_channel` is user-only, rejected in a project file.
+  Approval is a `/command` only, never a `clai2` subcommand, because the agent
+  can run `clai2` from its shell. Unapproved `instructions` go to the model as
+  `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the

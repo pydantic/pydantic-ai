@@ -31,7 +31,7 @@ A "hook" is not a standalone object in pydantic-ai -- it is a method on a capabi
 
 ## Usage
 
-Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`. `directory` is a path on the machine running the agent, relative to the process's current directory, not a workspace path.
+Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`. `directory` is a path on the machine running the agent, relative to the process's current directory, not a workspace path, and it must have `'operator'` authority in the run's workspace (see [Trust boundary](#trust-boundary)).
 
 ```python
 from pathlib import Path
@@ -108,6 +108,16 @@ machine. A run therefore refuses to start unless its
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace`: next to a
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
+
+`directory` must hold only code the operator wrote or this capability authored, not a cloned repository or a user's upload. A run therefore also refuses to start unless [`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory` `'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority` gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it: `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also only looks at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 

@@ -14,7 +14,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import AsyncIterable, Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Generic, Literal, cast
@@ -34,6 +34,8 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
+    ModelResponsePart,
+    ModelResponsePartDelta,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -46,7 +48,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, known_model_names
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -148,15 +150,25 @@ def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> l
             break
         if any(isinstance(part, ToolReturnPart) for part in last.parts):
             break
-        previous = committed[-2] if len(committed) > 1 else None
         if (
             last.state == 'interrupted'
-            and isinstance(previous, ModelResponse)
+            and len(committed) > 1
+            and isinstance(previous := committed[-2], ModelResponse)
             and any(call.tool_call_id in ran_calls for call in previous.tool_calls)
         ):
             break
         committed.pop()
     return committed
+
+
+def _add_interrupted_pass_usage(
+    usage: RunUsage, captured: Sequence[ModelMessage], history: Sequence[ModelMessage]
+) -> None:
+    """Add to `usage` the responses an interrupted pass received: those of a run `history` does not yet hold."""
+    earlier_runs = {message.run_id for message in history}
+    for message in captured:
+        if isinstance(message, ModelResponse) and message.run_id not in earlier_runs:
+            usage.incr(message.usage)
 
 
 def _to_acp_usage(usage: RunUsage) -> schema.Usage:
@@ -677,7 +689,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         captured: list[ModelMessage] = []
         try:
             while True:
-                result = None
                 with capture_run_messages() as captured:
                     async with self._agent.run_stream_events(
                         run_input,
@@ -695,29 +706,20 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                         model=self._resolve_run_model(state.model),
                         usage_limits=self._usage_limits,
                     ) as stream:
-                        event: AgentStreamEvent | AgentRunResultEvent[object]
-                        async for event in stream:
-                            if isinstance(event, AgentRunResultEvent):
-                                result = event.result
-                            else:
-                                await self._emit_event(turn, event)
+                        result = await self._forward_events(turn, stream)
 
                 assert result is not None, 'run_stream_events always yields a final result event'
                 history = result.all_messages()
                 usage += result.usage
                 output = result.output
-                if isinstance(output, DeferredToolRequests):
-                    if not output.approvals and not output.calls:  # pragma: no cover
-                        break  # defensive: the run never yields an empty DeferredToolRequests
-                    deferred_results = await self._resolve_approvals(turn, state, output)
-                    run_input = None
-                    continue
-                if output is not None and not isinstance(output, str):
-                    # Structured output isn't streamed as text parts, so deliver it as a final message.
-                    # (`str` output already streamed via text deltas; `None` has nothing to show.)
-                    await self._emit_text(turn, json.dumps(jsonable(output)), thought=False)
-                stop_reason = _finish_reason_to_stop_reason(result.response.finish_reason)
-                break
+                if not isinstance(output, DeferredToolRequests):
+                    await self._emit_structured_output(turn, output)
+                    stop_reason = _finish_reason_to_stop_reason(result.response.finish_reason)
+                    break
+                if not output.approvals and not output.calls:  # pragma: no cover
+                    break  # defensive: the run never yields an empty DeferredToolRequests
+                deferred_results = await self._resolve_approvals(turn, state, output)
+                run_input = None
         except (asyncio.CancelledError, _TurnCancelled):
             # The turn is ending without finishing its tool calls; close out any still shown as
             # pending/in_progress so the client stops rendering them as running. Shielded because an
@@ -734,10 +736,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # the responses it got before the limit: those of a run the history does not yet hold.
             await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
-                earlier_runs = {message.run_id for message in history}
-                for message in captured:
-                    if isinstance(message, ModelResponse) and message.run_id not in earlier_runs:
-                        usage.incr(message.usage)
+                _add_interrupted_pass_usage(usage, captured, history)
                 history = _committable_history(captured, turn.started)
             stop_reason = _usage_limit_stop_reason(exc)
         except Exception:
@@ -763,6 +762,26 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 )
                 stop_reason = 'cancelled'
         return schema.PromptResponse(stop_reason=stop_reason, usage=_to_acp_usage(usage))
+
+    async def _forward_events(
+        self, turn: _TurnState, stream: AsyncIterable[AgentStreamEvent | AgentRunResultEvent[object]]
+    ) -> AgentRunResult[object] | None:
+        """Send one run pass's stream events to the client, returning the pass's result."""
+        result = None
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                await self._emit_event(turn, event)
+        return result
+
+    async def _emit_structured_output(self, turn: _TurnState, output: object) -> None:
+        """Deliver structured output as a final message: it isn't streamed as text parts.
+
+        `str` output already streamed via text deltas; `None` has nothing to show.
+        """
+        if output is not None and not isinstance(output, str):
+            await self._emit_text(turn, json.dumps(jsonable(output)), thought=False)
 
     async def _fail_outstanding_tool_calls(self, turn: _TurnState, *, record: bool = False) -> None:
         """Drive every announced-but-unfinished tool call to a terminal `failed` status.
@@ -809,60 +828,71 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
     async def _emit_event(self, turn: _TurnState, event: AgentStreamEvent) -> None:
         """Translate a single Pydantic AI stream event into an ACP `session/update`."""
-        if isinstance(event, PartStartEvent):
-            part = event.part
-            if isinstance(part, TextPart) and part.content:
-                await self._emit_text(turn, part.content, thought=False)
-            elif isinstance(part, ThinkingPart) and part.content:
-                await self._emit_text(turn, part.content, thought=True)
-        elif isinstance(event, PartDeltaEvent):
-            delta = event.delta
-            if isinstance(delta, TextPartDelta) and delta.content_delta:
-                await self._emit_text(turn, delta.content_delta, thought=False)
-            elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-                await self._emit_text(turn, delta.content_delta, thought=True)
-        elif isinstance(event, FunctionToolCallEvent):
-            call = event.part
-            if call.tool_call_id in turn.started:
-                return  # the model re-emits the call event when resuming after approval
-            turn.started.add(call.tool_call_id)
-            fields = self._tool_call_fields(call, turn.cwd, default_kind=None)
-            # A call awaiting approval is not running yet: it starts `pending` and
-            # `_resolve_approvals` promotes it once approved. Any other call is already executing.
-            status: schema.ToolCallStatus = 'pending' if call.tool_name in turn.approval_names else 'in_progress'
-            turn.announced_status[call.tool_call_id] = status
-            await self._send_update(
-                turn,
-                acp.start_tool_call(
-                    tool_call_id=call.tool_call_id,
-                    title=fields.title,
-                    kind=fields.kind,
-                    status=status,
-                    content=fields.content,
-                    locations=fields.locations,
-                    raw_input=bounded_jsonable(call.args),
-                ),
-            )
-        elif isinstance(event, FunctionToolResultEvent):
-            part = event.part
-            if part.outcome == 'retried':
-                # The call has to be made again, which is a failure from the client's point of
-                # view. `model_response_str` reports the feedback the model itself was handed,
-                # unwrapped because the `{"error": ...}` envelope is a wire detail.
-                status, raw_output = 'failed', part.model_response_str(wrap_if_error=False)
-            elif part.tool_call_id in turn.denied:
-                status, raw_output = 'failed', part.content
-            else:
-                status, raw_output = 'completed', part.content
-            turn.resulted.add(part.tool_call_id)
-            await self._send_update(
-                turn,
-                acp.update_tool_call(
-                    tool_call_id=part.tool_call_id,
-                    status=status,
-                    raw_output=bounded_jsonable(raw_output),
-                ),
-            )
+        match event:
+            case PartStartEvent():
+                await self._emit_part_start(turn, event.part)
+            case PartDeltaEvent():
+                await self._emit_part_delta(turn, event.delta)
+            case FunctionToolCallEvent():
+                await self._emit_tool_call(turn, event.part)
+            case FunctionToolResultEvent():
+                await self._emit_tool_result(turn, event.part)
+            case _:
+                pass
+
+    async def _emit_part_start(self, turn: _TurnState, part: ModelResponsePart) -> None:
+        if isinstance(part, TextPart) and part.content:
+            await self._emit_text(turn, part.content, thought=False)
+        elif isinstance(part, ThinkingPart) and part.content:
+            await self._emit_text(turn, part.content, thought=True)
+
+    async def _emit_part_delta(self, turn: _TurnState, delta: ModelResponsePartDelta) -> None:
+        if isinstance(delta, TextPartDelta) and delta.content_delta:
+            await self._emit_text(turn, delta.content_delta, thought=False)
+        elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
+            await self._emit_text(turn, delta.content_delta, thought=True)
+
+    async def _emit_tool_call(self, turn: _TurnState, call: ToolCallPart) -> None:
+        if call.tool_call_id in turn.started:
+            return  # the model re-emits the call event when resuming after approval
+        turn.started.add(call.tool_call_id)
+        fields = self._tool_call_fields(call, turn.cwd, default_kind=None)
+        # A call awaiting approval is not running yet: it starts `pending` and
+        # `_resolve_approvals` promotes it once approved. Any other call is already executing.
+        status: schema.ToolCallStatus = 'pending' if call.tool_name in turn.approval_names else 'in_progress'
+        turn.announced_status[call.tool_call_id] = status
+        await self._send_update(
+            turn,
+            acp.start_tool_call(
+                tool_call_id=call.tool_call_id,
+                title=fields.title,
+                kind=fields.kind,
+                status=status,
+                content=fields.content,
+                locations=fields.locations,
+                raw_input=bounded_jsonable(call.args),
+            ),
+        )
+
+    async def _emit_tool_result(self, turn: _TurnState, part: ToolReturnPart) -> None:
+        if part.outcome == 'retried':
+            # The call has to be made again, which is a failure from the client's point of
+            # view. `model_response_str` reports the feedback the model itself was handed,
+            # unwrapped because the `{"error": ...}` envelope is a wire detail.
+            status, raw_output = 'failed', part.model_response_str(wrap_if_error=False)
+        elif part.tool_call_id in turn.denied:
+            status, raw_output = 'failed', part.content
+        else:
+            status, raw_output = 'completed', part.content
+        turn.resulted.add(part.tool_call_id)
+        await self._send_update(
+            turn,
+            acp.update_tool_call(
+                tool_call_id=part.tool_call_id,
+                status=status,
+                raw_output=bounded_jsonable(raw_output),
+            ),
+        )
 
     async def _resolve_approvals(
         self, turn: _TurnState, state: SessionState[AgentDepsT], requests: DeferredToolRequests
