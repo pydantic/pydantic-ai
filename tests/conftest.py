@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import ast
 import asyncio
 import dataclasses
-import gc
 import importlib.util
 import logging
 import os
@@ -18,7 +17,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
+from importlib.metadata import version
 from pathlib import Path
+from time import monotonic
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
@@ -29,6 +30,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
+from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -62,7 +64,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards
+from . import cassette_hooks, cost_guards, gc_isolation
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
@@ -114,11 +116,22 @@ __all__ = (
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
+_test_started_at = monotonic()
+"""When the running test's setup began, as a `monotonic()` reading. `IsNow` allows for the time since then."""
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup() -> None:
+    global _test_started_at
+    _test_started_at = monotonic()
+
+
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
+    config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -145,6 +158,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
+    from dbos import DBOSConfig
     from pluggy import Result
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -160,6 +174,10 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
+
+    class _DBOS2Config(DBOSConfig, total=False):
+        run_admin_server: bool
+
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
 
@@ -167,9 +185,9 @@ else:
         allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
-        # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
-        if 'delta' not in kwargs:  # pragma: no branch
-            kwargs['delta'] = 10
+        # This allows for the time since the test began, so a runner that stalls between making a timestamp and building
+        # this comparison can't fail the test. One older than the test by more than `delta` still fails.
+        kwargs['delta'] = kwargs.get('delta', 10) + (monotonic() - _test_started_at)
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):
@@ -567,6 +585,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
             'os.listdir',
             'os.getcwd',
             'os.path.abspath',
+            'os.readlink',
             'os.read',
             'os.remove',
             'os.unlink',
@@ -588,6 +607,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
 )
 
@@ -693,6 +713,18 @@ def detach_dbos_logging() -> None:
             logger.removeHandler(handler)
         for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
             logger.removeFilter(log_filter)
+
+
+def without_admin_server(config: DBOSConfig) -> DBOSConfig:
+    """Set `run_admin_server` to `False` on DBOS 2.x, which otherwise starts an admin server on port 3001.
+
+    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
+    Drop it once the `dbos` extra requires 3.0.
+    """
+    if Version(version('dbos')) >= Version('3'):
+        return config
+    dbos_2_config: _DBOS2Config = {**config, 'run_admin_server': False}
+    return dbos_2_config
 
 
 @pytest.fixture
@@ -836,41 +868,16 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
-@pytest.fixture
-def young_gc() -> Iterator[None]:
-    """Limit the test's garbage collections to the objects it creates.
-
-    A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
-    Freezing everything that exists before the test keeps it out of the collector's reach until
-    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
-    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
-    """
-    gc.freeze()
-    try:
-        yield
-    finally:
-        gc.unfreeze()
-
-
 @contextmanager
 def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
     """Fail if a task started inside the block is still running at its end.
 
-    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
-    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
-    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
-
-    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
-    block would undo the fixture's freeze for the rest of the test.
+    Tasks already running at entry are ignored. Pass `loop` when the test drives that loop itself instead of running
+    on it.
     """
-    gc.freeze()
-    try:
-        before = asyncio.all_tasks(loop)
-        yield
-        assert asyncio.all_tasks(loop) - before == set()
-    finally:
-        gc.unfreeze()
+    before = asyncio.all_tasks(loop)
+    yield
+    assert asyncio.all_tasks(loop) - before == set()
 
 
 @pytest.fixture(autouse=True)
@@ -970,11 +977,6 @@ def prefect_test_server() -> Iterator[None]:
         monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
-    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
-    # warning is expected, rather than in whichever test the collector happens to run in.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:

@@ -2510,6 +2510,22 @@ class TestClearToolResults:
         # Cleared args stay JSON-valid so they don't reach a provider as malformed function-args.
         assert _call_args(result.messages) == ['{}']
 
+    async def test_only_cleared_tool_inputs_lose_their_item_id(self):
+        cap = ClearToolResults(max_messages=1, keep_pairs=1, clear_tool_inputs=True)
+        old = ToolCallPart('fn', '{"q": "x"}', tool_call_id='tc1', id='fc_1', provider_name='openai')
+        new = ToolCallPart('fn', '{"q": "y"}', tool_call_id='tc2', id='fc_2', provider_name='openai')
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[old]),
+            _tool_return('fn', 'tc1'),
+            ModelResponse(parts=[new]),
+            _tool_return('fn', 'tc2'),
+        ]
+        result = await cap.compact(messages, _make_ctx())
+
+        cleared = result[0].parts[0]
+        assert isinstance(cleared, ToolCallPart) and cleared.id is None and cleared.tool_call_id == 'tc1'
+        assert result[2].parts[0] is new
+
     async def test_min_clear_tokens_skips_small_gain(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, min_clear_tokens=10_000)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'tiny')]
@@ -3048,6 +3064,22 @@ class TestClampOversizedMessages:
         # restores through. Equality covers the concrete part classes too, so this also pins
         # that the typed parts come back typed with their structured args intact.
         assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result)) == result
+
+    async def test_only_clamped_parts_lose_their_item_id(self):
+        kept_text = TextPart('short', id='msg_1', provider_name='openai')
+        kept_call = ToolCallPart('t', '{"a": 1}', tool_call_id='c1', id='fc_1', provider_name='openai')
+        big_text = TextPart('x' * 2_000, id='msg_2', provider_name='openai')
+        big_call = ToolCallPart('t', 'y' * 2_000, tool_call_id='c2', id='fc_2', provider_name='openai')
+        messages: list[ModelMessage] = [ModelResponse(parts=[kept_text, kept_call, big_text, big_call])]
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=100, keep_tail_chars=100)
+        result = await cap.compact(messages, _make_ctx())
+
+        kept_text_result, kept_call_result, clamped_text, clamped_call = result[0].parts
+        assert kept_text_result is kept_text
+        assert kept_call_result is kept_call
+        assert isinstance(clamped_text, TextPart) and clamped_text.id is None
+        assert isinstance(clamped_call, ToolCallPart) and clamped_call.id is None
+        assert clamped_call.tool_call_id == 'c2'
 
     async def test_small_tool_call_args_untouched(self):
         call = ModelResponse(parts=[ToolCallPart(tool_name='t', args='{"a": 1}', tool_call_id='c1')])

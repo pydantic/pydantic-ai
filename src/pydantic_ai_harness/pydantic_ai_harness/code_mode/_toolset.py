@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import inspect
 import math
 import re
@@ -11,7 +12,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -40,7 +41,7 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
-        AsyncMontyWebsocket,
+        AsyncMontyRemote,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -62,6 +63,7 @@ from pydantic_ai_harness._code_tools import (
     record_nested_call,
     run_nested_call,
     sanitize_tool_name,
+    schema_arg_names,
     signatures_and_conflicts,
 )
 from pydantic_ai_harness._monty_exec import (
@@ -110,17 +112,27 @@ _SANDBOX_LIMIT_MARKERS = {
 
 
 def _check_monty_sandbox_url(url: str) -> None:
-    """Reject URLs Monty's WebSocket client cannot dial, before the first `run_code` call fails on them."""
-    scheme = urlsplit(url).scheme
-    if scheme not in ('ws', 'wss'):
-        raise UserError(f'`monty_sandbox` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+    """Reject URLs Monty's remote client cannot dial, before the first `run_code` call fails on them.
+
+    The error leaves the URL out, because it may carry credentials.
+    """
+    parts = urlsplit(url)
+    # Monty reads `ws://` and `wss://`, its schemes before 1.5, as `http://` and `https://`.
+    if parts.scheme not in ('http', 'https', 'ws', 'wss'):
+        raise UserError('`monty_sandbox` must be an `http://`, `https://`, `ws://`, or `wss://` URL.')
+    # The client calls one fixed gRPC method at the server root, so it rejects anything after the host.
+    if parts.path not in ('', '/') or '?' in url or '#' in url:
+        raise UserError(
+            '`monty_sandbox` must be the server root, such as `https://sandbox.example.com`, '
+            'without a path, query, or fragment.'
+        )
 
 
 def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None,
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None,
     monty_sandbox_url: str | None,
     owner: str,
-) -> str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None:
+) -> str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None:
     """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
     if monty_sandbox_url is None:
         return monty_sandbox
@@ -471,7 +483,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -744,6 +756,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
 
+    # Monty resolves builtins before host names, so a tool with one of these names would never run.
+    # All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
+    # take over a tool that works today.
+    _BUILTIN_NAMES: ClassVar[frozenset[str]] = frozenset(dir(builtins))
+
     tool_selector: ToolSelector[AgentDepsT] = 'all'
     """Which wrapped tools to sandbox inside `run_code`. Non-matching tools
     are exposed as native tools."""
@@ -776,10 +793,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`."""
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
@@ -1186,7 +1203,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-            call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+            call_part = ToolCallPart(
+                tool_name=original_name,
+                args=schema_arg_names(callable_defs[sandbox_name], kwargs),
+                tool_call_id=tool_call_id,
+            )
             if speculation is not None:
                 claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
                 if claimed is not None:
@@ -1385,6 +1406,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
+            if safe_name in self._BUILTIN_NAMES:
+                raise UserError(
+                    f'Tool name {name!r} is a Python builtin, so code in `run_code` would call the builtin '
+                    'instead of the tool. Rename the tool, for example with `toolset.prefixed(...)` or '
+                    '`toolset.renamed(...)`.'
+                )
             if td.return_schema is None and name not in self._warned_missing_return_schema:
                 missing_return_schema.append(name)
         _warn_missing_return_schemas(missing_return_schema)

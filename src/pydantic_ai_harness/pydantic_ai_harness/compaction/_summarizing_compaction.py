@@ -305,89 +305,49 @@ def _transcript_entries(
     """
     entries: list[tuple[_TranscriptEntryKind, str]] = []
     for msg in messages:
-        entries.extend(
-            _message_entries(
-                msg,
-                skip_previous_summary=skip_previous_summary,
-                tool_return_max_chars=tool_return_max_chars,
-            )
-        )
+        if isinstance(msg, ModelRequest):
+            rendered = [_request_part_entry(part, skip_previous_summary, tool_return_max_chars) for part in msg.parts]
+        else:
+            rendered = [_response_part_entry(part) for part in msg.parts]
+        entries.extend(entry for entry in rendered if entry is not None)
     return entries
 
 
-def _message_entries(
-    message: ModelMessage,
-    *,
-    skip_previous_summary: bool,
-    tool_return_max_chars: int | None,
-) -> list[tuple[_TranscriptEntryKind, str]]:
-    """The entries *message* contributes, tagged with the role it was rendered for."""
-    rendered = (
-        [
-            _request_entry(
-                part,
-                skip_previous_summary=skip_previous_summary,
-                tool_return_max_chars=tool_return_max_chars,
-            )
-            for part in message.parts
-        ]
-        if isinstance(message, ModelRequest)
-        else [_response_entry(part) for part in message.parts]
-    )
-    return [entry for entry in rendered if entry is not None]
-
-
-def _request_entry(
-    part: ModelRequestPart, *, skip_previous_summary: bool, tool_return_max_chars: int | None
+def _request_part_entry(
+    part: ModelRequestPart, skip_previous_summary: bool, tool_return_max_chars: int | None
 ) -> tuple[_TranscriptEntryKind, str] | None:
-    """The entry *part* of a request contributes to the transcript, or `None` for one it leaves out."""
+    """The transcript entry for a request part, or `None` for a part the transcript leaves out."""
     if is_load_part(part):
         return None
-    if isinstance(part, UserPromptPart):
-        return _user_prompt_entry(part, tool_return_max_chars)
-    if isinstance(part, SystemPromptPart):
+    match part:
+        case UserPromptPart() if (origin := harness_data_origin(part)) is not None:
+            return 'harness_data', _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars)
+        case UserPromptPart() if _is_kept_user_part(part):
+            # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
+            return None
+        case UserPromptPart():
+            return _entry('user', user_prompt_text(part))
         # A request-scoped prompt applied to its own request only, so it's no lasting context.
-        if part.scope == 'request' or _is_earlier_summary(part, skip_previous_summary=skip_previous_summary):
+        case SystemPromptPart() if part.scope != 'request' and not (skip_previous_summary and is_legacy_summary(part)):
+            return _entry('system', part.content)
+        case ToolReturnPart():
+            return _tool_return_entry(part, tool_return_max_chars)
+        case RetryFeedbackPart():
+            return _entry(
+                'retry_feedback',
+                part.model_response(),
+                cause=part.retry.cause,
+                max_chars=tool_return_max_chars,
+                core_framed=True,
+            )
+        case CompactionPart() if part.content and not (skip_previous_summary and is_summary_part(part)):
+            return _entry('summary', part.content)
+        case _:
             return None
-        return _entry('system', part.content)
-    if isinstance(part, ToolReturnPart):
-        return _tool_return_entry(part, tool_return_max_chars)
-    if isinstance(part, RetryFeedbackPart):
-        return _entry(
-            'retry_feedback',
-            part.model_response(),
-            cause=part.retry.cause,
-            max_chars=tool_return_max_chars,
-            core_framed=True,
-        )
-    if isinstance(part, CompactionPart):
-        if not part.content or _is_earlier_summary(part, skip_previous_summary=skip_previous_summary):
-            return None
-        return _entry('summary', part.content)
-    return None
 
 
-def _user_prompt_entry(
-    part: UserPromptPart, tool_return_max_chars: int | None
-) -> tuple[_TranscriptEntryKind, str] | None:
-    """The entry a user prompt contributes: harness data as its own element, a kept copy as nothing."""
-    if (origin := harness_data_origin(part)) is not None:
-        return 'harness_data', _harness_data_element(origin, user_prompt_text(part), tool_return_max_chars)
-    if _is_kept_user_part(part):
-        # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
-        return None
-    return _entry('user', user_prompt_text(part))
-
-
-def _is_earlier_summary(part: SystemPromptPart | CompactionPart, *, skip_previous_summary: bool) -> bool:
-    """Whether *part* is a summary an earlier compaction wrote, which a newer summary replaces rather than reads."""
-    if not skip_previous_summary:
-        return False
-    return is_legacy_summary(part) if isinstance(part, SystemPromptPart) else is_summary_part(part)
-
-
-def _response_entry(part: ModelResponsePart) -> tuple[_TranscriptEntryKind, str] | None:
-    """The entry *part* of a response contributes to the transcript, or `None` for one it leaves out."""
+def _response_part_entry(part: ModelResponsePart) -> tuple[_TranscriptEntryKind, str] | None:
+    """The transcript entry for a response part, or `None` for a part the transcript leaves out."""
     if isinstance(part, TextPart):
         return _entry('assistant', part.content)
     if isinstance(part, ToolCallPart) and not is_load_part(part):
@@ -1072,12 +1032,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
             extra, preserved = self._retain_user_turns(to_summarize, preserved)
-        elif self.preserve_first_user_message:
-            first_user_msg = _first_user_message(split)
-            if first_user_msg is not None:
-                idx = split.index(first_user_msg)
-                if idx < cutoff and first_user_msg not in preserved:
-                    extra = [_kept_first_user_message(first_user_msg, system_parts)]
+        elif (
+            self.preserve_first_user_message
+            and (first_user_msg := _first_user_message(split)) is not None
+            and split.index(first_user_msg) < cutoff
+            and first_user_msg not in preserved
+        ):
+            extra = [_kept_first_user_message(first_user_msg, system_parts)]
 
         if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;

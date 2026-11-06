@@ -794,6 +794,21 @@ async def test_request_choice_without_message_is_invalid_response(allow_model_re
         await agent.run('hello')
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_fast(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='fast'))
+    assert (result.response.provider_details or {}).get('service_tier') == 'fast'
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_ultrafast_rejected_on_chat(allow_model_requests: None, openai_api_key: str) -> None:
+    """The setting's type allows `ultrafast` here because the Responses settings inherit it; OpenAI rejects it."""
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    with pytest.raises(ModelHTTPError, match='Invalid service_tier argument'):
+        await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='ultrafast'))
+
+
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
     mock_client = MockOpenAI.create_mock(c.model_copy(update={'service_tier': 'default'}))
