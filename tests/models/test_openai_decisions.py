@@ -89,6 +89,7 @@ from ..conftest import (
     legacy_retry_prompt_part,
     try_import,
 )
+from .mock_openai import with_history_digests
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
@@ -259,10 +260,12 @@ async def test_decision_response_does_not_end_a_responses_chain(allow_model_requ
 
     decision_response = await Agent(mock_model(boolean_answers), output_type=bool, instructions='Harmful?').run(
         'Is that harmful?',
-        message_history=[
-            ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
-            ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
-        ],
+        message_history=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
+                ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
+            ]
+        ),
     )
     client = AsyncOpenAI(
         api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(responses))

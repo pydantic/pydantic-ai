@@ -47,7 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call
+from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call, schema_arg_names
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -673,7 +673,8 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         watch.launched += 1
         self.stats.launched += 1
         launch_id = f'{watch.tool_call_id}__spec_{watch.launched}'
-        call_part = ToolCallPart(tool_name=original_name, args=extracted.kwargs, tool_call_id=launch_id)
+        args = schema_arg_names(step.wrapped_tools[original_name].tool_def, extracted.kwargs)
+        call_part = ToolCallPart(tool_name=original_name, args=args, tool_call_id=launch_id)
         call = SpeculativeCall(
             sandbox_name=sandbox_name,
             original_name=original_name,
