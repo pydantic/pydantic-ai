@@ -58,6 +58,11 @@ _CONFIRM = (
 
 _EXACT = "Write checks from the task's stated behavior, not your code."
 _EVERY_FIELD = 'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
+_MISREAD = (
+    'If inputs seem inconsistent or goals impossible, assume you misread. '
+    'Re-read, and try other interpretations before settling.'
+)
+_HEREDOC = 'Check behavior with heredocs for one-offs, not new files.'
 
 _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '
@@ -71,11 +76,10 @@ def _checks(*, measure: bool, cleanup: bool) -> str:
             _DELIVER,
             *([_TARGETS] if measure else []),
             _CONFIRM,
-            'If inputs seem inconsistent or goals impossible, assume you misread. '
-            'Re-read, and try other interpretations before settling.',
+            _MISREAD,
             _EXACT,
             _EVERY_FIELD,
-            'Check behavior with heredocs for one-offs, not new files.',
+            _HEREDOC,
             *([_CLEANUP] if cleanup else []),
         ]
     )
