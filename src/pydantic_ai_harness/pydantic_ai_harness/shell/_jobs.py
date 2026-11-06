@@ -80,8 +80,7 @@ watch_logs() {{
 }}
 stop_watcher() {{
   [ -z "$watcher" ] || {{
-    true 2> /dev/null > "$dir/watch.stop"
-    [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
+    true 2> /dev/null > "$dir/watch.stop" && [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
     wait "$watcher" 2> /dev/null
   }}
 }}
@@ -121,7 +120,9 @@ size doesn't clear it at every check. The watcher starts before `max_file_bytes`
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
 own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only once
 the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its last
-check. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
+check. When `watch.stop` cannot be created, as when the command removed the job directory, the wrapper sends `TERM`
+regardless: the logs that last check would clear are gone, and a watcher sent neither would keep the wrapper waiting on
+it. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
 ignored, at its next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a
 `sleep` without fractional seconds gets 1.
 
