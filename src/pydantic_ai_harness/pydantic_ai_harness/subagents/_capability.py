@@ -15,7 +15,7 @@ from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_de
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
-from pydantic_ai.durable_exec import BaseDurabilityCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
@@ -89,6 +89,24 @@ the delegates run rather than *who* they are -- so merging them applies one harn
 other's sub-agents. Enumerating those instead would mean a field added
 later merges silently by default, which is the wrong way round for a decision nobody made.
 """
+
+
+def _durably_unsupported(capability: SubAgents[Any], spec: DurabilityEngineSpec) -> list[str]:
+    """The task-control settings set on `capability` that durable execution on `spec`'s engine can't replay."""
+    control = capability.task_control
+    assert control is not None
+    found = {
+        'include_self': capability.include_self,
+        'remote_agents': bool(control.remote_agents),
+        # A durable unit has no live link back to stream its run's events through.
+        'forward_events': control.forward_events,
+    }
+    if spec.tool_config_key != 'temporal':
+        # Only Temporal journals when a task settles: elsewhere, a recovered task can settle before a timer fires or a
+        # limit is checked, so replay would decide differently.
+        found['auto_background_after'] = control.auto_background_after is not None
+        found['max_running_tasks'] = control.max_running_tasks is not None
+    return [name for name, is_set in found.items() if is_set]
 
 
 @dataclass
@@ -549,23 +567,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
         assert durability is not None, 'Only called in a durable context.'
         spec = durability.engine_spec
-        if (control := self.task_control) is not None and (
-            self.include_self
-            or control.remote_agents
-            # A durable unit has no live link back to stream its run's events through.
-            or control.forward_events
-            # Only Temporal journals when a task settles: elsewhere, a recovered task can settle before a timer fires or
-            # a limit is checked, so replay would decide differently.
-            or (
-                spec.tool_config_key != 'temporal'
-                and (control.auto_background_after is not None or control.max_running_tasks is not None)
-            )
-        ):
-            raise UserError(
-                '`SubAgents` `task_control` is not supported under durable execution with `include_self`, '
-                '`remote_agents` or `forward_events`, nor with `auto_background_after` or `max_running_tasks` outside '
-                'Temporal.'
-            )
+        if self.task_control is not None and (unsupported := _durably_unsupported(self, spec)):
+            settings = ', '.join(f'`{name}`' for name in unsupported)
+            raise UserError(f'`SubAgents` `task_control` is not supported under durable execution with {settings}.')
         # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
         # there, or Temporal, which honors the toolset's `{'temporal': False}`.
         in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'

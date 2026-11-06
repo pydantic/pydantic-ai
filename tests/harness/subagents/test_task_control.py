@@ -2547,21 +2547,25 @@ class TestTaskControlBoundaries:
         assert poet_tools == [[]]
 
     @pytest.mark.parametrize(
-        'capability',
+        ('capability', 'setting'),
         [
-            pytest.param(controlled(include_self=True), id='include_self'),
+            pytest.param(controlled(include_self=True), 'include_self', id='include_self'),
             pytest.param(
                 controlled(remote_agents=[RemoteSubAgent(name='remote')], transport=InMemoryTransport()),
+                'remote_agents',
                 id='remote_agents',
             ),
-            pytest.param(controlled(auto_background_after=1), id='auto_background_after'),
-            pytest.param(controlled(max_running_tasks=1), id='max_running_tasks'),
-            pytest.param(controlled(forward_events=True), id='forward_events'),
+            pytest.param(controlled(auto_background_after=1), 'auto_background_after', id='auto_background_after'),
+            pytest.param(controlled(max_running_tasks=1), 'max_running_tasks', id='max_running_tasks'),
+            pytest.param(controlled(forward_events=True), 'forward_events', id='forward_events'),
         ],
     )
-    async def test_task_control_refuses_durable_execution_it_cannot_replay(self, capability: SubAgents[Any]) -> None:
+    async def test_task_control_refuses_durable_execution_it_cannot_replay(
+        self, capability: SubAgents[Any], setting: str
+    ) -> None:
         agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
-        with pytest.raises(UserError, match='not supported under durable execution with `include_self`'):
+        # The error names only the setting that was found.
+        with pytest.raises(UserError, match=rf'not supported under durable execution with `{setting}`\.'):
             await agent.run('Go.')
 
     async def test_task_control_runs_each_task_in_a_durable_unit(self) -> None:
