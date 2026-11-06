@@ -544,6 +544,7 @@ the provider-agnostic workflows.
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) beyond the `'auto'` default, and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
 | Native tools | Limited parameter support | Web search only, run by the [backend](#how-delegation-works); sources and citations aren't recorded |
+| Tools revealed mid-session | Full feature support | [Revealed tools](tools.md#tools-revealed-mid-session) replace the backend's tools with `session.update` |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Reconnection | Limited parameter support | With a [`reconnect`](lifecycle.md#reconnecting) policy, a session stored with `openai_live_store=True` is forked, keeping the conversation on OpenAI's side; otherwise the text of the [completed history is replayed](lifecycle.md#state-restoration) into a new session, as much of its recent end as Live's seeding caps allow. A WebRTC sideband re-attaches to the call's session instead, keeping the reply and tool calls under way too, unless the drop outlasts the few seconds of events Live sends again |
 
@@ -578,6 +579,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 | Input transcription | Full feature support | [Dedicated model](audio.md#input-transcription); `'auto'` by default |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)); configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Tools revealed mid-session | Full feature support | [Revealed tools](tools.md#tools-revealed-mid-session) are sent with `session.update` |
 | Reconnection | Full feature support | The connection has no resumable server handle, so Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 
 ## Provider-specific quirks

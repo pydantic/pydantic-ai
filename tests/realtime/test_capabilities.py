@@ -262,10 +262,11 @@ async def test_capability_toolset_reaches_session() -> None:
 
 @pytest.mark.parametrize('contribution', ['tools', 'native_tools'])
 async def test_deferred_capability_with_tools_raises_before_connect(contribution: str) -> None:
-    """A deferred capability whose loading would have to reveal tools fails at session open.
+    """A deferred capability whose loading would have to reveal tools fails at session open on a model that can't take them.
 
-    A session's tools are fixed when the connection opens, so a mid-session load could never make
-    them available — silently loading less than promised is worse than the up-front error.
+    The model keeps the tools the session opened with, so a mid-session load could never make them
+    available, and silently loading less than promised is worse than the up-front error. No model
+    turns on a native tool mid-session.
     """
     toolset = FunctionToolset[None]()
 
@@ -288,7 +289,11 @@ async def test_deferred_capability_with_tools_raises_before_connect(contribution
 
     with pytest.raises(
         UserError,
-        match=r"Realtime sessions cannot reveal tools mid-session.*'deferred'",
+        match=(
+            r"Realtime sessions cannot turn on native tools mid-session.*'deferred'"
+            if contribution == 'native_tools'
+            else r"The 'gpt-realtime' realtime model keeps the tools a session opened with.*'deferred'"
+        ),
     ):
         await _drain(agent, model, capabilities=[DeferredCap()])
 
@@ -1250,8 +1255,8 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
 
 
 async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
-    # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
-    # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
+    # A `defer_loading=True` tool is hidden until tool search reveals it, which a session on a model that
+    # keeps the tools it opened with can never do. Advertising it silently would hand the model a `search_tools`
     # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
     # open, exactly as it does for a deferred *capability* that contributes tools. The guard fires
     # before any dial, so no provider is involved.
@@ -1263,7 +1268,7 @@ async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
 
     with pytest.raises(
         UserError,
-        match=r'cannot reveal tools mid-session.*`defer_loading=True`.*"?\'withheld_tool\'"?',
+        match=r"keeps the tools a session opened with, so tools with `defer_loading=True` are not supported.*'withheld_tool'",
     ):
         async with agent.realtime(_RecordingModel()).session():
             pass  # pragma: no cover
@@ -1274,14 +1279,8 @@ async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
 
     The graph rejects only a name owned by an unloaded capability and treats every other name — a
     typo, an already-visible tool — as a no-op (see `_reject_unloaded_capability_reveals`, and
-    `ToolAvailabilityDeltaPart`'s "silent no-op by design"). A session used to raise on *any* reveal,
-    which was both harsher than the graph and harsher than it needed to be: a session refuses
-    `defer_loading=True` tools and tool-contributing deferred capabilities when it opens, so it holds
-    nothing a reveal could have surfaced and nothing is lost by dropping the request.
-
-    That also makes the unloaded-capability branch unreachable from a session — the capabilities that
-    own hidden tools are exactly the ones a session refuses at connect — so it is covered on the graph
-    side rather than here.
+    `ToolAvailabilityDeltaPart`'s "silent no-op by design"). Reveals that do show a tool, and the
+    rejected one, are covered in `test_tool_reveals.py`.
     """
     agent = Agent()
 

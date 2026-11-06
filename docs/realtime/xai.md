@@ -93,6 +93,7 @@ Other Grok Voice models ignore the setting.
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
+| Tools revealed mid-session | Full feature support | [Revealed tools](tools.md#tools-revealed-mid-session) are sent with `session.update` |
 | Speech timestamps | Limited parameter support | Per [segment](#speech-timestamps), not per word |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |

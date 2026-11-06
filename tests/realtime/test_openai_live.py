@@ -93,6 +93,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
@@ -190,6 +191,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         # `thinking` sets the delegated backend's reasoning effort.
         supports_thinking=True,
         supports_tool_return_schema=False,
+        supports_tool_updates=True,
         emits_input_speech_events=False,
         output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
@@ -3702,6 +3704,35 @@ async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveMod
             assert connection._response_open  # pyright: ignore[reportPrivateUsage]
             assert connection._map_output_audio(bytes(480)) == []  # pyright: ignore[reportPrivateUsage]
     assert ws.sent == [_EMPTY_SESSION_UPDATE]
+
+
+async def test_a_sideband_tool_update_keeps_the_backends_native_tools(model: OpenAILiveModel) -> None:
+    """The backend a sideband attaches to was started by the offer, so an update builds on the tools Live reports."""
+    responses: dict[str, Any] = {
+        'model': 'gpt-5.6-luna',
+        'instructions': 'Be brief.',
+        'tools': [
+            {'type': 'function', 'name': 'load_capability', 'parameters': {'type': 'object', 'properties': {}}},
+            {'type': 'web_search'},
+        ],
+    }
+    ws = _FakeWebSocket([_started_frame(delegation={'type': 'responses', 'responses': responses})])
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            await connection.send(
+                UpdateTools(tools=[ToolDefinition(name='load_capability'), ToolDefinition(name='get_forecast')])
+            )
+    update = json.loads(ws.sent[-1])['session']['delegation']['responses']
+    assert [tool.get('name', tool['type']) for tool in update['tools']] == [
+        'load_capability',
+        'get_forecast',
+        'web_search',
+    ]
 
 
 async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
