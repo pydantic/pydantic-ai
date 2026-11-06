@@ -685,6 +685,7 @@ ENV = {
     'GITHUB_SERVER_URL': 'https://github.com',
     'GITHUB_REPOSITORY': 'o/r',
     'GITHUB_RUN_ID': '100',
+    'REVIEW_ENGINE': 'claude',
 }
 
 
@@ -786,12 +787,33 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     assert json.loads(publication(result.model_copy(update={'verdict': 'INCOMPLETE'}), HEAD, 20))['event'] == 'COMMENT'
 
 
+@pytest.mark.parametrize('engine', ['claude', 'opencode'])
+def test_publisher_engine_attribution_preserves_the_gate(engine: str):
+    result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
+    body = json.loads(publication(result, HEAD, 20, engine=engine))['body']
+    assert f'engine={engine}' in body
+    assert not verdicts(ReviewGitHub(current_reviews=[review(body=body)]))['douwebot'].failures
+    finding = result.model_copy(update={'discussion': 'Extra discussion'})
+    body = json.loads(publication(finding, HEAD, 20, engine=engine))['body']
+    assert verdicts(ReviewGitHub(current_reviews=[review(body=body)]))['douwebot'].failures
+    duplicated = result.model_copy(update={'discussion': publish_douwebot_review.REVIEW_ENGINES[engine]})
+    body = json.loads(publication(duplicated, HEAD, 20, engine=engine))['body']
+    assert verdicts(ReviewGitHub(current_reviews=[review(body=body)]))['douwebot'].failures
+    body = body.replace('\n\n' + publish_douwebot_review.REVIEW_ENGINES[engine], '')
+    assert verdicts(ReviewGitHub(current_reviews=[review(body=body)]))['douwebot'].failures
+    legacy = publication(
+        result.model_copy(update={'discussion': publish_douwebot_review.REVIEW_ENGINES[engine]}), HEAD, 20
+    )
+    assert verdicts(ReviewGitHub(current_reviews=[review(body=json.loads(legacy)['body'])]))['douwebot'].failures
+
+
 @pytest.mark.parametrize('state', ['open', 'moved', 'closed'])
 def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.MonkeyPatch, state: str):
     for key, value in {
         **ENV,
         'GH_TOKEN': 'token',
         'PR_NUMBER': '7',
+        'REVIEW_ENGINE': 'claude',
         'REVIEW_RESULT': '{"verdict":"APPROVE","comments":[],"discussion":""}' if state == 'open' else '',
     }.items():
         monkeypatch.setenv(key, value)
@@ -804,7 +826,9 @@ def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.Monke
             return subprocess.CompletedProcess(args, 0, live, '')
         assert args[-1] == 'repos/o/r/pulls/7/reviews'
         assert '--input' in args
-        assert kwargs['input'] == publication(ReviewResult(verdict='APPROVE', comments=[], discussion=''), HEAD, 100)
+        assert kwargs['input'] == publication(
+            ReviewResult(verdict='APPROVE', comments=[], discussion=''), HEAD, 100, engine='claude'
+        )
         return subprocess.CompletedProcess(args, 0, '', '')
 
     monkeypatch.setattr(publish_douwebot_review.subprocess, 'run', fake_run)

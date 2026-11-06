@@ -216,6 +216,7 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
 
 `pr-review-gates-events.yml` observes reviews and inline-comment changes with a read-only token,
 including on forks. Its completion wakes `PR Review Gates`, which also runs on PR edits, pushes,

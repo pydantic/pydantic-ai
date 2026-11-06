@@ -265,8 +265,15 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + " -->\\z"))
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40} -->\\z"; "")) as $verdict
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode))? -->\\z"; "")) as $marked
+                | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
+                   elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
+                   else "" end) as $attribution
+                | (if $attribution == "" then $marked
+                   elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
+                   else $marked + "\nMissing engine attribution" end) as $verdict
                 | select($verdict | startswith("Review incomplete.") | not)
                 | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))
                 | .html_url]
@@ -724,6 +731,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_REF: ${{ github.event.repository.default_branch }}
           REVIEW_RESULT: ${{ needs.review.outputs.fallback == 'true' && needs.douwebot-opencode.outputs.result || needs.review.outputs.result }}
+          REVIEW_ENGINE: ${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |

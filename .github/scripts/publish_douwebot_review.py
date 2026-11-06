@@ -12,7 +12,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 APPROVAL_BODY = 'No blocking findings.'
-DOUWEBOT_MARKER = re.compile(r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
+DOUWEBOT_MARKER = re.compile(
+    r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40})(?: engine=(claude|opencode))? -->\Z'
+)
+REVIEW_ENGINES: dict[str, str] = {
+    'claude': 'Reviewer: Claude Code (claude-opus-5-5)',
+    'opencode': 'Reviewer: OpenCode (opencode-go/deepseek-v4.1-flash)',
+}
 ReviewVerdict = Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE']
 REVIEW_BODIES: dict[ReviewVerdict, str] = {
     'APPROVE': APPROVAL_BODY,
@@ -38,7 +44,7 @@ class ReviewResult(BaseModel):
     discussion: str
 
 
-def publication(result: ReviewResult, head: str, run_id: int, *, inline: bool = True) -> str:
+def publication(result: ReviewResult, head: str, run_id: int, *, inline: bool = True, engine: str | None = None) -> str:
     """Bind the formal review and all findings to this run and reviewed head."""
     body = REVIEW_BODIES[result.verdict]
     if result.verdict == 'REQUEST_CHANGES' and not inline:
@@ -48,7 +54,10 @@ def publication(result: ReviewResult, head: str, run_id: int, *, inline: bool = 
     if not inline:
         for comment in result.comments:
             body += f'\n\n### `{comment.path}:{comment.line}` (`{comment.side}`)\n\n{comment.body}'
-    body += f'\n\n<!-- douwebot:review run={run_id} head={head} -->'
+    if engine is not None:
+        body += f'\n\n{REVIEW_ENGINES[engine]}'
+    engine_marker = f' engine={engine}' if engine is not None else ''
+    body += f'\n\n<!-- douwebot:review run={run_id} head={head}{engine_marker} -->'
     payload: dict[str, object] = {
         'commit_id': head,
         'event': 'COMMENT' if result.verdict == 'INCOMPLETE' else result.verdict,
@@ -62,6 +71,9 @@ def main() -> None:
     """Read only host-bound repository/PR/head values, then publish through `gh`."""
     env = os.environ
     head = env['HEAD_SHA']
+    engine = env['REVIEW_ENGINE']
+    if engine not in REVIEW_ENGINES:
+        raise ValueError('Unknown review engine')
     endpoint = f'repos/{env["GITHUB_REPOSITORY"]}/pulls/{int(env["PR_NUMBER"])}'
     result: ReviewResult | None = None
     for inline in (True, False):
@@ -75,7 +87,7 @@ def main() -> None:
             result = ReviewResult.model_validate_json(env['REVIEW_RESULT'])
         posted = subprocess.run(
             ['gh', 'api', '--method', 'POST', '--input', '-', f'{endpoint}/reviews'],
-            input=publication(result, head, int(env['GITHUB_RUN_ID']), inline=inline),
+            input=publication(result, head, int(env['GITHUB_RUN_ID']), inline=inline, engine=engine),
             check=False,
             capture_output=True,
             text=True,

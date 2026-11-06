@@ -7,14 +7,10 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
-from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from douwebot_usage_limit import is_usage_limit, is_usage_limit_file, main
-
-WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 
 
 def _limit_event(window: str = 'five_hour', status: str = 'rejected') -> dict[str, object]:
@@ -85,57 +81,3 @@ def test_main_fails_closed_without_github_output(tmp_path: Path, monkeypatch: py
     with pytest.raises(SystemExit) as raised:
         main()
     assert raised.value.code == 1
-
-
-_OBJECT = TypeAdapter(dict[str, object])
-_OBJECTS = TypeAdapter(dict[str, dict[str, object]])
-_STEPS = TypeAdapter(list[dict[str, object]])
-
-
-def _workflow() -> dict[str, object]:
-    # BaseLoader keeps `on` as a string. SafeLoader reads it as boolean true.
-    loaded: object = yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
-    return _OBJECT.validate_python(loaded)
-
-
-def _job(name: str) -> dict[str, object]:
-    jobs = _OBJECTS.validate_python(_workflow()['jobs'])
-    return jobs[name]
-
-
-def _steps(job: dict[str, object]) -> list[dict[str, object]]:
-    return _STEPS.validate_python(job['steps'])
-
-
-def _step(job: dict[str, object], step_id: str) -> dict[str, object]:
-    for step in _steps(job):
-        if step.get('id') == step_id:
-            return step
-    raise AssertionError(step_id)
-
-
-def test_workflow_only_publishes_the_successful_review() -> None:
-    """A fallback failure cannot publish the primary's missing result as an approval."""
-    review = _job('review')
-    fallback = _job('douwebot-opencode')
-    publish = _job('publish-review')
-    detector = _step(review, 'usage-limit')
-    assert detector['if'] == "steps.review.outcome == 'failure'"
-    detector_run = detector['run']
-    assert isinstance(detector_run, str)
-    assert 'contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}' in detector_run
-    assert 'pip install' not in detector_run
-    assert 'python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"' in detector_run
-    assert _OBJECT.validate_python(detector['env'])['TRUSTED_REF'] == '${{ github.sha }}'
-    assert fallback['needs'] == 'review'
-    assert fallback['if'] == "needs.review.result == 'success' && needs.review.outputs.fallback == 'true'"
-    needs = publish['needs']
-    assert isinstance(needs, list)
-    assert 'douwebot-opencode' in needs
-    publish_step = _step(publish, 'publish')
-    condition = publish_step['if']
-    assert isinstance(condition, str)
-    assert "needs.douwebot-opencode.result == 'success'" in condition
-    result = _OBJECT.validate_python(publish_step['env'])['REVIEW_RESULT']
-    assert isinstance(result, str)
-    assert 'needs.douwebot-opencode.outputs.result' in result

@@ -262,6 +262,34 @@ def test_reapplication_is_a_new_first_attempt_request(tmp_path: Path):
     assert replayed.returncode == 1
 
 
+def test_workflow_only_publishes_the_successful_review() -> None:
+    """A fallback failure cannot publish the primary's missing result as an approval."""
+    jobs = _workflow()['jobs']
+    review = jobs['review']
+    fallback = jobs['douwebot-opencode']
+    publish = jobs['publish-review']
+    detector = next(step for step in review['steps'] if step.get('id') == 'usage-limit')
+    assert detector['if'] == "steps.review.outcome == 'failure'"
+    assert 'contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}' in detector['run']
+    assert 'pip install' not in detector['run']
+    assert 'python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"' in detector['run']
+    assert detector['env']['TRUSTED_REF'] == '${{ github.sha }}'
+    assert fallback['needs'] == 'review'
+    assert fallback['if'] == "needs.review.result == 'success' && needs.review.outputs.fallback == 'true'"
+    assert 'douwebot-opencode' in publish['needs']
+    publish_step = next(step for step in publish['steps'] if step.get('id') == 'publish')
+    assert "needs.douwebot-opencode.result == 'success'" in publish_step['if']
+    assert 'needs.douwebot-opencode.outputs.result' in publish_step['env']['REVIEW_RESULT']
+    assert publish_step['env']['REVIEW_ENGINE'] == "${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}"
+    from douwebot_opencode_run import MODEL
+    from publish_douwebot_review import REVIEW_ENGINES
+
+    claude = next(step for step in review['steps'] if step.get('id') == 'review')
+    assert '--model claude-opus-5-5[1m]' in claude['with']['claude_args']
+    assert 'claude-opus-5-5' in REVIEW_ENGINES['claude']
+    assert MODEL in REVIEW_ENGINES['opencode']
+
+
 REVIEWED_HEAD = 'a' * 40
 FINDING = Finding(path='a.py', line=1, side='RIGHT', body='Rename this.')
 
@@ -273,6 +301,7 @@ def _douwebot_review(
     *,
     head: str = REVIEWED_HEAD,
     inline: bool = True,
+    engine: str | None = None,
 ) -> dict[str, Any]:
     """A review as the trusted publisher posts it, so the skip filter follows the publisher's wording."""
     return {
@@ -281,7 +310,7 @@ def _douwebot_review(
         'commit_id': REVIEWED_HEAD,
         'state': state,
         'html_url': f'review-{review_id}',
-        'body': json.loads(publication(result, head, 7, inline=inline))['body'],
+        'body': json.loads(publication(result, head, 7, inline=inline, engine=engine))['body'],
     }
 
 
@@ -294,6 +323,30 @@ def _douwebot_review(
             False,
             '',
             id='clean-approval',
+        ),
+        pytest.param(
+            _douwebot_review(10, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='claude'),
+            False,
+            '',
+            id='clean-claude',
+        ),
+        pytest.param(
+            _douwebot_review(11, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode'),
+            False,
+            '',
+            id='clean-opencode',
+        ),
+        pytest.param(
+            _douwebot_review(12, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)')),
+            False,
+            'review-12',
+            id='legacy-discussion-is-not-attribution',
+        ),
+        pytest.param(
+            _douwebot_review(13, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)'), engine='claude'),
+            False,
+            'review-13',
+            id='engine-line-in-discussion-is-still-a-finding',
         ),
         pytest.param(
             _douwebot_review(2, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[FINDING], discussion='')),
