@@ -47,13 +47,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT, neutralize_voice_tag
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.direct import model_request
 from pydantic_ai.messages import InstructionPart, RetryPromptPart  # pyright: ignore[reportDeprecated]
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import FramingAnnouncement
+from pydantic_ai.settings import FramingAnnouncement, ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
@@ -506,6 +507,44 @@ async def test_the_agent_model_settings_choose_the_announcement(framing_announce
     assert any(
         isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT for part in first_request.parts
     ) is (framing_announcement == 'always')
+
+
+@pytest.mark.parametrize(
+    'model_settings, announced',
+    [
+        pytest.param(None, True, id='default'),
+        pytest.param({'framing_announcement': 'never'}, False, id='never'),
+    ],
+)
+async def test_direct_requests_apply_the_setting(model_settings: ModelSettings | None, announced: bool):
+    """`model_request` prepares a history carrying a retry with the setting from its `model_settings`."""
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_system_voice = True
+
+    model = AnnouncingFunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=False))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Be brief.'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='Please return text.', retry=RetryInfo(cause='no_output'))]),
+    ]
+
+    await model_request(model, messages, model_settings=model_settings)
+
+    [[first_request, *_]] = received
+    assert isinstance(first_request, ModelRequest)
+    assert (
+        any(
+            isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT
+            for part in first_request.parts
+        )
+        is announced
+    )
 
 
 @pytest.mark.parametrize(
