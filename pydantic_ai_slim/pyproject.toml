@@ -75,7 +75,10 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 # Models
 openai = ["openai>=3.19.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
-google = ["google-genai>=2.25.0"]
+# `google-genai` 3.0.0 moves to `httpx2` and ships `types.py` with escape sequences Python 3.14
+# rejects, so importing it raises `SyntaxError`. 2.34.0 is the newest release this line is
+# tested against.
+google = ["google-genai>=2.25.0,<3"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
 # `anthropic` 2.0 makes `BetaMessageParam` a `Union`, which `AnthropicModel` calls as a constructor.
