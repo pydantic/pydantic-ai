@@ -1794,7 +1794,7 @@ class TestCodeMode:
     async def test_sandboxed_tool_named_after_builtin_raises_user_error(self) -> None:
         """A sandboxed tool named after a Python builtin raises UserError, since code would call the builtin."""
 
-        def open(path: str) -> str:  # noqa: A001
+        def open(path: str) -> str:
             """A tool that the sandbox's `open` builtin would shadow."""
             return path  # pragma: no cover
 
