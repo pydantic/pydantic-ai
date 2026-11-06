@@ -1402,6 +1402,33 @@ def test_project_cannot_register_worktree_commands(tmp_path: Path) -> None:
         load_project_settings(tmp_path)
 
 
+def test_kept_worktrees_preserve_existing_database(tmp_path: Path) -> None:
+    """The additive table leaves version-1 settings readable and survives unrelated writes."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test:model"'))
+        connection.execute('PRAGMA user_version = 1')
+    store = SettingsStore(path)
+    checkout = tmp_path / 'checkout'
+    assert store.kept_worktree(checkout) is None
+    store.keep_worktree(checkout, checkout='first')
+    # Older builds only access the tables they know; they accept the same schema version.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('future.setting', '{"kept":true}'))
+    reopened = SettingsStore(path)
+    assert reopened.load().model == 'test:model'
+    assert reopened.kept_worktree(checkout) == 'first'
+    reopened.set('display.thinking', False)
+    reopened.keep_worktree(checkout, checkout='replacement')
+    assert SettingsStore(path).kept_worktree(checkout) == 'replacement'
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT value_json FROM settings WHERE key = ?', ('future.setting',)).fetchone() == (
+            '{"kept":true}',
+        )
+
+
 def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / 'config.db'
     store = SettingsStore(path)

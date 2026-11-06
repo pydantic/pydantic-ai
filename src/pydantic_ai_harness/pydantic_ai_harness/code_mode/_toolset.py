@@ -40,7 +40,7 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
-        AsyncMontyWebsocket,
+        AsyncMontyRemote,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -62,6 +62,7 @@ from pydantic_ai_harness._code_tools import (
     record_nested_call,
     run_nested_call,
     sanitize_tool_name,
+    schema_arg_names,
     signatures_and_conflicts,
 )
 from pydantic_ai_harness._monty_exec import (
@@ -110,17 +111,27 @@ _SANDBOX_LIMIT_MARKERS = {
 
 
 def _check_monty_sandbox_url(url: str) -> None:
-    """Reject URLs Monty's WebSocket client cannot dial, before the first `run_code` call fails on them."""
-    scheme = urlsplit(url).scheme
-    if scheme not in ('ws', 'wss'):
-        raise UserError(f'`monty_sandbox` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+    """Reject URLs Monty's remote client cannot dial, before the first `run_code` call fails on them.
+
+    The error leaves the URL out, because it may carry credentials.
+    """
+    parts = urlsplit(url)
+    # Monty reads `ws://` and `wss://`, its schemes before 1.5, as `http://` and `https://`.
+    if parts.scheme not in ('http', 'https', 'ws', 'wss'):
+        raise UserError('`monty_sandbox` must be an `http://`, `https://`, `ws://`, or `wss://` URL.')
+    # The client calls one fixed gRPC method at the server root, so it rejects anything after the host.
+    if parts.path not in ('', '/') or '?' in url or '#' in url:
+        raise UserError(
+            '`monty_sandbox` must be the server root, such as `https://sandbox.example.com`, '
+            'without a path, query, or fragment.'
+        )
 
 
 def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None,
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None,
     monty_sandbox_url: str | None,
     owner: str,
-) -> str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None:
+) -> str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None:
     """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
     if monty_sandbox_url is None:
         return monty_sandbox
@@ -483,7 +494,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -848,10 +859,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`."""
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
@@ -1217,7 +1228,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         fresh_repl = not run_state.has_executed_feed
 
         callable_defs = tool.callable_defs
-        sanitized_to_original = tool.sanitized_to_original
 
         # Build a ToolManager for the sandbox's inner tools so that sandboxed
         # tool calls go through the standard validation/execution path. We
@@ -1272,7 +1282,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # Already converted in `__post_init__`; this narrows the field's type.
                 os_handler = as_os_handler(self.os_access)
                 completed = await MontyExecutor(
-                    dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, sanitized_to_original),
+                    dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
                     valid_names=callable_defs,
                     sequential_names=sequential_tools,
                     global_sequential=global_sequential,
@@ -1379,7 +1389,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         execution: RunCodeExecution,
         tool_manager: ToolManager[AgentDepsT],
-        sanitized_to_original: dict[str, str],
+        tool: _RunCodeTool[AgentDepsT],
         sandbox_name: str,
         kwargs: dict[str, Any],
     ) -> Coroutine[Any, Any, Any]:
@@ -1392,9 +1402,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
-        original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
+        original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-        call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+        call_part = ToolCallPart(
+            tool_name=original_name,
+            args=schema_arg_names(tool.callable_defs[sandbox_name], kwargs),
+            tool_call_id=tool_call_id,
+        )
         speculation = self.speculation
         if speculation is not None:
             claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)

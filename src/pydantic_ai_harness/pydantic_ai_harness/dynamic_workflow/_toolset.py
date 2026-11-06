@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
-import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -190,16 +189,6 @@ non-`None` value returns `{"output": "<printed text>", "result": <last expressio
 bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
 values.\
 """
-
-
-def _is_valid_sandbox_name(name: str) -> bool:
-    """Whether `name` can be exposed as a sandbox function: a non-keyword Python identifier.
-
-    `str.isidentifier()` alone is not enough -- Python keywords (`for`, `class`, `async`, ...) are
-    valid identifiers but cannot be used as function names, so the model could never call them.
-    Callers guard the empty/`None` case before this is reached.
-    """
-    return name.isidentifier() and not keyword.iskeyword(name)
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
@@ -479,7 +468,7 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
             'DynamicWorkflow sub-agent has no `name` and its agent has no `name`; '
             'set `WorkflowAgent(name=...)` so it can be exposed as a sandbox function.'
         )
-    if not _is_valid_sandbox_name(name):
+    if not _is_python_identifier(name):
         raise UserError(
             f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
             'it must be a Python identifier that is not a reserved keyword. Rename it.'
