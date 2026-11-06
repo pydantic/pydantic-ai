@@ -8,13 +8,14 @@ from typing import overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import _GptOssInlineDefsJsonSchemaTransformer  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -90,7 +91,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 # transformation, and other OpenAI ids only get its special-token setting.
                 gpt_oss = model_name.startswith('gpt-oss')
                 schema_profile = (
-                    ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer) if gpt_oss else None
+                    ModelProfile(json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer) if gpt_oss else None
                 )
                 return merge_profile(schema_profile, route_profile)
 

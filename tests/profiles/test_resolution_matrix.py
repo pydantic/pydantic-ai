@@ -47,6 +47,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
+    _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
 )
@@ -924,7 +925,10 @@ def test_gateway_gpt_oss_inline_defs():
         {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
     )
     assert _normalize(HuggingFaceProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+        {
+            'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
     # Other OpenAI ids keep each gateway's defaults.
@@ -934,6 +938,36 @@ def test_gateway_gpt_oss_inline_defs():
     assert HuggingFaceProvider.model_profile('openai/whisper-large-v3') == snapshot(
         {'may_tokenize_special_tokens_in_content': True}
     )
+
+
+@pytest.mark.skipif(not bedrock_imports() or not huggingface_imports(), reason='bedrock or huggingface not installed')
+def test_gpt_oss_inline_defs_without_openai_rewrite():
+    """Bedrock Converse and Hugging Face only inline gpt-oss `$defs`, and keep a schema whose `$ref` they can't reach.
+
+    The inliner doesn't walk under a `type` list, so inlining such a schema would leave its `$ref` pointing at a
+    dropped definition.
+    """
+    nested: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'home': {'$ref': '#/$defs/Address'}},
+        '$defs': {'Address': {'type': 'object', 'properties': {'city': {'type': 'string'}}}},
+    }
+    unreachable: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
+        '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    for profile in (
+        BedrockProvider.model_profile('openai.gpt-oss-120b-1:0'),
+        HuggingFaceProvider.model_profile('openai/gpt-oss-120b'),
+    ):
+        assert profile is not None
+        transformer = profile.get('json_schema_transformer')
+        assert transformer is not None
+        assert transformer(nested).walk() == snapshot(
+            {'type': 'object', 'properties': {'home': {'type': 'object', 'properties': {'city': {'type': 'string'}}}}}
+        )
+        assert transformer(unreachable).walk() == unreachable
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -1378,7 +1412,7 @@ def test_bedrock_openai():
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
             'supports_thinking': True,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,

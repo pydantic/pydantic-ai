@@ -1044,6 +1044,20 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
 
+class _GptOssInlineDefsJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """`InlineDefsJsonSchemaTransformer` for the gpt-oss models, which don't see a tool schema's `$defs` on any host.
+
+    A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, would be left
+    pointing at a definition it dropped, so such a schema is kept as it was.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = super().walk()
+        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
+            return self.schema
+        return inlined
+
+
 class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
     """`OpenAIJsonSchemaTransformer` on a schema whose `$defs` are inlined first, for the gpt-oss models.
 
@@ -1052,11 +1066,7 @@ class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
     """
 
     def walk(self) -> JsonSchema:
-        inlined = InlineDefsJsonSchemaTransformer(self.schema).walk()
-        # A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, is left
-        # pointing at a definition it dropped, so such a schema keeps its `$defs`.
-        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
-            inlined = self.schema
+        inlined = _GptOssInlineDefsJsonSchemaTransformer(self.schema).walk()
         transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
         result = transformer.walk()
         self.is_strict_compatible = transformer.is_strict_compatible
