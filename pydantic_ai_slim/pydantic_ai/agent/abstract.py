@@ -1096,11 +1096,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             stream: AgentStream,
                         ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
-                            async for event in stream:
-                                yield event
-                                if isinstance(event, _messages.FinalResultEvent):
-                                    final_result_event = event
-                                    break
+                            # Close the event generator the `break` leaves behind here, rather than in a task
+                            # asyncio's finalizer hook schedules, which nothing awaits.
+                            events = aiter(stream)
+                            try:
+                                async for event in events:
+                                    yield event
+                                    if isinstance(event, _messages.FinalResultEvent):
+                                        final_result_event = event
+                                        break
+                            finally:
+                                await _utils.aclose_if_supported(events)
 
                         # `node.stream()` applies the capability chain, so `stream_to_final` truncates
                         # the handler's view at the final result without hiding later events from

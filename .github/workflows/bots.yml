@@ -545,6 +545,7 @@ jobs:
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
             - A new test file or test that belongs in an existing file. Before accepting any new test file or test, search `pr-head/tests/` for an existing file that covers the same concern.
+            - A test, test double or flaky-test fix that can fail on a slow runner. Read every wait and assertion as if the runner stalls for a minute right before it, and check each against the numbered rules in "Tests that don't depend on timing" in `tests/AGENTS.md`. When you can name the interleaving that fails, say which one.
 
             Generally, the priority in terms of "crucial to get right" and "what to focus on first in a new PR" is public API > concepts and behavior > documentation > tests > code style.
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.

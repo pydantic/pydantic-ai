@@ -54,6 +54,7 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import (
     AbstractSpan,
+    new_thread_event_loop,
     run_until_complete as _graph_run_until_complete,
 )
 from pydantic_graph.exceptions import UnsupportedEventLoopError
@@ -683,10 +684,15 @@ async def group_by_temporal(
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
     context = _TemporalGroupsContext(aiter(aiterable))
+    groups = _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
     try:
-        yield _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
+        yield groups
     finally:
-        await _cleanup_temporal_group(context.task, context.aiterator)
+        try:
+            # Closed here rather than by a task asyncio's finalizer hook would schedule, which nothing awaits.
+            await aclose_if_supported(groups)
+        finally:
+            await _cleanup_temporal_group(context.task, context.aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
@@ -1284,8 +1290,7 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = None
 
     if event_loop is None or event_loop.is_closed():
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
+        event_loop = new_thread_event_loop()
     return event_loop
 
 

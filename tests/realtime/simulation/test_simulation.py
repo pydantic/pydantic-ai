@@ -3149,6 +3149,25 @@ def test_elevenlabs_agents_barge_in_keeps_the_truncated_reply_with_the_reply_it_
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
+def test_elevenlabs_agents_reply_spoken_over_several_steps() -> None:
+    """A reply the agent goes on speaking after the connection has read its first words is still one reply.
+
+    Without this, only the exploration continues a reply in the simulated server, in one of its 50 examples. Those are
+    drawn from a seed Hypothesis derives from the machine's source, so other examples, which may never continue a
+    reply, replace them whenever the machine or Hypothesis changes, and the coverage would come and go with them.
+    """
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
 @pytest.mark.parametrize('voiced', [False, True], ids=['being-voiced', 'voiced-in-full'])
 def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
     """Cut in on while its audio still comes, the reply ends with what was heard; voiced in full, nothing changes."""

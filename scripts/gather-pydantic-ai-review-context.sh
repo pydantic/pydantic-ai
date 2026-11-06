@@ -844,6 +844,45 @@ don't flag an entry whose sites the diff already updates and tests, or a
 missing entry: the manifest is the contract this check reads, not something to
 second-guess.
 
+### Example 9 — test determinism
+
+Trigger: the diff adds or changes a test, a test double, or a fix for a flaky
+test. The rules are the six numbered ones in "Tests that don't depend on
+timing" in `tests/AGENTS.md`. Read each wait and assertion as if the runner
+stalls for a minute right before it: CI runners do, and a flake fails `main`
+for whoever pushes next.
+
+**Flag this (HIGH):**
+```python
+async with anyio.create_task_group() as group:
+    group.start_soon(run_until_broken)
+    await _wait_for(started)  # the command touched this file
+    server.break_streams(backend.ref.id)
+```
+*Why:* The command touches `started` as soon as its process runs, but the
+fake registered the command's stream only after the process started. If the
+loop stalls in between, `break_streams` reaches no stream, the marker is lost,
+and the test hangs until the job's timeout. Ask the fake to register the stream
+before starting the process, or the test to wait for the stream itself.
+The same goes for a wait with no `READINESS_WAIT_TIMEOUT` guard or a shorter
+literal (`fail_after(1)`, `sleep(0.1)` "to let it start"), an assertion on
+elapsed time, a timeout test where the work can finish first, a
+`new_event_loop()` that is never closed, and a flake fix that only lengthens a
+timeout or adds a retry.
+
+**Don't flag this:**
+```python
+with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+    await backend_ready.wait()  # set by the code under test once it listens
+monkeypatch.setattr(module, '_GONE_SETTLE', 3600.0)
+```
+*Why:* The test waits for the state its next step needs, signalled by the
+code that owns it. The guard only stops a hang, and the patched timeout is far
+beyond any stall, so no runner speed changes the outcome. Also don't flag a
+short real wait whose duration is itself the claim and is asserted with a wide
+margin, or a test that breaks out of `async for` because early exit is its
+subject.
+
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block

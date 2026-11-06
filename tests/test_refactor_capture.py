@@ -190,6 +190,31 @@ def test_test_model():
     agent.run_sync('hi')
 """
 
+# The sessions run on this process's main thread, where `run_sync` installs an event loop and leaves it open for the
+# next sync call, and the next `asyncio.run()` replaces it. Left to the garbage collector, a replaced loop is
+# finalized in this test's teardown, where its self-pipe socket can be finalized before it and fail the test with
+# `ValueError: Invalid file descriptor: -1`. So each session test closes the loop it leaves behind.
+CONFTEST = """
+import asyncio
+import warnings
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def close_the_event_loop_left_behind():
+    yield
+    with warnings.catch_warnings():
+        # Python 3.12 and 3.13 create a loop to return here, and warn, when none was set.
+        warnings.simplefilter('ignore', DeprecationWarning)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+    loop.close()
+    asyncio.set_event_loop(None)
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
@@ -201,6 +226,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
+        pytester.makeconftest(CONFTEST)
         pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
             '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args

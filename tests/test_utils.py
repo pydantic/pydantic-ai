@@ -1579,3 +1579,36 @@ def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
         entry_point()
+
+
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
+    ],
+)
+def test_sync_entry_point_closes_its_event_loop_when_its_worker_thread_exits(entry_point: Callable[[], None]):
+    """The event loop a sync run installs on a worker thread stays open for the thread's later runs, and is closed
+    as the thread exits.
+
+    It used to be left to the garbage collector, which finalized it at an arbitrary later time, warning
+    `unclosed event loop` and, when its self-pipe socket happened to be finalized first, raising
+    `ValueError: Invalid file descriptor: -1` from `BaseEventLoop.__del__`.
+    """
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    def run_twice() -> None:
+        entry_point()
+        loops.append(asyncio.get_event_loop())
+        entry_point()
+        loops.append(asyncio.get_event_loop())
+        assert not loops[0].is_closed()
+
+    thread = threading.Thread(target=run_twice)
+    thread.start()
+    thread.join()
+
+    first, second = loops
+    assert first is second
+    assert first.is_closed()

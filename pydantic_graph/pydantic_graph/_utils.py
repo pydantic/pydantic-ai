@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import threading
 import types
 import warnings
 from collections.abc import Awaitable, Generator
@@ -82,9 +83,52 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         return event_loop
 
     if event_loop is None or event_loop.is_closed():
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
+        event_loop = new_thread_event_loop()
     return event_loop
+
+
+def new_thread_event_loop() -> asyncio.AbstractEventLoop:
+    """Create an event loop, install it as the current thread's, and close it when a worker thread exits.
+
+    The loop stays installed so later sync calls on the thread reuse it, along with anything bound to it, like an
+    HTTP connection pool. Nothing else closes it: left to the garbage collector once its thread is gone, it would
+    be finalized at an arbitrary later time, warning `unclosed event loop`, and, as its self-pipe socket can be
+    finalized first, raising `ValueError: Invalid file descriptor: -1` from `BaseEventLoop.__del__`. The main
+    thread's loop is left alone, as it lives until the interpreter exits.
+    """
+    event_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(event_loop)
+    if threading.current_thread() is not threading.main_thread():
+        closer: _CloseLoopsOnThreadExit | None = getattr(_worker_thread_loops, 'closer', None)
+        if closer is None:
+            closer = _worker_thread_loops.closer = _CloseLoopsOnThreadExit()
+        closer.add(event_loop)
+    return event_loop
+
+
+class _CloseLoopsOnThreadExit:
+    """Holds the loops `new_thread_event_loop()` installed on one worker thread, and closes them when it exits.
+
+    It lives in a `threading.local`, which drops it as the thread exits, so its `__del__` runs then, on that thread.
+    """
+
+    __slots__ = ('loops',)
+
+    def __init__(self) -> None:
+        self.loops: list[asyncio.AbstractEventLoop] = []
+
+    def add(self, loop: asyncio.AbstractEventLoop) -> None:
+        # Dropping the closed ones keeps the list from growing on a long-lived thread that keeps closing its loops.
+        self.loops = [*(owned for owned in self.loops if not owned.is_closed()), loop]
+
+    def __del__(self) -> None:
+        for loop in self.loops:
+            # A loop another thread is now running is that thread's to close.
+            if not loop.is_closed() and not loop.is_running():
+                loop.close()
+
+
+_worker_thread_loops = threading.local()
 
 
 _T = TypeVar('_T')

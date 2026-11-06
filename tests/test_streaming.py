@@ -80,8 +80,9 @@ from pydantic_ai._sync_stream import (
     _request_exit,  # pyright: ignore[reportPrivateUsage]
     _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.agent import AgentRun
+from pydantic_ai.agent import AgentRun, abstract as abstract_agent_module
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CombinedCapability,
@@ -6347,6 +6348,51 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
         await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
+
+
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+async def test_closing_stream_text_closes_the_generators_it_reads_from(debounce_by: float | None):
+    """Closing the generator `stream_text()` returns closes, in the closing task, every generator it reads from.
+
+    So does `run_stream()` with the event generator it stops reading at the final result. A generator dropped
+    unclosed is closed by a task asyncio's finalizer hook schedules, which nothing awaits, so it can still be pending
+    when the caller's `async with` exits. The generators are held here, so the hook can't close them in their place.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
+            yield piece
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    modules = {result_module.__file__, _utils.__file__, abstract_agent_module.__file__}
+    generators: list[AsyncGeneratorType[Any, Any]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in modules:
+            generators.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    sys.set_asyncgen_hooks(track, finalizer)
+    try:
+        async with agent.run_stream('hello') as result:
+            # Only the run and the model stream it holds open are left; not the event generator it stopped reading.
+            assert sorted(agen.ag_code.co_qualname for agen in generators if agen.ag_frame is not None) == [
+                'AbstractAgent.run_stream',
+                'AgentStream._events_iter',
+                'AgentStream._model_events',
+            ]
+            generators.clear()
+            text = result.stream_text(delta=True, debounce_by=debounce_by)
+            try:
+                async for _ in text:  # pragma: no branch
+                    break
+            finally:
+                await aclose_if_supported(text)
+            assert [agen.ag_code.co_qualname for agen in generators if agen.ag_frame is not None] == []
+    finally:
+        sys.set_asyncgen_hooks(firstiter, finalizer)
 
 
 async def test_args_validator_failure_events():

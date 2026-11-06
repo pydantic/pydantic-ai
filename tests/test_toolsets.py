@@ -58,9 +58,11 @@ has_mcp = find_spec('mcp') is not None
 if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
     # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
     # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp import Client
 
     from pydantic_ai.mcp import MCPToolset
+
+    from .mcp_server import mcp as mcp_test_server
 
 T = TypeVar('T')
 
@@ -749,12 +751,20 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+def in_process_mcp_toolset() -> MCPToolset:
+    """An `MCPToolset` connected in-process to `tests.mcp_server`, with no handshake deadline.
+
+    A pre-built `Client` keeps fastmcp's default of no `initialize` deadline; letting `MCPToolset` build the
+    client would apply its 5-second `init_timeout`, which a stalled CI worker can exceed. These tests are about
+    how `CombinedToolset` enters and exits its members, not about the transport or the handshake timing.
+    """
+    return MCPToolset(Client(mcp_test_server))
+
+
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager():
-    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
-    server1 = MCPToolset(transport)
-    server2 = MCPToolset(transport)
+    server1 = in_process_mcp_toolset()
+    server2 = in_process_mcp_toolset()
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
     async with toolset:
@@ -771,10 +781,9 @@ class InitializationError(Exception):
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
-    server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    server1 = in_process_mcp_toolset()
     server2 = AsyncMock()
     # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
     # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that

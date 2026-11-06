@@ -265,6 +265,11 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         cwd = body.get('cwd') or self.image_working_dir
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
+        # The stream exists from the moment the request arrives, as execd's connection does: registered before the
+        # command starts, a break or kill that comes while the process is still starting reaches it, however long
+        # starting takes. Registered after, it is lost, and the stream never ends.
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        sandbox.streams.append(queue)
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
@@ -279,14 +284,10 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         execution_id = uuid.uuid4().hex
         sandbox.processes[execution_id] = process
         self.processes.append(process)
-        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-        sandbox.streams.append(queue)
-        # The command can run before this registers it, so a kill that saw neither the process nor its stream ends
-        # them here.
+        # The command can run before this registers its process, so a kill that didn't see the process kills it here.
         if sandbox.state != 'Running':  # pragma: lax no cover
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            queue.put_nowait(('broken', None))
         return httpx.Response(
             200,
             headers={'content-type': 'text/event-stream'},

@@ -4,8 +4,10 @@ import asyncio
 import gc
 import io
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
+from threading import Thread
 from typing import Generic, TypeVar
 
 import prompt_toolkit
@@ -21,7 +23,7 @@ from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import DEFAULT_PLUGINS, chat
+from pydantic_clai2 import DEFAULT_PLUGINS, chat, warm_imports
 from pydantic_clai2.app import STOCK_PLUGINS
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -31,6 +33,21 @@ from pydantic_clai2.ui.rendering import theme
 
 models.ALLOW_MODEL_REQUESTS = False
 PromptT = TypeVar('PromptT')
+start_warming = warm_imports.start
+
+
+def warm_before_the_prompt(modules: Sequence[str] = warm_imports.FIRST_USE_MODULES) -> Thread:
+    """Finish the shell's background imports before its first prompt.
+
+    The scripted prompts answer at once, so `/set model` imports the OpenAI SDK while the warming thread is still
+    importing it. A warming import that fails partway, as concurrent imports of one package graph can make it, is only
+    logged, and leaves `openai.types.responses.response_output_text` in `sys.modules` while its package is dropped, so
+    the main thread's fresh import of the package lacks that attribute and `/set model` fails. Reload does not depend
+    on that overlap, so warming finishes first.
+    """
+    thread = start_warming(modules)
+    thread.join()
+    return thread
 
 
 async def main(root: Path, mode: str) -> None:
@@ -172,6 +189,7 @@ async def main(root: Path, mode: str) -> None:
         pytest.MonkeyPatch.context() as patch,
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
     ):
+        patch.setattr(warm_imports, 'start', warm_before_the_prompt)
         patch.setattr(prompt_toolkit, 'PromptSession', Prompt)
         patch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
         await chat(

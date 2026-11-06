@@ -41,6 +41,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.capabilities import Hooks, ModelFallback, ResolveModelId, SelectModel
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
 from pydantic_ai.exceptions import (
@@ -2078,8 +2079,15 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
         async with model:
             if interrupt == 'early_exit':
                 async with Agent(model).run_stream('hello') as result:
-                    async for _ in result.stream_text(delta=True):  # pragma: no branch
-                        break
+                    text = result.stream_text(delta=True)
+                    try:
+                        async for _ in text:  # pragma: no branch
+                            break
+                    finally:
+                        # Closed here, not left to the interpreter: dropped mid-iteration, the generator would be
+                        # closed by tasks asyncio's finalizer hook schedules, which nothing here awaits, and which
+                        # could still be pending at `no_leaked_tasks()`'s check.
+                        await aclose_if_supported(text)
             elif interrupt == 'explicit_close':
                 async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as response:
                     await response.close_stream()

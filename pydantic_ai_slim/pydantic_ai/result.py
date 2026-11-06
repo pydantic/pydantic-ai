@@ -172,14 +172,20 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             yield self._cached_output
             return
 
-        if delta:
-            async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
-                yield text
-        else:
-            async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
-                for validator in self._output_validators:
-                    text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
-                yield text
+        texts = self._stream_response_text(delta=delta, debounce_by=debounce_by)
+        try:
+            if delta:
+                async for text in texts:
+                    yield text
+            else:
+                async for text in texts:
+                    for validator in self._output_validators:
+                        text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
+                    yield text
+        finally:
+            # Closes the inner generator, and the pull it may have pending, when this one is closed: dropped instead,
+            # it would be closed later by a task asyncio's finalizer hook schedules, which nothing awaits.
+            await _utils.aclose_if_supported(texts)
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
@@ -824,8 +830,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
-            async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
-                yield text
+            texts = self._stream_response.stream_text(delta=delta, debounce_by=debounce_by)
+            try:
+                async for text in texts:
+                    yield text
+            finally:
+                # Closed with this generator rather than left to asyncio's finalizer hook; see `AgentStream.stream_text()`.
+                await _utils.aclose_if_supported(texts)
             await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover

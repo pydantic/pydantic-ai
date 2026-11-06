@@ -11,7 +11,11 @@ import pytest
 
 from .test_engine_definition import CLAI2_SOURCE, launch, proxy_env
 
-pytestmark = pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+pytestmark = [
+    pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script'),
+    # The first `node` start on a runner is slow; `started_node` pays it outside the test's budget.
+    pytest.mark.usefixtures('started_node'),
+]
 
 # Configure is real; only outbound HTTP is replaced. The CLI boundary records the
 # resulting public configuration instead of making a model request.
