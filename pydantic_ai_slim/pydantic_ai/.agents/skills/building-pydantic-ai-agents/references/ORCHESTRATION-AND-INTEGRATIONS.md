@@ -63,6 +63,7 @@ For `BaseNode` workflows, use `g.add_reachable(RootNode)` to register reachable 
 Configure bridge paths through steps, decisions and joins before discovery. Existing outgoing paths are preserved.
 Connect `g.start_node` explicitly. Node instances and constructor arguments still come from application code.
 For independent task functions, import the function and call `g.step(imported_function)` at the composition root.
+See [the graph guide](https://pydantic.dev/docs/ai/graph/graph/#registering-reachable-nodes) for recursive registration and module-qualified postponed annotations.
 
 
 ## Call the Model Without Using an Agent
