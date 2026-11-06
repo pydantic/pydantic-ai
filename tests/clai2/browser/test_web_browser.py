@@ -1645,6 +1645,12 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.keyboard.press('ArrowRight')
         await expect(feature).to_be_visible()
         await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(project).to_have_accessible_name('repo, 2 worktrees shown')
+        # On an unfolded project, → steps into its first worktree.
+        await page.keyboard.press('ArrowRight')
+        await expect(project).to_have_attribute('aria-selected', 'false')
+        await expect(feature).to_be_visible()
+        await page.keyboard.press('ArrowLeft')
         # It offers no worktree of a folder outside Git, and refuses the same branch inline.
         alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
         await alpha.hover()

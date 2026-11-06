@@ -15,15 +15,15 @@ To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web
 the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
-there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project from the sidebar, by default the current one (a project's row starts in its current
-checkout, else its main one), one of its worktrees, including any other worktree Git lists for its
-repository (its chevron, or →, unfolds them; ← folds them again), a new worktree of a listed
-checkout's repository (**New worktree…** on its row, or
-**New worktree of …** for the row the arrow keys select: a branch name,
-generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
-or any directory by its absolute path, which it completes as you type, listing each repository's
-worktrees. The header shows where the session works.
+there; CLAI's own working directory never changes. **New session** asks where the session runs.
+It lists one row per project from the sidebar, the current one first, and a project's row starts
+in the checkout you are in, else the project's main one. A project's chevron, or →, shows its
+worktrees, including any other worktree Git lists for its repository; ← hides them.
+**New worktree…** on a row, or **New worktree of …** for the row the arrow keys select, checks out
+a new worktree of that row's repository: a branch name, generated if empty, and a base, `HEAD` if
+empty; it goes in `.worktrees/` as `--worktree` puts it. You can also type any directory's
+absolute path, which it completes as you type, listing each repository with its worktrees shown.
+The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser

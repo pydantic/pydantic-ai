@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Project } from '../protocol'
 import { BranchIcon, CheckIcon, ChevronIcon, FolderIcon } from './icons'
@@ -93,10 +93,11 @@ export function NewSessionDialog({
   const [completed, setCompleted] = useState<Project[] | null>(null)
   // The projects folded the other way from how they start: folded, or unfolded while a path is typed.
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
-  const shown = useMemo(() => {
-    const unfolded = (key: string) => (completed !== null) !== toggled.has(key)
-    return completed === null ? places(projects, unfolded, current) : places(completed, unfolded)
-  }, [completed, projects, current, toggled])
+  const unfolded = useCallback((key: string) => (completed !== null) !== toggled.has(key), [completed, toggled])
+  const shown = useMemo(
+    () => (completed === null ? places(projects, unfolded, current) : places(completed, unfolded)),
+    [completed, projects, current, unfolded],
+  )
   // The highlighted row's key, kept as rows unfold and fold around it; the first row until the arrow keys move it.
   const [cursorKey, setCursorKey] = useState<string | null>(null)
   const cursor = Math.max(
@@ -144,8 +145,7 @@ export function NewSessionDialog({
   }, [completed, projects])
 
   const fold = (place: Place, open: boolean) => {
-    const unfolded = (completed !== null) !== toggled.has(place.key)
-    if (unfolded === open) return
+    if (unfolded(place.key) === open) return
     setToggled((was) => {
       const next = new Set(was)
       if (!next.delete(place.key)) next.add(place.key)
@@ -201,8 +201,10 @@ export function NewSessionDialog({
       const step = event.key === 'ArrowDown' ? 1 : -1
       setCursorKey(shown[(cursor + step + shown.length) % shown.length]!.key)
     } else if (event.key === 'ArrowRight' && highlighted?.worktrees) {
+      // As in a tree: → unfolds a folded project, and steps into an unfolded one's first worktree.
       event.preventDefault()
-      fold(highlighted, true)
+      if (unfolded(highlighted.key)) setCursorKey(shown[cursor + 1]!.key)
+      else fold(highlighted, true)
     } else if (event.key === 'ArrowLeft' && highlighted) {
       event.preventDefault()
       if (highlighted.parent !== undefined) setCursorKey(highlighted.parent)
@@ -230,7 +232,7 @@ export function NewSessionDialog({
           onKeyDown={keys}
         >
           {shown.map((place, index) => {
-            const unfolded = place.worktrees > 0 && shown[index + 1]?.parent === place.key
+            const open = place.worktrees > 0 && unfolded(place.key)
             return (
               // The pointer crosses other rows on its way to the buttons below, so hovering one does not move the
               // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead:
@@ -246,15 +248,15 @@ export function NewSessionDialog({
                     className="icon-button dialog-option-fold"
                     type="button"
                     tabIndex={-1}
-                    aria-expanded={unfolded}
-                    aria-label={`${unfolded ? 'Hide' : 'Show'} the worktrees of ${place.label}`}
-                    title={`${unfolded ? 'Hide' : 'Show'} its worktrees`}
+                    aria-expanded={open}
+                    aria-label={`${open ? 'Hide' : 'Show'} the worktrees of ${place.label}`}
+                    title={`${open ? 'Hide' : 'Show'} its worktrees`}
                     onClick={() => {
                       setCursorKey(place.key)
-                      fold(place, !unfolded)
+                      fold(place, !open)
                     }}
                   >
-                    <ChevronIcon size={12} className={`chevron ${unfolded ? 'down' : ''}`} />
+                    <ChevronIcon size={12} className={`chevron ${open ? 'down' : ''}`} />
                   </button>
                 ) : (
                   place.parent === undefined && <span className="dialog-option-fold" />
@@ -263,7 +265,15 @@ export function NewSessionDialog({
                   id={`place-${index}`}
                   role="option"
                   aria-selected={index === cursor}
-                  aria-label={place.branch === undefined ? undefined : place.label}
+                  // A worktree is named with its project; a project of several says whether they show, as an option
+                  // cannot carry `aria-expanded`.
+                  aria-label={
+                    place.branch !== undefined
+                      ? place.label
+                      : place.worktrees > 0
+                        ? `${place.label}, ${place.worktrees} worktrees ${open ? 'shown' : 'hidden'}`
+                        : undefined
+                  }
                   className={`dialog-option ${index === cursor ? 'active' : ''}`}
                   disabled={sending}
                   onClick={() => void start(place.path)}
