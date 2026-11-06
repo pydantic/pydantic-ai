@@ -280,9 +280,8 @@ Inside a run, the summary run takes the parent run's `conversation_id` without t
 
 > [!WARNING]
 > **Compatibility impact:** `FallbackCompaction` now tries the next strategy on `UnexpectedModelBehavior`
-> by default, including exhausted summary retries, instead of propagating it immediately. This is a
-> maintainer-approved Harness 0.x behavior change. Pass `fallback_on=(ModelAPIError, FallbackExceptionGroup)`
-> to retain the previous exception selection.
+> by default, including exhausted summary retries, instead of propagating it immediately. Pass
+> `fallback_on=(ModelAPIError, FallbackExceptionGroup)` to retain the previous exception selection.
 
 `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`.
 
@@ -612,7 +611,9 @@ history with an empty summary. Its nested summary run inherits the parent usage 
 one request from a finite request limit for the pending parent request. These limits also apply to
 retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead.
 On the automatic path, summary errors are [skipped](#a-summary-that-fails); the parent run's usage
-limits still apply and `UsageLimitExceeded` propagates.
+limits still apply and `UsageLimitExceeded` propagates. To fall back when the summary run hits its
+reserved limit, add `UsageLimitExceeded` to `FallbackCompaction`'s `fallback_on`, preferably with a
+fallback strategy that makes no model requests; this does not raise the parent run's limits.
 
 Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
@@ -801,7 +802,7 @@ to keep span cardinality low. Attributes:
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
-| `compaction.skipped` | str | `summary_failed` when an automatic summary failed, or `not_smaller` when its result wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.skipped` | str | `summary_failed` when an automatic summary failed, or `not_smaller` when its result wasn't smaller than the history; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
 | `error.type` | str | With `compaction.skipped='summary_failed'`: the exception's class name |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
