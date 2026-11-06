@@ -12,11 +12,13 @@ unknown ones are ignored, like model settings.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 from typing_extensions import get_type_hints
@@ -669,10 +671,19 @@ class TestProviderSettings:
         assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())
 
 
-def _google_request_file_search(tool: FileSearchTool) -> dict[str, Any]:
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    tools, _ = model._get_native_tools(ModelRequestParameters(native_tools=[tool]))  # pyright: ignore[reportPrivateUsage]
-    return dict(tools[0].get('file_search') or {})
+def _google_request_file_search(tool: AbstractNativeTool) -> dict[str, Any]:
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(json.loads(request.content))
+        candidate = {'content': {'role': 'model', 'parts': [{'text': 'ok'}]}, 'finishReason': 'STOP'}
+        usage = {'promptTokenCount': 1, 'candidatesTokenCount': 1}
+        return httpx2.Response(200, json={'candidates': [candidate], 'usageMetadata': usage})
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+    Agent(GoogleModel('gemini-3-flash-preview', provider=provider), capabilities=[NativeTool(tool)]).run_sync('hi')
+    return requests[0]['tools'][0]['fileSearch']
 
 
 @pytest.mark.parametrize(

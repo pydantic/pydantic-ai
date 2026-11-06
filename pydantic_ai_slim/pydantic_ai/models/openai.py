@@ -8141,10 +8141,7 @@ def _build_tool_search_return_part(
 
 
 def _map_file_search_tool_param(tool: FileSearchTool) -> responses.FileSearchToolParam:
-    file_search_tool = cast(
-        responses.FileSearchToolParam,
-        {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-    )
+    file_search_tool = responses.FileSearchToolParam(type='file_search', vector_store_ids=list(tool.file_store_ids))
     if tool.max_num_results is not None:
         file_search_tool['max_num_results'] = tool.max_num_results
     return file_search_tool
