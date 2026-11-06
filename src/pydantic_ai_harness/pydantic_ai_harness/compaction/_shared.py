@@ -616,8 +616,8 @@ async def compact_with_span(
             when there was one.
     """
     token = open_receipt_scope()
-    attributes: dict[str, AttributeValue] = {}
-    attributes_token = _pending_span_attributes.set(attributes)
+    recorded_attributes: dict[str, AttributeValue] = {}
+    attributes_token = _pending_span_attributes.set(recorded_attributes)
     try:
         compacted = await compact()
         receipts = drain_receipts()
@@ -643,7 +643,7 @@ async def compact_with_span(
                 span.set_attribute('compaction.model_requested', True)
             if background is not None:
                 span.set_attribute('compaction.background', background)
-            span.set_attributes(attributes)
+            span.set_attributes(recorded_attributes)
             for receipt in receipts:
                 attributes = {
                     'compaction.receipt.strategy': receipt.strategy,
