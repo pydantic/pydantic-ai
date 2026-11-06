@@ -95,6 +95,7 @@ from ..realtime.ws_cassettes import (
     ReplayWebSocket,
     realtime_cassette_plan,
 )
+from .mock_openai import with_history_digests
 
 with try_import() as imports_successful:
     import logfire
@@ -1556,7 +1557,9 @@ async def test_continuation_scopes_automatic_server_state_by_endpoint(
         http_client=http.client,
         base_url='https://api.openai.com/v1' if same_endpoint else 'https://gateway-a.example/v1',
     )
-    first = await Agent(OpenAIResponsesModel('gpt-4o', provider=provider)).run('first')
+    first = await Agent(OpenAIResponsesModel('gpt-4o', provider=provider)).run(
+        'first', model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    )
     settings: OpenAIResponsesModelSettings = {
         'openai_previous_response_id': previous_response_id,
         'openai_transport': transport,
@@ -1887,7 +1890,7 @@ async def test_compatible_compaction_stops_older_response_chaining(
         settings=settings,
         profile=OpenAIModelProfile(openai_responses_supports_prompt_cache_diagnostics=True),
     )
-    await Agent(model).run('after compaction', message_history=history)
+    await Agent(model).run('after compaction', message_history=with_history_digests(history))
 
     body = sockets.opened[0].sent[0]
     if compaction_provider == 'azure':

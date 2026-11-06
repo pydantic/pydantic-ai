@@ -359,22 +359,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     def _build_roster(self, disk_agents: list[SubAgent[AgentDepsT]]) -> None:
         if self.max_depth < 1:
             raise ValueError(f'`max_depth` counts the top-level run, so it must be at least 1; got {self.max_depth}.')
-        by_name: dict[str, SubAgent[AgentDepsT]] = {}
-        for sub_agent in self.agents:
-            name = sub_agent.resolved_name
-            if name is None:
-                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
-            if self.include_self and name == SELF_AGENT_NAME:
-                raise ValueError(
-                    f'Sub-agent name {SELF_AGENT_NAME!r} is taken by the running agent when `include_self=True`; '
-                    f'set `SubAgent(name=...)` to rename it.'
-                )
-            if name in by_name:
-                raise ValueError(
-                    f'Duplicate sub-agent name {name!r}. Each sub-agent needs a distinct name; '
-                    f'set `SubAgent(name=...)` to disambiguate.'
-                )
-            by_name[name] = sub_agent
+        by_name = self._explicit_agents_by_name()
         # Disk agents are lower precedence than explicit ones and than earlier
         # folders, so a name already taken is shadowed (a warning, not an error --
         # overriding a shared folder's agent from an earlier one, or a disk agent from code, is
@@ -396,6 +381,25 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         for name, sub_agent in by_name.items():
             validate_restriction(name, sub_agent.models, self._menu)
         self._validate_task_control()
+
+    def _explicit_agents_by_name(self) -> dict[str, SubAgent[AgentDepsT]]:
+        by_name: dict[str, SubAgent[AgentDepsT]] = {}
+        for sub_agent in self.agents:
+            name = sub_agent.resolved_name
+            if name is None:
+                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
+            if self.include_self and name == SELF_AGENT_NAME:
+                raise ValueError(
+                    f'Sub-agent name {SELF_AGENT_NAME!r} is taken by the running agent when `include_self=True`; '
+                    f'set `SubAgent(name=...)` to rename it.'
+                )
+            if name in by_name:
+                raise ValueError(
+                    f'Duplicate sub-agent name {name!r}. Each sub-agent needs a distinct name; '
+                    f'set `SubAgent(name=...)` to disambiguate.'
+                )
+            by_name[name] = sub_agent
+        return by_name
 
     def _validate_task_control(self) -> None:
         if (control := self.task_control) is not None:
@@ -680,9 +684,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     def _has_delegates(self) -> bool:
         return bool(self._by_name or self.include_self or self._remote_agents or self.dynamic_agents)
 
-    def _render_instructions(self) -> str | None:
-        if self._delegation_off or not self._has_delegates():
-            return None
+    def _agent_listing(self) -> str:
         lines: list[str] = [f'- {SELF_AGENT_NAME}: {_SELF_DESCRIPTION}'] if self.include_self else []
         for name, sub_agent in self._by_name.items():
             description = sub_agent.description or sub_agent.agent.description
@@ -692,11 +694,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             f'- {remote.name}: {remote.description}' if remote.description else f'- {remote.name}'
             for remote in self._remote_agents
         )
-        listing = '\n'.join(lines) or '(none yet)'
+        return '\n'.join(lines) or '(none yet)'
+
+    def _render_instructions(self) -> str | None:
+        if self._delegation_off or not self._has_delegates():
+            return None
         instructions = (
             f'You can delegate self-contained tasks to these sub-agents using the `{self.tool_name}` '
             f'tool. Each runs in its own fresh context and does not see this conversation, so pass '
-            f'everything it needs.\n\nAvailable sub-agents:\n{listing}'
+            f'everything it needs.\n\nAvailable sub-agents:\n{self._agent_listing()}'
         )
         if self.dynamic_agents is not None:
             instructions += (

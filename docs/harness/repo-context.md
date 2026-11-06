@@ -54,7 +54,7 @@ target, to load it.
 - `'repo_root'` walks up to the nearest directory, starting at the working directory, that contains one of `root_markers` (`('.git',)` by default), as Codex does. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned.
 - `'all'` walks every ancestor up to the filesystem root, as Claude Code does.
 
-`home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir` is not an ancestor of the working directory, only the working directory is scanned.
+`home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir`, with its symlinks followed, is not an ancestor of the working directory, only the working directory is scanned.
 
 Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by content hash, so two ancestors with identical content load once. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path.
 

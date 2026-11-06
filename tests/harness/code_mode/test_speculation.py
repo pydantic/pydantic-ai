@@ -102,6 +102,7 @@ def build_agent(
     extra_capabilities: Sequence[AbstractCapability[None]] = (),
     raw_args: str | None = None,
     name: str | None = None,
+    tools: Sequence[Tool[None]] = (),
 ) -> Agent[None, str]:
     """Agent whose model streams one `run_code` call for `code` in `chunk_size` pieces."""
 
@@ -131,7 +132,7 @@ def build_agent(
 
     model = FunctionModel(call_code, stream_function=stream_code)
     agent: Agent[None, str] = Agent(
-        model, name=name, deps_type=type(None), capabilities=[capability, *extra_capabilities]
+        model, name=name, deps_type=type(None), tools=tools, capabilities=[capability, *extra_capabilities]
     )
 
     @agent.tool_plain
@@ -186,6 +187,33 @@ class TestSpeculation:
         assert capability.speculation_stats.launched == 1
         assert capability.speculation_stats.adopted == 1
         assert capability.speculation_stats.evicted == 0
+
+    async def test_renamed_parameters_launch_under_their_schema_names(self):
+        """A speculated call passes a keyword-named parameter to the tool under its schema name."""
+        log = ToolLog()
+
+        async def lookup(**kwargs: Any) -> str:
+            # Speculation launches the call while the model is still streaming the snippet.
+            assert not log.streaming_done
+            log.started_during_stream += 1
+            log.calls.append(('lookup', json.dumps(kwargs)))
+            return 'found'
+
+        tool = Tool[None].from_schema(
+            lookup,
+            name='lookup',
+            description='Look up a sender.',
+            json_schema={'type': 'object', 'properties': {'from': {'type': 'string'}}, 'required': ['from']},
+        )
+        capability = CodeMode[None](speculate=['lookup'])
+        agent = build_agent(log, padded('a = await lookup(from_="alpha")\nprint(a)'), capability, tools=[tool])
+
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        assert log.calls == [('lookup', '{"from": "alpha"}')]
+        assert log.started_during_stream == 1
+        assert capability.speculation_stats.adopted == 1
 
     async def test_disabled_by_default_runs_cold(self):
         """Without `speculate`, nothing launches early and behavior is unchanged."""

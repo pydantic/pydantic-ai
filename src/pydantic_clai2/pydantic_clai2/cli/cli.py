@@ -95,9 +95,9 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
+    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'update'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    args = _parse_args(parser)
     _resume_source(args)
     _validate_args(args, parser)
     if args.database is not None:
@@ -209,7 +209,7 @@ def run(*, splash: Splash | None = None) -> None:
                     settings_for=settings_for,
                 )
             )
-            offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands)
+            offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(
@@ -231,6 +231,16 @@ def run(*, splash: Splash | None = None) -> None:
     except KeyboardInterrupt:
         if args.prompt is not None or args.web or args.update:
             raise SystemExit(130) from None
+
+
+def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """Normalize the update command before validating modes and session options."""
+    args = parser.parse_args()
+    while args.command == 'update':
+        # `clai2 update` is `clai2 --update`; options after it parse as they would before it.
+        parser.parse_args(args.arguments, namespace=args)
+        args.update = True
+    return args
 
 
 async def _update(channel: 'UpdateChannel') -> int:
