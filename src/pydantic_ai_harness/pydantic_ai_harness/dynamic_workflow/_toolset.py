@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
-import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -199,7 +198,7 @@ def _is_valid_sandbox_name(name: str) -> bool:
     valid identifiers but cannot be used as function names, so the model could never call them.
     Callers guard the empty/`None` case before this is reached.
     """
-    return name.isidentifier() and not keyword.iskeyword(name)
+    return _is_python_identifier(name)
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
