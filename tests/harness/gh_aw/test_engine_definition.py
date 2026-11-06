@@ -1084,7 +1084,8 @@ async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     )
     monkeypatch.setenv('GH_AW_MCP_CONFIG', invocation.env['GH_AW_MCP_CONFIG'])
     monkeypatch.delitem(sys.modules, 'custom_agent', raising=False)
-    module = import_generated_agent(invocation, monkeypatch)
+    # Off the event loop, as the launcher imports it: a first import of `pydantic_ai.mcp` scans package files.
+    module = await asyncio.to_thread(import_generated_agent, invocation, monkeypatch)
     agent: Agent[None, str] = module.agent
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
