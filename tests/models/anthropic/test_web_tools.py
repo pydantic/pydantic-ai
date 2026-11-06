@@ -263,6 +263,41 @@ def test_anthropic_20260318_web_search_settings_rejected_on_vertex(allow_model_r
         agent.run_sync('hi')
 
 
+def test_anthropic_20260318_web_search_settings_profile_override_on_vertex():
+    """A Vertex deployment that accepts `web_search_20260318` can opt in through the model profile."""
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(
+            anthropic_client=mock_anthropic_client(
+                AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
+            )
+        ),
+        profile=AnthropicModelProfile(anthropic_supports_web_tools_20260318=True),
+    )
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
+        ]
+    )
+
+    tools, *_ = model._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    assert tools == snapshot(
+        [
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260318',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+                'response_inclusion': 'full',
+                'allowed_callers': ['direct'],
+            }
+        ]
+    )
+
+
 def _native_parts(result: AgentRunResult[str]) -> list[tuple[str, str]]:
     """The native tool calls and returns in a run, which show what `response_inclusion` left in the response."""
     return [
