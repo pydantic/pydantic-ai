@@ -2771,6 +2771,106 @@ class TestCodeMode:
         assert description.count('get_weather') >= 1
         assert 'Get weather (dots)' not in description
 
+    async def test_parameter_names_that_are_not_identifiers_dispatch_under_their_schema_names(self) -> None:
+        """Keyword and non-identifier parameter names are renamed in the sandbox and restored for the tool call.
+
+        Object fields keep their schema names, so the type-checked snippet passes `@type` and `from` as `dict` keys.
+        """
+        received: list[dict[str, Any]] = []
+
+        def search(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'found'
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'properties': {'@type': {'type': 'string'}, 'from': {'type': 'integer'}},
+                    'required': ['@type'],
+                },
+            },
+            'required': ['from', 'user-id', 'filter'],
+        }
+        code = "await search(from_='me', user_id='u-1', filter={'@type': 'mail', 'from': 3})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(search, name='search', description='Search.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Search.')
+
+        assert received == snapshot([{'from': 'me', 'user-id': 'u-1', 'filter': {'@type': 'mail', 'from': 3}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('found')
+
+    async def test_functional_typed_dicts_reference_types_defined_later(self) -> None:
+        """A functional TypedDict can name itself and types rendered after it, under the type check."""
+        received: list[dict[str, Any]] = []
+
+        def walk(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'walked'
+
+        schema = {
+            'type': 'object',
+            'properties': {'node': {'$ref': '#/$defs/Node'}},
+            'required': ['node'],
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        '@id': {'type': 'string'},
+                        'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}},
+                        'meta': {
+                            'type': 'object',
+                            'title': 'Meta',
+                            'properties': {'label': {'type': 'string'}},
+                            'required': ['label'],
+                        },
+                    },
+                    'required': ['@id'],
+                }
+            },
+        }
+        code = "await walk(node={'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(walk, name='walk', description='Walk a tree.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Walk.')
+
+        assert received == snapshot([{'node': {'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('walked')
+
     async def test_sanitized_name_collision_with_native_tool(self) -> None:
         """A sanitized name that collides with a native (already valid) tool is dropped."""
         td_native = ToolDefinition(
