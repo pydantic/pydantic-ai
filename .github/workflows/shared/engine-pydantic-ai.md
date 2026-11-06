@@ -50,7 +50,18 @@ pre-agent-steps:
   - name: Install tools for the AWF sandbox (ripgrep, uv)
     run: bash .github/scripts/install-sandbox-tools.sh
 post-steps:
+  # Run the forwarder from trusted default-branch content: under workflow_run the
+  # checkout can be contributor-authored code, and this step holds the OTLP credential.
   - name: Forward agent spans to the OTLP endpoint
     if: always()
-    run: python3 .github/scripts/forward_agent_traces.py
+    continue-on-error: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    run: |
+      set -euo pipefail
+      install -d "$RUNNER_TEMP/gh-aw/trusted"
+      gh api "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/forward_agent_traces.py?ref=${DEFAULT_BRANCH}" \
+        --jq .content | base64 -d > "$RUNNER_TEMP/gh-aw/trusted/forward_agent_traces.py"
+      python3 "$RUNNER_TEMP/gh-aw/trusted/forward_agent_traces.py"
 ---

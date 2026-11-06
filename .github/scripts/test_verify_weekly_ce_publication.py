@@ -108,3 +108,14 @@ def test_proposal_survives_the_artifact_upload_and_download(tmp_path: pathlib.Pa
     )
     with pytest.raises(ValueError, match='differs'):
         verify(download_root / 'agent_output.json', download_root / 'reviewed-proposal.json')
+
+
+def test_unexpected_published_fields_are_rejected(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match='unexpected fields'):
+        verify(
+            _write(
+                tmp_path / 'agent_output.json',
+                [{'type': 'create_pull_request', **PROPOSAL, 'base': 'other-branch'}],
+            ),
+            _reviewed(tmp_path / 'proposal.json'),
+        )

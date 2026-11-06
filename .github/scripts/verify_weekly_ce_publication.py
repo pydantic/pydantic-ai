@@ -17,6 +17,7 @@ import sys
 from pydantic import TypeAdapter
 
 PROPOSAL_KEYS = ('title', 'body', 'branch')
+PUBLISHED_KEYS = frozenset({'type', *PROPOSAL_KEYS})
 MAPPING_ADAPTER = TypeAdapter(dict[str, object])
 ITEMS_ADAPTER = TypeAdapter(list[dict[str, object]])
 
@@ -53,6 +54,9 @@ def verify(safe_outputs: pathlib.Path, reviewed: pathlib.Path) -> None:
         return
     if len(proposals) > 1:
         raise ValueError('Only one focused pull request is permitted')
+    unexpected = sorted(set(proposals[0]) - PUBLISHED_KEYS)
+    if unexpected:
+        raise ValueError(f'Published pull request carries unexpected fields: {", ".join(unexpected)}')
     if not reviewed.is_file():
         raise ValueError('Published pull request has no independently reviewed proposal')
     expected = _mapping(json.loads(reviewed.read_text(encoding='utf-8')))
