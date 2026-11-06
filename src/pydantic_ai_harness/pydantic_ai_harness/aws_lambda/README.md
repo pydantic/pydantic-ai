@@ -214,7 +214,8 @@ From Python, call `boto3.client('lambda').send_durable_execution_callback_succes
 Result=json.dumps(decision))`. An approval can also deny the call with a message for the model, or
 approve it with different arguments; [The decision](https://pydantic.dev/docs/ai/capabilities/durable-approvals/#the-decision) lists every form.
 `send-durable-execution-callback-failure` ends the wait without a decision, like a timeout: every
-pending call is denied with a message saying why, and the run continues.
+pending approval is denied and every pending external call fails, with a message saying why, and the
+run continues.
 
 The callback's `timeout` is set from `DurableApprovals(timeout=...)`, rounded up to whole seconds.
 Without one, the execution waits until its `ExecutionTimeout`. The announcement is a step like any
