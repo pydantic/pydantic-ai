@@ -1,5 +1,6 @@
 """The opt-in `shell` tool: commands that outlive the run, with a bounded foreground wait."""
 
+import contextlib
 import json
 import os
 import shlex
@@ -376,6 +377,17 @@ class TestShellTool:
         assert recorder.finished.exit_code is None
         assert recorder.finished.total_lines == 0
         assert recorder.output == ''
+
+    async def test_supervisor_exits_after_its_job_directory_is_removed(self, tmp_path: Path) -> None:
+        # With nowhere to create `watch.stop`, the supervisor must still stop its log watcher rather than wait on it.
+        output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        try:
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
 
     async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
         toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()

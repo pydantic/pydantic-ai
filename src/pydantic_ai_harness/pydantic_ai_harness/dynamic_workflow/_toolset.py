@@ -406,6 +406,24 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
+def _dispatched_task(agent_name: str, kwargs: Mapping[str, object]) -> str:
+    """The `task` a sandbox call to sub-agent `agent_name` passed, its only keyword argument."""
+    # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
+    # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
+    # results) -- so check here: a dropped extra kwarg or a non-string `task` would
+    # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
+    # is touched.
+    if 'task' not in kwargs:
+        raise TypeError(f'{agent_name}() missing required keyword argument: task')
+    extra = sorted(set(kwargs) - {'task'})
+    if extra:
+        raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
+    task = kwargs['task']
+    if not isinstance(task, str):
+        raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
+    return task
+
+
 @dataclass(frozen=True)
 class WorkflowAgent(Generic[AgentDepsT]):
     """One sub-agent exposed to the orchestration script as an async function.
@@ -775,19 +793,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
         async def dispatch(agent_name: str, kwargs: dict[str, Any]) -> Any:
             nonlocal budget_exhausted
-            # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
-            # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
-            # results) -- so check here: a dropped extra kwarg or a non-string `task` would
-            # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
-            # is touched.
-            if 'task' not in kwargs:
-                raise TypeError(f'{agent_name}() missing required keyword argument: task')
-            extra = sorted(set(kwargs) - {'task'})
-            if extra:
-                raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
-            task = kwargs['task']
-            if not isinstance(task, str):
-                raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
+            task = _dispatched_task(agent_name, kwargs)
             try:
                 output = await self._run_one(agent_name, task, ctx)
             except _BudgetExhausted:
