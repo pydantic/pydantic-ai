@@ -1195,6 +1195,10 @@ class TestSpritesSandbox:
         with pytest.raises(ValueError, match='timeout'):
             await SpritesSandboxBackend().run(['true'], timeout=timeout)
 
+    async def test_non_number_timeout_raises_value_error(self, transport: SpriteTransport) -> None:
+        with pytest.raises(ValueError, match=r"^timeout must be a positive finite number or None, got '5'\.$"):
+            await SpritesSandboxBackend().run(['true'], timeout='5')  # pyright: ignore[reportArgumentType]
+
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)
 

@@ -89,6 +89,7 @@ from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
     check_provider,
+    check_timeout,
     command_argv,
     require_asyncio,
     run_to_completion,
@@ -693,8 +694,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         the backend's own commands, which must not recurse into another capture read or check. `sandbox` is for a
         command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory.
         """
-        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+        check_timeout(timeout)
         directory = cwd or self._working_dir
         marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
