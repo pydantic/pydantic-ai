@@ -282,6 +282,34 @@ class TestCoder:
         assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
         assert 'Measure results against any numeric target the task states.' in seen['Run it']
 
+    async def test_a_durable_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
+        """A durable worker does not inherit the caller's context variables, and the delegate text still applies.
+
+        The child run is awaited only after `delegation_depth()` is set, and a recorded delegation sets
+        that level again on the worker before the child starts. An isolated operation body sees a fresh
+        context, which is where a worker would lose a context variable read too late.
+        """
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            _finish_or_delegate(seen, messages, info)
+            yield 'done'
+
+        agent = Agent(
+            FunctionModel(respond, stream_function=stream),
+            name='coder',
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Coder(agency='low', repo_context=False),
+                RecordingDurability(isolated=True),
+            ],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+
     async def test_a_delegate_with_task_control_is_also_told_to_finish(self, tmp_path: Path) -> None:
         """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone.
 

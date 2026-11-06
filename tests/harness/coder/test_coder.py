@@ -10,7 +10,7 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Capability, LocalWorkspace, local_workspace
+from pydantic_ai.capabilities import LocalWorkspace, local_workspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -132,7 +132,7 @@ def test_coder_members_and_parameters() -> None:
     shell = next(item for item in coder.capabilities if isinstance(item, Shell))
     assert (shell.tools, shell.denied_commands, shell.allow_interactive) == (['shell'], [], True)
     assert (shell.env, shell.denied_env_patterns) == (None, [])
-    guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
+    guidance = next(item for item in coder.capabilities if type(item).__name__ == '_CoderGuidance')
     assert guidance.id == 'coder_instructions'
     repo = next(item for item in coder.capabilities if isinstance(item, RepoContext))
     assert repo == RepoContext[object](walk_up='repo_root')

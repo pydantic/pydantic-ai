@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
@@ -121,37 +120,33 @@ and discards its work.
 """
 
 
-class _CoderGuidance(Capability[AgentDepsT]):
-    """Literal coding guidance, with the delegate text installed when this run is a delegate.
+@dataclass
+class _CoderGuidance(AbstractCapability[AgentDepsT]):
+    """Literal coding guidance, with the delegate text chosen when this run is a delegate.
 
     `Coder` is flattened into the agent's capability list, so this leaf is what `for_run` reaches.
     The texts are strings: a function would be dynamic, and the static prompt-cache prefix ends at
-    the first dynamic part. `for_run` copies this instance and sets `_delegate`, so the copy shares
-    the construction-time function toolset. A new `Capability` would be a toolset added at runtime,
-    which durable execution rejects.
+    the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
+    default, so two copies are rejected rather than merged. A delegate's text comes from
+    `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
+    a recorded delegation sets again on the worker.
     """
 
-    def __init__(
-        self,
-        guidance: str,
-        delegated: str,
-        project: Sequence[Callable[[RunContext[AgentDepsT]], Awaitable[str]]],
-    ) -> None:
-        super().__init__(id='coder_instructions', instructions=None)
-        self._guidance = guidance
-        self._delegated_guidance = delegated
-        self._project = project
-        self._delegate = False
+    guidance: str
+    delegated_guidance: str
+    project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
+    delegate: bool = False
+
+    def __post_init__(self) -> None:
+        self.id = 'coder_instructions'
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return [self._delegated_guidance if self._delegate else self._guidance, *self._project]
+        return [self.delegated_guidance if self.delegate else self.guidance, *self.project]
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Capability[AgentDepsT]:
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         if delegation_depth() <= 1:
             return self
-        serving = copy.copy(self)
-        serving._delegate = True
-        return serving
+        return replace(self, delegate=True)
 
 
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
@@ -269,8 +264,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            # The id also names its (empty) function toolset, which durable execution requires.
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, project),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],

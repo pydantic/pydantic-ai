@@ -310,7 +310,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
-    '_CoderGuidance': Anonymous(
+    '_CoderGuidance': Rejected(
         'Coder-local guidance; its `coder_instructions` id is set per instance, so a second copy raises rather than merging'
     ),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
