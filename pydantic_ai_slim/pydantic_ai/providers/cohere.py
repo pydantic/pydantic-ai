@@ -22,6 +22,15 @@ except ImportError as _import_error:
 # is what users should see, not `ModuleNotFoundError: httpx`.
 import httpx
 
+# Probe-backed (pydantic/pydantic-ai#12070): families that accept `response_format`
+# structured output. Cohere's own docs list fewer families; the probes are the source.
+_NATIVE_OUTPUT_MODEL_PREFIXES = (
+    'command-a-plus',
+    'command-a-03',
+    'command-a-reasoning',
+    'command-r7b-12',
+)
+
 
 class CohereProvider(Provider[AsyncClientV2]):
     """Provider for Cohere API."""
@@ -54,6 +63,9 @@ class CohereProvider(Provider[AsyncClientV2]):
             profile = merge_profile(
                 profile, ModelProfile(thinking_always_enabled=False, thinking_enabled_by_default=True)
             )
+        if model_name.startswith(_NATIVE_OUTPUT_MODEL_PREFIXES):
+            profile['supports_json_schema_output'] = True
+            profile['supports_json_object_output'] = True
         return profile
 
     def __init__(
