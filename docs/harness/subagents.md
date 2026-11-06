@@ -80,7 +80,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](../deferred-tools.md) or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
-- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, or in a child workflow when you opt in (see below), neither of which has access to the parent run's model, so a delegate needs a model of its own (or, in an activity, a `models` option); see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, or in a child workflow when you opt in (see [Delegates as child workflows](#delegates-as-child-workflows)), neither of which has access to the parent run's model, so a delegate needs a model of its own (or, in an activity, a `models` option); see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -297,7 +297,6 @@ orchestrator = Agent(
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
 - Only one `SubAgents` on an agent can set `task_control`. Task control, and `dynamic_agents` within a bound `DelegationTasks` owner, are not supported under durable execution: such a run under a durability capability raises a `UserError`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so this check can't catch them; don't use task control or `dynamic_agents` with them.
 - On Temporal and DBOS, `dynamic_agents` keeps the roster in the workflow and runs each delegation other than to `self` in a durable unit of its own, on the parent run's model unless the created agent has one, so recovery rebuilds the created agents and reuses each delegation's result. The `factory` runs again on replay, so keep it deterministic. Engines that record each tool call in a unit of its own would lose the roster on replay, so they raise a `UserError`. Under any durability capability, `SubAgents` needs an `id`, which it has by default; `id=None` raises a `UserError`.
-- On Temporal and DBOS, a delegate with its own durability on the parent's engine keeps it when the delegate tool runs as a child workflow ([Temporal](../durable_execution/temporal.md#child-workflows), [DBOS](../durable_execution/dbos.md#child-workflows)): add a [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] with `tools=['delegate_task']` and `temporal={'child_workflow': {}}` (or `dbos=...`) to the parent's capabilities. The delegate's model requests and tool calls are then recorded in the child's history rather than the parent's. The tool body runs as workflow code, so use it only when every delegate is durable on that engine, and on Temporal register each delegate with the worker too, for example with an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin]. With `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, or a delegate's `max_calls`, which rely on parent-run state the child workflow doesn't receive, a delegation raises a `UserError`. The delegate's usage isn't reliably counted in the parent run's usage, and the parent's usage limits don't bound it. The delegation depth isn't carried into the child workflow either, so if a delegate's own `SubAgents` also opts in, `max_depth` counts again from each child workflow and no longer bounds the tree.
 - Task control and `DelegationTasks` run tasks as asyncio tasks, so they need the asyncio event loop: AnyIO's Trio backend is not supported.
 
 ### Task events
@@ -507,6 +506,39 @@ readers and expose no shell, code execution, or parent plugin tools.
 
 Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
 and child run IDs provide correlation. This owner adds no logging exporter.
+
+## Durable execution
+
+### Delegates as child workflows
+
+By default, on Temporal a delegation to an agent other than `self` runs in an activity, and on DBOS it runs inline in the parent workflow, so a delegate's own durability does nothing. To keep it, run the delegate tool as a child workflow ([Temporal](../durable_execution/temporal.md#child-workflows), [DBOS](../durable_execution/dbos.md#child-workflows)) with [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai_harness.subagents import SubAgent, SubAgents
+
+worker = Agent('{{ anthropic:large }}', name='worker', capabilities=[TemporalDurability()])
+
+lead = Agent(
+    '{{ anthropic:large }}',
+    name='lead',
+    capabilities=[
+        SubAgents(agents=[SubAgent(worker)]),
+        SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}}),
+        TemporalDurability(),
+    ],
+)
+```
+
+On DBOS, use `DBOSDurability()` and `SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}})`. The delegate's model requests and tool calls are then recorded in the child's history rather than the parent's.
+
+- Every delegate must be durable on the parent's engine: the tool body runs as workflow code.
+- On Temporal, register each delegate with the worker too, for example with an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin].
+- `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
+- The delegate's usage isn't reliably counted in the parent run's usage, and the parent's usage limits don't bound it.
+- The delegation depth isn't carried into the child workflow, so if a delegate's own `SubAgents` also opts in, `max_depth` counts again from each child workflow and no longer bounds the tree.
 
 ## Discovery
 
