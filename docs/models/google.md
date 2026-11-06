@@ -180,13 +180,13 @@ URL context, code execution, file search, and remote MCP servers; availability d
 and endpoint. Image-capable models support `BinaryImage` output and `ImageGenerationTool`.
 
 [`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
-provides typed Interactions settings. `google_native_tools` exposes additional native tools, such as
+provides typed Interactions settings. `google_interactions_native_tools` exposes additional native tools, such as
 Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type. Use the shared `thinking`, `tool_choice`, and `service_tier`
 settings for portable configuration. `google_labels` and `google_video_resolution` use the same types
 as `GoogleModelSettings`. Safety settings have a different API shape: use
 `google_interactions_safety_settings` for Interactions and `google_safety_settings` for GenerateContent.
 For native audio or video output, configure
-`google_response_format` and, when needed, `google_generation_config`, and read the returned
+`google_interactions_response_format` and, when needed, `google_interactions_generation_config`, and read the returned
 [`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
 The typed generation configuration also exposes voice selection, transcription and video task controls.
 

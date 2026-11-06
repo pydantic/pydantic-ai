@@ -70,7 +70,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._stream:
             for value in self._ready_events(event):
-                for result in await self._map_event(value):
+                for result in self._map_event(value):
                     yield result
         if not self._completed:
             raise UnexpectedModelBehavior('Google Interactions stream ended before `interaction.completed`.')
@@ -107,15 +107,15 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             )
         )
 
-    async def _map_event(self, event: gi.InteractionSSEEvent) -> Iterable[ModelResponseStreamEvent]:
+    def _map_event(self, event: gi.InteractionSSEEvent) -> Iterable[ModelResponseStreamEvent]:
         if isinstance(event, gi.StepStart):
-            return await self._map_start(event)
+            return self._map_start(event)
         elif isinstance(event, gi.StepDelta):
             return self._map_delta(event)
         elif isinstance(event, gi.StepStop):
-            return await self._map_stop(event)
+            return self._map_stop(event)
         elif isinstance(event, gi.InteractionCompletedEvent):
-            return await self._map_completed(event)
+            return self._map_completed(event)
         elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
             return ()
         elif isinstance(event, gi.ErrorEvent):
@@ -125,7 +125,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         else:
             raise UnexpectedModelBehavior(f'Unexpected Google Interactions stream event: {event}')
 
-    async def _map_start(self, event: gi.StepStart) -> list[ModelResponseStreamEvent]:
+    def _map_start(self, event: gi.StepStart) -> list[ModelResponseStreamEvent]:
         step = event.step
         self._steps[event.index] = JSON_OBJECT.validate_python(
             step.model_dump(mode='json', by_alias=True, exclude_none=True)
@@ -158,14 +158,14 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
                 self._parts_manager.handle_part(vendor_part_id=(event.index, index), part=part)
                 for index, part in enumerate(
                     mark_step(
-                        await map_step(step, self.provider_name, server_calls=self._server_calls),
+                        map_step(step, self.provider_name, server_calls=self._server_calls),
                         event.index,
                     )
                 )
             ]
         return []
 
-    async def _map_stop(self, event: gi.StepStop) -> list[ModelResponseStreamEvent]:
+    def _map_stop(self, event: gi.StepStop) -> list[ModelResponseStreamEvent]:
         self._flush_content(event.index)
         if event.index in self._arguments:
             self._steps[event.index]['arguments'] = JSON_OBJECT.validate_json(''.join(self._arguments.pop(event.index)))
@@ -185,7 +185,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             )
         events: list[ModelResponseStreamEvent] = []
         for index, part in enumerate(
-            mark_step(await map_step(step, self.provider_name, server_calls=self._server_calls), event.index)
+            mark_step(map_step(step, self.provider_name, server_calls=self._server_calls), event.index)
         ):
             if (
                 isinstance(step, gi.ModelOutputStep)
@@ -205,10 +205,10 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
                 events.append(self._parts_manager.handle_part(vendor_part_id=(event.index, index), part=part))
         return events
 
-    async def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
+    def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
         events: list[ModelResponseStreamEvent] = []
         for index in list(self._content_buffers):
-            events.extend(await self._map_stop(gi.StepStop(index=index)))
+            events.extend(self._map_stop(gi.StepStop(index=index)))
         raw = JSON_OBJECT.validate_python(event.interaction.model_dump(mode='json', by_alias=True, exclude_none=True))
         raw['steps'] = [self._steps[index] for index in sorted(self._steps)]
         response = build_response(

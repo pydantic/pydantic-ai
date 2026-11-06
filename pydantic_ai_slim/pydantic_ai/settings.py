@@ -124,7 +124,7 @@ with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not 
 routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
-`google_service_tier`, `google_cloud_service_tier`) always take precedence over this unified field when set.
+`google_interactions_service_tier`, `google_cloud_service_tier`) always take precedence over this unified field when set.
 """
 
 
@@ -682,7 +682,7 @@ class ModelSettings(TypedDict, total=False):
 
     See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
     the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
-    `anthropic_service_tier`, `bedrock_service_tier`, `google_service_tier`, `google_cloud_service_tier`)
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_interactions_service_tier`, `google_cloud_service_tier`)
     take precedence over this unified field when set.
 
     Supported by:

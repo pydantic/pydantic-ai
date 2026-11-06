@@ -134,26 +134,26 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     Use the shared `thinking` and `service_tier` settings when switching between the two APIs.
     """
 
-    google_thinking_level: gi.ThinkingLevel
+    google_interactions_thinking_level: gi.ThinkingLevel
     """Native thinking level; overrides the shared `thinking` setting."""
-    google_thinking_summaries: gi.ThinkingSummaries
+    google_interactions_thinking_summaries: gi.ThinkingSummaries
     """Whether the API includes thought summaries."""
     google_interactions_safety_settings: list[gi.SafetySettingParam]
     """Safety settings in the Interactions API format. Support depends on the model and API."""
-    google_response_format: gi.CreateModelInteractionResponseFormatParam
+    google_interactions_response_format: gi.CreateModelInteractionResponseFormatParam
     """Native response format for text, image, audio or video generation.
 
     Structured output and `ImageGenerationTool` configure this automatically.
     Use inline delivery: video URI delivery requires server-side storage, which this model disables.
     """
-    google_generation_config: gi.GenerationConfigParam
+    google_interactions_generation_config: gi.GenerationConfigParam
     """Additional typed generation configuration, including speech, transcription and video.
 
     Values override the corresponding shared model settings.
     """
-    google_service_tier: gi.ServiceTier
+    google_interactions_service_tier: gi.ServiceTier
     """Native service tier; overrides the shared `service_tier` setting."""
-    google_native_tools: list[gi.ToolParam]
+    google_interactions_native_tools: list[gi.ToolParam]
     """Additional typed native tools, such as Google Maps and Vertex retrieval.
 
     Use `NativeTool` with the shared native-tool types when one represents the tool.
@@ -263,12 +263,12 @@ class GoogleInteractionsModel(Model[Client]):
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overrides: list[str] = []
-        if 'google_thinking_level' in model_settings:
-            overrides.append('google_thinking_level')
-        if 'google_generation_config' in model_settings:
-            config = _GENERATION_CONFIG.validate_python(model_settings['google_generation_config'])
+        if 'google_interactions_thinking_level' in model_settings:
+            overrides.append('google_interactions_thinking_level')
+        if 'google_interactions_generation_config' in model_settings:
+            config = _GENERATION_CONFIG.validate_python(model_settings['google_interactions_generation_config'])
             if 'thinking_level' in config:
-                overrides.append('google_generation_config')
+                overrides.append('google_interactions_generation_config')
         return tuple(overrides)
 
     async def request(
@@ -287,9 +287,7 @@ class GoogleInteractionsModel(Model[Client]):
             )
         if not isinstance(response, gi.Interaction):
             raise UnexpectedModelBehavior('Expected a non-streaming Google interaction.')
-        return await process_response(
-            response, self.model_name, self.system, self.base_url, self._canonical_system_stamp
-        )
+        return process_response(response, self.model_name, self.system, self.base_url, self._canonical_system_stamp)
 
     @asynccontextmanager
     async def request_stream(
@@ -384,8 +382,8 @@ class GoogleInteractionsModel(Model[Client]):
             request['system_instruction'] = '\n\n'.join(instructions)
         response_format: gi.CreateModelInteractionResponseFormatParam | None
         tools, response_format = self._map_tools(params)
-        if 'google_native_tools' in settings:
-            tools.extend(_NATIVE_TOOLS.validate_python(settings['google_native_tools']))
+        if 'google_interactions_native_tools' in settings:
+            tools.extend(_NATIVE_TOOLS.validate_python(settings['google_interactions_native_tools']))
         if tools:
             request['tools'] = tools
         config = self._generation_config(settings, params)
@@ -400,7 +398,7 @@ class GoogleInteractionsModel(Model[Client]):
             )
         if 'google_labels' in settings:
             request['labels'] = _LABELS.validate_python(settings['google_labels'])
-        tier = settings.get('google_service_tier')
+        tier = settings.get('google_interactions_service_tier')
         if tier is None:
             tier = {'default': 'standard', 'flex': 'flex', 'priority': 'priority'}.get(
                 settings.get('service_tier', 'auto')
@@ -426,8 +424,8 @@ class GoogleInteractionsModel(Model[Client]):
             }
         elif params.output_mode == 'prompted':
             response_format = {'type': 'text', 'mime_type': 'application/json'}
-        if 'google_response_format' in settings:
-            response_format = _RESPONSE_FORMAT.validate_python(settings['google_response_format'])
+        if 'google_interactions_response_format' in settings:
+            response_format = _RESPONSE_FORMAT.validate_python(settings['google_interactions_response_format'])
         return response_format
 
     def _generation_config(self, settings: ModelSettings, params: ModelRequestParameters) -> gi.GenerationConfigParam:
@@ -437,14 +435,16 @@ class GoogleInteractionsModel(Model[Client]):
                 native_key = 'max_output_tokens' if key == 'max_tokens' else key
                 config.update(_GENERATION_CONFIG.validate_python({native_key: settings.get(key)}))
         config.update(self._thinking_config(params.thinking))
-        if 'google_thinking_level' in settings:
-            config['thinking_level'] = _THINKING_LEVEL.validate_python(settings['google_thinking_level'])
-        if 'google_thinking_summaries' in settings:
-            config['thinking_summaries'] = _THINKING_SUMMARIES.validate_python(settings['google_thinking_summaries'])
+        if 'google_interactions_thinking_level' in settings:
+            config['thinking_level'] = _THINKING_LEVEL.validate_python(settings['google_interactions_thinking_level'])
+        if 'google_interactions_thinking_summaries' in settings:
+            config['thinking_summaries'] = _THINKING_SUMMARIES.validate_python(
+                settings['google_interactions_thinking_summaries']
+            )
         if params.declared_tool_defs:
             config['tool_choice'] = self._tool_choice(settings, params)
-        if 'google_generation_config' in settings:
-            config.update(_GENERATION_CONFIG.validate_python(settings['google_generation_config']))
+        if 'google_interactions_generation_config' in settings:
+            config.update(_GENERATION_CONFIG.validate_python(settings['google_interactions_generation_config']))
         return config
 
     def _tool_choice(self, settings: ModelSettings, params: ModelRequestParameters) -> gi.ToolChoiceParam:

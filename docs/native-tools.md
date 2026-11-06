@@ -1014,12 +1014,12 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter             | OpenAI | Anthropic | xAI |
-|-----------------------|--------|-----------|-----|
-| `authorization_token` | ✅ | ✅ | ✅ |
-| `allowed_tools`       | ✅ | ✅ | ✅ |
-| `description`         | ✅ | ❌ | ✅ |
-| `headers`             | ✅ | ❌ | ✅ |
+| Parameter             | OpenAI | Anthropic | xAI | Google Interactions |
+|-----------------------|--------|-----------|-----|---------------------|
+| `authorization_token` | ✅ | ✅ | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ | ✅ | ✅ |
+| `description`         | ✅ | ❌ | ✅ | ❌ |
+| `headers`             | ✅ | ❌ | ✅ | ✅ |
 
 ## File Search Tool
 

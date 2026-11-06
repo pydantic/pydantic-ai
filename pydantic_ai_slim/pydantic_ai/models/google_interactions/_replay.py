@@ -48,7 +48,10 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
         raw['content'] = replay_content(raw, parts)
     elif isinstance(part, NativeToolCallPart):
         validate_native_step(raw, part)
-        raw.update(id=part.tool_call_id, arguments=_JSON_OBJECT.validate_python(part.args_as_dict()))
+        args = part.args_as_dict()
+        if part.tool_name.partition(':')[0] == 'mcp_server':
+            args = args.get('tool_args', {})
+        raw.update(id=part.tool_call_id, arguments=_JSON_OBJECT.validate_python(args))
     elif isinstance(part, NativeToolReturnPart):
         validate_native_step(raw, part)
         raw.update(call_id=part.tool_call_id)

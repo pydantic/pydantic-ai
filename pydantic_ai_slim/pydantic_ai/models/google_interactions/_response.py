@@ -95,6 +95,12 @@ def mcp_tool_name(server_name: str | None) -> str:
     return f'mcp_server:{server_name}' if server_name else 'mcp_server'
 
 
+def mcp_call_args(name: str, server_name: str | None, arguments: JsonValue) -> dict[str, JsonValue]:
+    """Use the MCP call args shape the other adapters share; replay restores the wire name and arguments."""
+    tool_name = name.removeprefix(f'{server_name}:') if server_name else name
+    return {'action': 'call_tool', 'tool_name': tool_name, 'tool_args': arguments if arguments is not None else {}}
+
+
 def mcp_server_names(steps: Iterable[gi.Step]) -> dict[str, str]:
     all_steps: list[gi.Step] = list(steps)
     executed = {step.call_id for step in all_steps if isinstance(step, gi.FunctionResultStep)}
@@ -140,7 +146,7 @@ def usage_from_interaction(usage: gi.Usage | None) -> RequestUsage:
     )
 
 
-async def process_response(
+def process_response(
     response: gi.Interaction,
     model_name: str,
     provider_name: str,
@@ -150,7 +156,7 @@ async def process_response(
     parts: list[ModelResponsePart] = []
     server_calls = mcp_server_names(response.steps or [])
     for index, step in enumerate(response.steps or []):
-        parts.extend(mark_step(await map_step(step, provider_name, server_calls=server_calls), index))
+        parts.extend(mark_step(map_step(step, provider_name, server_calls=server_calls), index))
     return build_response(response, parts, model_name, provider_name, provider_url, canonical_system)
 
 
@@ -223,7 +229,7 @@ NativeResultStep = (
 )
 
 
-async def map_step(
+def map_step(
     step: gi.Step, provider_name: str, *, server_calls: Mapping[str, str] | None = None
 ) -> list[ModelResponsePart]:
     """Map one wire step, including signatures that carry no visible text."""
@@ -236,7 +242,7 @@ async def map_step(
         case gi.FunctionResultStep():
             return map_function_result(step, provider_name, server_calls)
         case gi.ModelOutputStep():
-            return [await map_content(content, provider_name) for content in step.content or []]
+            return [map_content(content, provider_name) for content in step.content or []]
         case _ if isinstance(step, NativeCallStep):
             return map_native_call(step, provider_name)
         case _ if isinstance(step, NativeResultStep):
@@ -272,7 +278,9 @@ def map_native_call(step: NativeCallStep, provider_name: str) -> list[ModelRespo
             mcp_tool_name(step.server_name)
             if isinstance(step, gi.MCPServerToolCallStep)
             else NATIVE_TOOL_NAMES[step.type.removesuffix('_call')],
-            JSON_OBJECT.validate_python(raw.get('arguments', {})),
+            mcp_call_args(step.name, step.server_name, raw.get('arguments'))
+            if isinstance(step, gi.MCPServerToolCallStep)
+            else JSON_OBJECT.validate_python(raw.get('arguments', {})),
             step.id,
             provider_name=provider_name,
             provider_details=step_metadata(raw),
@@ -329,7 +337,7 @@ def map_function_call(
         return [
             NativeToolCallPart(
                 mcp_tool_name(server_calls.get(step.id)),
-                step.arguments,
+                mcp_call_args(step.name, server_calls.get(step.id), raw.get('arguments')),
                 step.id,
                 provider_name=provider_name,
                 provider_details=step_metadata(raw),
@@ -338,11 +346,11 @@ def map_function_call(
     return [ToolCallPart(step.name, step.arguments, step.id, provider_name=provider_name)]
 
 
-async def map_content(content: gi.Content, provider_name: str) -> ModelResponsePart:
+def map_content(content: gi.Content, provider_name: str) -> ModelResponsePart:
     if isinstance(content, gi.TextContent):
         return map_text_content(content, provider_name)
     elif isinstance(content, (gi.ImageContent, gi.AudioContent, gi.VideoContent, gi.DocumentContent)):
-        return await map_media_content(content, provider_name)
+        return map_media_content(content, provider_name)
     else:
         raise UnexpectedModelBehavior(f'Unexpected Google Interactions response content: {content.type!r}')
 
@@ -376,7 +384,7 @@ def map_annotation(text: str, annotation: gi.Annotation) -> Citation | None:
     return Citation([source], anchor=anchor)
 
 
-async def map_media_content(
+def map_media_content(
     content: gi.ImageContent | gi.AudioContent | gi.VideoContent | gi.DocumentContent, provider_name: str
 ) -> FilePart:
     if content.data is not None:

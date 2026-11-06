@@ -46,8 +46,9 @@ _MODEL_SETTINGS_CLASSES, _UNIMPORTABLE_MODEL_MODULES = _discover_model_settings(
 # Provider-specific settings fields are namespaced with the provider's name, which is also the name of
 # the module the provider lives in. `mcp_sampling` is not a provider integration but the MCP sampling
 # pseudo-model, so its public fields are namespaced after the protocol instead.
-# Google's API adapters share the `google_` provider namespace.
-_PREFIX_OVERRIDES: dict[str, str] = {'mcp_sampling': 'mcp_', 'google_interactions': 'google_'}
+_PREFIX_OVERRIDES: dict[str, str] = {'mcp_sampling': 'mcp_'}
+# Settings another adapter honors with the same name and type keep that adapter's prefix.
+_SHARED_SETTINGS: dict[str, set[str]] = {'google_interactions': {'google_labels', 'google_video_resolution'}}
 
 
 @pytest.mark.parametrize('settings_cls', _MODEL_SETTINGS_CLASSES.values(), ids=list(_MODEL_SETTINGS_CLASSES))
@@ -59,7 +60,7 @@ def test_specific_prefix_settings(settings_cls: type):
     inherited = {
         key for base in getattr(settings_cls, '__orig_bases__', ()) for key in getattr(base, '__annotations__', {})
     }
-    specific_settings = set(settings_cls.__annotations__.keys()) - inherited
+    specific_settings = set(settings_cls.__annotations__.keys()) - inherited - _SHARED_SETTINGS.get(module_name, set())
     assert all(setting.startswith(prefix) for setting in specific_settings), (
         f'{prefix} is not a prefix for {specific_settings}'
     )
