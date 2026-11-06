@@ -646,6 +646,8 @@ def test_about_shows_how_an_install_in_the_launch_session_ended(
     fleet = make_fleet()
     fleet.launch.updates.capture = lambda: True
     b = fleet.new('b')
+    # As if the launch session's page had asked first: B's cancelled Update leaves it the page that hears.
+    earlier = fleet.service._update_asked = fleet.service.session(fleet.launch.session.conversation_id)  # pyright: ignore[reportPrivateUsage]
     with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
         connected(socket)
         watch(socket, b)
@@ -655,6 +657,8 @@ def test_about_shows_how_an_install_in_the_launch_session_ended(
             dialog_id = at(opened, 'dialog', 'id')
             assert fleet.post(f'/api/sessions/{b}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
             assert action.result(timeout=10).status_code == 200
+            if answer == 'no':
+                assert fleet.service._update_asked is earlier  # pyright: ignore[reportPrivateUsage]
         uv = messages(socket, until=kind('notice', session=b, command='uv'))[-1]
         assert (uv['text'], uv['level']) == ('Resolving', 'error')
         result = messages(socket, until=kind('notice', session=b, command='/update now'))[-1]
