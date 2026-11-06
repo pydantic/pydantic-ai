@@ -431,12 +431,12 @@ For workflow incidents, and task incidents the hourly run does not retire, inspe
 affected host stage and output, link that evidence to the incident, and close it manually.
 A green run that skips the model or affected stage is not proof.
 
-The hourly scheduled run retires a task incident whose pull request head can no longer run.
-That is the case when the pull request is merged or closed, or its head moved off the SHA in
-the key. The run comments the pull request state it read once, then closes the incident. A
-retired incident records no recovery. Do not describe a retired task as a same-target
-recovery. Close a task incident manually when its key names no pull request head, such as
-a manual dispatch's key.
+The hourly scheduled run retires a task incident that can no longer block a run.
+That is the case when the pull request is merged or closed, when its head moved off the SHA in
+the key, or when the manual dispatch run in the key has concluded. The run comments the state
+it read once, then closes the incident. A retired incident records no recovery. Do not
+describe a retired task as a same-target recovery. Close a task incident manually when its
+key names neither a pull request head nor a manual dispatch run, such as a scheduled run's key.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
