@@ -40,6 +40,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.batch_utils import UNRUN_MESSAGES
 from tests.conftest import try_import
+from tests.models.mock_openai import with_history_digests
 
 with try_import() as imports_successful:
     import httpx2
@@ -278,11 +279,13 @@ async def test_batch_encode_continues_a_stored_response() -> None:
     model = _model()
     request = BatchRequest(
         custom_id='item',
-        messages=[
-            ModelRequest(parts=[UserPromptPart('Hello')]),
-            ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
-            ModelRequest(parts=[UserPromptPart('Again')]),
-        ],
+        messages=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Hello')]),
+                ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
+                ModelRequest(parts=[UserPromptPart('Again')]),
+            ]
+        ),
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
     body = json.loads((await model.batch_encode(request)).body)

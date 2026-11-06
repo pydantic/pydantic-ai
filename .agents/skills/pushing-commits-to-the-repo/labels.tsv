@@ -33,6 +33,8 @@ ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
 cli
+cluster:cache	Work stream: prompt cache retention, expiry and prefix stability
+cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 cohere
 community contribution
 community snippets
