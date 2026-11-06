@@ -880,7 +880,7 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and the Anthropic-specific caching setting are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. The Anthropic-specific `max_uses` and caching settings are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -889,7 +889,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | Parameter | Anthropic | OpenRouter |
 |-----------|-----------|------------|
 | `model` | ✅ (required — the advisor model to consult) | ✅ (required — an OpenRouter catalog slug) |
-| `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
+| `provider_settings.anthropic.max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
 | `provider_settings.anthropic.caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
 | `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |

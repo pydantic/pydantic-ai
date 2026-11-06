@@ -187,7 +187,7 @@ CASES = [
     pytest.param(
         Case(
             lambda: OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(api_key='test-key')),
-            AdvisorTool(model='claude-opus-4-8', max_uses=1),
+            AdvisorTool(model='claude-opus-4-8', provider_settings={'anthropic': {'max_uses': 1}}),
             frozenset(),
         ),
         id='openrouter-advisor',
@@ -408,6 +408,7 @@ ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
         'caching',
         {'type': 'ephemeral', 'ttl': '5m'},
     ),
+    (AdvisorTool(model='advisor', provider_settings={'anthropic': {'max_uses': 2}}), 'max_uses', 2),
 ]
 OPENROUTER_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
     (WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}), 'engine', 'exa'),
@@ -508,6 +509,7 @@ class TestProviderSettings:
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'partial_images', 2),
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'quality', 'high'),
             (_anthropic_request_tool, AdvisorTool, {'model': 'advisor'}, 'anthropic', 'caching', '5m'),
+            (_anthropic_request_tool, AdvisorTool, {'model': 'advisor'}, 'anthropic', 'max_uses', 2),
             (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'enable_citations', True),
             (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'max_content_tokens', 1000),
             (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'instructions', 'search these'),
@@ -531,6 +533,7 @@ class TestProviderSettings:
         [
             (ImageGenerationTool, {'quality': 'high', 'provider_settings': {'openai': {'quality': 'low'}}}),
             (AdvisorTool, {'model': 'advisor', 'caching': '5m', 'provider_settings': {'anthropic': {'caching': '1h'}}}),
+            (AdvisorTool, {'model': 'advisor', 'max_uses': 1, 'provider_settings': {'anthropic': {'max_uses': 2}}}),
             (
                 WebFetchTool,
                 {'max_content_tokens': 1000, 'provider_settings': {'anthropic': {'max_content_tokens': 2000}}},

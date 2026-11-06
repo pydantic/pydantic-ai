@@ -9309,9 +9309,8 @@ def test_anthropic_advisor_tool_request_shape():
         native_tools=[
             AdvisorTool(
                 model='claude-opus-4-8',
-                max_uses=2,
                 max_tokens=2048,
-                provider_settings={'anthropic': {'caching': '1h'}},
+                provider_settings={'anthropic': {'max_uses': 2, 'caching': '1h'}},
             )
         ],
     )

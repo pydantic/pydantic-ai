@@ -782,6 +782,7 @@ def test_model_json_schema_with_capabilities():
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
+                            'deprecated': True,
                             'title': 'Max Uses',
                         },
                         'max_tokens': {
@@ -811,7 +812,10 @@ def test_model_json_schema_with_capabilities():
                 },
                 'AnthropicAdvisorToolSettings': {
                     'additionalProperties': True,
-                    'properties': {'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'}},
+                    'properties': {
+                        'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'},
+                        'max_uses': {'title': 'Max Uses', 'type': 'integer'},
+                    },
                     'title': 'AnthropicAdvisorToolSettings',
                     'type': 'object',
                 },
