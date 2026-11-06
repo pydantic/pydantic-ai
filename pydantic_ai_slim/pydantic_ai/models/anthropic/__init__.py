@@ -503,7 +503,7 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
     """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
-    if not isinstance(client, AsyncAnthropicBedrock):
+    if model_settings.get('max_retries') is None or not isinstance(client, AsyncAnthropicBedrock):
         return with_max_retries(client, model_settings)
     copy = with_max_retries(client, model_settings)
     if copy.aws_profile == client.aws_profile:
