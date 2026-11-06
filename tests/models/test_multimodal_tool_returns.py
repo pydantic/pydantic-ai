@@ -1305,7 +1305,13 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
         expected=snapshot(
             [
                 {'type': 'user_input', 'content': [{'type': 'text', 'text': 'show me both photos'}]},
-                {'type': 'function_call', 'id': 'photo1', 'name': 'get_photo', 'arguments': {}},
+                {
+                    'type': 'function_call',
+                    'id': 'photo1',
+                    'name': 'get_photo',
+                    'arguments': {},
+                    'signature': 'c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=',
+                },
                 {'type': 'function_call', 'id': 'photo2', 'name': 'get_photo', 'arguments': {}},
                 {
                     'type': 'function_result',
