@@ -63,6 +63,8 @@ def main() -> None:
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
     )
     runner_temp = Path(os.environ['RUNNER_TEMP'])
+    # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
+    # lexically, so check_symlinks above also rejects links that could escape either checkout.
     permissions: list[dict[str, str]] = [
         {'action': '*', 'resource': '*', 'effect': 'deny'},
         *({'action': action, 'resource': '*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
