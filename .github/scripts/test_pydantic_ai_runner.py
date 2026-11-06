@@ -3059,10 +3059,11 @@ def test_clai2_engine_names_the_staged_shim_sources():
         assert steps[engine]['env']['LOGFIRE_SERVICE_VERSION'] == '${{ steps.workflow-policy.outputs.service-version }}'
 
 
-def test_compiled_job_limits_and_ui_security_group_match_the_previous_compiler():
-    """gh-aw 1.0.1 caps the agent job at 60 and detection at 10 minutes, which the previous compiler did not.
+def test_compiled_job_limits_and_ui_security_concurrency():
+    """gh-aw 1.0.1 caps the agent job at 60 minutes and detection at 10; the previous compiler capped neither job.
 
-    Stale Issues Finder's 60-minute engine step did not fit the agent cap. UI Security reviewed PRs in parallel.
+    Stale Issues Finder's 60-minute engine step did not fit the agent cap, and the detector step had 20 minutes.
+    gh-aw 1.0.1 gives the detector step its job's budget. UI Security reviewed PRs in parallel.
     """
     workflows = Path(__file__).parent.parent / 'workflows'
     ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']

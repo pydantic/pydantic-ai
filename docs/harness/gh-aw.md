@@ -610,15 +610,14 @@ receives no telemetry credentials. Host and proxy telemetry use gh-aw's own expo
 configured with `observability.otlp`.
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` reaches the launcher, it instruments Pydantic AI and
-exports spans directly. gh-aw excludes that variable from the agent container, so a gh-aw
-workflow does not export Python agent spans. The launcher attaches `TRACEPARENT` and
-preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported spans keep their workflow parentage
-and identity.
+exports spans directly, with `send_to_logfire='if-token-present'`. gh-aw excludes that
+variable from the agent container, so this direct export does not run under gh-aw. The
+launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported
+spans keep their workflow parentage and identity.
 
-The launcher uses private mode-0700 Logfire configuration and data directories under
-`/tmp`, ignoring checkout settings and credentials. `console=False` prevents span
-content entering captured engine stdio, and `send_to_logfire='if-token-present'` applies.
-Without an endpoint, it does not configure Logfire.
+When it configures Logfire, the launcher uses private mode-0700 configuration and data
+directories under `/tmp`, ignoring checkout settings and credentials. `console=False`
+prevents span content entering captured engine stdio.
 
 A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
 Logfire. Calling `logfire.configure()` again replaces that configuration. Preserve the

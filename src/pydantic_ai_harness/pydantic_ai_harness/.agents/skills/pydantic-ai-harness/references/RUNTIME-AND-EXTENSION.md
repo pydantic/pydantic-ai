@@ -581,7 +581,7 @@ caller-supplied `PYTHONPATH` as trusted engine configuration. Point both setting
 For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
 Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
 Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
-OTLP credentials stay on the host, so a gh-aw workflow does not export Python agent spans.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
 See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
