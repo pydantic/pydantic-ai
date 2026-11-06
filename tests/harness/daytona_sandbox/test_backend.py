@@ -859,7 +859,10 @@ class TestErrorsAndFilesystem:
         with pytest.raises(NotADirectoryError):
             await backend.write_bytes(f'{tmp_path}/{below}/a.py', b'x')
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='root ignores directory permissions, and Windows does not enforce POSIX file modes',
+    )
     async def test_writing_into_a_protected_directory_is_permission_denied(
         self, fake_daytona: FakeDaytona, tmp_path: Path
     ) -> None:
