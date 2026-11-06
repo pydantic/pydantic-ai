@@ -1252,7 +1252,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1260,6 +1260,10 @@ jobs:
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
       # behaves identically and coverage combination stays complete. The lowest leg was
       # synced above, so `--no-sync` there keeps its resolution.
+      # `sentence-transformers` is the exception: it brings torch and the CUDA wheels, about
+      # 2.6 GB of a 3.2 GB install, and no test here imports it. A slow download of them has
+      # run this job past `timeout-minutes` (#12625). Keep every `uv` call in this job on the
+      # same extras, so none of them syncs it back in.
       - name: run tests
         shell: bash
         run: |
@@ -1275,13 +1279,13 @@ jobs:
           # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
           # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
@@ -1301,7 +1305,7 @@ jobs:
           mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
           chmod +x "$RUNNER_TEMP/render-cli/render"
           export PATH="$RUNNER_TEMP/render-cli:$PATH"
-          uv run --all-packages --all-extras --no-extra mcp-tasks \
+          uv run --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers \
             pytest --durations=5 tests/harness/render/test_local_runtime_live.py
         env:
           RENDER_CLI_VERSION: 2.28.0
@@ -1312,7 +1316,7 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
