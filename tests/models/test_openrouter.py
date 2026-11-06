@@ -1500,13 +1500,23 @@ async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() 
 @pytest.mark.parametrize(
     ('model_name', 'effort'),
     [
-        # OpenRouter makes GLM-5.3's reasoning mandatory, so it gets the lowest effort.
+        # OpenRouter makes GLM-5.3's reasoning mandatory, so it gets the lowest effort it accepts.
         ('z-ai/glm-5.3', 'minimal'),
+        ('minimax/minimax-m2.7', 'minimal'),
+        ('meta/muse-spark-open', 'minimal'),
+        ('recursive/flint-v1.0:free', 'minimal'),
+        ('~openai/gpt-sol-latest', 'minimal'),
+        # Not probed with `minimal`: each call runs a paid research job.
+        ('perplexity/sonar-deep-research', 'low'),
+        # Always reasons by its own profile, not OpenRouter's table, and rejects `minimal`.
+        ('openai/o3', 'low'),
+        # Reasoning-optional, so reasoning is turned off.
         ('z-ai/glm-5.2', 'none'),
     ],
 )
-def test_openrouter_glm_thinking_false(model_name: str, effort: str) -> None:
-    """GLM schema quirks must not change OpenRouter's reasoning translation.
+def test_openrouter_thinking_false_effort(model_name: str, effort: str) -> None:
+    """`thinking=False` turns reasoning off where the route allows it, and otherwise sends the lowest effort the
+    route accepts.
 
     This inspects the prepared payload directly because cassette matching does not pin its body.
     """
@@ -2207,29 +2217,6 @@ async def test_openrouter_thinking_false_on_mandatory_reasoning_route(
     )
     assert response.text
     assert request_capture.body()['reasoning'] == snapshot({'effort': 'minimal'})
-
-
-@pytest.mark.parametrize(
-    ('model_name', 'effort'),
-    [
-        ('minimax/minimax-m2.7', 'minimal'),
-        ('meta/muse-spark-open', 'minimal'),
-        ('recursive/flint-v1.0:free', 'minimal'),
-        ('~openai/gpt-sol-latest', 'minimal'),
-        # Not probed with `minimal`: each call runs a paid research job.
-        ('perplexity/sonar-deep-research', 'low'),
-        # Always reasons by its own profile, not OpenRouter's table, and rejects `minimal`.
-        ('openai/o3', 'low'),
-    ],
-)
-def test_openrouter_thinking_false_sends_lowest_accepted_effort(model_name: str, effort: str) -> None:
-    """`thinking=False` on an always-reasoning route sends the lowest effort that route accepts."""
-    model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='mock-api-key'))
-
-    prepared, _ = model.prepare_request(OpenRouterModelSettings(thinking=False), ModelRequestParameters())
-
-    assert prepared is not None
-    assert prepared.get('extra_body') == {'reasoning': {'effort': effort}}
 
 
 async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
