@@ -197,6 +197,9 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'DurableReplay',
+        'ReplayCounter',
+        'replay_scope',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 

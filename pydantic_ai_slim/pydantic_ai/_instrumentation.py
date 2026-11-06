@@ -21,6 +21,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
+from ._durable_replay import current_replay, start_as_current_span
 from ._genai_prices import best_effort_price
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
@@ -1013,10 +1014,14 @@ def open_model_request_span(
     prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
+    # A request a durable engine served from its journal was already recorded when it ran.
+    replay = current_replay()
+    replay_snapshot = replay.snapshot() if replay is not None else None
     previous_include_content = include_content_ctx.get()
     try:
         with (
-            settings.tracer.start_as_current_span(
+            start_as_current_span(
+                settings.tracer,
                 span_name,
                 attributes=attributes,
                 kind=SpanKind.CLIENT,
@@ -1114,7 +1119,7 @@ def open_model_request_span(
                 yield finish, prepared_request_context
     finally:
         include_content_ctx.set(previous_include_content)
-        if record_metrics:
+        if record_metrics and not (replay is not None and replay.replayed_since(replay_snapshot)):
             record_metrics()
 
 
