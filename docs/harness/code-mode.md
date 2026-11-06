@@ -604,7 +604,7 @@ For Logfire Agent Sandboxes, install Logfire 5.4.0 or later with its sandbox ext
 pip/uv-add "logfire[agent-sandboxes]>=5.4.0"
 ```
 
-Logfire 5.4.0 still builds a WebSocket URL with a `/monty-ws/` path. With Monty 1.5,
+Logfire 5.4.0 and earlier still build a WebSocket URL with a `/monty-ws/` path. With Monty 1.5,
 pass the server root explicitly, using the region that matches your API key:
 
 ```python {test="skip"}
@@ -645,6 +645,8 @@ include missing or invalid credentials, an invalid server URL, and exceptions ra
 They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
 refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
 if it still fails, the error propagates to the caller.
+Pool adapters can wrap Monty errors with an explicit `__cause__`. Code Mode searches a bounded
+cause chain to apply the underlying Monty error's recovery policy. Setup failures preserve the outer exception.
 Inside a Temporal workflow, the exception reaches workflow code and follows the
 [workflow failure policy](#temporal-durability), not the model retry policy.
 

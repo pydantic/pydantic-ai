@@ -71,6 +71,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
+    find_monty_error,
     in_temporal_workflow,
     is_sandbox_panic,
 )
@@ -1277,33 +1278,28 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             in_temporal_workflow=in_workflow,
         )
         try:
-            try:
-                # Already converted in `__post_init__`; this narrows the field's type.
-                os_handler = as_os_handler(self.os_access)
-                completed = await MontyExecutor(
-                    dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
-                    valid_names=callable_defs,
-                    sequential_names=sequential_tools,
-                    global_sequential=global_sequential,
-                    portal=run_state.portal,
-                    # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
-                    # check is dropped there for replay, but sleeps are charged what they request.
-                    max_sleep_secs=configured.get('max_feed_duration_secs'),
-                    os_handler=os_handler,
-                ).run(
-                    partial(
-                        session.feed_start,
-                        code,
-                        print_callback=capture.callback,
-                        os=os_handler,
-                        mount=self.mount,
-                        skip_type_check=not type_check,
-                    )
+            # Already converted in `__post_init__`; this narrows the field's type.
+            os_handler = as_os_handler(self.os_access)
+            completed = await MontyExecutor(
+                dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
+                valid_names=callable_defs,
+                sequential_names=sequential_tools,
+                global_sequential=global_sequential,
+                portal=run_state.portal,
+                # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
+                # check is dropped there for replay, but sleeps are charged what they request.
+                max_sleep_secs=configured.get('max_feed_duration_secs'),
+                os_handler=os_handler,
+            ).run(
+                partial(
+                    session.feed_start,
+                    code,
+                    print_callback=capture.callback,
+                    os=os_handler,
+                    mount=self.mount,
+                    skip_type_check=not type_check,
                 )
-            except MontyRuntimeError:
-                # The session is idle again and keeps assignments made before the failing line.
-                run_state.has_executed_feed = True
-                raise
+            )
             run_state.has_executed_feed = True
         except BaseException as e:
             retry = await self._feed_failure_retry(e, run_state, execution, fresh_repl=fresh_repl)
@@ -1364,6 +1360,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         Returns `None` for an interruption, which the caller re-raises unchanged.
         """
+        if isinstance(error, Exception):
+            error = (
+                find_monty_error(
+                    error,
+                    (MontySyntaxError, MontyTypingError, MontyRuntimeError, MontyCrashedError, MontyDisconnectError),
+                )
+                or error
+            )
         capture = execution.capture
         match error:
             case MontySyntaxError():
@@ -1377,6 +1381,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
+                run_state.has_executed_feed = True
                 return _runtime_failure_retry(
                     error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
                 )

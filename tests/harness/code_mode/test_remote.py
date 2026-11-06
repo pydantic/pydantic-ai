@@ -26,6 +26,9 @@ from pydantic_monty import (
     AsyncSnapshot,
     ExternalSettledResult,
     MontyRefusedError,
+    MontyRuntimeError,
+    MontySyntaxError,
+    MontyTypingError,
     MountDir,
 )
 
@@ -297,6 +300,28 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
 _SECRET = 'https://alice:secret@sandbox.example.com/?token=private Bearer factory-key'
 
 
+class _WrappedError(Exception):
+    """A pool adapter's error, independent of any SDK's exception classes."""
+
+
+def _wrap_error(error: Exception, depth: int) -> Exception:
+    for _ in range(depth):
+        try:
+            raise _WrappedError(_SECRET) from error
+        except _WrappedError as wrapped:
+            error = wrapped
+    return error
+
+
+async def _native_refusal(cause: str) -> MontyRefusedError:
+    async with serve_monty_relay(refusal_causes=(cause,)) as relay:
+        async with AsyncMontyRemote(relay.url) as pool:
+            with pytest.raises(MontyRefusedError) as exc_info:
+                async with pool.checkout():
+                    pytest.fail('refusal server admitted a session')  # pragma: no cover
+    return exc_info.value
+
+
 @dataclass
 class _DisconnectError(Exception):
     cause: str | None
@@ -318,6 +343,22 @@ async def local_backed_factory_pool() -> AsyncIterator[MagicMock]:
         pool.__aexit__.return_value = None
         pool.checkout.side_effect = local_pool.checkout
         yield pool
+
+
+@pytest.fixture
+def wrap_native_runtime_errors(monkeypatch: pytest.MonkeyPatch, wrapper_depth: int) -> None:
+    """Wrap real native runtime failures at the public snapshot boundary, as a pool adapter can."""
+    original_resume = AsyncFutureSnapshot.resume
+
+    async def wrap_runtime_error(
+        snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
+    ) -> AsyncSnapshot:
+        try:
+            return await original_resume(snapshot, results)
+        except MontyRuntimeError as error:
+            raise _wrap_error(error, wrapper_depth)
+
+    monkeypatch.setattr(AsyncFutureSnapshot, 'resume', wrap_runtime_error)
 
 
 class TestCodeModeErrorRouting:
@@ -384,19 +425,15 @@ class TestCodeModeErrorRouting:
         assert sleep.await_args_list == ([((0.1,), {})] if expected_checkouts == 2 else [])
 
     @pytest.mark.parametrize('cause', ['caller_cap', 'capacity', 'worker_unavailable'])
+    @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
     async def test_local_backed_factory_recovers_after_native_capacity_refusal(
-        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, cause: str
+        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, cause: str, wrapper_depth: int
     ) -> None:
         """A local-backed checkout proves successful retry without relying on the skipped remote bridge.
 
         The first checkout raises an actual transport refusal; the second uses a real local session.
         """
-        async with serve_monty_relay(refusal_causes=(cause,)) as relay:
-            async with AsyncMontyRemote(relay.url) as pool:
-                with pytest.raises(MontyRefusedError) as exc_info:
-                    async with pool.checkout():
-                        pytest.fail('refusal server admitted a session')  # pragma: no cover
-
+        error = _wrap_error(await _native_refusal(cause), wrapper_depth)
         sleep = AsyncMock()
         monkeypatch.setattr('anyio.sleep', sleep)
         checkout = local_backed_factory_pool.checkout.side_effect
@@ -407,7 +444,7 @@ class TestCodeModeErrorRouting:
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise exc_info.value
+                raise error
             async with checkout(**kwargs) as session:
                 yield session
 
@@ -421,6 +458,72 @@ class TestCodeModeErrorRouting:
         assert attempts == 2
         factory.assert_called_once_with()
         sleep.assert_awaited_once_with(0.1)
+
+    @pytest.mark.parametrize('cause', ['caller_cap', 'capacity', 'worker_unavailable', 'unauthenticated'])
+    @pytest.mark.parametrize('wrapper_depth', [1, 2, 9, 10])
+    async def test_wrapped_native_checkout_refusals(
+        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, cause: str, wrapper_depth: int
+    ) -> None:
+        """Explicit causes within ten exceptions retain capacity policy and propagate the original wrapper.
+
+        Deeper chains are opaque so malformed adapter errors cannot make classification unbounded.
+        """
+        error = _wrap_error(await _native_refusal(cause), wrapper_depth)
+        local_backed_factory_pool.checkout.side_effect = error
+        sleep = AsyncMock()
+        monkeypatch.setattr('anyio.sleep', sleep)
+        agent = Agent(
+            _snippets_model('1 + 1'),
+            capabilities=[CodeMode(monty_sandbox=MagicMock(return_value=local_backed_factory_pool))],
+        )
+
+        with capture_run_messages() as messages, pytest.raises(_WrappedError) as exc_info:
+            await agent.run('checkout through an adapter')
+
+        assert exc_info.value is error
+        retried = cause != 'unauthenticated' and wrapper_depth < 10
+        assert local_backed_factory_pool.checkout.call_count == (2 if retried else 1)
+        assert sleep.await_args_list == ([((0.1,), {})] if retried else [])
+        assert _retries(messages) == []
+        assert _SECRET not in str(messages)
+
+    async def test_wrapped_factory_refusal_is_not_retried(self) -> None:
+        """Capacity backoff applies to checkout, not arbitrary factory failures, and preserves the wrapper."""
+        error = _wrap_error(await _native_refusal('capacity'), 1)
+        factory = MagicMock(side_effect=error)
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=factory)])
+
+        with capture_run_messages() as messages, pytest.raises(_WrappedError) as exc_info:
+            await agent.run('build the pool')
+
+        assert exc_info.value is error
+        factory.assert_called_once_with()
+        assert _retries(messages) == []
+        assert _SECRET not in str(messages)
+
+    @pytest.mark.parametrize('chain', ['cycle', 'context'])
+    async def test_checkout_ignores_implicit_context_and_bounds_cycles(
+        self, local_backed_factory_pool: MagicMock, chain: str
+    ) -> None:
+        """Only bounded explicit causes select retries; incidental context and cycles must propagate unchanged."""
+        error = _WrappedError(_SECRET)
+        if chain == 'cycle':
+            error.__cause__ = error
+        else:
+            error.__context__ = await _native_refusal('capacity')
+        local_backed_factory_pool.checkout.side_effect = error
+        agent = Agent(
+            _snippets_model('1 + 1'),
+            capabilities=[CodeMode(monty_sandbox=MagicMock(return_value=local_backed_factory_pool))],
+        )
+
+        with capture_run_messages() as messages, pytest.raises(_WrappedError) as exc_info:
+            await agent.run('checkout with an opaque exception chain')
+
+        assert exc_info.value is error
+        local_backed_factory_pool.checkout.assert_called_once()
+        assert _retries(messages) == []
+        assert _SECRET not in str(messages)
 
     async def test_refusal_sequence_repeats_final_cause(self) -> None:
         """The relay repeats the last refusal, including across new checkouts on the same native pool."""
@@ -470,8 +573,14 @@ class TestCodeModeErrorRouting:
             (RuntimeError(_SECRET), 'Code execution failed and the session was reset'),
         ],
     )
+    @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
     async def test_local_backed_factory_execution_failure_resets_without_leaking_pool_details(
-        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, error: Exception, guidance: str
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        local_backed_factory_pool: MagicMock,
+        error: Exception,
+        guidance: str,
+        wrapper_depth: int,
     ) -> None:
         """Local-backed doubles pin crash/disconnect guidance while real bridge execution is unavailable (#8824).
 
@@ -487,7 +596,7 @@ class TestCodeModeErrorRouting:
             snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
         ) -> AsyncSnapshot:
             await original_resume(snapshot, results)
-            raise error
+            raise _wrap_error(error, wrapper_depth)
 
         monkeypatch.setattr(AsyncFutureSnapshot, 'resume', fail_after_tool)
         agent = Agent(
@@ -520,8 +629,13 @@ class TestCodeModeErrorRouting:
             ('ValueError', 'raise ValueError("runtime failure")'),
         ],
     )
+    @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
+    @pytest.mark.usefixtures('wrap_native_runtime_errors')
     async def test_local_backed_factory_runtime_error(
-        self, local_backed_factory_pool: MagicMock, error_name: str, code: str
+        self,
+        local_backed_factory_pool: MagicMock,
+        error_name: str,
+        code: str,
     ) -> None:
         """Local-backed factory plumbing preserves state for snippet/tool exceptions with clear source frames."""
         agent = Agent(
@@ -555,7 +669,49 @@ class TestCodeModeErrorRouting:
         assert 'session was reset' not in str(retry.content)
         assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 42
 
+    @pytest.mark.parametrize('wrapper_depth', [1, 2])
+    @pytest.mark.parametrize(
+        ('code', 'guidance'),
+        [('invalid ???', 'Syntax error in code'), ('await ping(value="wrong")', 'Type error in code')],
+    )
+    async def test_wrapped_syntax_and_type_errors_reach_model(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        local_backed_factory_pool: MagicMock,
+        wrapper_depth: int,
+        code: str,
+        guidance: str,
+    ) -> None:
+        """Adapters must preserve actionable syntax/type guidance without exposing their connection details."""
+        original_feed = AsyncMontySession.feed_start
+
+        async def wrap_feed_error(session: AsyncMontySession, *args: Any, **kwargs: Any) -> AsyncSnapshot:
+            try:
+                return await original_feed(session, *args, **kwargs)
+            except (MontySyntaxError, MontyTypingError) as error:
+                raise _wrap_error(error, wrapper_depth)
+
+        monkeypatch.setattr(AsyncMontySession, 'feed_start', wrap_feed_error)
+        snippets = ('await ping(value=1)', code, '1 + 1') if guidance == 'Syntax error in code' else (code, '1 + 1')
+        agent = Agent(
+            _snippets_model(*snippets),
+            capabilities=[CodeMode(monty_sandbox=MagicMock(return_value=local_backed_factory_pool))],
+        )
+
+        @agent.tool_plain
+        def ping(value: int) -> int:
+            return value
+
+        result = await agent.run('correct the snippet')
+
+        (retry,) = _retries(result.all_messages())
+        assert guidance in str(retry.content)
+        assert _SECRET not in str(result.all_messages())
+        assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
+
     @pytest.mark.parametrize('code', ['data = [0] * 1_000_000', 'raise MemoryError("memory limit exceeded")'])
+    @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
+    @pytest.mark.usefixtures('wrap_native_runtime_errors')
     async def test_local_backed_factory_memory_limit_resets(
         self, local_backed_factory_pool: MagicMock, code: str
     ) -> None:
