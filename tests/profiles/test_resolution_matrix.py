@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from textwrap import dedent
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -3082,7 +3082,26 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
-def _route_provider(provider_name: str) -> type[Provider[Any]]:
+_RouteProvider = Literal[
+    'anthropic',
+    'bedrock',
+    'cerebras',
+    'deepseek',
+    'github-copilot',
+    'groq',
+    'heroku',
+    'litellm',
+    'nebius',
+    'ollama',
+    'openrouter',
+    'snowflake',
+    'together',
+    'vercel',
+]
+"""The provider names the forced-tool-choice route tests use."""
+
+
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -3116,8 +3135,6 @@ def _route_provider(provider_name: str) -> type[Provider[Any]]:
             return TogetherProvider
         case 'vercel':
             return VercelProvider
-        case _:  # pragma: no cover
-            raise ValueError(f'Unknown route provider: {provider_name}')
 
 
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
@@ -3134,7 +3151,7 @@ def _route_provider(provider_name: str) -> type[Provider[Any]]:
         ('snowflake', 'claude-opus-5-5'),
     ],
 )
-def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
+def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: _RouteProvider, model_name: str):
     """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
     Anthropic profile carries `supports_forced_tool_choice=False` over."""
     profile = _route_provider(provider_name).model_profile(model_name)
@@ -3142,7 +3159,7 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     assert profile.get('supports_forced_tool_choice') is False
 
 
-def _forcing_allowed_while_thinking(provider_name: str, model_name: str) -> bool:
+def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
     """Whether a route lets a forced tool choice through while the model thinks.
 
     This is the AND of `supports_forced_tool_choice` and `supports_forced_tool_choice_with_thinking`, with an absent
@@ -3163,11 +3180,11 @@ def _diverges(owner: str, why: str) -> pytest.MarkDecorator:
     return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f'{owner}: {why}')
 
 
-_CLAUDE_OPUS_5_5 = ('anthropic', 'claude-opus-5-5')
-_DEEPSEEK_V4 = ('deepseek', 'deepseek-v4-pro')
-_DEEPSEEK_V4_1 = ('deepseek', 'deepseek-flash')
+_CLAUDE_OPUS_5_5: tuple[_RouteProvider, str] = ('anthropic', 'claude-opus-5-5')
+_DEEPSEEK_V4: tuple[_RouteProvider, str] = ('deepseek', 'deepseek-v4-pro')
+_DEEPSEEK_V4_1: tuple[_RouteProvider, str] = ('deepseek', 'deepseek-flash')
 """DeepSeek's API serves V4.1 Flash as `deepseek-flash`."""
-_GPT_OSS = ('cerebras', 'gpt-oss-120b')
+_GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
 """gpt-oss follows the Harmony format, whose profile restricts forced tool choice."""
 
 
@@ -3250,7 +3267,9 @@ _GPT_OSS = ('cerebras', 'gpt-oss-120b')
         ),
     ],
 )
-def test_forced_tool_choice_guard_agrees_across_routes(reference: tuple[str, str], route: tuple[str, str]):
+def test_forced_tool_choice_guard_agrees_across_routes(
+    reference: tuple[_RouteProvider, str], route: tuple[_RouteProvider, str]
+):
     """Whether a model can be forced to call a tool is a property of the model, so every route serving it agrees.
 
     Each route is compared with its family's first route. A route that disagrees today is a strict expected failure
