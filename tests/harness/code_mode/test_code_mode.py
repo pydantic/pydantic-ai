@@ -1791,6 +1791,36 @@ class TestCodeMode:
         with pytest.raises(UserError, match='conflicts with the code mode'):
             await wrapper.get_tools(build_run_context(None))
 
+    async def test_tool_named_after_builtin_raises_user_error(self) -> None:
+        """A tool named after a Python builtin raises UserError: Monty resolves
+        builtins before host dispatch, so the tool could never be called
+        (sequential tools silently return builtin results, async tools raise
+        confusing TypeErrors)."""
+        for name in ('list', 'open', 'format', 'print'):
+
+            def tool(path: str = 'notes.txt') -> str:  # pragma: no cover
+                return 'tool result'
+
+            tool.__name__ = name
+            wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(tool, add))
+            assert isinstance(wrapper, CodeModeToolset)
+
+            with pytest.raises(UserError, match='conflicts with a Python builtin'):
+                await wrapper.get_tools(build_run_context(None))
+
+    async def test_non_builtin_tool_names_still_work(self) -> None:
+        """Names that are not builtins still register."""
+
+        def fetch(query: str = 'x') -> str:
+            return 'ok'
+
+        capability = CodeMode[object]()
+        wrapper = capability.get_wrapper_toolset(_build_function_toolset(fetch, add))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+        assert 'fetch' in tools
+
     async def test_filter_excluding_everything_yields_run_code_with_no_functions(self) -> None:
         """A filter that rejects every tool produces a `run_code` with no functions block."""
         capability = CodeMode[object](tools=lambda ctx, td: False)

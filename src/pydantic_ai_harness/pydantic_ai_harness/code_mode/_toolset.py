@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import inspect
 import math
 import re
@@ -76,6 +77,8 @@ from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
+
+_PYTHON_BUILTIN_NAMES = frozenset(n for n in dir(builtins) if not n.startswith('_'))
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -1397,6 +1400,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         callable_defs, sanitized_to_original = partition_callable_tools(
             wrapped_tools, owner='CodeMode', reserved_name=RUN_CODE_TOOL_NAME
         )
+        # Monty resolves builtins before it asks the host for a name, so a tool named
+        # after a builtin would never run: sequential tools silently return builtin
+        # results and async tools raise confusing TypeErrors. Reject these names at
+        # setup, like the `run_code` check does. Mirrors the JS port's `pyIsBuiltin`
+        # + setup check, which uses CPython's full builtin list so a later Monty
+        # release cannot silently take over a working tool.
+        for safe_name in callable_defs:
+            if safe_name in _PYTHON_BUILTIN_NAMES:
+                name = sanitized_to_original.get(safe_name, safe_name)
+                raise UserError(
+                    f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with a Python "
+                    f'builtin inside the code sandbox and could never be called. '
+                    f'Rename your tool, or use `.prefixed()` / `.renamed()` on the toolset.'
+                )
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
