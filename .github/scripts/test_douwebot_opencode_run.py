@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import douwebot_opencode_run
 from douwebot_opencode_run import check_symlinks
 
 
@@ -58,12 +62,6 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The fallback keeps the review rubric and does not pass GitHub credentials to OpenCode."""
-    import json
-    import subprocess
-
-    import douwebot_opencode_run
-    import yaml
-
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     (workspace / 'pr-head').mkdir()

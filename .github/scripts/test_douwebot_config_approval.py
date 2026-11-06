@@ -12,7 +12,8 @@ from typing import Any
 
 import pytest
 import yaml
-from publish_douwebot_review import Finding, ReviewResult, publication
+from douwebot_opencode_run import MODEL
+from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -281,9 +282,6 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     assert "needs.douwebot-opencode.result == 'success'" in publish_step['if']
     assert 'needs.douwebot-opencode.outputs.result' in publish_step['env']['REVIEW_RESULT']
     assert publish_step['env']['REVIEW_ENGINE'] == "${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}"
-    from douwebot_opencode_run import MODEL
-    from publish_douwebot_review import REVIEW_ENGINES
-
     claude = next(step for step in review['steps'] if step.get('id') == 'review')
     assert '--model claude-opus-5-5[1m]' in claude['with']['claude_args']
     assert 'claude-opus-5-5' in REVIEW_ENGINES['claude']
