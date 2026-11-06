@@ -228,9 +228,9 @@ The default instructions are short: match the surrounding code's style, structur
 files with `read_file`; check deliverables against the task's stated requirements and edge cases; check
 behavior with heredocs rather than new files; and finish long-running work before replying.
 
-`agency` sets how far the agent works on its own:
+`autonomy` sets how far the agent works on its own:
 
-| `agency` | The agent |
+| `autonomy` | The agent |
 |---|---|
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |

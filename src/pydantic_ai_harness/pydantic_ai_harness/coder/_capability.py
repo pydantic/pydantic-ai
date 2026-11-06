@@ -15,7 +15,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import Agency, coder_instructions, project_instructions
+from pydantic_ai_harness.coder._instructions import Autonomy, coder_instructions, project_instructions
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -179,7 +179,7 @@ class Coder(CombinedCapability[AgentDepsT]):
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.
         instructions: Appended to the default instructions.
-        agency: How far the agent works on its own. `'low'` proposes a plan and waits
+        autonomy: How far the agent works on its own. `'low'` proposes a plan and waits
             for approval before editing. `'medium'` works until done but asks when a
             choice really matters. `'high'` asks only for credentials, approvals, or
             real ambiguity, and measures results against any numeric target the task
@@ -220,7 +220,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         workspace: str | Path | None = None,
         *,
         instructions: str | None = None,
-        agency: Agency = 'high',
+        autonomy: Autonomy = 'high',
         unrestricted_filesystem: bool = False,
         repo_context: bool | RepoContext[AgentDepsT] = True,
         sub_agents: bool = True,
@@ -229,8 +229,8 @@ class Coder(CombinedCapability[AgentDepsT]):
         caching: bool = True,
         strict: bool | None = False,
     ) -> None:
-        if agency not in get_args(Agency):
-            raise ValueError(f'`agency` must be one of {", ".join(map(repr, get_args(Agency)))}, not {agency!r}.')
+        if autonomy not in get_args(Autonomy):
+            raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
         if task_control is not None and not sub_agents:
             raise ValueError('`task_control` requires `sub_agents=True`.')
         if workspace is not None:
@@ -254,7 +254,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             else None
         )
         guidance, delegated_guidance = coder_instructions(
-            agency=agency,
+            autonomy=autonomy,
             delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
             repo_files=bundled_repo_context.filenames

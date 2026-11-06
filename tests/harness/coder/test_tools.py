@@ -16,7 +16,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
-from pydantic_ai_harness.coder import Agency, Coder
+from pydantic_ai_harness.coder import Autonomy, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.subagents import TaskControl
@@ -243,7 +243,7 @@ class TestCoder:
             assert guidance.endswith('\n' + extra_instructions)
 
     @pytest.mark.parametrize(
-        ('agency', 'ask', 'targets', 'cleanup'),
+        ('autonomy', 'ask', 'targets', 'cleanup'),
         [
             ('low', 'Propose a plan and wait for approval before editing.', False, False),
             ('medium', 'Work until done; ask when a choice really matters.', False, False),
@@ -251,11 +251,11 @@ class TestCoder:
             ('max', 'Work fully autonomously; nobody will answer questions.', True, True),
         ],
     )
-    async def test_agency_sets_how_far_the_agent_goes_alone(
-        self, tmp_path: Path, agency: Agency, ask: str, targets: bool, cleanup: bool
+    async def test_autonomy_sets_how_far_the_agent_goes_alone(
+        self, tmp_path: Path, autonomy: Autonomy, ask: str, targets: bool, cleanup: bool
     ) -> None:
         model = TestModel(call_tools=[])
-        coder = Coder(agency=agency, repo_context=False, sub_agents=False)
+        coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
@@ -277,7 +277,7 @@ class TestCoder:
             return _finish_or_delegate(seen, messages, info)
 
         agent = Agent(
-            FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder(agency='low', repo_context=False)]
+            FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder(autonomy='low', repo_context=False)]
         )
         assert (await agent.run('Delegate it')).output == 'done'
         assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
@@ -303,16 +303,16 @@ class TestCoder:
             FunctionModel(respond, stream_function=stream),
             capabilities=[
                 LocalWorkspace(tmp_path),
-                Coder(agency='low', repo_context=False, task_control=TaskControl()),
+                Coder(autonomy='low', repo_context=False, task_control=TaskControl()),
             ],
         )
         assert (await agent.run('Delegate it')).output == 'done'
         assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
         assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
 
-    def test_unknown_agency_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"`agency` must be one of 'low', 'medium', 'high', 'max', not 'full'"):
-            Coder(agency='full')  # pyright: ignore[reportArgumentType]
+    def test_unknown_autonomy_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"`autonomy` must be one of 'low', 'medium', 'high', 'max', not 'full'"):
+            Coder(autonomy='full')  # pyright: ignore[reportArgumentType]
 
     async def test_file_tool_mistakes_do_not_end_the_run(self, tmp_path: Path) -> None:
         """Consecutive denied writes come back as retries until `MAX_FILE_TOOL_RETRIES` is spent."""

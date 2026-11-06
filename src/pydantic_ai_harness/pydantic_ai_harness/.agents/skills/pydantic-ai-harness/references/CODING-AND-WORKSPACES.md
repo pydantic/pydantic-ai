@@ -89,12 +89,12 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
 - `shell(command, mode='foreground', timeout=None)` (`mode='background'` too), `delegate_task(agent_name, task)`
 
-Keyword-only options: `instructions=None` (appended to the default guidance), `agency='high'`
+Keyword-only options: `instructions=None` (appended to the default guidance), `autonomy='high'`
 (`'low'` proposes a plan and waits for approval; `'medium'` asks when a choice really matters; `'high'`
 asks only for credentials, approvals, or real ambiguity and measures stated numeric targets; `'max'` never
 asks and also deletes its scratch files. At `'max'` it also uses the original deliverable wording, confirms
 each stated requirement and edge case explicitly, and uses every supplied field. A delegate finishes on its
-own and measures numeric targets whatever the level; the type is `Agency`),
+own and measures numeric targets whatever the level; the type is `Autonomy`),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
 files as the agent reads, inlining up to 32,000 characters of them per conversation before switching to pointers; pass a
