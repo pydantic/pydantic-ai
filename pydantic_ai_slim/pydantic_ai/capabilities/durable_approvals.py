@@ -82,6 +82,11 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
             )
         try:
             decision = _RESULTS_ADAPTER.validate_python(payload)
+            # `build_results` checks `approvals` and `calls` only; without this, a decision could set the
+            # `tool_call_metadata` of a call an earlier handler already resolved.
+            pending_ids = {call.tool_call_id for call in (*requests.approvals, *requests.calls)}
+            if extra_metadata := set(decision.metadata) - pending_ids:
+                raise ValueError(f'`metadata` contains tool call IDs that are not pending: {sorted(extra_metadata)}')
             return requests.build_results(
                 approvals=decision.approvals, calls=decision.calls, metadata=decision.metadata
             )

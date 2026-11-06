@@ -177,6 +177,8 @@ class _CallbackWaiter(ExternalEventWaiter):
             )
         except CallbackError as error:
             raise ExternalEventError(str(error)) from error
+        # The `CallbackConfig` sets no `serdes`, so on SDK 1.x and 3.x `Callback.result()` returns the
+        # result as the resolver sent it (`PASS_THROUGH_SERDES`), or `None` when it sent none.
         if result is None:
             return None
         try:

@@ -212,6 +212,11 @@ async def test_partial_decision_leaves_the_rest_pending() -> None:
             r"not valid: `approvals` contains tool call IDs not in this `DeferredToolRequests.approvals`: \['call-0'\]",
             id='stale-tool-call-id',
         ),
+        pytest.param(
+            {'approvals': {'call-1': True}, 'metadata': {'call-0': {'approved_by': 'alice'}}},
+            r"not valid: `metadata` contains tool call IDs that are not pending: \['call-0'\]",
+            id='metadata-for-a-call-that-is-not-pending',
+        ),
     ],
 )
 async def test_invalid_decision_fails_the_run(payload: JsonValue, error: str) -> None:
