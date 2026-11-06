@@ -85,7 +85,7 @@ agent = Agent(model, model_settings=settings)
 
 ### Turning thinking off
 
-Some OpenRouter routes make reasoning mandatory and reject `reasoning.effort: 'none'` (OpenRouter's [model list](https://openrouter.ai/api/v1/models) marks them `reasoning.mandatory`). On these routes, the unified [`thinking=False`](../capabilities/thinking.md) setting sends the lowest effort the route accepts instead: `minimal` on the routes Pydantic AI knows accept it, and `low` on other models that always reason, such as `openai/o3`.
+On routes that can't turn reasoning off, the unified `thinking=False` setting sends the lowest effort the route accepts instead of `effort='none'`: see [Thinking](../capabilities/thinking.md#openrouter) for which routes get `minimal` and which get `low`.
 
 ### Eager Input Streaming
 
