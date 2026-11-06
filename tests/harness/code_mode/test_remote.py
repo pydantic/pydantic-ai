@@ -395,7 +395,7 @@ class TestCodeMode:
             async with AsyncMontyRemote(relay.url) as pool:
                 with pytest.raises(MontyRefusedError) as exc_info:
                     async with pool.checkout():
-                        pytest.fail('refusal server admitted a session')
+                        pytest.fail('refusal server admitted a session')  # pragma: no cover
 
         sleep = AsyncMock()
         monkeypatch.setattr('anyio.sleep', sleep)
@@ -429,7 +429,7 @@ class TestCodeMode:
                 for cause in ('capacity', 'unauthenticated', 'unauthenticated'):
                     with pytest.raises(MontyRefusedError) as exc_info:
                         async with pool.checkout():
-                            pytest.fail('refusal server admitted a session')
+                            pytest.fail('refusal server admitted a session')  # pragma: no cover
                     assert exc_info.value.cause == cause
         assert len(relay.metadata) == 3
 
@@ -437,7 +437,7 @@ class TestCodeMode:
         """An empty explicit sequence must fail before the relay can accept connections."""
         with pytest.raises(ValueError, match='at least one cause'):
             async with serve_monty_relay(refusal_causes=()):
-                pytest.fail('empty refusal sequence accepted')
+                pytest.fail('empty refusal sequence accepted')  # pragma: no cover
 
     @pytest.mark.parametrize('error_type', [RuntimeError, UserError, LogfireConfigError])
     async def test_local_backed_factory_checkout_error(
@@ -482,17 +482,12 @@ class TestCodeMode:
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', _CrashedError)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', _DisconnectError)
         original_resume = AsyncFutureSnapshot.resume
-        failed = False
 
         async def fail_after_tool(
             snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
         ) -> AsyncSnapshot:
-            nonlocal failed
-            result = await original_resume(snapshot, results)
-            if not failed:
-                failed = True
-                raise error
-            return result
+            await original_resume(snapshot, results)
+            raise error
 
         monkeypatch.setattr(AsyncFutureSnapshot, 'resume', fail_after_tool)
         agent = Agent(
