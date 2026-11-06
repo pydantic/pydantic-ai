@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .subagents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .teams import Team
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
@@ -182,6 +183,7 @@ __all__ = [
     'SubAgents',
     'SummarizingCompaction',
     'SystemReminders',
+    'Team',
     'TieredCompaction',
     'ToolCallJudge',
     'ToolGuardrail',
@@ -283,6 +285,7 @@ _LAZY_EXPORTS = {
     'SubAgents': 'subagents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
+    'Team': 'teams',
     'TieredCompaction': 'compaction',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',

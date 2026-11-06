@@ -36,9 +36,8 @@ def _is_deprecation_shim(package: Path) -> bool:
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
 # capability tables per review. `media` exports the content-addressed stores Step Persistence
 # uses; its docs page and README are framed as Step Persistence supporting infrastructure, not
-# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625). `teams` holds only
-# the event types the team composition will emit, documented with `planning`'s claimable stores.
-_NOT_A_CAPABILITY = frozenset({'media', 'teams'})
+# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625).
+_NOT_A_CAPABILITY = frozenset({'media'})
 
 
 def _capability_packages() -> list[Path]:
@@ -196,6 +195,7 @@ _CAPABILITY_PAGE_META = {
     'subagents.md': ('subagents', 'Subagents'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
+    'teams.md': ('teams', 'Teams'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
