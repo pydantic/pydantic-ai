@@ -294,12 +294,8 @@ class TestCoder:
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return _finish_or_delegate(seen, messages, info)
 
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            _finish_or_delegate(seen, messages, info)
-            yield 'done'
-
         agent = Agent(
-            FunctionModel(respond, stream_function=stream),
+            FunctionModel(respond),
             name='coder',
             capabilities=[
                 LocalWorkspace(tmp_path),
