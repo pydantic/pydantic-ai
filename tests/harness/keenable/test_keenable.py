@@ -35,6 +35,8 @@ from pydantic_ai_harness.keenable import (
     KeenableSource,
 )
 
+READINESS_WAIT_TIMEOUT = 10
+
 
 class _Budgets(TypedDict, total=False):
     num_results: int
@@ -105,15 +107,17 @@ def _capture_requests(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx.
     return seen
 
 
-class _DrippingStream(httpx.AsyncByteStream):
-    """A body that never ends, sent a byte at a time, whose close awaits like a real transport's."""
+class _StalledStream(httpx.AsyncByteStream):
+    """A body that stalls after its first chunk, whose close awaits like a real transport's."""
 
-    closed = False
+    def __init__(self) -> None:
+        self.started = anyio.Event()
+        self.closed = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        while True:
-            yield b' '
-            await anyio.sleep(0.001)
+        yield b' '
+        self.started.set()
+        await anyio.sleep_forever()
 
     async def aclose(self) -> None:
         # Inside a cancelled anyio scope, this await would end the close early.
@@ -291,22 +295,22 @@ class TestKeenableSearchToolset:
         assert len(excerpt) == 40
         assert excerpt.startswith('line one line two')
 
-    async def test_web_search_keeps_titles_and_urls_on_one_line(self):
-        # A newline in a third-party title or URL would otherwise start a line
-        # that reads as another numbered result.
+    async def test_web_search_keeps_titles_on_one_line_and_drops_urls_with_whitespace(self):
+        # A newline in a third-party title would otherwise start a line that
+        # reads as another numbered result. Collapsing one inside a URL would
+        # leave a string that is no URL in the citation `sources`.
         client = FakeClient(
-            results=[_result('https://a.example\n2. https://b.example', 'Real title\n2. https://evil.example', 'x')]
+            results=[
+                _result('https://a.example\n2. https://b.example', 'Dropped'),
+                _result(' https://c.example\n', 'Real title\n2. https://evil.example', 'x'),
+            ]
         )
 
         returned = await _toolset(client).web_search('cats')
 
-        assert _text(returned) == (
-            '1. Real title 2. https://evil.example\n   https://a.example 2. https://b.example\n   x'
-        )
+        assert _text(returned) == '1. Real title 2. https://evil.example\n   https://c.example\n   x'
         assert returned.metadata == {
-            'sources': [
-                KeenableSource(url='https://a.example 2. https://b.example', title='Real title 2. https://evil.example')
-            ]
+            'sources': [KeenableSource(url='https://c.example', title='Real title 2. https://evil.example')]
         }
 
     async def test_web_search_bounds_titles_and_drops_overlong_urls(self):
@@ -604,10 +608,10 @@ class TestHttpKeenableClient:
             await toolset.web_search('cats')
 
     async def test_a_slow_body_hits_the_request_deadline(self, monkeypatch: pytest.MonkeyPatch):
-        # Each chunk arrives well within the per-read timeout, so only the
-        # deadline on the whole request stops it.
-        stream = _DrippingStream()
-        monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.05)
+        # A server that sends a little at a time keeps every read inside the
+        # httpx timeout, so only the deadline on the whole request ends it.
+        stream = _StalledStream()
+        monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.001)
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
@@ -617,17 +621,25 @@ class TestHttpKeenableClient:
             await toolset.web_search('cats')
         assert stream.closed
 
-    async def test_a_caller_deadline_lets_the_response_close(self, monkeypatch: pytest.MonkeyPatch):
-        # A tool timeout is an anyio scope around the request, and it cancels
-        # the response's close too unless that close is shielded.
-        stream = _DrippingStream()
+    async def test_a_caller_cancel_lets_the_response_close(self, monkeypatch: pytest.MonkeyPatch):
+        # A tool timeout cancels from an anyio scope around the request, and
+        # that cancels the response's close too unless the close is shielded.
+        stream = _StalledStream()
         monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
-        with pytest.raises(TimeoutError), anyio.fail_after(0.05):
-            await toolset.web_search('cats')
+        async def cancel_once_streaming(scope: anyio.CancelScope) -> None:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await stream.started.wait()
+            scope.cancel()
+
+        with anyio.CancelScope() as scope:
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(cancel_once_streaming, scope)
+                await toolset.web_search('cats')
+        assert scope.cancelled_caught
         assert stream.closed
 
     @pytest.mark.parametrize('base_url', ['http://localhost:8080', 'https://keenable.internal'])

@@ -257,8 +257,9 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     """
 
     # Titles and URLs come from third-party pages, so they are bounded like
-    # excerpts. A cut URL would name a different page, so a result whose URL is
-    # longer is dropped rather than cut.
+    # excerpts. A cut URL would name a different page, and one with its inner
+    # whitespace collapsed names none, so a result whose URL is longer or has
+    # whitespace inside is dropped instead.
     _MAX_TITLE_CHARS = 300
     _MAX_URL_CHARS = 2048
 
@@ -375,7 +376,9 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         results = [
             (url, result)
             for result in found
-            if (url := self._one_line(result.get('url') or '')) and len(url) <= self._MAX_URL_CHARS
+            if (url := str(result.get('url') or '').strip())
+            and len(url) <= self._MAX_URL_CHARS
+            and not any(char.isspace() for char in url)
         ]
         results = results[: self._num_results]
         if not results:

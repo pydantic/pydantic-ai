@@ -25,7 +25,7 @@ The capability adds two tools:
 
 - `web_search(query)`: returns the matching pages with title, URL, and a short
   excerpt of each. Titles are cut at 300 characters, and a result whose URL is
-  longer than 2,048 characters is left out.
+  longer than 2,048 characters or has whitespace inside is left out.
 - `get_page(url)`: retrieves one page as markdown.
 
 Both return a `ToolReturn` whose `metadata['sources']` lists the URLs and
