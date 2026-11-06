@@ -1,4 +1,4 @@
-"""`DynamicWorkflow` under `AWSLambdaDurability`: concurrent sub-agents replay their own checkpoints."""
+"""`DynamicWorkflow` under `AWSLambdaDurability`: gathered sub-agents run one at a time, so replay gives each call its own checkpoints."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .conftest import FakeDurableContext
 
 
 @pytest.mark.parametrize('durable_orchestrator', [True, False])
-def test_concurrent_sub_agents_replay_their_own_checkpoints(durable_orchestrator: bool) -> None:
+def test_gathered_sub_agents_replay_their_own_checkpoints(durable_orchestrator: bool) -> None:
     orchestrator = build_orchestrator(AWSLambdaDurability, durable_orchestrator=durable_orchestrator)
     first = FakeDurableContext()
     assert run_durable(lambda: orchestrator.run('go'), context=first).output == EXPECTED

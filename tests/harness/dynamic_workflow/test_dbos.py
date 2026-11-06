@@ -1,4 +1,4 @@
-"""`DynamicWorkflow` under `DBOSDurability`: concurrent sub-agents replay their own recorded steps on recovery."""
+"""`DynamicWorkflow` under `DBOSDurability`: gathered sub-agents run one at a time, so recovery replays each call its own steps."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def workflow(dbos: DBOS) -> Callable[[], Awaitable[str]]:
     return run
 
 
-async def test_concurrent_sub_agents_recover_their_own_results(
+async def test_gathered_sub_agents_recover_their_own_results(
     dbos: DBOS, workflow: Callable[[], Awaitable[str]]
 ) -> None:
     workflow_id = str(uuid.uuid4())
