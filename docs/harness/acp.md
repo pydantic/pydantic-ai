@@ -206,6 +206,12 @@ run_acp_stdio_sync(agent, models=['{{ anthropic:medium }}', '{{ anthropic:large 
 
 A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
 
+## Token usage
+
+Each completed turn reports its token counts (input/output/total, plus cached tokens) on the ACP `PromptResponse`, summed across any approval pauses. This is an UNSTABLE ACP field, so clients that don't support it simply ignore it.
+
+Each completed turn also ends with a `usage_update` session notification. `used` is the last model request's total tokens (`input_tokens + output_tokens`), rather than the turn-wide sum, and `size` is the context window of the model that served that request, falling back to [`DEFAULT_CONTEXT_WINDOW`][pydantic_ai_harness.compaction.DEFAULT_CONTEXT_WINDOW] when it cannot be resolved. The notification is not persisted in the session transcript or replayed by `session/load`.
+
 ## Cancellation and limitations
 
 - **Cancellation.** `session/cancel` and `session/close` cancel the in-flight turn; close waits for it to unwind before returning. Cooperative async tools stop promptly. A synchronous tool already running in a worker thread cannot be force-stopped, so prefer async tools for cancellation-sensitive work.
