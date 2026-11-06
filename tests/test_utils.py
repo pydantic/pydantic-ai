@@ -1398,6 +1398,12 @@ def test_strip_markdown_fences_indented_json_and_info_strings():
     assert strip_markdown_fences('```application/json\n{"a": 1}\n```') == '{"a": 1}'
 
 
+def test_strip_markdown_fences_long_backtick_run():
+    """A malformed backtick run must not trigger quadratic regex backtracking."""
+    text = '`' * 20_000
+    assert strip_markdown_fences(text) == text
+
+
 class _AmbiguousBool:
     """Mimics the result of a numpy array comparison: its truth value is ambiguous."""
 
