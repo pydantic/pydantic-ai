@@ -137,10 +137,11 @@ async def test_cache_defaults_reach_anthropic_request(
     if saved:
         # A saved native setting takes precedence over the unified default.
         assert request['cache_control'] is OMIT
-        # Claude Sonnet 4.6 has no mid-conversation system messages, so the announcement opens the
-        # instructions, ahead of their cache point.
-        assert 'cache_control' not in request['system'][0]
-        assert request['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+        # Nothing in this history needs the framing announcement, so the instructions are the whole
+        # system prompt and carry the saved cache point.
+        assert request['system'] == [
+            {'type': 'text', 'text': 'Static instructions', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}
+        ]
     else:
         assert request['cache_control']['type'] == 'ephemeral'
     assert model.resolve_cache_retention(None) is None  # Library defaults remain opt-in.
