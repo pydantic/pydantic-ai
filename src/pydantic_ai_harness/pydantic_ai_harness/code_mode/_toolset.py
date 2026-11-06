@@ -1302,7 +1302,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
             # and the model still gets a retry.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
-            reset_advice = await self._runtime_error_advice(e, run_state)
+            reset_advice = await self._reset_for_runtime_error(e, run_state)
             if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None or reset_advice:
                 # A retry is the only record the model gets of an uncaught failure, and these
                 # calls already started. Without them the model reruns their side effects when
@@ -1373,7 +1373,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return result
 
     @staticmethod
-    async def _runtime_error_advice(error: MontyRuntimeError, run_state: MontyRunState) -> str:
+    async def _reset_for_runtime_error(error: MontyRuntimeError, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
             advice = _TIME_LIMIT_MESSAGE
         elif isinstance(error.exception(), MemoryError) and (
@@ -1382,7 +1382,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             advice = (
                 'The sandbox ran out of memory and the session was reset. '
                 'Re-run any imports, recreate any state you need, and use less memory: '
-                'process smaller batches and avoid large intermediate values.'
+                'process smaller batches, avoid large intermediate values, and print less output.'
             )
         else:
             return ''

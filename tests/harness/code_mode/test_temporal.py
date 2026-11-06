@@ -30,6 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from anyio.from_thread import start_blocking_portal
 from pydantic_monty import MontyRefusedError
 
 try:
@@ -434,9 +435,15 @@ async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Cl
     Replay immediately encounters the authentication refusal, so recording the original backoff
     as a workflow timer would make its command history nondeterministic. No session is admitted,
     avoiding the remote execution bridge while exercising real gRPC refusals through CodeMode.
+    The relay uses its own event loop because Temporal debug mode runs workflows on the test loop.
     """
     workflow_id = 'test_code_mode_temporal_remote_checkout_backoff'
-    async with serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('capacity', 'unauthenticated')) as relay:
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(
+            serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('capacity', 'unauthenticated'))
+        ) as relay,
+    ):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
@@ -454,7 +461,12 @@ async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Cl
         assert len(relay.metadata) == 2
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
-    async with serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',)) as relay:
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(
+            serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',))
+        ) as relay,
+    ):
         replay_result = await Replayer(
             workflows=[RemoteCodeModeRefusalWorkflow],
             plugins=[PydanticAIPlugin()],

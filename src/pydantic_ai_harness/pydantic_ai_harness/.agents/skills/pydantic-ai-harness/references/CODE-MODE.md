@@ -139,6 +139,7 @@ Remote session and idle timeouts explain that state is lost. Sandbox memory-limi
 `MemoryError`s without a traceback reset the session and ask the model to use smaller batches.
 Other snippet or nested-tool `MemoryError`s keep state unless their diagnostic is indistinguishable
 from a sandbox memory limit: Monty does not guarantee heap integrity after a limit fires.
+Exceeding the 10 MiB printed-output cap also resets the session because it has the same diagnostic.
 Remote host-side error details are omitted
 from retries because they may contain pool URLs or credentials; the original exception remains
 the cause for application-side diagnostics. Retries list nested calls that already started so

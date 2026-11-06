@@ -778,13 +778,14 @@ class TestCodeMode:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
-        with pytest.raises(ModelRetry, match='memory limit exceeded'):
+        with pytest.raises(ModelRetry, match='memory limit exceeded') as exc_info:
             await wrapper.call_tool(
                 'run_code',
                 {'code': "x = 7\nprint('x' * (10 * 1024 * 1024))"},
                 ctx,
                 tools['run_code'],
             )
+        assert 'print less output' in exc_info.value.message
         with pytest.raises(ModelRetry, match='Name `x` used when not defined'):
             await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
         result = await wrapper.call_tool('run_code', {'code': 'x = 7\nx + 1'}, ctx, tools['run_code'])

@@ -691,6 +691,8 @@ Errors the model can act on are returned as model retries:
   raised by the snippet or a nested tool keep the session. Errors that cannot be distinguished
   from a sandbox memory-limit failure also reset it: Monty does not guarantee heap integrity after
   a memory limit fires, even if the worker stays alive.
+  Exceeding the 10 MiB printed-output cap also resets the session: Monty exposes the same diagnostic
+  for this host-side limit and a sandbox heap limit.
 - A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
   Remote host-side error details are omitted from model retries because they can contain pool URLs
   or credentials. The original exception remains the retry's cause for application-side diagnostics.
