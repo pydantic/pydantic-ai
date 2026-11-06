@@ -499,12 +499,12 @@ def _stop_rate_limit_retries(state: RetryCallState) -> bool:
     fails as `time_limit`, which opens a task incident, while a rate limit that outlasts
     these retries fails as `rate_limit`, which stays local to the run.
     """
-    retry_ends = (state.seconds_since_start or 0.0) + state.upcoming_sleep
-    if retry_ends >= RATE_LIMIT_RETRY_SECS:
+    elapsed = state.seconds_since_start or 0.0
+    if elapsed + state.upcoming_sleep >= RATE_LIMIT_RETRY_SECS:
         return True
     seconds_left = _run_seconds_left()
     return (
-        retry_ends >= RATE_LIMIT_MIN_RETRY_SECS
+        elapsed >= RATE_LIMIT_MIN_RETRY_SECS
         and seconds_left is not None
         and seconds_left - state.upcoming_sleep <= RUN_TIME_RESERVE_SECS
     )

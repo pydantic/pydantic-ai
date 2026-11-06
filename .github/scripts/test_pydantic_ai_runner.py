@@ -414,7 +414,8 @@ def test_prewarm_stages_the_workflow_commit_whatever_the_workspace_holds(tmp_pat
     # CI Review's `git checkout --detach` of the PR head aborts on a dirty workspace.
     assert lock.read_text(encoding='utf-8') == 'pull request head\n'
 
-    # Without the staged source the launcher has nothing to run, so the step fails.
+    # A checkout that fails, here because the path already holds one, fails the step:
+    # without the staged source the launcher has nothing to run.
     rerun = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
     assert rerun.returncode == 1
     assert '::error::could not check out' in rerun.stdout
@@ -3035,7 +3036,7 @@ def test_rate_limit_retry_backs_off_exponentially_and_hands_a_longer_1302_burst_
     ('seconds_before_reserve', 'expected_sleeps'),
     [
         pytest.param(100, [1, 2, 4, 8, 16, 16, 16, 16, 16], id='stops-before-the-reserve'),
-        pytest.param(-1, [1, 2, 4, 8, 16, 16], id='inside-the-reserve-retries-a-minute'),
+        pytest.param(-1, [1, 2, 4, 8, 16, 16, 16], id='inside-the-reserve-retries-a-minute'),
     ],
 )
 def test_rate_limit_retry_leaves_the_run_time_reserve_to_the_safe_output(
