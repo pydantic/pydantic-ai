@@ -601,6 +601,8 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.read', 'pydantic_clai2/cli/shell_terminal.py', '_key'),
     ('os.write', 'pydantic_clai2/cli/shell_terminal.py', 'pass_through'),
     ('os.write', 'pydantic_clai2/cli/self_update.py', '_print_line'),
+    # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
+    ('socket.socket.accept', 'pydantic_clai2/ui/prompt/interrupts.py', '_wake'),
     # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
     ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
     ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
@@ -653,12 +655,12 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
-    ('pydantic_clai2/config/project_settings.py', '_present'),
+    ('pydantic_clai2/config/project_settings.py', ('_present', 'load_project_settings')),
     ('pydantic_clai2/auth.py', '_connected'),
     ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
     ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
-    ('pydantic_clai2/builtin_plugins/logfire_destination.py', 'remember'),
+    ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
     ('pydantic_clai2/builtin_plugins/web/__init__.py', '_launcher'),
     ('pydantic_clai2/mcp/form.py', 'saved_message'),
     ('pydantic_clai2/mcp/runtime.py', ('log', '_build')),
