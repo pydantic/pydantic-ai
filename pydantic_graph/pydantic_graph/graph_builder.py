@@ -1452,7 +1452,13 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         self._add(edges, parent_namespace)
 
-    def _add(self, edges: Iterable[EdgePath[StateT, DepsT]], parent_namespace: dict[str, object] | None) -> None:
+    def _add(
+        self,
+        edges: Iterable[EdgePath[StateT, DepsT]],
+        parent_namespace: dict[str, object] | None,
+        *,
+        infer_missing: bool = False,
+    ) -> None:
         destination_ids: set[int] = set()
         destinations: list[AnyDestinationNode] = []
         for edge in edges:
@@ -1463,7 +1469,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                 self._insert_destination_node(destination_node, destinations, destination_ids)
             self._insert_path_nodes(edge.path)
 
-        self._infer_step_edges(destinations, parent_namespace)
+        self._infer_step_edges(destinations, parent_namespace, infer_missing=infer_missing)
 
     def _insert_path_nodes(self, path: Path) -> None:
         for item in path.items:
@@ -1492,11 +1498,17 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                     self._insert_destination_node(nested_destination, destinations, destination_ids)
 
     def _infer_step_edges(
-        self, destinations: Iterable[AnyDestinationNode], parent_namespace: dict[str, object] | None
+        self,
+        destinations: Iterable[AnyDestinationNode],
+        parent_namespace: dict[str, object] | None,
+        *,
+        infer_missing: bool,
     ) -> None:
         # Automatically create edges from step function return hints including `BaseNode`s.
         for destination in destinations:
             if not isinstance(destination, Step) or isinstance(destination, NodeStep):
+                continue
+            if infer_missing and self._edges_by_source.get(destination.id):
                 continue
             type_hints = get_type_hints(destination.call, localns=parent_namespace, include_extras=True)
             try:
@@ -1506,7 +1518,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             else:
                 edge = self._edge_from_return_hint(destination, return_hint)
                 if edge is not None:
-                    self._add((edge,), parent_namespace)
+                    self._add((edge,), parent_namespace, infer_missing=infer_missing)
 
     def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
         """Add a simple edge between two nodes.
@@ -1666,19 +1678,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             self._insert_node(node)
             pending.append(node.id)
 
-        reached: set[NodeID] = set()
         processed_types: set[type[BaseNode[StateT, DepsT, GraphOutputT]]] = set()
         processed_paths: set[int] = set()
         while pending:
             node_id = pending.pop()
-            reached.add(node_id)
             node = self._nodes[node_id]
             if isinstance(node, NodeStep) and node.node_type not in processed_types:
                 processed_types.add(node.node_type)
                 if not self._edges_by_source.get(node_id):
-                    self._add((self._node(node.node_type, parent_namespace),), parent_namespace)
-                    # Adding an inferred edge can also infer new paths for a reached Step.
-                    pending.extend(reached)
+                    self._add((self._node(node.node_type, parent_namespace),), parent_namespace, infer_missing=True)
 
             paths = list(self._edges_by_source.get(node_id, ()))
             if isinstance(node, Decision):

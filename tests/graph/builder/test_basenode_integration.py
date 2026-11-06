@@ -13,7 +13,6 @@ import pytest
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, StepNode
 from pydantic_graph.exceptions import GraphBuildingError, GraphSetupError
 from pydantic_graph.join import JoinNode, reduce_list_append
-from pydantic_graph.paths import EdgePath
 from pydantic_graph.step import NodeStep
 
 from ..._inline_snapshot import snapshot
@@ -377,7 +376,7 @@ async def test_add_reachable_preserves_configured_paths():
     g = GraphBuilder(input_type=Root, output_type=int)
 
     @g.step
-    async def unused(ctx: StepContext[None, None, None]) -> int:
+    async def unused(ctx: StepContext[None, None, None]) -> int:  # pragma: no cover
         return 0
 
     g.add(g.edge_from(NodeStep(Root)).label('configured').to(Finish), g.edge_from(unused).to(Unrelated))
@@ -385,7 +384,6 @@ async def test_add_reachable_preserves_configured_paths():
     graph = g.build(validate_graph_structure=False)
     assert 'configured' in str(graph)
     assert 'Unrelated' not in graph.edges_by_source
-    assert await unused.call(StepContext(state=None, deps=None, inputs=None)) == 0
     g.add(g.edge_from(g.start_node).to(Root))
     assert await g.build(validate_graph_structure=False).run(inputs=Root()) == 42
 
@@ -429,43 +427,84 @@ async def test_add_reachable_configured_bridges():
     assert await g.build().run(inputs=2) == [4, 6]
 
 
-async def test_add_reachable_revisits_step_paths():
-    g = GraphBuilder(input_type=int, output_type=int)
+async def test_add_reachable_shared_step():
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
 
     @dataclass
-    class Finish(BaseNode[None, None, int]):
+    class Finish(BaseNode[IntegrationState, None, int]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+            ctx.state.log.append('finish')
             return End(self.value)
 
     @g.step
-    async def shared(ctx: StepContext[None, None, int]) -> Finish:
+    async def shared(ctx: StepContext[IntegrationState, None, int]) -> Finish:
         return Finish(ctx.inputs)
 
     @dataclass
-    class Later(BaseNode[None, None, int]):
+    class First(BaseNode[IntegrationState, None, int]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], shared]:
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
             return shared.as_node(self.value)
 
     @dataclass
-    class Root(BaseNode[None, None, int]):
+    class Second(BaseNode[IntegrationState, None, int]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[None, None]) -> Later:
-            return Later(self.value)
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
+            return shared.as_node(self.value)
 
-    # Register shared without triggering destination inference, then reach it before Later.
-    g.add(g.edge_from(shared).transform(lambda ctx: ctx.inputs.value).to(g.end_node))
-    edge = g.edge_from(NodeStep(Root)).transform(lambda ctx: 0).to(Later, shared)
-    g.add(EdgePath(sources=edge.sources, path=edge.path, destinations=[NodeStep(Later)]))
+    g.add_reachable(First, Second)
+    g.add_reachable(First, Second)
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: First(ctx.inputs)).to(First))
+    graph = g.build(validate_graph_structure=False)
+    state = IntegrationState()
+    assert await graph.run(state=state, inputs=7) == 7
+    assert state.log == ['finish']
+
+
+async def test_add_reachable_preserves_step_paths():
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
+
+    @dataclass
+    class Finish(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:  # pragma: no cover
+            ctx.state.log.append('finish')
+            return End(self.value)
+
+    @g.step
+    async def shared(ctx: StepContext[IntegrationState, None, int]) -> Finish:
+        return Finish(ctx.inputs)
+
+    @dataclass
+    class Root(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
+            return shared.as_node(self.value)
+
+    def configured(ctx: StepContext[IntegrationState, None, Finish]) -> int:
+        ctx.state.log.append('configured')
+        return ctx.inputs.value
+
+    g.add(g.edge_from(shared).transform(configured).to(g.end_node))
     g.add_reachable(Root)
     g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
     graph = g.build()
-    assert 'Finish' in graph.edges_by_source
-    assert await graph.run(inputs=7) == 7
+    assert 'Finish' not in graph.nodes
+    state = IntegrationState()
+    assert await graph.run(state=state, inputs=7) == 7
+    assert state.log == ['configured']
 
 
 @pytest.mark.parametrize('recursive', [False, True])
@@ -501,14 +540,18 @@ class Second(BaseNode[None, None, int]):
         return first.First(self.value + 1) if self.value < 2 else End(self.value)
 """)
     monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
-    first = import_module(f'{package_name}.first')
-    g = GraphBuilder(input_type=int, output_type=int)
-    if recursive:
-        g.add_reachable(first.First)
-    else:
-        g.add(g.node(first.First), g.node(first.second.Second))
-    g.add(g.edge_from(g.start_node).transform(lambda ctx: first.First(ctx.inputs)).to(first.First))
-    assert await g.build().run(inputs=0) == 2
+    try:
+        first = import_module(f'{package_name}.first')
+        g = GraphBuilder(input_type=int, output_type=int)
+        if recursive:
+            g.add_reachable(first.First)
+        else:
+            g.add(g.node(first.First), g.node(first.second.Second))
+        g.add(g.edge_from(g.start_node).transform(lambda ctx: first.First(ctx.inputs)).to(first.First))
+        assert await g.build().run(inputs=0) == 2
+    finally:
+        for name in (package_name, f'{package_name}.first', f'{package_name}.second'):
+            sys.modules.pop(name, None)
 
 
 def test_add_reachable_errors():
