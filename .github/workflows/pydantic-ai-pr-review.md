@@ -132,17 +132,6 @@ safe-outputs:
     # rerun dedup in `eligibility`, and `supersede-older-reviews`, which filters
     # `review.body.includes(marker)` and is a silent no-op without it.
     footer: always
-  threat-detection:
-    # Detection has an independent budget and the same unknown-model constraint.
-    max-ai-credits: -1
-    # Detection uses the stateful Claude CLI, so it retains normal recovery.
-    engine:
-      id: claude
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: "3"
 engine:
   id: pydantic-ai
   # The CLI cap stays above every workflow cap; `gh_aw_agent` enforces

@@ -89,17 +89,6 @@ safe-outputs:
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
-  threat-detection:
-    # Detection's separate AWF config does not inherit the model pricing below.
-    max-ai-credits: -1
-    # Detection uses the stateful Claude CLI, so it retains normal recovery.
-    engine:
-      id: claude
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
   # Must equal `timeout-minutes` above. The workflow composition subtracts teardown headroom from it

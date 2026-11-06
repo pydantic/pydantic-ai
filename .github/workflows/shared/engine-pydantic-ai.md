@@ -4,16 +4,16 @@
 # The engine itself is the published definition at
 # `src/pydantic_ai_harness/gh-aw/pydantic.md`; each workflow imports it. This
 # file adds only what is specific to this repository: the workflow agent
-# composition, the Z.AI endpoint, and threat detection on the same engine.
+# composition, the Z.AI endpoint, and codex-based threat detection.
 #
 # `PAI_AGENT` loads `.github/scripts/gh_aw_agent`, staged in a pre-agent step.
 # The engine owns the model, the AWF sandbox, gateway MCP tools and session
 # recording; the composition owns the workflow policies.
 #
-# Threat detection runs on the published engine too: gh-aw v1.0.1 resolves a
-# behavior-defined engine for the detection job. The detection module prints the
-# model's verdict to stderr so gh-aw's result parser sees the bare
-# `THREAT_DETECTION_RESULT:` line.
+# Threat detection runs on gh-aw's built-in codex engine, because v1.0.1
+# normalizes a custom engine to a built-in one. Its Responses endpoint is the
+# Coding Plan's `/api/v1`, reached through the AWF openai proxy so the key stays
+# on the host. It emits no OTLP spans.
 #
 # Usage:
 #   imports:
@@ -25,19 +25,19 @@ safe-outputs:
   threat-detection:
     # Detection has an independent budget and the same unknown-model constraint.
     max-ai-credits: -1
-    # gh-aw v1.0.1 does not accept an imported engine for the detection job:
-    # `getThreatDetectionEngineID` normalizes any non-built-in engine to one of
-    # copilot/claude/codex (`declarableDetectionEngineIDs`). Keep the existing
-    # Claude CLI detector on the Z.AI endpoint until upstream supports the
-    # published engine. Keep main's 20-minute detector; gh-aw 1.0.1 applies the
-    # detection job's timeout to its step too, so 22 is the floor plus measured
-    # setup headroom.
+    # gh-aw v1.0.1 cannot run an imported engine in the detection job; it normalizes
+    # custom engines to a built-in one. Use the built-in codex engine, which speaks the
+    # Responses API, and point it at the Coding Plan's Responses endpoint through the
+    # AWF api-proxy. `OPENAI_API_KEY` is a key codex declares, so the Z.AI credential
+    # stays on the host and strict mode needs no new repository secret.
+    # Keep main's 20-minute detector. gh-aw 1.0.1 applies the detection job's
+    # timeout to its step too, so 22 is the floor plus measured setup headroom.
     engine:
-      id: claude
+      id: codex
       model: ${{ vars.GH_AW_MODEL }}
       env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+        OPENAI_BASE_URL: https://api.z.ai/api/v1
+        OPENAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: '3'
 pre-agent-steps:
   - name: Stage the workflow agent composition

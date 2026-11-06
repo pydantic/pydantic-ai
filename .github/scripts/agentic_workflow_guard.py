@@ -713,7 +713,9 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
 
 
 ZAI_ANTHROPIC_ENDPOINT = 'https://api.z.ai/api/anthropic'
+ZAI_CODEX_ENDPOINT = 'https://api.z.ai/api/v1'
 ZAI_CREDENTIAL = '${{ secrets.ZAI_API_KEY }}'
+DETECTION_ENGINE_ID = 'codex'
 AGENT_ENGINE_ENDPOINT = ZAI_ANTHROPIC_ENDPOINT
 AGENT_COMPOSITION = 'gh_aw_agent:agent'
 SHARED_ENGINE_RELATIVE = 'shared/engine-pydantic-ai.md'
@@ -779,27 +781,51 @@ def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]
     return violations
 
 
+def _detection_proxy_violations(workflows_dir: Path) -> list[Violation]:
+    """The compiled detection job must send codex through the Z.AI openai proxy."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            continue
+        text = lock.read_text(encoding='utf-8')
+        if (
+            '"openai":{"host":"api.z.ai"' not in text and '\\"openai\\":{\\"host\\":\\"api.z.ai\\"' not in text
+        ) or '--openai-api-base-path /api/v1' not in text:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-engine-config',
+                    'The detection job must target api.z.ai through the AWF openai proxy with the /api/v1 base path.',
+                )
+            )
+    return violations
+
+
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """Every Z.AI workflow must use the shared engine, endpoint and credential."""
     shared_path = workflows_dir / 'shared' / 'engine-pydantic-ai.md'
     if not shared_path.is_file():
         return [Violation(str(shared_path), 'provider-engine-config', 'Shared engine configuration is missing.')]
     shared = parse_frontmatter(shared_path)
-    detection_env = _as_mapping(
-        _as_mapping(_as_mapping(shared.get('safe-outputs')).get('threat-detection')).get('engine')
-    ).get('env')
+    detection_engine = _as_mapping(_as_mapping(shared.get('safe-outputs')).get('threat-detection')).get('engine')
+    detection_env = _as_mapping(detection_engine).get('env')
     violations: list[Violation] = []
     if (
-        _as_mapping(detection_env).get('ANTHROPIC_BASE_URL') != ZAI_ANTHROPIC_ENDPOINT
-        or _as_mapping(detection_env).get('ANTHROPIC_API_KEY') != ZAI_CREDENTIAL
+        _as_mapping(detection_engine).get('id') != DETECTION_ENGINE_ID
+        or _as_mapping(detection_env).get('OPENAI_BASE_URL') != ZAI_CODEX_ENDPOINT
+        or _as_mapping(detection_env).get('OPENAI_API_KEY') != ZAI_CREDENTIAL
     ):
         violations.append(
             Violation(
                 str(shared_path),
                 'provider-engine-config',
-                'The shared threat-detection engine must use the Z.AI endpoint and credential.',
+                'The shared threat-detection engine must use the codex engine on the Z.AI Responses endpoint '
+                'with the Z.AI credential.',
             )
         )
+
+    violations.extend(_detection_proxy_violations(workflows_dir))
 
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         frontmatter = parse_frontmatter(source)
@@ -841,14 +867,14 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
             _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine')
         ).get('env')
         if local_detection and (
-            _as_mapping(local_detection).get('ANTHROPIC_BASE_URL') != ZAI_ANTHROPIC_ENDPOINT
-            or _as_mapping(local_detection).get('ANTHROPIC_API_KEY') != ZAI_CREDENTIAL
+            _as_mapping(local_detection).get('OPENAI_BASE_URL') != ZAI_CODEX_ENDPOINT
+            or _as_mapping(local_detection).get('OPENAI_API_KEY') != ZAI_CREDENTIAL
         ):
             violations.append(
                 Violation(
                     str(source),
                     'provider-engine-config',
-                    'A workflow-local threat-detection engine must use the Z.AI endpoint and credential.',
+                    'A workflow-local threat-detection engine must use the Z.AI Responses endpoint and credential.',
                 )
             )
     return violations

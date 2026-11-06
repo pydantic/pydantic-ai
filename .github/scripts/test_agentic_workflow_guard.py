@@ -1210,11 +1210,11 @@ def _engine_source(
 
 
 def _shared_engine_source(
-    endpoint: str = 'https://api.z.ai/api/anthropic', credential: str = '${{ secrets.ZAI_API_KEY }}'
+    endpoint: str = 'https://api.z.ai/api/v1', credential: str = '${{ secrets.ZAI_API_KEY }}'
 ) -> str:
     return (
-        '---\nsafe-outputs:\n  threat-detection:\n    engine:\n      env:\n'
-        f'        ANTHROPIC_BASE_URL: {endpoint}\n        ANTHROPIC_API_KEY: {credential}\n---\n'
+        '---\nsafe-outputs:\n  threat-detection:\n    engine:\n      id: codex\n      env:\n'
+        f'        OPENAI_BASE_URL: {endpoint}\n        OPENAI_API_KEY: {credential}\n---\n'
     )
 
 
@@ -1245,7 +1245,7 @@ def test_provider_engine_config_checks_shared_threat_detection(tmp_path: Path):
 
     assert check_provider_engine_config(workflows) == []
 
-    _write(engine, _shared_engine_source(endpoint='https://provider.example/api/anthropic'))
+    _write(engine, _shared_engine_source(endpoint='https://provider.example/api/v1'))
     assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
     _write(engine, _shared_engine_source(credential='${{ secrets.OTHER_API_KEY }}'))
@@ -1262,15 +1262,18 @@ def test_provider_engine_config_checks_workflow_local_threat_detection(tmp_path:
     _write(shared / 'engine-pydantic-ai.md', _shared_engine_source())
     local = _write(
         workflows / 'pydantic-ai-local.md',
-        _engine_source() + 'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n'
-        '        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
-        '        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n',
+        _engine_source().replace(
+            '---\nPrompt\n',
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n'
+            '        OPENAI_BASE_URL: https://api.z.ai/api/v1\n'
+            '        OPENAI_API_KEY: ${{ secrets.ZAI_API_KEY }}\n---\nPrompt\n',
+        ),
     )
 
     assert check_provider_engine_config(workflows) == []
 
     matching = local.read_text(encoding='utf-8')
-    _write(local, matching.replace('https://api.z.ai/api/anthropic', 'https://provider.example/api/anthropic'))
+    _write(local, matching.replace('https://api.z.ai/api/v1', 'https://provider.example/api/v1'))
     assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
     _write(local, matching.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
