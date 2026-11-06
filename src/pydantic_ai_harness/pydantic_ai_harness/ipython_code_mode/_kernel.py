@@ -482,13 +482,7 @@ class IPythonKernel:
         except BaseException:
             # The run was cancelled mid-cell: stop the cell so a kernel that outlives the run is free.
             with anyio.CancelScope(shield=True):
-                # Unset only when stopping the kernel itself failed.
-                if self._manager is not None:  # pragma: no branch
-                    if await manager.is_alive():
-                        await self._interrupt_abandoned_cell(msg_id)
-                    else:
-                        # `shutdown()` killed it while this cell waited on a tool call; close the channels.
-                        await self._stop()
+                await self._abandon_cell(manager, msg_id)
             raise
         cell = collector.finish()
         if deadline.interrupted:
@@ -517,6 +511,16 @@ class IPythonKernel:
                 reply = await call_function(prompt[len(self._token) :])
                 deadline.exclude_since(started)
             client.input(reply)
+
+    async def _abandon_cell(self, manager: _KernelManager, msg_id: str) -> None:
+        """Free the kernel from a cell whose run was cancelled, interrupting the cell or closing a dead kernel's channels."""
+        # Unset only when stopping the kernel itself failed.
+        if self._manager is not None:  # pragma: no branch
+            if await manager.is_alive():
+                await self._interrupt_abandoned_cell(msg_id)
+            else:
+                # `shutdown()` killed it while this cell waited on a tool call; close the channels.
+                await self._stop()
 
     async def _interrupt_abandoned_cell(self, msg_id: str) -> None:
         """Interrupt a cell whose run was cancelled, and stop the kernel if the cell keeps running.

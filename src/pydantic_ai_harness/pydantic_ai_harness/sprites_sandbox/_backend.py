@@ -313,6 +313,23 @@ async def _close_command(command: WSCommand) -> None:
             command.ws.transport.abort()
 
 
+async def _start_or_back_off(command: _ExecCommand, delay: float | None) -> bool:
+    """Start `command`, returning whether it started; after a handshake that failed before the socket opened, wait `delay`.
+
+    A failure after the socket opened, or on the last attempt (`delay` is `None`), raises.
+    """
+    try:
+        await command.start()
+    except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
+        if command.ws is not None:
+            raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
+        if delay is None:
+            raise NetworkError(f'Sprites exec handshake failed: {error}') from error
+        await anyio.sleep(delay)
+        return False
+    return True
+
+
 async def _close_client(client: AsyncSpritesClient | None) -> None:
     if client is not None and (error := await _cleanup_call(client.aclose, timeout=_CLOSE_TIMEOUT)) is not None:
         logger.warning('Could not close Sprites SDK client: %r', error)
@@ -686,18 +703,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # Stdin EOF gates execution: a handshake that failed before the socket opened cannot
                 # have started the command, so it is retried with backoff; an opened socket never is.
                 for delay in (*_HANDSHAKE_RETRY_DELAYS, None):  # pragma: no branch - each breaks or raises
-                    try:
-                        await exec_command.start()
+                    if await _start_or_back_off(exec_command, delay):
                         break
-                    except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
-                        if exec_command.ws is not None:
-                            raise WorkspaceUnavailableError(
-                                'Sprites exec connection failed; command may have run'
-                            ) from error
-                        if delay is None:
-                            raise NetworkError(f'Sprites exec handshake failed: {error}') from error
-                        await anyio.sleep(delay)
-                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                    exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -705,26 +713,39 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
             if timeout is not None and deadline.cancelled_caught:
                 interrupted = True
-                # A handshake that never opened started no command, so there is no capture to read.
-                started = exec_command.ws is not None
-                await _close_command(exec_command)
-                partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
-                # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-                stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
-                raise WorkspaceTimeoutError(
-                    f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
-                )
+                raise await self._timed_out(exec_command, marker, capture, timeout, capture_stderr=capture_stderr)
         except BaseException as error:
             # On a timeout or a cancellation, closing the socket is what ends the command in the Sprite.
-            if not interrupted:
-                started = exec_command.ws is not None
-                await _close_command(exec_command)
-                if capture_stderr and started:
-                    # Removes the capture file, as far as the shielded grace allows.
-                    await stop_shielded(lambda: self._read_capture(capture))
-            if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
-                raise mapped from error
-            raise
+            mapped = await self._abandon_command(
+                error, exec_command, capture, sandbox.name, interrupted=interrupted, capture_stderr=capture_stderr
+            )
+            if mapped is None:
+                raise
+            raise mapped from error
+        return await self._finish(
+            sandbox,
+            exec_command,
+            code,
+            marker,
+            directory,
+            timeout=timeout,
+            deadline=deadline.deadline,
+            check_working_dir=check_working_dir,
+        )
+
+    async def _finish(
+        self,
+        sandbox: AsyncSprite,
+        exec_command: _ExecCommand,
+        code: int,
+        marker: str,
+        directory: str | None,
+        *,
+        timeout: float | None,
+        deadline: float,
+        check_working_dir: bool,
+    ) -> CommandResult:
+        """Close a command that exited and build its result, confirming a missing `directory` and a deleted Sprite."""
         await _close_command(exec_command)
         stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         result = CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
@@ -736,9 +757,45 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         ):
             # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
             # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
-            await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
-        await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
+            await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline)
+        await _check_sprite_deleted(sandbox, deadline=deadline)
         return result
+
+    async def _timed_out(
+        self, exec_command: _ExecCommand, marker: str, capture: str, timeout: float, *, capture_stderr: bool
+    ) -> WorkspaceTimeoutError:
+        """Close a command that ran past `timeout` and build its timeout error with the output it left."""
+        # A handshake that never opened started no command, so there is no capture to read.
+        started = exec_command.ws is not None
+        await _close_command(exec_command)
+        partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
+        # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
+        stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
+        return WorkspaceTimeoutError(
+            f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
+        )
+
+    async def _abandon_command(
+        self,
+        error: BaseException,
+        exec_command: _ExecCommand,
+        capture: str,
+        sprite_name: str,
+        *,
+        interrupted: bool,
+        capture_stderr: bool,
+    ) -> WorkspaceError | None:
+        """Close a command that failed or was cancelled, unless its timeout already closed it, and map `error`.
+
+        Returns the `WorkspaceError` to raise for `error`, or `None` to re-raise it unchanged.
+        """
+        if not interrupted:
+            started = exec_command.ws is not None
+            await _close_command(exec_command)
+            if capture_stderr and started:
+                # Removes the capture file, as far as the shielded grace allows.
+                await stop_shielded(lambda: self._read_capture(capture))
+        return _map_error(error, sprite_name) if isinstance(error, Exception) else None
 
     async def _check_working_dir(
         self, sandbox: AsyncSprite, directory: str, failed: CommandResult, *, timeout: float | None, deadline: float
