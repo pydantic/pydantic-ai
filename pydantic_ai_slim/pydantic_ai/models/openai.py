@@ -5138,11 +5138,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(tool, WebSearchTool):
                 tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
-                file_search_tool = cast(
-                    responses.FileSearchToolParam,
-                    {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-                )
-                tools.append(file_search_tool)
+                tools.append(_map_file_search_tool_param(tool))
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
@@ -8142,6 +8138,16 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_file_search_tool_param(tool: FileSearchTool) -> responses.FileSearchToolParam:
+    file_search_tool = cast(
+        responses.FileSearchToolParam,
+        {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
+    )
+    if tool.max_num_results is not None:
+        file_search_tool['max_num_results'] = tool.max_num_results
+    return file_search_tool
 
 
 def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
