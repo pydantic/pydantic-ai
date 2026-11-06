@@ -184,8 +184,8 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 [tool loop](tools.md#function-tools) as every other provider, including validation, retries,
 [dependencies](../dependencies.md), and [capability hooks](capabilities.md), and sends the
 results back. Speech and delegated work run independently, so the Live model can keep talking while
-that happens rather than leaving dead air. Delegations run one at a time, though: when the user asks
-something new while a delegation is still under way, even one only waiting for a tool's result, Live
+that happens rather than leaving dead air. Delegations run one at a time, though: when the user speaks
+a new request while a delegation is still under way, even one only waiting for a tool's result, Live
 delegates it once that one is done.
 
 In history, the round has the shape a [standard run](../message-history.md) gives it: the reply that
