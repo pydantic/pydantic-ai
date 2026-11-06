@@ -31,6 +31,8 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
+| `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
+| `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -71,7 +73,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--session-id UUID` | Save a new session under this ID |
 | `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
-| `--update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
+| `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
@@ -100,12 +102,13 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.tool_retries` | `3` | Default retries per tool call. Explicit tool retry limits take precedence. |
 | `run.code_mode` | `true` | Fold tools into a sandboxed run_code that runs each statement while the model writes. Off, every tool is called natively. |
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
+| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
-| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
@@ -262,7 +265,7 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
-`clai2 --update` installs the same way without starting a session: it prints uv's output
+`clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
 is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
@@ -270,6 +273,7 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
 `--session-id`, `--agent`, `--worktree`, `--model`, `--request-limit`, or
 `--fork-session`.
+Both spellings accept `--database PATH`, including after `update`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
 typed in the page or in the terminal: the page shows uv's progress, over Settings too while
@@ -401,6 +405,37 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spinner`,
+`splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
+`smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
+first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
+`speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
+`session_namer`, and `session_namer_model`. The exception is a `permissions` value
+no wider than your own, which applies at once: the modes run from `full` through
+`auto` to `read-only`, so a repository can ask for more confirmation without
+your approval, but never for less. `/permissions` still changes the mode for the
+current session, and the project value returns at the next start. A project file
+cannot set `update_channel`: like `worktree_remove_commands`, it is user-only, and
+a file that sets it stops startup. Until you approve
+one, CLAI uses your own setting for it and names it under the banner at startup.
+`/project` lists what the file sets, with each value and whether it applies;
+`/project approve NAME...` (or `all`) applies those keys now and in every later
+session in that repository, and `/project revoke NAME...` (or `all`) removes saved
+approvals and returns to your own settings, including an approval of a key or value
+the file no longer sets, or of a file that is gone, which would otherwise apply
+again if the repository brought it back. An approval is kept in your user settings, for the folder
+that holds `.clai` and for the value you approved: once the file changes that
+value, as after a pull, it waits for your approval again. You approve at the
+prompt; `clai2` has no subcommand for it. A headless `clai2 -p` run or `clai2 --web`
+launch uses the approvals you saved and prints the keys it leaves out (on stderr
+for `-p`).
+
+The project's `instructions` are still sent while they wait, but as the
+repository's text rather than as your own: framed on the user channel, with a
+note from CLAI that they come from `.clai/settings.json` and are not approved,
+never in the system prompt where your own `run.instructions` go. Once approved, they take the place of
+your own instructions, as before.
+
 For instruction-loading settings, see [Repository instructions](#repository-instructions).
 
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
@@ -415,9 +450,12 @@ so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
 current declaration, off) and enable it again. The approval keeps the file's
 absolute path, so another repository cannot put its own file at the same
-relative path and have it run as the one you approved. An approval saved by an
-older CLAI with a relative path does not load; remove it and enable it again
-from its repository. Project declarations rank just
+relative path and have it run as the one you approved. It also keeps the
+file's contents: once the file changes, as after a pull, the plugin does not
+load until you review it and run `/plugins enable NAME` again. Modules the file
+imports are not covered. An approval saved by an older CLAI with a relative
+path does not load; remove it and enable it again from its repository. One
+saved before CLAI kept the file's contents is asked for again once. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -426,7 +464,10 @@ turn starts and ends; see
 [lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
 listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
-the table turns it off until you enable it again, and removing the table stops
+the table, or to a program inside the project that a list command runs, such
+as `["./scripts/check.sh"]` (a string command is approved as written),
+turns it off until you enable it again (CLAI checks such a program each time it
+starts it), and removing the table stops
 its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
@@ -436,35 +477,50 @@ next start. In the `/set` menu a value the project
 sets carries a muted `project` mark after it, and the details panel names the
 origin. CLAI prints the file it found when it starts.
 
-`AGENTS.md` or `CLAUDE.md` in the launch directory is read automatically by the
-built-in `repo_context` plugin (harness `RepoContext`), which is separate from
-the project file. `/plugins disable repo_context` turns it off, for this and
+The built-in `repo_context` plugin (harness `RepoContext`), which is separate
+from the project file, reads instruction files automatically: one per directory,
+`AGENTS.md` else `CLAUDE.md`, from the launch directory and the directories above
+it. Under your home the walk-up stops at `~`;
+elsewhere it stops at the repository root (see
+[Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
+the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
 ### Repository instructions
 
-By default, `repo_context` reads only the workspace's `CLAUDE.md` and `AGENTS.md`.
-Enable its existing `walk_up` option to read ancestors too:
+`repo_context` reads the workspace's instruction file and those above it. Two
+user-only settings set where that walk stops, and which shared directories an
+instruction symlink may point into:
 
 ```text
-/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
-/set repo_context.walk_up_root /srv/projects
+/set repo_context.walk_up_roots '["~", "/srv/projects"]'
 /set repo_context.autoload_symlink_roots '["~/agent-context"]'
 ```
 
-`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
-it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
-by default). A root outside the workspace's ancestors leaves only the workspace
-scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
-list of directories if your instruction files are symlinks into a shared directory.
+The walk reads ancestors up to the nearest listed root that contains the
+workspace, inclusive: with the list above, a workspace under `/srv/projects`
+stops there and one elsewhere under your home stops at `~`.
+`repo_context.walk_up_roots` defaults to `["~"]`, your home. When no listed root
+contains the workspace, as in a container's `/app`, the walk stops at the
+repository root, the nearest directory with a `.git`. Avoid listing a root other
+users can write to, such as `/tmp`. To scan only the workspace, turn the walk off:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false}'
+```
+
+`repo_context.autoload_symlink_roots` defaults to `[]`; set
+it to a JSON list of directories if your instruction files are symlinks into a
+shared directory.
 
 Both settings are user-only, not plugin JSON options; `.clai/settings.json`
 rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
-`~other-user`, or environment-variable interpolation. Quote paths containing
-spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
-single-quote the whole JSON list as above. Paths are normalized when used and
-need not exist when saved. Changes apply on the next run, not during a running turn.
+`~other-user`, or environment-variable interpolation. Single-quote each whole
+JSON list as above, which also keeps paths containing spaces in one argument,
+such as `/set repo_context.walk_up_roots '["~", "/srv/My Projects"]'`. Paths are
+resolved, following symlinks, when used and need not exist when saved. Changes
+apply on the next run, not during a running turn.
 
 Authorize a directory holding only trusted instructions, not `/` or all of home:
 repository symlinks can select any readable file beneath it. See
@@ -1263,6 +1319,9 @@ A press that cancels a running turn, closes completions, or leaves history searc
 does not count toward the shortcut. Wait for queued prompts to finish first.
 Typing another key or opening another menu resets the double-Esc sequence.
 
+In the web UI, a prompt's **Edit** and **Retry** buttons rewind to it the same way, between turns,
+and send the edited or unchanged prompt with its images at once.
+
 ### Shell commands with `!`
 
 A line that starts with `!`, after trimming surrounding whitespace, runs in the
@@ -1829,6 +1888,33 @@ The menu is the built-in `ask_user` plugin around the harness's
 shows how to put a different one, a web form for instance, in its place.
 `/plugins disable ask_user` removes the tool.
 
+### Permissions
+
+`/permissions` chooses what the agent may do without asking, for this session:
+
+| Mode | File writes | Shell commands |
+|---|---|---|
+| `full` (default) | run | run |
+| `auto` | run | run, except commands that delete (`rm -rf`), push (`git push`), rewrite history (`git reset --hard`, `git clean`), use `sudo`, reach the network (`curl`, `ssh`, ...), or install packages |
+| `read-only` | ask | ask |
+
+A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
+showing the command or the file change; the terminal prints the command (or a path too long for the
+picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
+same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
+the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
+prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
+that code mode's sandbox keeps the folder as the turn mounted it until the next prompt.
+
+The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
+and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
+the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
+only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
+gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+per run rather than bound to the agent. The model is told to do the work itself instead.
+
 ### Compacting the conversation
 
 The built-in `compaction` plugin is on by default, with or without `coder`.
@@ -2228,11 +2314,11 @@ keep the original saved path; resuming does not change directories or migrate
 saved data.
 
 In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
-the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
-marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
-session and one running in another CLAI cannot be archived. Resuming an archived
-session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
-and continues in the copy.
+the web UI's sidebar, except its **Archived** view, and nothing is deleted.
+<kbd>h</kbd> lists archived sessions too, marked `(archived)`, and searches them;
+<kbd>a</kbd> on one unarchives it. The current session and one running in another
+CLAI cannot be archived. Resuming an archived session, or a new turn in it,
+unarchives it; `--fork-session` leaves it archived and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -2337,7 +2423,8 @@ Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude
 Code · to import** for one not imported yet: Enter imports and resumes it, and
 Right previews it. Rename or delete it after importing it. The imported copy
-keeps saying where it came from, also once CLAI renames it. Codex sessions a
+keeps saying where it came from, also once CLAI renames it, and the web UI's
+sidebar shows the same label beside its title. Codex sessions a
 script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
 imports one.
 
@@ -2534,8 +2621,15 @@ still applies after `/update now` restarts CLAI in the worktree. An
 unchanged worktree that CLAI reopened, or one you launched inside, is kept without
 asking.
 
-If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
-or EOF keeps it; only `y` or `yes` confirms removal. By default, removal keeps
+If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
+**Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
+The path and removal details appear dimmed below the question. The complete
+details are also available in the transcript before you choose; use PageUp and
+PageDown to inspect long commands. Enter on **No**,
+Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
+keeps it and saves the preference in your settings database for this checkout.
+There is no command to undo this choice for the same checkout.
+A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
 with an explanation. You can register a user-only removal command for an exact
 repository in `config.db` with the `worktrees.remove_commands` user setting; when
@@ -2627,8 +2721,16 @@ looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
-- **Status dots.** A dot beside a live session in the sidebar shows that it runs a
-  turn, that input waits behind its turn, or that it asks you a question.
+- **A stable sidebar.** Sessions are listed by project, or all together under
+  **Recent**, newest created first. Selecting, renaming, or a turn ending never
+  moves a row. Sessions whose folder is gone fold into **Removed worktrees**.
+- **Status marks.** Each row has one: a spinner and elapsed time while it runs a
+  turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
+  you a question, and a bold title while it has changes you have not seen.
+  **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
+- **Archiving.** A session's menu archives it, or every session of its branch, and a
+  project's menu archives all its chats. The sidebar's **Archived** view lists them
+  with **Unarchive**.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn
@@ -2775,8 +2877,10 @@ The coding tools,
 default, `/plugins disable coder` for a chat-only shell. The model can also ask
 you multiple-choice questions mid-run through the built-in `ask_user` plugin;
 see [Questions from the model](#questions-from-the-model). The built-in
-`repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
-into the agent's instructions; `/plugins disable repo_context` turns that off.
+`repo_context` plugin reads the instruction files (`AGENTS.md`, else `CLAUDE.md`)
+of the launch directory and its ancestors into the agent's
+instructions, and a subdirectory's as the agent works there; `/plugins disable
+repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
@@ -3081,7 +3185,8 @@ name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
 off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
-keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+keeps its own model unless `-m` or `CLAI_MODEL` selects another, and code mode
+starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--resume`,
 and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
 To pass deps or plugins, write a launcher that calls `chat` (see
 `customization.md`).
@@ -3137,7 +3242,8 @@ The agent has the `coder`, `repo_context`, and `compaction` built-ins,
 configured as in `clai2`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
-and `AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that
+and the instruction files (`AGENTS.md`, else `CLAUDE.md`) of `workspace` and its
+ancestors are read, plus a subdirectory's as the agent works there. A capability you pass that
 supplies a workspace, such as a sandbox, takes its place, and a run's own
 `workspace=` replaces it for that run. Commands get this process's environment
 minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own

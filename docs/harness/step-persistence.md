@@ -45,7 +45,7 @@ async def main():
 asyncio.run(main())
 ```
 
-That is the whole setup. `run_id` is always per-`Agent.run` call, matching pydantic_ai's `RunContext.run_id`. For multi-turn logical grouping use `conversation_id=` -- that is the pydantic_ai-native primitive for it (see [Three-level identity](#three-level-identity)).
+`run_id` is per-`Agent.run` call, matching pydantic_ai's `RunContext.run_id`. For multi-turn grouping use `conversation_id=` (see [Three-level identity](#three-level-identity)).
 
 `run_id` resolution per call:
 
@@ -336,7 +336,7 @@ The store issues `createIndex` on its first write, for ten indexes: `conversatio
 - The unique index build fails if an existing `tool_effects` collection already holds duplicate `(run_id, tool_call_id)` pairs.
 - Index builds against already-populated collections cost time and I/O on that first call.
 
-`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
+`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against MongoDB 9.0.
 
 Install MongoDB support:
 
@@ -378,7 +378,7 @@ Call `build_persistence` during application startup and close the returned pool 
 
 Each step writes a new full-history snapshot keyed by an incrementing `seq`, and nothing is pruned by default. Within one long `Agent.run` the snapshot count equals the number of settled tool-call steps, so a long single run pays a growing storage cost.
 
-All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in `max_snapshots_per_run: int | None` (default `None`, unbounded -- byte-for-byte the prior behavior). When set to `N >= 1`, each `save_snapshot` prunes the run down to a retain set:
+All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in `max_snapshots_per_run: int | None` (default `None`, unbounded). When set to `N >= 1`, each `save_snapshot` prunes the run down to a retain set:
 
 - the newest `N` snapshots by `seq`,
 - the newest snapshot overall (serves `latest_snapshot(include_interrupted=True)`),
@@ -408,13 +408,11 @@ A database written by an earlier release keeps working: its rows hold the histor
 
 ## Persisting media
 
-`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` message past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above **64 KiB**, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text.
+`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` message past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above 64 KiB, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text.
 
-Text externalization is not Mongo-only and has no opt-out short of `media_store=None`: the walker is shared, so an existing `FileStepStore` or `SqliteStepStore` deployment starts writing blobs for large text parts as well as binary ones from this release on. Snapshots written before it still restore -- the reader recognises the older binary marker shape. This compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
+Text externalization applies to every store with a media store, not only Mongo; the only opt-out is `media_store=None`.
 
-Reserved-key escaping is a second marker-format generation with the same rule for these stores: a payload using the marker format's namespaced keys is moved into a versioned reserved mapping (the `__harness_external_escaped_keys__` stash, stamped with the format version under `__harness_external_marker_format__`), and the current reader moves those values back to their own keys. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves both reserved keys sitting in the restored payload rather than removing them. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped: `restore_media` raises `ValueError`, and `latest_snapshot` surfaces it to the caller for the file, sqlite, mongo, and postgres stores. `list_snapshots` is different: each store treats the failed snapshot as unparsable, skips it, and logs the error, so an unknown version shows up as a missing snapshot rather than an exception. That rejection is the version gate and is intended, but store users have to anticipate it. Keep a current reader for persisted snapshots that contain escaped markers.
-
-Two later additions follow the same upgrade-only rule. A dict the walker leaves inline but which carries `__harness_external_media__` or `__harness_external_literal__` (a tool return, say) is written wrapped under `__harness_external_literal__` with a `__harness_external_marker_format__` stamp, so it is never read back as a marker; a wrapper stamped with a version this reader does not know is rejected. An older reader leaves the wrapper in the restored payload, and still misreads a wrapped dict whose `__harness_external_media__` is `true`. A binary marker whose source used URL-safe base64, which is how pydantic serializes `bytes`, carries `__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an older reader keeps that key in the restored part, which validation ignores.
+The marker format is versioned, and compatibility is upgrade-only. A current reader restores snapshots written by earlier releases, but an earlier release can misread or fail to validate markers a newer one wrote, so keep a current reader for persisted snapshots. An escaped-keys marker or a literal wrapper stamped with a format version this reader does not know is rejected: `restore_media` raises `ValueError`, which `latest_snapshot` surfaces for the file, sqlite, mongo, and postgres stores, while `list_snapshots` skips that snapshot and logs the error.
 
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
@@ -456,13 +454,13 @@ URIs are `media+sha256://<hex>`, content-addressed. The same blob written throug
 
 - `DiskMediaStore(directory)` -- one file per blob at `<directory>/<sha256>.bin`.
 - `SqliteMediaStore(database=...)` or `SqliteMediaStore(connection=...)` -- one row per blob (`INSERT OR IGNORE` for content-addressed dedup).
-- `S3MediaStore(bucket=, endpoint=, region=, access_key_id=, secret_access_key=)` -- path-style URLs plus handrolled SigV4. Compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. PUT/GET/HEAD only -- no multipart, lifecycle, or listing in v1.
+- `S3MediaStore(bucket=, endpoint=, region=, access_key_id=, secret_access_key=)` -- path-style URLs plus handrolled SigV4. Compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. PUT/GET/HEAD only -- no multipart, lifecycle, or listing.
 - `MongoMediaStore(client= or db_url=, database=...)` -- MongoDB, needs the `mongodb` extra. Each blob is sha256-addressed chunks across a `media` manifest document and a sibling `media_chunks` collection (manual chunking rather than GridFS, so dedup is preserved -- see the [media page](media.md)), so a blob larger than one BSON document still stores and reads back. Chunking bounds the document, not memory: there is no streaming API, so each blob is held whole in process memory on both `put` and `get`. The manifest holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. `collection=` renames both collections and `chunk_size_bytes=` (default 8 MiB) sets the split size.
 - `PostgresMediaStore(pool, table='media')` -- PostgreSQL over a caller-owned asyncpg-compatible pool; no extra is needed. One row per blob keyed by the sha256 digest (`ON CONFLICT (sha256) DO NOTHING` for content-addressed dedup). The bytes are one `BYTEA` value, which PostgreSQL caps at 1 GB. There is no streaming API, so each blob is held whole in process memory on both `put` and `get`.
 
 ### Exposing externalized bytes as URLs
 
-Each store accepts a `public_url=` callable that turns the canonical `media+sha256://<hex>` URI into a URL the model can fetch directly. The forthcoming `MediaExternalizer` capability will use this to swap `BinaryContent` parts for `ImageUrl` / `AudioUrl` / other URL parts before the model sees the message, letting providers fetch big media over the wire without re-encoding bytes into the request body.
+Each store accepts a `public_url=` callable that turns the canonical `media+sha256://<hex>` URI into a URL the model can fetch directly.
 
 Static base URL (public R2 bucket, CDN):
 
@@ -509,7 +507,7 @@ class MediaContext:
     metadata: Mapping[str, str] = field(default_factory=dict)  # user-supplied tags
 ```
 
-All fields default; new fields are added non-breakingly as use cases emerge. Pass what you have, ignore the rest.
+All fields have defaults; pass what you have.
 
 **Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
 
@@ -542,14 +540,11 @@ store = DiskMediaStore('runs', key_strategy=by_media_type)
 
 Separately, all five stores accept a `public_url=` resolver, useful when a CDN, local HTTP server, or signed-URL service fronts the bytes. Without it `public_url(...)` returns `None` (the model never sees a URL unless a resolver is configured and it returns a string).
 
-pydantic_ai providers transparently download bytes from a URL when the target model does not natively accept that URL type, so emitting a URL is always safe: you only ever lose wire savings, never correctness.
-
-!!! note "The future `MediaExternalizer` capability"
-    When it lands, the composition will be `Agent(capabilities=[MediaExternalizer(store), StepPersistence(...)])` and `StepPersistence` will see already-URL-ified messages, so the externalize walk becomes a no-op. The existing API does not change.
+Pydantic AI providers download the bytes from a URL when the target model does not accept that URL type, so a URL costs a download rather than a failed request.
 
 ### Persisting to unsupported backends
 
-DynamoDB, Redis, GCS, and other backends are out of scope for this release. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`. Please open an issue if you ship one -- we want to feed the eventual shared adapter layer with N >= 3 real implementations before abstracting.
+DynamoDB, Redis, GCS, and other backends are not built in. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`.
 
 ## Conversation heads and background names
 
@@ -571,13 +566,24 @@ An application may set `ConversationSummary.checkout` to a `GitCheckout` (reposi
 name, checkout root, branch) for the workspace, so a browser can still group the
 conversation by repository after that folder is removed; the store saves it as given.
 
+`ConversationSummary.created_at` records when the conversation was first saved;
+later saves keep it, so a browser can list conversations in a stable order:
+`listing(order_by='created_at')` pages by it, so using an old conversation again
+does not move it onto the first page. A conversation saved before the field
+existed reads `None` until its next save, which sets it to the conversation's
+previous `updated_at`.
+
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
 change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, retaining shared
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+between hosts. On Linux, a process that started after the conversation was last
+saved has reused the recorded PID, so the conversation is not busy; elsewhere PID
+reuse is conservatively treated as busy. Linux times a process's start from the
+current wall clock, so if the clock jumps forward by more than the owner's age at
+its last save, a running conversation reads as not busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
@@ -599,32 +605,9 @@ There is no automatic conversation TTL or media garbage collection.
 failure policy are CLAI's resume-browser policy rather than a Harness primitive,
 so CLAI now owns its own copy. Copy the helpers you use into your application;
 the module will be removed in a future release. The conversation store above is
-unaffected.
-
-Until then, the module provides a tool-free naming agent
-and `SessionNamer`, a worker owned by the application's task group. `submit(id)`
-coalesces jobs in a queue bounded to ten sessions. `run()` processes one job at a
-time until its owner cancels it. `backfill(entries)` considers up to ten newest
-entries. Naming failures are logged at debug level and leave existing metadata
-usable; cancellation propagates. Applications must join the worker before closing
-its model clients or storage dependencies.
-
-Names consist of a short title, subtitle, and up to four tags. The model receives
-the prior title/detail plus a bounded 2,400-character current conversation tail.
-This is deliberately not a message-index cursor: compaction and recovery can
-replace the list. Generated names become eligible again after 16 content
-revisions. Manual names are not changed. Naming requests have a 60-second worker
-timeout and the provided `generate_name` helper allows at most two model requests
-and 250 output tokens. The helper's agent is named `session_namer`, has no tools,
-and does not inherit the foreground agent's capabilities.
-
-Core's agent spans attribute auxiliary model calls to `session_namer`; no second
-span hierarchy is emitted. Successful naming response token counts are stored
-separately from foreground history, including results rejected as stale while the
-session still exists. Failed or timed-out requests may incur provider usage not
-available to the application. Monetary pricing of auxiliary calls is not included
-in retained-history cost. Applications choose the naming model and disclose the
-additional provider requests to their users.
+unaffected. Until then, applications using its `SessionNamer` must join the worker
+before closing its model clients or storage, and failed or timed-out naming
+requests may still incur provider usage.
 
 ## Earlier checkpoints and notifications
 
@@ -653,34 +636,12 @@ completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 
-### Core boundary for stronger interrupted-step recovery
-
-Automatic execution recovery is not implemented. Two core contracts should be
-addressed before promising it:
-
-1. `on_run_error` should expose authoritative post-cleanup history. Today Harness
-   stashes a live list reference from node/request hooks because the outer error
-   context can reference the start-of-run list. That depends on core continuing
-   to mutate the working history in place. Core's cancellation result APIs are
-   useful to callers, but do not establish the same contract for every error hook.
-2. An awaited checkpoint boundary should expose normalized results as individual
-   tools settle, including accompanying user content, retries, and parallel
-   siblings. `after_tool_execute` sees raw results before all normalization;
-   `after_node_run` sees a settled batch. `FunctionToolResultEvent` exposes a
-   normalized result, but observing a stream is not an atomic commit of that
-   result with the tool-effect ledger and the execution frontier.
-
-A hard kill during a parallel batch can therefore leave a completed effect with
-no persisted result. A `started` effect is unknown after a crash, and even a
-`failed` tool may have made partial external changes. Returning to an older
-`complete` checkpoint does not undo those changes. Tools with external effects
-need their own idempotency/reconciliation strategy. No Harness event can make an
-external side effect atomic with a local SQLite write.
-
-Tests cover a real subprocess kill, early-request failure, final-history rewrite,
-revision conflicts, and bounded/cancelled naming. The kill test confirms that
-frontier capture survives without error hooks; it is not an exactly-once execution
-guarantee.
+Automatic execution recovery is not implemented. Snapshots are saved per settled
+batch, not per tool, so a hard kill during a parallel batch can leave a completed
+effect with no persisted result. A `started` effect is unknown after a crash, and
+a `failed` tool may have made partial external changes. Returning to an older
+`complete` checkpoint does not undo those changes, so tools with external effects
+need their own idempotency or reconciliation strategy.
 
 ## What this capability does not do
 
@@ -688,7 +649,7 @@ guarantee.
 - It does not deduplicate replayed side effects automatically. Tools that write artifacts, labels, PRs, or external state should call `annotate_tool_effect(store, ctx, ...)` (see [Failure recovery](#failure-recovery)) so the orchestrator can decide whether replay is safe.
 - It does not prune events, and by default does not prune snapshots. Retention is the caller's responsibility; snapshot growth can be bounded opt-in with `max_snapshots_per_run` (see [Bounding snapshot growth](#bounding-snapshot-growth)).
 - It does not garbage-collect externalized media. Pruning a snapshot leaves its content-addressed blobs in place, since they may be shared across snapshots and runs.
-- It does not emit OpenTelemetry spans. pydantic_ai's `Instrumentation` capability already spans `agent run` / `chat` / `running tool` and populates `gen_ai.agent.name`, `gen_ai.agent.call.id`, `gen_ai.conversation.id` via baggage. A future change may add step-persistence attributes to the active span; that is tracked as a follow-up issue.
+- It does not emit OpenTelemetry spans. pydantic_ai's `Instrumentation` capability already spans `agent run` / `chat` / `running tool` and populates `gen_ai.agent.name`, `gen_ai.agent.call.id`, `gen_ai.conversation.id` via baggage.
 
 ## Related
 

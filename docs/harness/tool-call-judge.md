@@ -88,7 +88,7 @@ Native tools that the provider executes server-side (hosted web search, code exe
 | `'allow'` | the call runs |
 | `'ask'` | the call becomes a human approval request |
 
-`'block'` is the default because a judge that is down or overloaded should not be a way to get a call through. `'ask'` is the right answer when a person is available: an uncertain judge escalates instead of guessing, and the call reaches the caller in the run's [`DeferredToolRequests`](../deferred-tools.md) output. Include `DeferredToolRequests` in the agent's output type when you use it.
+`'block'` is the default because a judge that is down or overloaded should not be a way to get a call through. Use `'ask'` when a person is available: an uncertain judge escalates instead of guessing, and the call reaches the caller in the run's [`DeferredToolRequests`](../deferred-tools.md) output. Include `DeferredToolRequests` in the agent's output type when you use it.
 
 ```python {names="defined"}
 from pydantic_ai import Agent, DeferredToolRequests
@@ -113,11 +113,9 @@ A tool registered with `requires_approval=True` and a judge are two gates, and b
 
 1. The call's arguments are validated and the call is deferred, before any execution hook runs. The judge does not see it and is not billed for it.
 2. A person approves or denies it.
-3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the same validated arguments the person saw.
+3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the same arguments the person saw, unless a [tool validation hook](../hooks.md#tool-validation-hooks) rewrote them: the person sees the model's arguments, the judge the rewritten ones.
 
-So the judge is the second gate, not the first, and the effective rule is that both must allow. The judge can still block a call a person approved; it can never release one a person denied, because a denied call never reaches execution.
-
-That ordering follows from where each gate sits in the agent loop rather than from a policy this capability chose, and it is the conservative direction: adding a judge to a tool that already asks a person can only narrow what runs.
+So the judge is the second gate, not the first, and the effective rule is that both must allow. The judge can still block a call a person approved; it can never release one a person denied, because a denied call never reaches execution. Adding a judge to a tool that already asks a person can only narrow what runs.
 
 What the judge cannot do is ask again. A person's approval answers the `'ask'` question for that call, so on an approved call an `on_uncertain='ask'` policy allows it rather than raising a second approval request. Without that, a judge that stays uncertain -- one that is down, or one whose question the call genuinely cannot settle -- would hand the same person the same question after every approval and the call would never run. This applies to the judge's own escalation and to a `requires_approval=True` tool alike; `yes` still blocks either.
 
@@ -132,7 +130,7 @@ By default, one judgement is a fresh internal-agent run whose entire input is:
 
 The outer agent's conversation, instructions, and tool results are not forwarded. That keeps each judgement small and cheap, and it keeps the judge away from text the agent read from pages, files, and other tool results -- text that can carry instructions aimed at whatever reads it next.
 
-The cost of that default is real: a question like "is this deletion something the user asked for?" cannot be answered from the call alone. Set `include_conversation=True` when the question needs the conversation that led to the call:
+With that default, a question like "is this deletion something the user asked for?" cannot be answered from the call alone. Set `include_conversation=True` when the question needs the conversation that led to the call:
 
 ```python {names="defined"}
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
@@ -148,7 +146,7 @@ judge = ToolCallJudge(
 
 The judge then also receives a `<conversation>` block: user messages, assistant messages, tool calls, and tool results rendered as a transcript and clamped to the most recent `conversation_window` tokens (estimated at ~4 characters per token). System prompts and thinking parts are left out, so the judge is shown observable behavior rather than the agent's configuration or private reasoning.
 
-Turning it on widens the judge's own prompt-injection surface, because that transcript includes third-party content. The judge instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk rather than removing it: content-derived instructions are exactly what a model is least able to discount, which is why the judge is one filter among the controls a sensitive tool needs.
+Turning it on widens the judge's own prompt-injection surface, because that transcript includes third-party content. The judge instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk but does not remove it, so the judge is one filter among the controls a sensitive tool needs.
 
 Either way, what the judge is shown leaves the process. The whole validated argument dict goes to the judging model's provider before the verdict comes back, so a call is disclosed even when it is then blocked. Where a tool's arguments can carry credentials or customer data, scope `tools` away from it, or route the judge to a provider you already trust with that data.
 
@@ -196,7 +194,7 @@ Judging adds a model request in the path of every selected tool call, before the
 
 Inside a durable workflow or flow (Temporal, DBOS, Prefect) the judgement is a durable operation. It is checkpointed under the name `<agent>__capability__<id>.judge`, so a replay reuses the recorded verdict instead of asking the model again: the same call is allowed or blocked the same way every time, and the judge is billed once.
 
-That matters because the judgement is made from `before_tool_execute`, which runs in orchestration context rather than inside a checkpointed unit. An uncheckpointed model call there would be re-made on every replay, paid for each time, and free to answer differently, which would leave the same call allowed on one replay and blocked on the next.
+The judgement is made from `before_tool_execute`, which runs in orchestration context rather than inside a checkpointed unit. Without the checkpoint, the model call would be re-made and billed on every replay, and could answer differently, allowing the same call on one replay and blocking it on the next.
 
 `on_verdict` is not part of the durable operation. It runs from the same hook as the judgement, so a replay calls it again with the recorded verdict. Deduplicate on `ToolCallVerdict.tool_call_id` when the callback writes metrics or records to an external system.
 
@@ -213,7 +211,7 @@ judge = ToolCallJudge(
 )
 ```
 
-Without one, Pydantic AI refuses to bind the agent, naming the fix, rather than silently running the judge uncheckpointed. Outside durable execution nothing changes and `id` stays optional.
+Without one, Pydantic AI refuses to bind the agent and names the fix. Outside durable execution nothing changes and `id` stays optional.
 
 ## Observability
 
@@ -249,7 +247,7 @@ judge = ToolCallJudge(
 
 ## Safety boundary
 
-A judgement cheap enough to run on every call is exactly why it must not be the only thing between an agent and an irreversible action. `ToolCallJudge` is a filter, not a security boundary: the decision is a model's, on input the agent partly controls. Keep authentication, authorization, argument validation, least privilege, and recovery controls inside or below any tool that destroys data, spends money, exposes secrets, or cannot be undone.
+`ToolCallJudge` is a filter, not a security boundary: the decision is a model's, on input the agent partly controls. Keep authentication, authorization, argument validation, least privilege, and recovery controls inside or below any tool that destroys data, spends money, exposes secrets, or cannot be undone.
 
 Unlike [`OutputGuardrail`](guardrails.md), this capability does not inspect the agent's final output. It decides on one tool call at a time, at the point where the decision can still prevent the action.
 

@@ -18,11 +18,7 @@ within the agent's reach, and is hard to reset between runs.
 capability handles the wiring: the endpoint, dummy credentials, the AWS CLI, and
 a health check.
 
-## The solution
-
-`LocalStack` exposes AWS tooling wired to a running LocalStack instance. The
-agent issues plain AWS CLI commands; the capability injects the endpoint,
-region, and credentials, and adds a health check for the emulated services.
+## Usage
 
 ```python
 from pydantic_ai import Agent
@@ -111,9 +107,8 @@ credentials.
 ## Managing the container
 
 Set `manage_container=True` and the capability starts a LocalStack Docker
-container for each run and stops it when the run ends, so each run gets a fresh
-environment; runs inside `async with agent:` share one instead (see below).
-Docker must be installed and running.
+container for each run and stops it when the run ends. Docker must be installed
+and running.
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -252,7 +247,7 @@ LocalStack(
 ```
 
 The AWS CLI must be installed and on `PATH` (or point `aws_cli_path` at it). If
-the binary is missing, `aws_cli` returns a clear error instead of aborting the
+the binary is missing, `aws_cli` returns an error instead of aborting the
 run. Set `include_instructions=False` to omit the capability's prompt text when
 you supply your own.
 

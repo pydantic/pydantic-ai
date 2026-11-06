@@ -47,6 +47,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  warm-douwebot-tools:
+    name: warm douwebot fallback tools
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-douwebot-tools
+        with:
+          save-cache: 'true'
+
   classify:
     name: classify changes
     runs-on: ubuntu-latest
@@ -283,16 +296,19 @@ jobs:
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_latest_versions_canary_report.py
-          .github/scripts/test_semantic_owner_router.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_weekly_ce_audit.py
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
+          .github/scripts/test_douwebot_usage_limit.py
+          .github/scripts/test_douwebot_opencode_run.py
+          .github/scripts/test_douwebot_opencode_result.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_ui_security_detection.py
@@ -310,6 +326,12 @@ jobs:
         env:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
+
+      # The `complexity` job runs this script with only the `lint` group installed, so its tests run here.
+      - name: Test the cognitive complexity check
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_check_complexity.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -388,7 +410,8 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch
+          # `complexity` checks only staged changes, and a checkout stages none; the `complexity` job runs it.
+          SKIP: no-commit-to-branch,complexity
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -429,7 +452,11 @@ jobs:
           # On 2026-10-27 the step ran 127 to 292 s over 375 pull request runs (median 236 s, p90 259 s),
           # and 23 of them failed only on the budget, with zero type errors, on diffs as small as a
           # docstring; 320 is about 1.1x that maximum and still fails a regression like #8077's.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '320' || '' }}
+          # After #11806 set the worker count and heap above, 181 passing runs from 2026-10-29 to 30
+          # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
+          # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
+          # exceeded it.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '280' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -441,10 +468,12 @@ jobs:
         run: |
           # Exclude the tag being built: once its GitHub release exists, `gh release view`
           # would otherwise compare the release to itself and make this gate a no-op.
+          # Take the highest version, not the newest: a V1 maintenance release can be published last.
           release_tag=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
             --exclude-drafts --exclude-pre-releases --json tagName \
             | jq -r --arg current "$GITHUB_REF_NAME" \
-              'map(select(.tagName != $current))[0].tagName // empty')
+              'map(select(.tagName != $current and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))))
+               | max_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)).tagName // empty')
           if [ -z "$release_tag" ]; then
             echo '::error::Could not find a prior stable release for the API compatibility baseline.'
             exit 1
@@ -461,6 +490,28 @@ jobs:
       - run: uv run python .github/scripts/check_http_dependencies.py
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
+
+  # Fails when a change makes a function's cognitive complexity exceed the limit, or grow while above it.
+  complexity:
+    name: cognitive complexity
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          # The base is `HEAD^1`: on a pull request, the base branch tip its merge commit was made on;
+          # on a push or a merge group, the commit before it on the branch.
+          fetch-depth: 2
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-suffix: complexity
+
+      - name: Check cognitive complexity against the base
+        run: uv run --only-group lint scripts/check_complexity.py --base HEAD^1 --format github
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
@@ -504,11 +555,25 @@ jobs:
       # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
+      # The pinned action's curl download reads this config; keep retries scoped to setup.
+      - name: Configure Lychee download retries
+        run: |
+          mkdir -p "$RUNNER_TEMP/lychee-curl"
+          cat > "$RUNNER_TEMP/lychee-curl/.curlrc" <<'EOF'
+          show-error
+          retry = 3
+          retry-max-time = 120
+          connect-timeout = 10
+          max-time = 60
+          EOF
+
       # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
       # `--offline` so only local files are checked: external hosts are swept weekly by
       # link-check.yml instead, where being down doesn't block a PR.
       - name: Check doc links and heading anchors
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        env:
+          CURL_HOME: ${{ runner.temp }}/lychee-curl
         with:
           args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
           fail: true
@@ -579,7 +644,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
@@ -1216,7 +1281,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1224,6 +1289,10 @@ jobs:
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
       # behaves identically and coverage combination stays complete. The lowest leg was
       # synced above, so `--no-sync` there keeps its resolution.
+      # `sentence-transformers` is the exception: it brings torch and the CUDA wheels, about
+      # 2.6 GB of a 3.2 GB install, and no test here imports it. A slow download of them has
+      # run this job past `timeout-minutes` (#12625). Keep every `uv` call in this job on the
+      # same extras, so none of them syncs it back in.
       - name: run tests
         shell: bash
         run: |
@@ -1239,13 +1308,13 @@ jobs:
           # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
           # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
@@ -1265,7 +1334,7 @@ jobs:
           mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
           chmod +x "$RUNNER_TEMP/render-cli/render"
           export PATH="$RUNNER_TEMP/render-cli:$PATH"
-          uv run --all-packages --all-extras --no-extra mcp-tasks \
+          uv run --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers \
             pytest --durations=5 tests/harness/render/test_local_runtime_live.py
         env:
           RENDER_CLI_VERSION: 2.28.0
@@ -1276,7 +1345,7 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1518,8 +1587,6 @@ jobs:
     timeout-minutes: 10
     env:
       CI: true
-      # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
-      BLOCKBUSTER_ENABLED: "false"
       # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
       COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.harness-browser-use
@@ -1696,6 +1763,7 @@ jobs:
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
+      azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1731,6 +1799,8 @@ jobs:
             "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
+            "$H/integration_tests/azure_durable_task"
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1872,6 +1942,7 @@ jobs:
     env:
       REDIS_REQUIRE_LIVE: "1"
       REDIS_TEST_URL: redis://127.0.0.1:6379
+      REDIS_CLUSTER_TEST_URL: redis://127.0.0.1:6380
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1883,7 +1954,51 @@ jobs:
           enable-cache: true
           cache-suffix: harness-redis
 
+      # One node in cluster mode that owns every slot: enough for the server to refuse a script
+      # whose keys span slots with `CROSSSLOT`, which the standalone service above never does. A
+      # step rather than a service because a service cannot pass `redis-server` its arguments or
+      # assign the slots once it is up.
+      - name: Start a single-node Redis Cluster
+        timeout-minutes: 2
+        run: |
+          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+          until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
+          docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
+          until docker exec redis-cluster redis-cli -p 6380 cluster info | grep -q cluster_state:ok; do sleep 1; done
+
       - run: make integration-redis
+
+  harness-azure-durable-task-integration:
+    name: harness Azure Durable Task integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.azure_durable_task == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      dts-emulator:
+        # Pinned by digest: newer emulator builds have changed name validation before.
+        image: mcr.microsoft.com/dts/dts-emulator:v0.0.9@sha256:e883ec67fa5adec9400f7389d44c851ad5353b686b69a66139770b1f908c0f35
+        ports:
+          - 8080:8080
+    env:
+      AZURE_DURABLE_TASK_REQUIRE_LIVE: "1"
+      AZURE_DURABLE_TASK_TEST_ENDPOINT: 127.0.0.1:8080
+      AZURE_DURABLE_TASK_TEST_TASKHUB: default
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-azure-durable-task
+
+      - run: make integration-azure-durable-task
 
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
@@ -1948,6 +2063,7 @@ jobs:
     needs:
       - classify
       - quality
+      - complexity
       - mypy
       - docs-assets
       - docs-only
@@ -1967,6 +2083,7 @@ jobs:
       - harness-mongodb-integration
       - harness-postgres-integration
       - harness-redis-integration
+      - harness-azure-durable-task-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -1990,20 +2107,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

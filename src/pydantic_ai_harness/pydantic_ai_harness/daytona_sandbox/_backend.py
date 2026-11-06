@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Literal
 
 import anyio
 import anyio.lowlevel
+import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -34,9 +34,12 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_provider,
     check_timeout,
     command_argv,
     command_deadline,
+    require_asyncio,
     run_to_completion,
     running_on_asyncio,
     safe_credential_reason,
@@ -81,15 +84,16 @@ _OUTPUT_PREVIEW_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 
 
-def _require_asyncio() -> None:
-    if not running_on_asyncio():
-        raise UserError('Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.')
+_ASYNCIO_ONLY = 'Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.'
 
 
-def _new_client() -> AsyncDaytona:
-    """An `AsyncDaytona` configured from the environment: `DAYTONA_API_KEY`, or a JWT token and organization ID."""
+async def _new_client() -> AsyncDaytona:
+    """An `AsyncDaytona` built off the event loop, because its constructor checks for dotenv files.
+
+    It reads `DAYTONA_API_KEY`, or a JWT token and organization ID, from the environment.
+    """
     try:
-        return daytona.AsyncDaytona()
+        return await anyio.to_thread.run_sync(daytona.AsyncDaytona)
     except daytona.DaytonaAuthenticationError as error:
         # The SDK reads the credentials here, so this is a missing key rather than a rejected one.
         raise WorkspaceUnavailableError(_MISSING_CREDENTIALS_MESSAGE) from error
@@ -105,12 +109,12 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
     Raises:
         UserError: The event loop is not asyncio.
     """
-    _require_asyncio()
+    require_asyncio(_ASYNCIO_ONLY)
     if not sandbox_id.strip():
         raise ValueError('Daytona workspace ref id cannot be empty')
     owned: AsyncDaytona | None = None
     if client is None:
-        client = owned = _new_client()
+        client = owned = await _new_client()
     try:
         sandbox = await client.get(sandbox_id, request_timeout=_REQUEST_TIMEOUT)
         if not _in_deleted_state(sandbox):
@@ -143,19 +147,12 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     retry as transient. A not-found answer is a missing `path` for a path operation, and a refused
     request otherwise.
     """
-    if path is not None and isinstance(error, daytona.DaytonaError):
-        # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
-        message = str(error).lower()
-        if 'too many levels of symbolic links' in message:
-            return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
-        for phrase, error_type in (
-            ('Not a directory', NotADirectoryError),
-            ('Is a directory', IsADirectoryError),
-            ('Permission denied', PermissionError),
-            ('File exists', FileExistsError),
-        ):
-            if phrase.lower() in message:
-                return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
+    if (
+        path is not None
+        and isinstance(error, daytona.DaytonaError)
+        and (path_error := _path_error(error, path)) is not None
+    ):
+        return path_error
     if path is not None and isinstance(error, daytona.DaytonaForbiddenError):
         # Toolbox authorization is about the requested file, not the API credentials.
         return PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
@@ -173,6 +170,23 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     ):
         return WorkspaceError(f'{context}: {error}')
     return error
+
+
+def _path_error(error: daytona.DaytonaError, path: str) -> OSError | None:
+    """The `OSError` named by the POSIX `strerror` text of a failed path operation, or `None` if it names none."""
+    # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
+    message = str(error).lower()
+    if 'too many levels of symbolic links' in message:
+        return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
+    for phrase, error_type in (
+        ('Not a directory', NotADirectoryError),
+        ('Is a directory', IsADirectoryError),
+        ('Permission denied', PermissionError),
+        ('File exists', FileExistsError),
+    ):
+        if phrase.lower() in message:
+            return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
+    return None
 
 
 async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
@@ -427,14 +441,13 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and ref.provider != 'daytona':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
-        if ref is not None and not ref.id.strip():
-            raise ValueError('Daytona workspace ref id cannot be empty')
+        if ref is not None:
+            check_provider(ref, 'daytona')
+            if not ref.id.strip():
+                raise ValueError('Daytona workspace ref id cannot be empty')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -469,7 +482,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         Attaching by `ref` to a sandbox that no longer exists raises `WorkspaceUnavailableError`; it
         does not create a replacement.
         """
-        _require_asyncio()
+        require_asyncio(_ASYNCIO_ONLY)
         async with self._lock:
             if (sandbox := self._sandbox) is None:
                 sandbox = await self._acquire_locked()
@@ -483,7 +496,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _acquire_locked(self) -> AsyncSandbox:
         """Create or attach to the sandbox; the caller holds `_lock`."""
         if self._client is None:
-            self._client = _new_client()
+            self._client = await _new_client()
         client = self._client
         if self._ref is not None:
             sandbox = await self._attach(client, self._ref.id)

@@ -17,6 +17,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
+    ConversationOrder,
     ConversationSummary,
     SavedConversation,
     SqliteConversationStore,
@@ -221,10 +222,18 @@ class Sessions(Generic[DepsT, OutputT]):
         return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
-        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
-        entries = await self.store.listing(query=query, limit=limit, archived=archived)
+        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming.
+
+        `order_by='created_at'` pages by creation instead of activity, as the web sidebar lists them.
+        """
+        entries = await self.store.listing(query=query, limit=limit, archived=archived, order_by=order_by)
         self.namer.backfill(entries, client=self.naming)
         return entries
 
@@ -312,16 +321,9 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
-        def shown(
-            saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
-        ) -> list[ConversationSummary]:
-            # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-            entries = merge(saved, imported, limit=limit)
-            return entries if archived else [entry for entry in entries if entry.archived_at is None]
-
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return shown(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -335,7 +337,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=shown(entries, imports.listing(), limit=200, archived=False),
+                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -362,6 +364,15 @@ class Sessions(Generic[DepsT, OutputT]):
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
+
+    @staticmethod
+    def _browser_entries(
+        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+    ) -> list[ConversationSummary]:
+        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+        entries = merge(saved, imported, limit=limit)
+        return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
     async def _delete(self, source: ConversationSummary) -> None:
         """Delete a saved session, then the `run_code` REPL code mode kept for it; one another live session holds is refused."""

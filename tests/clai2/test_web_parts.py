@@ -8,7 +8,7 @@ import os
 import re
 import socket
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +19,9 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
+    Agent,
     AgentRunResult,
+    AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -28,6 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -40,10 +43,18 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileSystem,
+    FileWrittenEvent,
+)
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
@@ -79,10 +90,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolOutput,
     TurnEnded,
     TurnStarted,
+    TurnSummary,
+    Usage,
     dump,
     dump_session,
+    history_entries,
     history_items,
     legacy_tags,
+    usage_info,
 )
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from pydantic_clai2.builtin_plugins.web.service import Observer
@@ -97,6 +112,7 @@ from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering.status import Status
+from pydantic_clai2.ui.rendering.usage_report import session_usage
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -308,6 +324,115 @@ def test_history_items() -> None:
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
+
+
+CALC = 'def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n'
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param(
+            {'old_text': '    return a * b\n', 'new_text': '    return a * b\n\n\ndef sub(a, b):\n    return a - b\n'},
+            id='prefix',
+        ),
+        pytest.param({'old_text': '\n\ndef mul(a, b):\n    return a * b\n', 'new_text': ''}, id='deletion'),
+        pytest.param(
+            {
+                'replacements': [
+                    {'old_text': '    return a + b\n', 'new_text': '    return b + a\n'},
+                    {'old_text': 'def mul(a, b):\n', 'new_text': 'def times(a, b):\n'},
+                ]
+            },
+            id='replacements',
+        ),
+    ],
+)
+async def test_a_reloaded_edit_shows_the_lines_the_live_one_did(tmp_path: Path, args: dict[str, JsonValue]) -> None:
+    """A reloaded `edit_file` card changes the lines its live diff did, not all of `old_text` and `new_text`."""
+    (tmp_path / 'calc.py').write_text(CALC)
+    call = json.dumps({'path': 'calc.py', **args})
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='edit_file', json_args=call, tool_call_id='e1')}
+
+    translate = EventTranslator().translate
+    live: list[Diff] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            live.extend(message.diff for message in translate(event) if isinstance(message, DiffAdded))
+
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path)])
+    result = await agent.run('edit', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+    reloaded = next(item for item in history_items(result.all_messages()) if item.kind == 'tool')
+
+    def changed(diffs: list[Diff]) -> list[str]:
+        lines = [line for diff in diffs for line in diff.diff.split('\n')]
+        return [line for line in lines if line[:1] in '+-' and not line.startswith(('--- a/', '+++ b/'))]
+
+    assert changed(live) and changed(reloaded.diffs) == changed(live)
+
+
+def test_a_reloaded_edit_without_a_diff() -> None:
+    """Edits that failed, or that a line diff cannot show, leave the browser to show their arguments."""
+    huge = 'x\n' * 300
+    calls = {
+        'failed': {'path': 'a', 'old_text': 'a', 'new_text': 'b'},
+        'malformed': {'path': 1, 'old_text': 'a', 'new_text': 'b'},
+        'incomplete': {'path': 'a', 'new_text': 'b'},
+        'huge': {'path': 'a', 'old_text': huge, 'new_text': huge + 'y'},
+        'line feed': {'path': 'a', 'old_text': 'a\n', 'new_text': 'a'},
+    }
+    messages = [
+        ModelResponse(parts=[EditFileCallPart('edit_file', args, tool_call_id=id) for id, args in calls.items()]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('edit_file', 'no', tool_call_id=id, outcome='failed' if id == 'failed' else 'success')
+                for id in calls
+            ]
+        ),
+    ]
+    assert [item.diffs for item in history_items(messages)] == [[], [], [], [], []]
+
+
+def test_history_entries_follow_each_turn_with_its_usage_as_usage_reports_it() -> None:
+    """A reloaded transcript shows each saved turn's usage line, as the turn's end showed it live."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(
+            parts=[ToolCallPart('grep', {}, tool_call_id='g1')], usage=RequestUsage(input_tokens=10, output_tokens=2)
+        ),
+        ModelRequest(parts=[ToolReturnPart('grep', 'found', tool_call_id='g1')]),
+        ModelResponse(parts=[TextPart('first')], usage=RequestUsage(input_tokens=20, output_tokens=3)),
+        ModelRequest(parts=[UserPromptPart('two')]),
+        ModelResponse(parts=[TextPart('second')], usage=RequestUsage(input_tokens=30, output_tokens=4)),
+        ModelRequest(parts=[UserPromptPart('cancelled before any answer')]),
+        ModelRequest(parts=[UserPromptPart('three')]),
+        ModelResponse(parts=[TextPart('third')], usage=RequestUsage(input_tokens=40, output_tokens=5)),
+    ]
+    entries = history_entries(messages)
+    assert [entry.kind for entry in entries] == [
+        'user',
+        'tool',
+        'assistant',
+        'turn',
+        'user',
+        'assistant',
+        'turn',
+        'user',
+        'user',
+        'assistant',
+        'turn',
+    ]
+    summaries = [entry for entry in entries if isinstance(entry, TurnSummary)]
+    assert [summary.usage for summary in summaries] == [usage_info(turn) for turn in session_usage(messages).turns]
+    assert summaries[0].usage == Usage(input_tokens=30, output_tokens=5, requests=2)
+    assert len({entry.id for entry in entries}) == len(entries)
+    assert history_items(messages) == [entry for entry in entries if isinstance(entry, Item)]
 
 
 def test_item_log_follows_what_browsers_were_sent() -> None:
@@ -604,15 +729,19 @@ async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path)
 
 
 async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    output = io.StringIO()
     with pytest.raises(BaseExceptionGroup) as raised:
         await run_web(
             settings_for=lambda project: Settings(model='test'),
             store=SettingsStore(tmp_path / 'c.db'),
-            project=ProjectSettings(),
-            console=Console(file=io.StringIO()),
+            project=ProjectSettings(path=tmp_path / '.clai' / 'settings.json', pending={'run.permissions': 'full'}),
+            console=Console(file=output, width=200),
             resume='00000000-0000-0000-0000-000000000000',
         )
     assert raised.group_contains(LookupError, match='No saved session')
+    assert 'not applied until you approve them with /project approve in a CLAI session: permissions' in (
+        output.getvalue()
+    ), 'the launch names the project settings it leaves out'
 
 
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:

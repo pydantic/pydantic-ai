@@ -87,8 +87,9 @@ A few keys to know:
 
 Type `/` to see every command, or `/help` for the full list.
 
-CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+CLAI reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -110,7 +111,7 @@ in the reference.
 ## Updating
 
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
-`/update now` installs without asking, and `clai2 --update` does it from your shell and exits
+`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
 (on Windows, use `/update now` instead).
 CLAI installs the newest build, then restarts into it with the same conversation open.
 While other live sessions run turns, as ones the browser opened can, `/update now`
@@ -361,7 +362,7 @@ These are on from the start:
   Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
   specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
-- `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
