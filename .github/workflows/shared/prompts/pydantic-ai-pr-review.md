@@ -273,6 +273,8 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
 head it has not reviewed yet. No earlier review or comment, from this bot or
 another, covers that head.
 
+`noop` is not available in this workflow; when in doubt, submit a COMMENT review.
+
 **Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a
 bot reviewing another bot's PR. If the PR author is a bot, submit a
 `COMMENT` review with the verdict in the body. Include the unreviewed file list

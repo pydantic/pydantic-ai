@@ -140,6 +140,16 @@ class Issue:
 
 
 @dataclass(frozen=True)
+class PullRequest:
+    """The validated pull-request fields that retire a task incident."""
+
+    number: int
+    state: str
+    merged: bool
+    head_sha: str
+
+
+@dataclass(frozen=True)
 class GitHubResponse:
     """A decoded GitHub REST response and the metadata the job log records."""
 
@@ -539,7 +549,9 @@ class GitHubClient:
 
     def send(self, method: str, path: str, payload: object | None = None) -> GitHubResponse:
         body = json.dumps(payload).encode() if payload is not None else None
-        request = urllib.request.Request(f'{API_ROOT}/repos/{self.repo}/{path}', data=body, method=method)
+        # GitHub answers the repository URL with a trailing slash with 404.
+        url = f'{API_ROOT}/repos/{self.repo}/{path}' if path else f'{API_ROOT}/repos/{self.repo}'
+        request = urllib.request.Request(url, data=body, method=method)
         request.add_header('Authorization', f'Bearer {self.token}')
         request.add_header('Accept', 'application/vnd.github+json')
         request.add_header('X-GitHub-Api-Version', '2022-11-28')
@@ -634,6 +646,19 @@ def _issue(value: object) -> Issue | None:
     if state is None or url is None:
         return None
     return Issue(number, title, body, state, url, _iso_time(data.get('created_at')))
+
+
+def _pull_request(value: object) -> PullRequest | None:
+    data = _mapping(value)
+    head = _mapping(data.get('head')) if data is not None else None
+    if data is None or head is None:
+        return None
+    number = data.get('number')
+    state = _object_string(data, 'state')
+    head_sha = _object_string(head, 'sha')
+    if isinstance(number, bool) or not isinstance(number, int) or state is None or head_sha is None:
+        return None
+    return PullRequest(number, state, data.get('merged_at') is not None, head_sha)
 
 
 def _marker_from_body(body: str) -> IncidentMarker | None:
@@ -1300,6 +1325,92 @@ def _recover_issue(
     return True
 
 
+def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None:
+    """Why a task incident can never block a run again, or `None` while it can or its key names no PR head or dispatch.
+
+    The key ends in `<event>:<PR number, head branch under workflow_run, or ref>:<head SHA>:<id>`. The incident
+    blocks only runs with that exact key, so once its PR closes or moves to another head it blocks nothing.
+    A dispatch's id is its run ID, so its incident blocks only re-runs of that run, and nothing once it concludes.
+    GitHub deletes only a run that completed or is more than two weeks old, and a deleted run cannot be re-run.
+    """
+    parts = marker.key.rsplit(':', 3)
+    if len(parts) != 4:
+        return None
+    prefix, target, head_sha, task_id = parts
+    event = prefix.rpartition(':')[2]
+    if event == 'workflow_dispatch' and task_id.isdecimal():
+        try:
+            response = client.request('GET', f'actions/runs/{task_id}')
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return f'Dispatch run {task_id} no longer exists.'
+            raise
+        run = _mapping(response)
+        if run is None:
+            raise ValueError('GitHub returned an invalid workflow run')
+        if run.get('status') != 'completed':
+            return None
+        return f'Dispatch run {task_id} concluded `{run.get("conclusion")}`.'
+    if event.startswith('pull_request') and target.isdecimal():
+        payloads: list[object] = [client.request('GET', f'pulls/{target}')]
+    elif event == 'workflow_run' and target:
+        head = urllib.parse.quote(f'{client.repo.partition("/")[0]}:{target}', safe='')
+        # Newest first, so a branch reused by several PRs is judged by its latest one.
+        response = client.request('GET', f'pulls?state=all&head={head}&per_page=100')
+        if not isinstance(response, list):
+            raise ValueError('GitHub returned an invalid pull-request list')
+        payloads = []
+        entry: object
+        for entry in response:  # pyright: ignore[reportUnknownVariableType]
+            payloads.append(entry)  # pyright: ignore[reportUnknownArgumentType]
+    else:
+        return None
+    pulls = [pull for payload in payloads if (pull := _pull_request(payload)) is not None]
+    if not pulls:
+        return None
+    pull = next((pull for pull in pulls if pull.state == 'open'), pulls[0])
+    if pull.state != 'open':
+        return f'PR #{pull.number} is {"merged" if pull.merged else "closed without merging"}.'
+    if pull.head_sha != head_sha:
+        return f'PR #{pull.number} moved from `{head_sha}` to `{pull.head_sha}`.'
+    return None
+
+
+def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run: bool) -> None:
+    """Close task incidents whose PR closed or moved on, or whose dispatch run concluded, with the evidence as a comment."""
+    for issue in issues:
+        marker = _marker_from_body(issue.body)
+        if marker is None or marker.scope != 'task':
+            continue
+        # One unreadable PR or run, or one failed write, must not stop the provider recovery that follows.
+        try:
+            reason = _task_retirement(client, marker)
+            if reason is None:
+                continue
+            if dry_run:
+                print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
+                continue
+            # A run that commented but could not close left its comment; post it once. Incident reuse adds
+            # no comments, so the first page holds it unless people have left about 100.
+            listed = client.request('GET', f'issues/{issue.number}/comments?per_page=100')
+            if not isinstance(listed, list):
+                raise ValueError('GitHub returned an invalid comment list')
+            if not any(
+                str((_mapping(entry) or {}).get('body')).startswith('Retired: ')  # pyright: ignore[reportUnknownArgumentType]
+                for entry in listed  # pyright: ignore[reportUnknownVariableType]
+            ):
+                comment = (
+                    f'Retired: {reason} This incident blocked only runs with its task key, so it no longer blocks '
+                    'anything. It did not record a recovery of the failed run.'
+                )
+                client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
+            client.close_issue(issue.number)
+        except (OSError, ValueError) as exc:
+            print(f'Could not retire task incident #{issue.number}: {exc}')
+            continue
+        print(f'Retired task incident #{issue.number}: {reason}')
+
+
 def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
     issues = client.open_incidents()
     if args.recover_issue is not None:
@@ -1322,6 +1433,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
         now = _now()
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=False)
         return 0
+    _retire_task_incidents(client, issues, dry_run=args.dry_run)
     api_key = os.environ.get('ZAI_API_KEY', '')
     quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
     now = _now()

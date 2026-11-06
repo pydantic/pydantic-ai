@@ -33,6 +33,8 @@ ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
 cli
+cluster:cache	Work stream: prompt cache retention, expiry and prefix stability
+cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 cohere
 community contribution
 community snippets
@@ -61,6 +63,7 @@ feature	New feature request, or PR implementing a feature (enhancement)
 feedback wanted
 final-review	Run the CI Review agent on this PR's head
 fix
+flake	A flaky test on main; the issue is the claim on its fix
 gateway
 genai-prices
 gh-aw	GitHub Agentic Workflows integration and engine, including its runner, recorder, and parser.
@@ -93,11 +96,11 @@ moonshot/kimi
 more info	More information required
 native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
-needs MRE
 needs-confirmation
 needs-durable-exec-review	Touches a core definition a durable engine depends on (scripts/durable_exec_contract.json)
 needs-maintainer-action	The next meaningful action must come from a maintainer
 needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
+needs-reproduction
 new models	Support for new model(s)
 new-capability	Requests and PRs adding a first-party capability or a new provider-backed implementation.
 ollama	Ollama provider integration, configuration, and model support.

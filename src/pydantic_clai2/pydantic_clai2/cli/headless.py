@@ -1,6 +1,7 @@
 """One-shot CLI execution without terminal input or stream rendering."""
 
 import os
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -27,6 +28,12 @@ async def no_screen() -> AsyncGenerator[None]:
     yield  # pragma: no cover -- async context manager protocol.
 
 
+def _report_pending(project: ProjectSettings) -> None:
+    """Name the project settings left out on stderr: nobody is at a prompt to approve them, and stdout is the answer."""
+    if project.pending_notice is not None:
+        print(project.pending_notice, file=sys.stderr)
+
+
 async def run_headless(
     *,
     text: str,
@@ -50,6 +57,7 @@ async def run_headless(
         # The browser needs a terminal, which a headless run has none of.
         raise ValueError('A headless run needs an explicit `resume` (`--resume SESSION-ID`)')
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
+    _report_pending(project)
     load_plugins = agent is None
     agent = create_agent() if agent is None else agent
     if settings.model is None and agent.model is None:
