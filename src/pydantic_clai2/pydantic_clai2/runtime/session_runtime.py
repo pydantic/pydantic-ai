@@ -157,6 +157,31 @@ def _process(
     )
 
 
+def _fast_command(
+    args: list[str],
+    *,
+    session: Session[DepsT, OutputT],
+    agent: AbstractAgent[DepsT, OutputT],
+    context: CommandContext,
+    store: SettingsStore,
+) -> str:
+    """`/fast [on|off]`: set the session model's `service_tier` to `priority` or `default`; no argument toggles it."""
+    if args not in ([], ['on'], ['off']):
+        raise ValueError('Usage: /fast [on|off]')
+    model = session.model or _model_label(agent)
+    current = context.model_settings(model) or {}
+    saved = store.model_settings(model)
+    custom = saved.get('custom_params')
+    if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+        raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
+    enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+    tier = 'priority' if enabled else 'default'
+    store.save_model_settings(model, {**saved, 'service_tier': tier})
+    return f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.' + (
+        ' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else ''
+    )
+
+
 def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -232,23 +257,6 @@ def create_shell(
     session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
-    def fast(args: list[str]) -> str:
-        if args not in ([], ['on'], ['off']):
-            raise ValueError('Usage: /fast [on|off]')
-        model = session.model or _model_label(agent)
-        current = context.model_settings(model) or {}
-        saved = store.model_settings(model)
-        custom = saved.get('custom_params')
-        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
-        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
-        tier = 'priority' if enabled else 'default'
-        store.save_model_settings(model, {**saved, 'service_tier': tier})
-        return (
-            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
-            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
-        )
-
     def effort_menu() -> SettingsMenu:
         # Model settings load provider SDKs; keep them off the startup path.
         from pydantic_clai2.ui.menus.model_menu import model_settings_menu
@@ -279,7 +287,7 @@ def create_shell(
         Command(
             name='fast',
             description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
-            handler=fast,
+            handler=partial(_fast_command, session=session, agent=agent, context=context, store=store),
             complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
             available=lambda: (
                 provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'

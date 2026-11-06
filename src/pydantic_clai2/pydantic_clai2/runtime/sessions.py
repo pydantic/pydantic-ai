@@ -321,16 +321,9 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
-        def shown(
-            saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
-        ) -> list[ConversationSummary]:
-            # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-            entries = merge(saved, imported, limit=limit)
-            return entries if archived else [entry for entry in entries if entry.archived_at is None]
-
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return shown(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return _browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -344,7 +337,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=shown(entries, imports.listing(), limit=200, archived=False),
+                entries=_browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -406,6 +399,15 @@ class Sessions(Generic[DepsT, OutputT]):
             + effects
             + conversation_text(list(reversed(saved.messages)))
         )
+
+
+def _browser_entries(
+    saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+) -> list[ConversationSummary]:
+    """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+    # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+    entries = merge(saved, imported, limit=limit)
+    return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
 
 async def _not_shown(conversation_id: str) -> str | None:
