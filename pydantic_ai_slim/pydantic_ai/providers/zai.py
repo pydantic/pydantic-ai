@@ -7,7 +7,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -21,6 +21,14 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+
+_TOOL_STREAM_MODEL_PREFIXES = ('glm-4.6', 'glm-4.7', 'glm-5')
+"""Model name prefixes for Z.AI models that accept the `tool_stream` request parameter (GLM-4.6 and later).
+
+`tool_stream` is a Z.AI-native parameter — gateways serving GLM models (Cerebras, Crusoe, Bedrock) don't
+accept it, so the flag is set in `ZaiProvider.model_profile()`, not in the shared `zai_model_profile`.
+"""
 
 
 class ZaiProvider(_OpenAISDKProvider):
@@ -49,6 +57,7 @@ class ZaiProvider(_OpenAISDKProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            ZaiModelProfile(zai_supports_tool_stream=model_name.lower().startswith(_TOOL_STREAM_MODEL_PREFIXES)),
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
