@@ -192,7 +192,7 @@ class TestSpeculation:
         """A speculated call passes a keyword-named parameter to the tool under its schema name."""
         log = ToolLog()
 
-        def lookup(**kwargs: Any) -> str:
+        async def lookup(**kwargs: Any) -> str:
             if not log.streaming_done:
                 log.started_during_stream += 1
             log.calls.append(('lookup', json.dumps(kwargs)))
