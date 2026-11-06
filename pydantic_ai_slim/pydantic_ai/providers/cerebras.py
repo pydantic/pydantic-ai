@@ -7,6 +7,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
@@ -45,6 +46,7 @@ class CerebrasProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
+            'gemma': google_model_profile,
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
@@ -53,8 +55,9 @@ class CerebrasProvider(_OpenAISDKProvider):
         }
 
         # Reasoning models that support the cerebras_disable_reasoning setting.
-        # GLM's thinking is configured here rather than by Z.AI's profile.
-        reasoning_prefixes = ('zai', 'gpt-oss')
+        # GLM's thinking is configured here rather than by Z.AI's profile. gemma-4 documents
+        # effort `none`/`low`/`medium`/`high` with `none` the default, so it thinks but is never always-on.
+        reasoning_prefixes = ('zai', 'gpt-oss', 'gemma-4')
 
         profile = None
         model_name_lower = model_name.lower()

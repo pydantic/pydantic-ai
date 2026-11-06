@@ -1,0 +1,54 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://ai-gateway.vercel.sh/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "130"
+      content-type:
+      - application/json
+      host:
+      - ai-gateway.vercel.sh
+      http-referer:
+      - https://pydantic.dev/docs/ai/
+    body:
+      type: json
+      content:
+        model: google/gemma-4-31b-it
+        stream: false
+        messages:
+        - role: user
+          content: What is 6 * 7?
+        reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      content-length:
+      - "273"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        id: chatcmpl-gemma-4
+        object: chat.completion
+        created: 0
+        model: gemma-4-31b-it
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "42"
+          finish_reason: stop
+        usage:
+          prompt_tokens: 1
+          completion_tokens: 1
+          total_tokens: 2
+  recorded_at: 2026-10-31T18:32:45.792835+00:00
