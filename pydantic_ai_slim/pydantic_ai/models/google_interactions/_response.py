@@ -27,6 +27,7 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnContent,
     WebCitationSource,
 )
 from ...usage import RequestUsage
@@ -259,7 +260,7 @@ def map_function_result(
     return [
         NativeToolReturnPart(
             mcp_tool_name(server_calls.get(step.call_id)),
-            raw.get('result'),
+            map_mcp_result(raw.get('result')),
             step.call_id,
             provider_name=provider_name,
             provider_details=step_metadata(raw),
@@ -291,12 +292,36 @@ def map_native_result(
             mcp_tool_name(step.server_name or server_calls.get(step.call_id))
             if isinstance(step, gi.MCPServerToolResultStep)
             else NATIVE_TOOL_NAMES[step.type.removesuffix('_result')],
-            raw.get('result'),
+            map_mcp_result(raw.get('result')) if isinstance(step, gi.MCPServerToolResultStep) else raw.get('result'),
             step.call_id,
             provider_name=provider_name,
             provider_details=step_metadata(raw),
         )
     ]
+
+
+def map_mcp_result(result: JsonValue) -> ToolReturnContent:
+    """Normalize inline MCP images so the shared binary telemetry control applies."""
+    if not isinstance(result, list):
+        return result
+    content: list[JsonValue | BinaryContent] = []
+    for item in result:
+        if isinstance(item, dict) and item.get('type') == 'image' and isinstance(data := item.get('data'), str):
+            metadata = dict(item)
+            metadata.pop('data')
+            media_type = item.get('mime_type')
+            content.append(
+                BinaryContent.narrow_type(
+                    BinaryContent(
+                        base64.b64decode(data),
+                        media_type=media_type if isinstance(media_type, str) else 'application/octet-stream',
+                        vendor_metadata={'google_interactions_mcp_content': metadata},
+                    )
+                )
+            )
+        else:
+            content.append(item)
+    return content
 
 
 def map_function_call(

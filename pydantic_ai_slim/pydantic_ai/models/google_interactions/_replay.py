@@ -10,6 +10,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import (
+    BinaryContent,
     FilePart,
     ModelResponsePart,
     NativeToolCallPart,
@@ -23,6 +24,7 @@ from ._response import NATIVE_TOOL_NAMES, media_kind
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _OBJECT_LIST = TypeAdapter(list[dict[str, JsonValue]])
 _JSON_VALUE = TypeAdapter(JsonValue)
+_CONTENT_LIST = TypeAdapter(list[object])
 _STEP = TypeAdapter(gi.Step)
 
 
@@ -49,11 +51,31 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
     elif isinstance(part, NativeToolReturnPart):
         validate_native_step(raw, part)
         raw.update(call_id=part.tool_call_id)
-        raw['result'] = _JSON_VALUE.validate_python(part.content)
+        raw['result'] = replay_native_result(part)
     else:
         raise UnexpectedModelBehavior('Persisted Google Interactions step does not match its message part.')
     _STEP.validate_python(raw)
     return raw
+
+
+def replay_native_result(part: NativeToolReturnPart) -> JsonValue:
+    result: object = part.content
+    if part.tool_name.partition(':')[0] != 'mcp_server' or not isinstance(result, list):
+        return _JSON_VALUE.validate_python(result)
+    content: list[JsonValue] = []
+    for item in _CONTENT_LIST.validate_python(result):
+        if isinstance(item, BinaryContent):
+            value = _JSON_OBJECT.validate_python(
+                (item.vendor_metadata or {}).get('google_interactions_mcp_content', {})
+            )
+            value.setdefault('type', 'image')
+            value['data'] = item.base64
+            if item.media_type != value.get('mime_type', 'application/octet-stream'):
+                value['mime_type'] = item.media_type
+            content.append(value)
+        else:
+            content.append(_JSON_VALUE.validate_python(item))
+    return content
 
 
 def validate_native_step(raw: dict[str, JsonValue], part: NativeToolCallPart | NativeToolReturnPart) -> None:

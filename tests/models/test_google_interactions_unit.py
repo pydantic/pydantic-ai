@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import FileSearchTool, ImageGenerationTool, MCPServerTool, MemoryTool
 from pydantic_ai.settings import ThinkingEffort
 from pydantic_ai.tools import ToolDefinition
@@ -1233,6 +1234,80 @@ async def test_explicit_mcp_server_identity(
         await model_request(mock_model, [*restored, ModelRequest.user_text_prompt('continue')])
         sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
         assert sent[:2] == [call, result]
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_mcp_images_redact_and_replay(
+    mock_model: GoogleInteractionsModel,
+    mock_google: MockGoogle,
+    explicit: bool,
+    streaming: bool,
+    allow_model_requests: None,
+):
+    """Inject MCP image results to verify telemetry controls and exact replay, including edited history."""
+    encoded = base64.b64encode(b'mcp-image-sentinel').decode()
+    call: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_call' if explicit else 'function_call',
+        'id': 'call',
+        'name': 'lookup' if explicit else 'docs:lookup',
+        'arguments': {},
+    }
+    if explicit:
+        call['server_name'] = 'docs'
+    content: list[JsonValue] = [
+        {'type': 'text', 'text': 'found'},
+        {'type': 'image', 'mime_type': 'image/png', 'data': encoded, 'resolution': 'low'},
+        {'type': 'image', 'data': encoded},
+        {'type': 'image', 'uri': 'https://example.com/image.png'},
+    ]
+    result: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_result' if explicit else 'function_result',
+        'call_id': 'call',
+        'result': content,
+    }
+    if not explicit:
+        result['name'] = 'docs:lookup'
+    if streaming:
+        values: list[dict[str, JsonValue]] = [
+            {'event_type': 'step.start', 'index': 0, 'step': call},
+            {'event_type': 'step.stop', 'index': 0},
+            {'event_type': 'step.start', 'index': 1, 'step': result},
+            {'event_type': 'step.stop', 'index': 1},
+            {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+        ]
+        stream = GoogleInteractionsStreamedResponse(
+            ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+        )
+        async for _ in stream:
+            pass
+        response = stream.get()
+    else:
+        mock_google.body['steps'] = [call, result]
+        response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))[0]
+    assert isinstance(restored, ModelResponse)
+    for value in (response, restored):
+        hidden = InstrumentationSettings(include_content=True, include_binary_content=False)
+        shown = InstrumentationSettings(include_content=True, include_binary_content=True)
+        assert encoded not in repr(value.otel_message_parts(hidden))
+        assert encoded in repr(value.otel_message_parts(shown))
+        part = value.parts[1]
+        assert isinstance(part, NativeToolReturnPart)
+        image = TypeAdapter(list[object]).validate_python(part.content)[1]
+        assert isinstance(image, BinaryContent) and image.data == b'mcp-image-sentinel'
+        # Per-part metadata must suffice when response-level replay data was dropped by a caller.
+        value.provider_details = None
+        await model_request(mock_model, [value, ModelRequest.user_text_prompt('continue')])
+        sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        assert sent[:2] == [call, result]
+        image.data = b'edited'
+        image.media_type = 'image/jpeg'
+        await model_request(mock_model, [value, ModelRequest.user_text_prompt('continue')])
+        sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        expected: list[JsonValue] = list(content)
+        expected[1] = {'type': 'image', 'mime_type': 'image/jpeg', 'data': 'ZWRpdGVk', 'resolution': 'low'}
+        assert sent[1]['result'] == expected
 
 
 @pytest.mark.parametrize('thinking', [False, 'minimal'])

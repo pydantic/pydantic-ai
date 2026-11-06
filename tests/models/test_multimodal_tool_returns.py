@@ -24,6 +24,7 @@ from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from _pytest.fixtures import SubRequest
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -627,19 +628,23 @@ def assert_multimodal_result(
 
 
 @pytest.fixture
-def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) -> Any:
+def vertex_provider(request: SubRequest, vertex_provider_auth: None) -> Any:
     """Override conftest's vertex_provider to return None for non-vertex tests instead of skipping."""
-    if 'google_vertex' not in request.node.name:  # pyright: ignore[reportUnknownMemberType]
+    test_name = request.node.name
+    if 'google_vertex' not in test_name:
         return None
 
     if not google_available():  # pragma: no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_CLOUD_PROJECT', os.getenv('GOOGLE_PROJECT'))
+    # Recorded Interactions requests normalize the project, so CI needs no live project configuration.
+    if not project and os.getenv('CI') and 'google_vertex_interactions' in test_name:
+        project = 'pydantic-ai'
     if not project:
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
-    location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
-    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))  # pragma: no cover
+    location = os.getenv('GOOGLE_LOCATION', 'global')
+    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))
 
 
 @pytest.fixture

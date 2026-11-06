@@ -204,6 +204,9 @@ sent in a framed user turn that identifies their originating tool call.
 Grounding data includes more than citations: search queries are in `NativeToolCallPart.args`, and
 search suggestions, fetched URL status and Maps places are in `NativeToolReturnPart.content`.
 Additional raw step metadata remains in each native part's `provider_details`.
+Inline MCP result images appear as [`BinaryContent`][pydantic_ai.messages.BinaryContent] values
+inside the result content list. They respect `include_binary_content` in telemetry and retain their
+provider format when replayed from serialized message history.
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
 caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
