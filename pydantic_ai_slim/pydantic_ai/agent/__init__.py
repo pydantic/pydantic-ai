@@ -1813,6 +1813,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     conversation_id=conversation_id,
                     deps=deps,
                     metadata=metadata,
+                    # Metadata can wrap the spec dict in a callback; retain its static layer for identity.
                     spec_metadata=resolved.metadata if resolved is not None else None,
                 )
             )
