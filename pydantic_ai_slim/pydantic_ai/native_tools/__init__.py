@@ -226,8 +226,9 @@ class AnthropicWebSearchToolSettings(TypedDict, total=False):
     response_inclusion: Literal['full', 'excluded']
     """Whether results consumed by completed code execution calls remain in the response.
 
-    This has no effect when the model calls the tool directly, which is the default on models without dynamic
-    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    Anthropic defaults to `'full'`. This has no effect when the model calls the tool directly, which is the default on
+    models without dynamic filtering and on requests whose citations route the tool to direct calls: direct results,
+    and results from code execution calls that paused before completing, are returned in full.
     """
 
 
@@ -537,13 +538,17 @@ class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
 
     use_cache: bool
-    """Whether Anthropic may return cached web content."""
+    """Whether Anthropic may return cached web content.
+
+    Anthropic defaults to `True`; `False` fetches the page fresh, which adds latency.
+    """
 
     response_inclusion: Literal['full', 'excluded']
     """Whether results consumed by completed code execution calls remain in the response.
 
-    This has no effect when the model calls the tool directly, which is the default on models without dynamic
-    filtering and on requests whose citations route the tool to direct calls: direct results are returned in full.
+    Anthropic defaults to `'full'`. This has no effect when the model calls the tool directly, which is the default on
+    models without dynamic filtering and on requests whose citations route the tool to direct calls: direct results,
+    and results from code execution calls that paused before completing, are returned in full.
     """
 
 

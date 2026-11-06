@@ -225,14 +225,15 @@ left out on models that don't support them.
     Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_search_20250305` otherwise.
     Anthropic-specific web search settings select `web_search_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
-    By default the model can call `web_search_20260209` from a server-side code execution sandbox.
+    By default the model can call `web_search_20260209` and `web_search_20260318` from a server-side code execution sandbox.
     On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
     needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
     Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
-    Without those settings, `WebSearchTool` on Vertex AI uses `web_search_20250305`, as Anthropic does not offer the
-    dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
+    `WebSearchTool` on Vertex AI uses `web_search_20250305`, the only web search version Vertex accepts,
+    so dynamic filtering is unavailable even on otherwise-supported models, and the Anthropic-specific
+    settings raise a `UserError` there.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
@@ -739,7 +740,7 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
     Anthropic-specific web fetch settings select `web_fetch_20260318`; see [Web tool settings](models/anthropic.md#web-tool-settings).
-    By default the model can call `web_fetch_20260209` from a server-side code execution sandbox.
+    By default the model can call `web_fetch_20260209` and `web_fetch_20260318` from a server-side code execution sandbox.
     On the Anthropic API, Pydantic AI turns that off when you ask for citations, unless the request
     needs code execution; to turn it off otherwise, for example for Zero Data Retention, see
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
