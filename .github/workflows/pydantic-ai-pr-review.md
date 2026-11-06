@@ -168,7 +168,7 @@ env:
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/pydantic-local.md
   - shared/engine-pydantic-ai.md
   - uses: shared/review-publication.md
     with:

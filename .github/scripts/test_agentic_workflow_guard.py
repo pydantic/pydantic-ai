@@ -30,6 +30,7 @@ from agentic_workflow_guard import (
     check_daily_aic_guardrail,
     check_dangling_needs,
     check_job_timeout_env,
+    check_job_timeout_headroom,
     check_lock_regenerated,
     check_logfire_wiring,
     check_prompt_paths,
@@ -40,6 +41,7 @@ from agentic_workflow_guard import (
     check_provider_health_recovery_wiring,
     check_provider_health_wiring,
     check_safe_output_job_max,
+    check_shell_exposure,
     check_timeout_declared,
     run_checks,
 )
@@ -637,6 +639,53 @@ def test_job_timeout_env_defers_to_timeout_declared_when_no_timeout_is_set(tmp_p
 
     assert check_job_timeout_env(source) == []
     assert [v.check for v in check_timeout_declared(source)] == ['timeout-declared']
+
+
+def test_job_timeout_headroom_requires_room_beyond_the_step(tmp_path: Path):
+    source = _write(
+        tmp_path / 'w.md',
+        '---\ntimeout-minutes: 60\njobs:\n  agent:\n    timeout-minutes: 63\n'
+        '  detection:\n    timeout-minutes: 22\n---\nprompt\n',
+    )
+    assert check_job_timeout_headroom(source) == []
+
+    _write(
+        source,
+        '---\ntimeout-minutes: 60\njobs:\n  agent:\n    timeout-minutes: 60\n'
+        '  detection:\n    timeout-minutes: 22\n---\nprompt\n',
+    )
+    assert [v.check for v in check_job_timeout_headroom(source)] == ['job-timeout-headroom']
+
+    _write(
+        source,
+        '---\ntimeout-minutes: 60\njobs:\n  agent:\n    timeout-minutes: 63\n'
+        '  detection:\n    timeout-minutes: 20\n---\nprompt\n',
+    )
+    assert [v.check for v in check_job_timeout_headroom(source)] == ['job-timeout-headroom']
+
+
+def test_job_timeout_headroom_accepts_the_default_agent_cap(tmp_path: Path):
+    source = _write(
+        tmp_path / 'w.md', '---\ntimeout-minutes: 30\njobs:\n  detection:\n    timeout-minutes: 22\n---\nprompt\n'
+    )
+    assert check_job_timeout_headroom(source) == []
+
+
+def test_shell_exposure_matches_tools_bash(tmp_path: Path):
+    disabled = _write(
+        tmp_path / 'a.md',
+        '---\ntools:\n  bash: []\nenv:\n  PYDANTIC_AI_SHELL_DISABLED: "1"\n---\nprompt\n',
+    )
+    assert check_shell_exposure(disabled) == []
+
+    missing = _write(tmp_path / 'b.md', '---\ntools:\n  bash: []\n---\nprompt\n')
+    assert [v.check for v in check_shell_exposure(missing)] == ['shell-exposure']
+
+    allowed_shell = _write(
+        tmp_path / 'c.md',
+        "---\ntools:\n  bash: ['git *']\nenv:\n  PYDANTIC_AI_SHELL_DISABLED: '1'\n---\nprompt\n",
+    )
+    assert [v.check for v in check_shell_exposure(allowed_shell)] == ['shell-exposure']
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------

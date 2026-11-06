@@ -166,7 +166,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/pydantic-local.md
   - shared/engine-pydantic-ai.md
   - shared/provider-health.md
 jobs:

@@ -261,11 +261,11 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Compiler.** The commands here are built and compiled with gh-aw v1.0.1. Until the
   upstream fix for imported engine definitions ships, the agent engine needs a v1.0.1
   build that reads an imported definition's `behaviors.supported-env-var-keys` before
-  strict mode rejects the credential name in the engine environment. `local-notes/bin`
-  holds that authoring build; record its patch in the PR that introduces it. Compile
-  `pydantic-ai-pr-review` with `--no-lint`: CTR-021 requires a positive
-  `workflow_run.branches` scope, and CI Review must start for every PR head branch. Every
-  other workflow uses plain compile.
+  strict mode rejects the credential name in the engine environment. The same authoring
+  build exempts `workflow-run-scope` (CTR-021) for a `workflow_run` that also runs on
+  `pull_request_review`, because CI Review must start for every PR head branch and no
+  positive branch list can express that. `local-notes/bin` holds that authoring build;
+  record its patches in the PR that introduces them. Every workflow uses plain compile.
 - **Engine configuration.** Each source imports the published definition
   (`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@<ref>`) and
   `shared/engine-pydantic-ai.md`, and declares its own `engine` block: the published

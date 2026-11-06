@@ -18,6 +18,7 @@ from pydantic import TypeAdapter
 
 PROPOSAL_KEYS = ('title', 'body', 'branch')
 MAPPING_ADAPTER = TypeAdapter(dict[str, object])
+ITEMS_ADAPTER = TypeAdapter(list[dict[str, object]])
 
 
 def _mapping(value: object) -> dict[str, object]:
@@ -27,18 +28,14 @@ def _mapping(value: object) -> dict[str, object]:
 
 
 def _items(path: pathlib.Path) -> list[dict[str, object]]:
+    """Read the ingested safe-output items, failing closed when the file is absent."""
     if not path.is_file():
-        return []
-    items: list[dict[str, object]] = []
-    for line in path.read_text(encoding='utf-8').splitlines():
-        if not line.strip():
-            continue
-        try:
-            value: object = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError('Safe-output line is not JSON') from error
-        items.append(_mapping(value))
-    return items
+        raise ValueError(f'ingested agent output is missing: {path}')
+    payload: object = json.loads(path.read_text(encoding='utf-8'))
+    items = _mapping(payload).get('items')
+    if not isinstance(items, list):
+        raise ValueError('ingested agent output has no items list')
+    return ITEMS_ADAPTER.validate_python(items)
 
 
 def _proposal(item: dict[str, object]) -> dict[str, object]:
@@ -67,11 +64,11 @@ def verify(safe_outputs: pathlib.Path, reviewed: pathlib.Path) -> None:
 def main() -> int:
     """Run the verifier from the safe-outputs job."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--safe-outputs', type=pathlib.Path, required=True)
+    parser.add_argument('--agent-output', type=pathlib.Path, required=True)
     parser.add_argument('--reviewed', type=pathlib.Path, required=True)
     args = parser.parse_args()
     try:
-        verify(args.safe_outputs, args.reviewed)
+        verify(args.agent_output, args.reviewed)
     except (OSError, ValueError) as error:
         print(f'weekly CE audit publication rejected: {error}', file=sys.stderr)
         return 1

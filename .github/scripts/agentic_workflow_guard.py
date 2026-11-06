@@ -719,7 +719,8 @@ DETECTION_ENGINE_ID = 'codex'
 AGENT_ENGINE_ENDPOINT = ZAI_ANTHROPIC_ENDPOINT
 AGENT_COMPOSITION = 'gh_aw_agent:agent'
 SHARED_ENGINE_RELATIVE = 'shared/engine-pydantic-ai.md'
-PUBLISHED_ENGINE_RELATIVE = 'pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main'
+PUBLISHED_ENGINE_PREFIX = 'pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@'
+LOCAL_DEFINITION_RELATIVE = 'shared/pydantic-local.md'
 
 
 def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
@@ -784,6 +785,17 @@ def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]
 def _detection_proxy_violations(workflows_dir: Path) -> list[Violation]:
     """The compiled detection job must send codex through the Z.AI openai proxy."""
     violations: list[Violation] = []
+    vendored = workflows_dir / 'shared' / 'pydantic-local.md'
+    repo_definition = workflows_dir.parents[1] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
+    if vendored.is_file() and repo_definition.is_file() and vendored.read_bytes() != repo_definition.read_bytes():
+        violations.append(
+            Violation(
+                str(vendored),
+                'provider-engine-config',
+                'A vendored engine definition must be byte-identical to `src/pydantic_ai_harness/gh-aw/pydantic.md`.',
+            )
+        )
+
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         lock = source.with_suffix('.lock.yml')
         if not lock.is_file():
@@ -832,7 +844,8 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
         if not _is_zai_workflow(frontmatter):
             continue
         imports = _as_strings(frontmatter.get('imports'))
-        if SHARED_ENGINE_RELATIVE not in imports or PUBLISHED_ENGINE_RELATIVE not in imports:
+        published = any(entry.startswith(PUBLISHED_ENGINE_PREFIX) for entry in imports)
+        if SHARED_ENGINE_RELATIVE not in imports or not (published or LOCAL_DEFINITION_RELATIVE in imports):
             violations.append(
                 Violation(
                     str(source),
@@ -1522,6 +1535,64 @@ def changed_files(base_ref: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
+def check_job_timeout_headroom(source: Path) -> list[Violation]:
+    """Job caps must leave room for setup and post-steps beyond the step budget."""
+    frontmatter = parse_frontmatter(source)
+    step = frontmatter.get('timeout-minutes')
+    if not isinstance(step, int) or step <= 0:
+        return []
+    jobs = _as_mapping(frontmatter.get('jobs'))
+    agent = _as_mapping(jobs.get('agent')).get('timeout-minutes')
+    agent_cap = agent if isinstance(agent, int) else 60
+    detection = _as_mapping(jobs.get('detection')).get('timeout-minutes')
+    violations: list[Violation] = []
+    if agent_cap <= step:
+        violations.append(
+            Violation(
+                str(source),
+                'job-timeout-headroom',
+                f'`jobs.agent.timeout-minutes` ({agent_cap}) must exceed the {step}-minute step budget; '
+                'setup and post-steps otherwise come out of the step.',
+            )
+        )
+    if not isinstance(detection, int) or detection <= 20:
+        violations.append(
+            Violation(
+                str(source),
+                'job-timeout-headroom',
+                '`jobs.detection.timeout-minutes` must exceed the 20-minute detector floor; gh-aw applies it '
+                'to the detection step too.',
+            )
+        )
+    return violations
+
+
+def check_shell_exposure(source: Path) -> list[Violation]:
+    """A source with `tools.bash: []` must disable the composition's shell tool."""
+    frontmatter = parse_frontmatter(source)
+    bash = _as_mapping(frontmatter.get('tools')).get('bash')
+    disabled = _as_mapping(frontmatter.get('env')).get('PYDANTIC_AI_SHELL_DISABLED')
+    if isinstance(bash, list) and not bash:
+        if disabled != '1':
+            return [
+                Violation(
+                    str(source),
+                    'shell-exposure',
+                    '`tools.bash: []` must pair with `PYDANTIC_AI_SHELL_DISABLED: "1"` so no shell is offered.',
+                )
+            ]
+        return []
+    if disabled is not None:
+        return [
+            Violation(
+                str(source),
+                'shell-exposure',
+                '`PYDANTIC_AI_SHELL_DISABLED` is only valid for a source with `tools.bash: []`.',
+            )
+        ]
+    return []
+
+
 def run_checks(
     workflows_dir: Path = WORKFLOWS_DIR,
     changed: list[str] | None = None,
@@ -1549,6 +1620,8 @@ def run_checks(
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
         violations += check_job_timeout_env(source)
+        violations += check_job_timeout_headroom(source)
+        violations += check_shell_exposure(source)
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)

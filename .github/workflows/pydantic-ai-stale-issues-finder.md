@@ -109,7 +109,7 @@ if: ${{ needs.provider_health.outputs.ready == 'true' }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/pydantic-local.md
   - shared/engine-pydantic-ai.md
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -144,7 +144,7 @@ jobs:
   detection:
     timeout-minutes: 22
   agent:
-    timeout-minutes: 62
+    timeout-minutes: 63
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5

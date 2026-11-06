@@ -130,7 +130,7 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/pydantic-local.md
   - shared/engine-pydantic-ai.md
   - shared/provider-health.md
   - shared/security-findings.md

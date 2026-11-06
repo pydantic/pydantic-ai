@@ -321,15 +321,19 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_check_complexity.py
 
-      # The composition imports the workspace harness, so a syntax error, a bad import
-      # or a withdrawn symbol fails here before a workflow run discovers it.
-      - name: Import the workflow agent composition
+      # Import the composition against the exact installs the engine performs, not the
+      # workspace venv: a symbol the workspace has but `engine.version` lacks would
+      # otherwise pass here and crash every workflow run.
+      - name: Import the composition against the engine's pinned runtime
         env:
-          UV_NO_SYNC: "1"
           PYDANTIC_AI_NO_BANNER: "1"
         run: >-
-          PYTHONPATH=.github/scripts uv run python -c
-          "import gh_aw_agent; assert gh_aw_agent.agent.name == 'gh-aw-agent'"
+          PYTHONPATH=.github/scripts uv run --isolated --no-config --no-project
+          --python 3.12
+          --with 'pydantic-ai-harness[coder]==0.66.0'
+          --with 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
+          --with 'cryptography>=48.0.1'
+          python -c "import gh_aw_agent; assert gh_aw_agent.agent.name == 'gh-aw-agent'"
 
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the

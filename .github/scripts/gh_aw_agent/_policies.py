@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from typing import ClassVar
 
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage] -- re-exports the SDK's class
 
 from pydantic_ai import ModelRequestContext, ModelRetry, RunContext
 from pydantic_ai.capabilities import (

@@ -49,10 +49,15 @@ safe-outputs:
         AGENT_RESULT: ${{ needs.agent.result }}
       run: test "$AGENT_RESULT" = success
     - name: Require the published PR to be the independently reviewed proposal
-      run: >-
-        python3 .github/scripts/verify_weekly_ce_publication.py
-        --safe-outputs /tmp/gh-aw/safeoutputs.jsonl
-        --reviewed /tmp/gh-aw/reviewed-proposal.json
+      run: |
+        set -euo pipefail
+        reviewed=/tmp/gh-aw/agent/reviewed-proposal.json
+        if [ ! -f "$reviewed" ]; then
+          reviewed=/tmp/gh-aw/reviewed-proposal.json
+        fi
+        python3 .github/scripts/verify_weekly_ce_publication.py \
+          --agent-output /tmp/gh-aw/agent_output.json \
+          --reviewed "$reviewed"
   create-pull-request:
     max: 1
     draft: false
@@ -103,7 +108,7 @@ imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/checkout.md
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/pydantic-local.md
   - shared/engine-pydantic-ai.md
   - shared/provider-health.md
 pre-agent-steps:
