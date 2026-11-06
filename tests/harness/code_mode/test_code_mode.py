@@ -25,7 +25,7 @@ from uuid import UUID
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import (
     NOT_HANDLED,
@@ -1892,6 +1892,54 @@ class TestCodeMode:
             tools['run_code'],
         )
         assert result.return_value == {'output': 'user-result company-result\n'}
+
+    @staticmethod
+    async def _run_code_with_tools(code: str, *tool_defs: ToolDefinition) -> Any:
+        """Run `code` through Monty against fresh tools, as only the first snippet of a session is type checked."""
+        static = _StaticToolset(list(tool_defs), results={td.name: 'ok' for td in tool_defs})
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        return result.return_value
+
+    @pytest.mark.parametrize(
+        'right,wrong',
+        [
+            pytest.param("sync_user(user={'email': 'x'})", "sync_user(user={'age': 1})", id='bug-1-param-vs-return'),
+            pytest.param("tool_a(wrap={'user': {'name': 'x'}})", "tool_a(wrap={'user': {'id': 1}})", id='bug-2-nested'),
+            pytest.param("tool_b(user={'name': 'x'})", "tool_b(user={'id': 1})", id='bug-3-shared'),
+        ],
+    )
+    async def test_type_checker_sees_the_types_of_renamed_conflicts(self, right: str, wrong: str) -> None:
+        """#8816: on main each `wrong` call got past the checker, as its annotation named a missing or rebound class."""
+        user_name: type[BaseModel] = create_model('User', name=(str, ...))
+        user_id: type[BaseModel] = create_model('User', id=(int, ...))
+        user_email: type[BaseModel] = create_model('User', email=(str, ...))
+        user_age: type[BaseModel] = create_model('User', age=(int, ...))
+        wrapper: type[BaseModel] = create_model('Wrapper', user=(user_name, ...))
+        ret_wrap: type[BaseModel] = create_model('RetWrap', user=(user_age, ...))
+
+        def tool(name: str, returns: dict[str, Any] | None = None, **params: Any) -> ToolDefinition:
+            fields: dict[str, Any] = {k: (v, ...) for k, v in params.items()}
+            args: type[BaseModel] = create_model('Args', **fields)
+            return ToolDefinition(
+                name=name,
+                parameters_json_schema=args.model_json_schema(),
+                return_schema=returns or {'type': 'string'},
+            )
+
+        # Order matters: bug 3 needed the shared `User` to be the first one seen.
+        tools = (
+            tool('tool_a', wrap=wrapper),
+            tool('tool_b', user=user_name),
+            tool('tool_c', user=user_id),
+            tool('sync_user', returns=ret_wrap.model_json_schema(), user=user_email),
+        )
+        assert await self._run_code_with_tools(f'print(await {right})', *tools) == {'output': 'ok\n'}
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools(f'await {wrong}', *tools)
 
     # ---------------------------------------------------------------------------
     # Deferred tools
