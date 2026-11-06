@@ -19,6 +19,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentStreamEvent,
     DeferredToolResults,
     ModelMessage,
@@ -245,9 +246,9 @@ def test_anthropic_20260318_web_tools_implicit_code_execution(
     assert ('code_execution' in enabled_names) is enables_code_execution
 
 
-def test_anthropic_20260318_settings_forwarded_on_vertex():
-    """An opted-in setting reaches Vertex, whose API is the authority on what it supports."""
-    m = AnthropicModel(
+def test_anthropic_20260318_web_search_settings_rejected_on_vertex(allow_model_requests: None):
+    """Vertex AI only accepts `web_search_20250305`, so the option is rejected before the request."""
+    model = AnthropicModel(
         'claude-sonnet-4-6',
         provider=AnthropicProvider(
             anthropic_client=mock_anthropic_client(
@@ -255,28 +256,21 @@ def test_anthropic_20260318_settings_forwarded_on_vertex():
             )
         ),
     )
-    params = ModelRequestParameters(
-        native_tools=[
-            WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
-        ]
-    )
+    tool = WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
+    agent = Agent(model, capabilities=[NativeTool(tool)])
 
-    tools, *_ = m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match=r'needs `web_search_20260318`, which this client does not offer'):
+        agent.run_sync('hi')
 
-    assert tools == snapshot(
-        [
-            {
-                'name': 'web_search',
-                'type': 'web_search_20260318',
-                'max_uses': None,
-                'allowed_domains': None,
-                'blocked_domains': None,
-                'user_location': None,
-                'response_inclusion': 'full',
-                'allowed_callers': ['direct'],
-            }
-        ]
-    )
+
+def _native_parts(result: AgentRunResult[str]) -> list[tuple[str, str]]:
+    """The native tool calls and returns in a run, which show what `response_inclusion` left in the response."""
+    return [
+        (type(part).__name__, part.tool_name)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ]
 
 
 @pytest.mark.vcr()
@@ -303,7 +297,11 @@ async def test_anthropic_20260318_web_search_response_inclusion(
         'and reply with the first result title.'
     )
 
-    assert result.output
+    assert result.output == snapshot('The title of the first search result is **"pydantic ai"**.')
+    assert result.usage.details.get('web_search_requests') == 1
+    assert _native_parts(result) == snapshot(
+        [('NativeToolCallPart', 'code_execution'), ('NativeToolReturnPart', 'code_execution')]
+    )
     assert request_capture.body('/v1/messages')['tools'] == snapshot(
         [
             {
@@ -316,11 +314,6 @@ async def test_anthropic_20260318_web_search_response_inclusion(
                 'user_location': None,
             }
         ]
-    )
-    assert not any(
-        isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_search'
-        for message in result.all_messages()
-        for part in message.parts
     )
 
 
@@ -347,7 +340,10 @@ async def test_anthropic_20260318_web_fetch_settings(
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
 
-    assert result.output
+    assert result.output == snapshot('The page title is **Pydantic AI**.')
+    assert _native_parts(result) == snapshot(
+        [('NativeToolCallPart', 'code_execution'), ('NativeToolReturnPart', 'code_execution')]
+    )
     assert request_capture.body('/v1/messages')['tools'] == snapshot(
         [
             {
@@ -362,11 +358,6 @@ async def test_anthropic_20260318_web_fetch_settings(
                 'use_cache': False,
             }
         ]
-    )
-    assert not any(
-        isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name == 'web_fetch'
-        for message in result.all_messages()
-        for part in message.parts
     )
 
 

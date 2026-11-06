@@ -488,8 +488,7 @@ _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropi
 # Citations route the `20260209` and `20260318` web tools to direct calls on the direct API, where uncited sandbox
 # results were reproduced and the direct calls recorded. Foundry and Claude Platform on AWS (`AsyncAnthropicAWS`, an
 # `AsyncAnthropic` subclass) also send those versions but aren't verified to accept `allowed_callers` with citations,
-# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients only send those versions when
-# `provider_settings` asks for `20260318`, which stays off for them too.
+# so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicAWS,
     AsyncAnthropicBedrock,
@@ -2566,6 +2565,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
+                if 'response_inclusion' in (tool.provider_settings or {}).get('anthropic', {}) and isinstance(
+                    self.client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
+                ):
+                    # Vertex AI only accepts `web_search_20250305` (checked against its API), so it would reject the
+                    # request.
+                    raise UserError(
+                        "Anthropic's `response_inclusion` web search setting needs `web_search_20260318`, which this "
+                        'client does not offer: it only supports `web_search_20250305`.'
+                    )
                 tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
