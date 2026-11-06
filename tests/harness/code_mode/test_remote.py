@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import replace
-from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Never
 
 import pytest
-import websockets
-from pydantic_monty import AsyncMontyWebsocket, MountDir
-from websockets.asyncio.server import ServerConnection
-from websockets.http11 import Request, Response
+from pydantic_monty import AsyncMontyRemote, MountDir
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -24,6 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import CodeModeToolset
+from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -46,8 +41,7 @@ def _snippets_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
-async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path: Path) -> None:
+async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) -> None:
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
     agent = Agent(
@@ -58,7 +52,7 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
         ),
         capabilities=[
             CodeMode(
-                monty_sandbox=websocket_relay_url,
+                monty_sandbox=monty_relay.url,
                 mount=MountDir(virtual_path='/workspace', host_path=tmp_path),
             )
         ],
@@ -82,19 +76,47 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
     ]
 
 
-@pytest.mark.parametrize('url', ['ws://monty-server:8000', 'wss://sandbox.example.com/monty'])
-async def test_websocket_sandbox_url_accepted(url: str) -> None:
-    """Any `ws://` or `wss://` URL passes validation; workers dial lazily, not at enter."""
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://sandbox.example.com',
+        'http://monty-server:8000/',
+        # Monty reads its earlier WebSocket schemes as `http://` and `https://`.
+        'ws://monty-server:8000',
+        'wss://sandbox.example.com/',
+    ],
+)
+async def test_remote_sandbox_url_accepted(url: str) -> None:
+    """A server root URL passes validation; workers dial lazily, not at enter."""
     agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
     result = await agent.run('no run_code call, so nothing dials')
     assert result.output == 'done'
 
 
-async def test_non_websocket_sandbox_url_rejected() -> None:
-    """A URL Monty's WebSocket client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com/monty')])
-    with pytest.raises(UserError, match="not scheme 'https'"):
+async def test_unsupported_scheme_rejected() -> None:
+    """A URL Monty's remote client cannot dial fails when the run starts, not at every `run_code`."""
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='ftp://sandbox.example.com')])
+    with pytest.raises(UserError, match="not scheme 'ftp'"):
         await agent.run('never dials')
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://sandbox.example.com/monty',
+        'wss://sandbox.example.com/monty-ws/',
+        'https://sandbox.example.com/?token=hunter2',
+        'https://sandbox.example.com?',
+        'https://sandbox.example.com#hunter2',
+    ],
+)
+async def test_url_beyond_server_root_rejected(url: str) -> None:
+    """The client calls one fixed method at the server root, so a path, query, or fragment fails up front."""
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
+    with pytest.raises(UserError, match='must be the server root') as exc_info:
+        await agent.run('never dials')
+    assert url not in str(exc_info.value)
+    assert 'hunter2' not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -111,10 +133,10 @@ async def test_remote_turn_deadline_follows_max_duration(
         seen.append(request_timeout)
         raise RuntimeError('not dialing')
 
-    monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyWebsocket', recording_pool)
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyRemote', recording_pool)
     agent = Agent(
         _snippets_model('1'),
-        capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty', resource_limits=resource_limits)],
+        capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com', resource_limits=resource_limits)],
     )
     await agent.run('record the deadline')
     assert seen == [request_timeout]
@@ -122,7 +144,7 @@ async def test_remote_turn_deadline_follows_max_duration(
 
 async def test_dial_failure_redacts_sandbox_url() -> None:
     """A failed dial's retry message must not leak the URL, which may carry credentials."""
-    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='ws://127.0.0.1:1/?token=hunter2')])
+    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
 
     result = await agent.run('dial a dead worker')
 
@@ -133,66 +155,50 @@ async def test_dial_failure_redacts_sandbox_url() -> None:
 
 def test_repr_hides_sandbox_url() -> None:
     """The URL may carry credentials, so neither the capability nor its toolset shows it in `repr`."""
-    capability = CodeMode[None](monty_sandbox='wss://alice:s3cr3t@sandbox.example.com/monty?api_key=k-123')
+    capability = CodeMode[None](monty_sandbox='https://alice:s3cr3t@sandbox.example.com')
     toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
 
     assert 'sandbox.example.com' not in repr(capability)
     assert 'sandbox.example.com' not in repr(toolset)
 
 
-@asynccontextmanager
-async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
-    """A WebSocket endpoint that records each upgrade request and refuses it with 401."""
-
-    def refuse(connection: ServerConnection, request: Request) -> Response:
-        seen.append(request)
-        return connection.respond(HTTPStatus.UNAUTHORIZED, 'unauthorized')
-
-    async def never_called(connection: ServerConnection) -> None:  # pragma: no cover
-        pass
-
-    async with websockets.serve(never_called, '127.0.0.1', 0, process_request=refuse) as server:
-        port: int = next(iter(server.sockets)).getsockname()[1]
-        yield f'ws://127.0.0.1:{port}/monty-ws/'
-
-
 async def test_monty_sandbox_builds_each_run_pool() -> None:
-    """`monty_sandbox` is called once per run for a fresh pool, which dials with its own headers."""
-    seen: list[Request] = []
-    pools: list[AsyncMontyWebsocket] = []
-    async with _refusing_server(seen) as url:
+    """`monty_sandbox` is called once per run for a fresh pool, which dials with its own metadata."""
+    pools: list[AsyncMontyRemote] = []
+    async with serve_monty_relay(refuse=True) as relay:
 
-        def build_pool() -> AsyncMontyWebsocket:
-            pools.append(AsyncMontyWebsocket(url, connect_headers=lambda: {'Authorization': 'Bearer k-pool'}))
+        def build_pool() -> AsyncMontyRemote:
+            pools.append(AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-pool'}))
             return pools[-1]
 
         agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
         for _ in range(2):
-            await agent.run('dial')
+            result = await agent.run('dial')
+            (retry,) = _retries(result.all_messages())
+            assert 'UNAUTHENTICATED' in str(retry.content)
 
     assert len(pools) == 2 and pools[0] is not pools[1]
-    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-pool', 'Bearer k-pool']
+    assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-pool', 'Bearer k-pool']
 
 
 async def test_async_monty_sandbox_is_awaited() -> None:
     """An `async def` `monty_sandbox` is awaited for its pool."""
-    seen: list[Request] = []
-    async with _refusing_server(seen) as url:
+    async with serve_monty_relay(refuse=True) as relay:
 
-        async def build_pool() -> AsyncMontyWebsocket:
-            return AsyncMontyWebsocket(url, connect_headers=lambda: {'Authorization': 'Bearer k-async'})
+        async def build_pool() -> AsyncMontyRemote:
+            return AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-async'})
 
         agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
         await agent.run('dial')
 
-    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-async']
+    assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-async']
 
 
 async def test_failing_monty_sandbox_is_a_retry() -> None:
     """A `monty_sandbox` function that raises becomes a retry, and the next call builds the pool again."""
     calls: list[None] = []
 
-    def build_pool() -> AsyncMontyWebsocket:
+    def build_pool() -> AsyncMontyRemote:
         calls.append(None)
         raise RuntimeError('no sandbox for you')
 
@@ -207,7 +213,7 @@ async def test_pool_instead_of_function_rejected() -> None:
     """The pool itself, instead of a function that returns it, fails as the run starts."""
     agent = Agent(
         _snippets_model('1 + 1'),
-        capabilities=[CodeMode(monty_sandbox=AsyncMontyWebsocket('wss://sandbox.example.com/monty'))],  # pyright: ignore[reportArgumentType]
+        capabilities=[CodeMode(monty_sandbox=AsyncMontyRemote('https://sandbox.example.com'))],  # pyright: ignore[reportArgumentType]
     )
     with pytest.raises(UserError, match='not the pool itself'):
         await agent.run('dial')
@@ -216,52 +222,37 @@ async def test_pool_instead_of_function_rejected() -> None:
 def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
     """`monty_sandbox_url` still works, warns once at the caller's line, and moves into `monty_sandbox`."""
     with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
-        capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
+        capability = CodeMode(monty_sandbox_url='https://sandbox.example.com')
     assert warned[0].filename == __file__
-    assert capability.monty_sandbox == 'wss://sandbox.example.com/monty'
+    assert capability.monty_sandbox == 'https://sandbox.example.com'
     assert capability.monty_sandbox_url is None
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         replace(capability)
 
     with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
-        toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
+        toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='https://sandbox.example.com')
     assert warned[0].filename == __file__
-    assert toolset.monty_sandbox == 'wss://sandbox.example.com/monty'
+    assert toolset.monty_sandbox == 'https://sandbox.example.com'
 
     with pytest.raises(UserError, match='`monty_sandbox_url` is its deprecated form'):
-        CodeMode(monty_sandbox='wss://a.example.com', monty_sandbox_url='wss://b.example.com')
+        CodeMode(monty_sandbox='https://a.example.com', monty_sandbox_url='https://b.example.com')
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
-async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url: str) -> None:
+async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRelay) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
-    connections: list[websockets.ServerConnection] = []
+    agent = Agent(
+        _snippets_model('await drop_connection()'),
+        capabilities=[CodeMode(monty_sandbox=monty_relay.url)],
+    )
 
-    async def proxy(client: websockets.ServerConnection) -> None:
-        connections.append(client)
-        async with websockets.connect(websocket_relay_url, max_size=None) as upstream:
+    @agent.tool_plain
+    async def drop_connection() -> None:
+        # One statement: the harness cancels this while the reset is in flight, so a separate
+        # wait line would only sometimes run. The wait never ends on its own.
+        await asyncio.gather(monty_relay.drop_streams(), asyncio.Event().wait())
 
-            async def pump(source: Any, sink: Any) -> None:
-                async for message in source:
-                    await sink.send(message)
-
-            await asyncio.gather(pump(client, upstream), pump(upstream, client), return_exceptions=True)
-
-    async with websockets.serve(proxy, '127.0.0.1', 0, max_size=None) as server:
-        port: int = next(iter(server.sockets)).getsockname()[1]
-        agent = Agent(
-            _snippets_model('await drop_connection()'),
-            capabilities=[CodeMode(monty_sandbox=f'ws://127.0.0.1:{port}')],
-        )
-
-        @agent.tool_plain
-        async def drop_connection() -> None:
-            # One statement: the harness cancels this while the close is in flight, so a separate
-            # wait line would only sometimes run. The wait never ends on its own.
-            await asyncio.gather(*(connection.close() for connection in connections), asyncio.Event().wait())
-
-        result = await agent.run('lose the worker mid-snippet')
+    result = await agent.run('lose the worker mid-snippet')
 
     (retry,) = _retries(result.all_messages())
     assert 'MontyDisconnectError' in str(retry.content)

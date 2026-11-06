@@ -581,9 +581,9 @@ If these checks pass, inspect the generated code and launch events. Oversized st
 and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
 not a guarantee that every eligible call starts early.
 
-## Remote workers over WebSockets
+## Remote workers
 
-Set `monty_sandbox` to a `ws://` or `wss://` URL to run sandboxed code on a remote Monty worker
+Set `monty_sandbox` to the root URL of a Monty server to run sandboxed code on a remote worker
 instead of a local subprocess:
 
 ```python
@@ -592,23 +592,47 @@ from pydantic_ai_harness import CodeMode
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty')],
+    capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com')],
 )
 ```
 
-A URL connects without a key. To send headers or set other pool options, pass a sync or async
-function that returns a `pydantic_monty.AsyncMontyWebsocket` instead; Code Mode builds a pool from
-it for each run. That pool's `request_timeout`, 10 seconds by default, limits how long code runs
-between tool calls, in place of `max_duration_secs`.
+Each worker is a gRPC stream to the server. The client always calls the same method at the server
+root, so a URL with a path, query, or fragment raises a `UserError` when the run starts.
+`ws://` and `wss://` URLs from earlier releases still work: Monty reads them as `http://` and
+`https://`.
 
-Use `wss://` unless the server is on a network you trust: the connection carries your agent's tool
+A URL connects without a key. To send metadata such as an `authorization` header, or to set other
+pool options, pass a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`
+instead; Code Mode builds a pool from it for each run:
+
+```python {test="skip"}
+from pydantic_monty import AsyncMontyRemote
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+def sandbox_pool() -> AsyncMontyRemote:
+    return AsyncMontyRemote(
+        'https://sandbox.example.com',
+        metadata=lambda: {'authorization': 'Bearer my-key'},
+    )
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
+```
+
+That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
+in place of `max_duration_secs`.
+
+Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
-The `run_code` description lists the standard library modules Monty 1.4 can import, so run the
-worker on `pydantic-monty>=1.4.0`.
+The `run_code` description lists the standard library modules Monty 1.5 can import, and earlier
+releases serve workers over WebSockets, so run the worker on `pydantic-monty>=1.5.0`.
 
 ## Temporal durability
 
@@ -816,8 +840,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
-  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`,
-  `os.path`, `tomllib`)
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
+  `hashlib`, `os.path`, `tomllib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
@@ -844,7 +868,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_sandbox=None,   # a ws:// or wss:// URL, or a function that returns the pool
+    monty_sandbox=None,   # an http(s):// server root URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=True,
 )

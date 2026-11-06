@@ -39,7 +39,7 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMontyWebsocket
+    from pydantic_monty import AsyncMontyRemote
 
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
@@ -164,10 +164,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://` or `https://` server root URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
     A function's pool limits how long code runs between tool calls with its own `request_timeout`
     (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
@@ -263,7 +263,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         """Build from an agent spec, naming the fields a spec can express.
 
         Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
-        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyWebsocket` hint is a
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyRemote` hint is a
         `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
         would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
         no JSON schema, and would drop the keyword form.
