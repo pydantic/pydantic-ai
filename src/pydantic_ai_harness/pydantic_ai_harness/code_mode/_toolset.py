@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import inspect
 import math
 import re
@@ -95,6 +96,11 @@ CodeModeMount = MountDir | list[MountDir]
 _RETRY_VALUE_PREVIEW_CHARS = 120
 _RETRY_PREVIEW_ITEMS = 5
 _RETRY_SUMMARY_MAX_CHARS = 2000
+
+# Monty resolves builtins before host names, so a tool with one of these names would never run.
+# All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
+# silently take over a tool that works today.
+_BUILTIN_NAMES = frozenset(dir(builtins))
 
 
 # One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
@@ -1400,6 +1406,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
+            if safe_name in _BUILTIN_NAMES:
+                raise UserError(
+                    f'Tool name {name!r} is a Python builtin, so code in `run_code` would call the builtin '
+                    'instead of the tool. Rename the tool, for example with `toolset.prefixed(...)` or '
+                    '`toolset.renamed(...)`.'
+                )
             if td.return_schema is None and name not in self._warned_missing_return_schema:
                 missing_return_schema.append(name)
         _warn_missing_return_schemas(missing_return_schema)
