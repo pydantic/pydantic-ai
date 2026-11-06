@@ -320,6 +320,16 @@ async def _send_to_owner(
         await owner.notify(record, event)
 
 
+def _local_abilities(ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT]) -> tuple[bool, bool]:
+    """Whether a local task can be resumed and ask questions.
+
+    A task in a durable unit of its own can't ask questions, and keeps no conversation to resume.
+    """
+    if ctx.in_durable_context:
+        return False, False
+    return sub_agent.resumable, sub_agent.can_ask_questions
+
+
 def _new_task_id(ctx: RunContext[Any]) -> str:
     """A new task's ID: under durable execution, one replay derives again from the run and the recorded tool call."""
     if ctx.in_durable_context:
@@ -855,10 +865,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             key = self._resolve_model_key(agent_name, sub_agent, model)
             if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
                 return exhausted
-            resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
-        if ctx.in_durable_context:
-            # A task in a durable unit of its own can't ask questions, and keeps no conversation to resume.
-            resumable = can_ask = False
+            resumable, can_ask = _local_abilities(ctx, sub_agent)
         self._check_running_limit(ctx, owner, agent_name, conversation_id)
         task_id = resume or _new_task_id(ctx)
         start_type = TaskAssignedEvent if previous is None else TaskFollowUpEvent
