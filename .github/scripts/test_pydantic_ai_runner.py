@@ -2164,6 +2164,7 @@ def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPat
         _permission_mode: str | None,
         *,
         task: shim.TaskCallable | None,
+        bash_scopes: shim.BashScopes | None = None,
     ) -> AbstractToolset[object]:
         selected_tasks.append(task)
         raise RuntimeError('stop after task selection')
