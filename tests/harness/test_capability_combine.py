@@ -315,9 +315,14 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
+    '_ReportExhaustedRetries': Anonymous(
+        'Coder-local retry reporting; whichever sees the exhausted retry turns it into a tool failure, and the other passes that on'
+    ),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
+    'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxdSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
@@ -344,6 +349,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
+    'Permissions': Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would'),
     'ManagedPrompt': Anonymous(
         'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
     ),
@@ -369,6 +375,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'AbsurdDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
+    ),
+    'AzureDurableTaskDurability': Rejected(
+        'an agent accepts only one durable execution engine; core rejects a second before binding'
     ),
     'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
@@ -438,9 +447,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
-    'SmartSearch': Collides(
-        'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
-        'provider receives the source, so merging two could send it somewhere neither chose'
+    'SmartSearch': Narrows(
+        'one `smart_search` tool per id, and its judge `model` decides which provider receives the source',
+        lambda cls: (cls('test'), cls('other')),
     ),
     'PlaywrightBrowser': Narrows(
         'one browser per id, and its egress settings are an access boundary',
@@ -456,6 +465,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ExaAgent': Narrows(
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
+    ),
+    'Pixeltable': Narrows(
+        'one Pixeltable catalog configuration per id, and its table allowlist is an access boundary',
+        lambda cls: (cls(tables=['app']), cls(tables=['app.docs'])),
     ),
     'ExaSearch': Narrows(
         'one Exa search configuration per id, and its domain lists are an access boundary',

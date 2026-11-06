@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Harness 0.x: `Planning.from_spec`'s `cache_ttl` follows the deprecated `Planning.cache_ttl`, defaulting to `None`; an explicit `'5m'` or `'1h'` warns that it's ignored.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+}

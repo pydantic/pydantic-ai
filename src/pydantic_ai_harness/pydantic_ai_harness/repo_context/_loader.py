@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none
 
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `context-file` as a framing tag there.
@@ -34,45 +35,66 @@ class ContextFile:
     """The file's text content."""
 
 
-def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
-    """Directories to scan, ancestor-first (home first, workspace last).
+def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
+    """`directory` and each of its ancestors up to `top` inclusive, ancestor-first.
 
-    Walk up from `workspace_dir` to `home_dir` inclusive. When `home_dir` is
-    `None`, or is not an ancestor of `workspace_dir`, only `workspace_dir` is
-    scanned. The workspace backend handles filesystem path behavior.
+    When `top` is `None`, or is not an ancestor of `directory`, only `directory` is
+    returned. The walk-up scans these with `top` as the home directory, and nested
+    traversal with `top` as the working directory. The workspace backend handles
+    filesystem path behavior.
     """
-    if home_dir is None:
-        return [workspace_dir]
-    chain: list[Path] = [workspace_dir]
-    if workspace_dir != home_dir:
-        for parent in workspace_dir.parents:
+    if top is None:
+        return [directory]
+    chain: list[Path] = [directory]
+    if directory != top:
+        for parent in directory.parents:
             chain.append(parent)
-            if parent == home_dir:
+            if parent == top:
                 break
         else:
-            return [workspace_dir]
+            return [directory]
     return list(reversed(chain))
 
 
-async def _real_file(workspace: Workspace, path: Path) -> Path | None:
-    """The file `path` names, after symlinks, when it is a regular file in `path`'s own directory, else `None`.
+async def find_root(workspace: Workspace, working_dir: Path, markers: Sequence[str]) -> Path | None:
+    """The nearest of `working_dir` and its ancestors that contains an entry named in `markers`, or `None`.
 
-    A link such as `CLAUDE.md -> AGENTS.md` returns `AGENTS.md` in the same directory, so the file is
-    labeled and deduplicated by the name it is kept under.
+    An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
+    """
+    for directory in (working_dir, *working_dir.parents):
+        for marker in markers:
+            if await workspace.exists(str(directory / marker)):
+                return directory
+    return None
+
+
+_INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md'})
+"""Names a symlinked instruction file may point to whatever `filenames` holds, so `CLAUDE.md -> AGENTS.md` keeps
+loading when only `CLAUDE.md` is configured."""
+
+
+async def _real_file(
+    workspace: Workspace, path: Path, filenames: Sequence[str], *, autoload_symlink_roots: Sequence[Path] = ()
+) -> tuple[Path, Path] | None:
+    """Return the resolved read/dedup target and display path of an authorized instruction file.
+
+    A same-directory link such as `CLAUDE.md -> AGENTS.md` is labeled by its target's name. Its target must
+    itself be an instruction file, named in `filenames` or one of `AGENTS.md` and `CLAUDE.md`: a repository's
+    `AGENTS.md -> .env` would otherwise send a file the file tools may deny to the model.
     """
     text = str(path)
-    try:
-        entry = await workspace.stat(text)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    if entry.is_dir:
+    entry = await stat_or_none(workspace, text)
+    if entry is None or entry.is_dir:
         return None
     real = Path(await workspace.realpath(text))
-    # Autoloaded instructions belong to the directory being scanned, not a
-    # symlink target in another directory (even another ancestor in the walk).
-    if real.parent != Path(await workspace.realpath(str(path.parent))):
-        return None
-    return path.parent / real.name
+    if real.parent == Path(await workspace.realpath(str(path.parent))):
+        if real.name != path.name and real.name not in filenames and real.name not in _INSTRUCTION_NAMES:
+            return None
+        return real, path.parent / real.name
+    # External targets require explicit authorization; their entry directory still defines their scope.
+    if any(real.is_relative_to(root) for root in autoload_symlink_roots):
+        return real, path
+    return None
 
 
 async def discover_instruction_files(
@@ -80,46 +102,65 @@ async def discover_instruction_files(
     workspace_dir: Path,
     home_dir: Path | None,
     filenames: Sequence[str],
+    *,
+    autoload_symlink_roots: Sequence[Path] = (),
 ) -> list[ContextFile]:
-    """Collect instruction files from `home_dir` down to `workspace_dir`.
+    """Collect one instruction file per directory from `home_dir` down to `workspace_dir`.
 
-    Precedence is ancestor-first, workspace-last: the broadest context comes
-    first and the most specific (closest to the model's recency window) comes
-    last. Within a directory, `filenames` are tried in order.
+    Precedence is ancestor-first, workspace-last: the broadest context comes first and the
+    most specific (closest to the model's recency window) comes last. Each directory contributes the first of
+    `filenames` that exists there and is an accepted file or link.
 
-    Files are deduped by the path a symlink resolves to and by content hash, so
-    two names for the same content within one directory load once, under the
-    name of the file a symlink points to.
+    Files are deduped by resolved target and content hash, so an ancestor file with the same content as an
+    earlier one loads once. Same-directory links use the target's name. External targets must be beneath a
+    resolved `autoload_symlink_roots` path and keep the scanned entry's name.
     """
     seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
-    for directory in _walk_dirs(workspace_dir, home_dir):
-        for filename in filenames:
-            candidate = await _real_file(workspace, directory / filename)
-            if candidate is None or candidate in seen_paths:
-                continue
-            content = (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace')
-            digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
-            if digest in seen_hashes:
-                continue
-            seen_paths.add(candidate)
-            seen_hashes.add(digest)
-            found.append(ContextFile(directory=directory, path=candidate, content=content))
+    for directory in directories_up_to(workspace_dir, home_dir):
+        candidate = await _dir_context_file(workspace, directory, filenames, autoload_symlink_roots)
+        if candidate is None:
+            continue
+        target, label = candidate
+        if target in seen_paths:
+            continue
+        content = (await workspace.read_bytes(str(target))).decode('utf-8', errors='replace')
+        digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        if digest in seen_hashes:
+            continue
+        seen_paths.add(target)
+        seen_hashes.add(digest)
+        found.append(ContextFile(directory=directory, path=label, content=content))
     return found
+
+
+async def _dir_context_file(
+    workspace: Workspace, directory: Path, filenames: Sequence[str], autoload_symlink_roots: Sequence[Path] = ()
+) -> tuple[Path, Path] | None:
+    """The resolved target and label of the first of `filenames` in `directory` that `_real_file` accepts."""
+    for filename in filenames:
+        candidate = await _real_file(
+            workspace, directory / filename, filenames, autoload_symlink_roots=autoload_symlink_roots
+        )
+        if candidate is not None:
+            return candidate
+    return None
+
+
+async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
+    """Return the path of the first existing instruction file in `directory`, without reading it."""
+    candidate = await _dir_context_file(workspace, directory, filenames)
+    return None if candidate is None else candidate[1]
 
 
 async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
     """Return the first existing instruction file in `directory`, or `None`."""
-    for filename in filenames:
-        candidate = await _real_file(workspace, directory / filename)
-        if candidate is not None:
-            return ContextFile(
-                directory=directory,
-                path=candidate,
-                content=(await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'),
-            )
-    return None
+    path = await dir_context_file_path(workspace, directory, filenames)
+    if path is None:
+        return None
+    content = (await workspace.read_bytes(str(path))).decode('utf-8', errors='replace')
+    return ContextFile(directory=directory, path=path, content=content)
 
 
 def render_context_file(file: ContextFile, *, label: str) -> str:

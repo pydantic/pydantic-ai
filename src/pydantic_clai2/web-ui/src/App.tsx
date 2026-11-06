@@ -4,8 +4,9 @@ import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { PermissionsChip } from './components/PermissionsChip'
 import { Switches } from './components/Switches'
-import { Transcript } from './components/Transcript'
+import { Transcript, type Rewind } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { CommandMenu } from './components/CommandMenu'
@@ -46,17 +47,30 @@ const SessionTranscript = memo(function SessionTranscript({
   id,
   chat,
   onWorker,
+  onError,
 }: {
   id: string
   chat: Chat
   onWorker: (id: string) => void
+  onError: (message: string) => void
 }) {
   const session = useMemo(() => sessionApi(id), [id])
+  const rewind = useCallback<Rewind>(
+    (runId, text) =>
+      session.rewind(runId, text).then(
+        () => true,
+        (error: unknown) => {
+          onError(error instanceof Error ? error.message : String(error))
+          return false
+        },
+      ),
+    [session, onError],
+  )
   const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: onWorker }), [chat.tasks, onWorker])
   return (
     <SessionContext.Provider value={session}>
       <WorkersContext.Provider value={links}>
-        <Transcript entries={chat.entries} running={chat.running} empty={null} />
+        <Transcript entries={chat.entries} running={chat.running} empty={null} rewind={rewind} />
       </WorkersContext.Provider>
     </SessionContext.Provider>
   )
@@ -83,9 +97,11 @@ export function App() {
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
-  const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
-  // The Changes panel, which takes the side panel's column: opening one closes the other.
+  // Monty, the Changes panel, and a plugin's side panel share the right-hand column: opening one closes the others.
   const [changes, setChanges] = useState(() => localStorage.getItem('clai-changes') === 'open')
+  const [monty, setMonty] = useState(
+    () => localStorage.getItem('clai-monty') === 'open' && !changes && !localStorage.getItem('clai-side-panel'),
+  )
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
@@ -276,15 +292,25 @@ export function App() {
       const next =
         key !== undefined ? (shownKey === key ? null : key) : shownKey || !firstPanel ? null : panelKey(firstPanel)
       setSidePanel(next)
-      if (next) setChanges(false)
+      if (next) {
+        setChanges(false)
+        setMonty(false)
+      }
     },
     [shownKey, firstPanel],
   )
   const toggleChanges = useCallback(() => {
     setChanges((open) => !open)
     setSidePanel(null)
+    setMonty(false)
   }, [])
-  // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
+  const toggleMonty = useCallback(() => {
+    setMonty((open) => !open)
+    setChanges(false)
+    setSidePanel(null)
+  }, [])
+  // The files may have changed when a turn ends, so the count and the panel ask again then. While one runs, each asks
+  // only for a session or scope it has no answer for yet.
   const changesActive = connection === 'open' && !chat.running
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
   const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false, state.sessionsVersion).changes
@@ -345,6 +371,22 @@ export function App() {
     const timer = window.setTimeout(() => setLost(true), 60000)
     return () => window.clearTimeout(timer)
   }, [restarting])
+  // Over the session, or over Settings when it is open, as it is after About's Update… starts the install.
+  const updating = state.update && (
+    <div className="opening-overlay" role="status">
+      {!lost && <span className="spinner" />}
+      {lost ? (
+        <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
+      ) : restarting ? (
+        <span>Restarting CLAI…</span>
+      ) : (
+        <span>
+          Updating CLAI to <span className="opening-title">{state.update.target}</span>…
+          {state.update.line && <span className="update-line mono">{state.update.line}</span>}
+        </span>
+      )}
+    </div>
+  )
 
   const showToast = useCallback((text: string, level: 'info' | 'error') => {
     const shown = { text, level }
@@ -388,6 +430,10 @@ export function App() {
   const focusSessions = useCallback(() => {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusSearch())
+  }, [])
+  const toggleAttention = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.toggleAttention())
   }, [])
   const focusWorkers = useCallback(() => {
     setSidebar(true)
@@ -541,7 +587,7 @@ export function App() {
         newSession()
       } else if (mod && event.key === 'j') {
         event.preventDefault()
-        setMonty((open) => !open)
+        toggleMonty()
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         togglePanel()
@@ -551,6 +597,9 @@ export function App() {
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
+      } else if (mod && event.altKey && event.code === 'KeyU') {
+        event.preventDefault()
+        toggleAttention()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -572,7 +621,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions, toggleAttention])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -595,7 +644,12 @@ export function App() {
       ref={composer}
       running={chat.running}
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
-      controls={<Switches status={status} running={chat.running} onError={showError} />}
+      controls={
+        <>
+          <PermissionsChip status={status} onError={showError} />
+          <Switches status={status} running={chat.running} onError={showError} />
+        </>
+      }
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
@@ -724,7 +778,7 @@ export function App() {
               </button>
               <button
                 className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
-                onClick={() => setMonty(!monty)}
+                onClick={toggleMonty}
                 title={`${monty ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
                 aria-pressed={monty}
               >
@@ -791,7 +845,7 @@ export function App() {
           .sort()
           .map((id) => (
             <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
-              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} />
+              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} onError={showError} />
             </Activity>
           ))}
         {!orchestrating && !workerTask && !fresh && (
@@ -809,21 +863,7 @@ export function App() {
             </span>
           </div>
         )}
-        {state.update && (
-          <div className="opening-overlay" role="status">
-            {!lost && <span className="spinner" />}
-            {lost ? (
-              <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
-            ) : restarting ? (
-              <span>Restarting CLAI…</span>
-            ) : (
-              <span>
-                Updating CLAI to <span className="opening-title">{state.update.target}</span>…
-                {state.update.line && <span className="update-line mono">{state.update.line}</span>}
-              </span>
-            )}
-          </div>
-        )}
+        {!settings && updating}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">
             This page belongs to an earlier CLAI. Open the new address it printed.
@@ -849,8 +889,10 @@ export function App() {
           pluginsVersion={state.pluginsVersion}
           settingsVersion={state.settingsVersion}
           pluginFocus={pluginFocus}
+          updated={state.updated}
           onError={showError}
           onNotice={showNotice}
+          overlay={updating}
         />
       )}
       {commandMenu && (

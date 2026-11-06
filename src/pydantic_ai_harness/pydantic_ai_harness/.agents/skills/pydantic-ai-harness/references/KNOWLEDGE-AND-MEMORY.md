@@ -4,8 +4,9 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand), and `KnowledgeBase` (search and read a document corpus the application provides). Only
-`Skills` needs an extra; `KnowledgeBase`'s hosted backends need their service's client library.
+demand), and `KnowledgeBase` (search and read a document corpus the application provides).
+`Skills` and the optional Pixeltable integration require extras; `KnowledgeBase`'s hosted backends
+need their service's client library.
 
 | Need | Use |
 |---|---|
@@ -54,6 +55,7 @@ only).
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
+| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11 to 3.14; creates the table on first use |
 
 ```python
 from pydantic_ai import Agent
@@ -90,6 +92,16 @@ Gotchas:
   implement `MemoryStore` mutations atomically.
 - `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
+
+### Pixeltable catalog
+
+`Pixeltable(tables=['app.documents'])` gives an agent read-only tools to list and describe allowed
+tables, query rows, and search an embedding index. The `tables` allowlist is required, and two
+instances with different allowlists raise instead of merging. `PixeltableMemoryStore` is a separate store for
+`Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11 to 3.14.
+Projections omit media, array, binary, unstored computed columns, and unstored iterator outputs by
+default and reject them when explicitly requested.
+See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)
 
@@ -137,8 +149,8 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
-  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+  `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
 

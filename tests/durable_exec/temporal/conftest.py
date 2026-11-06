@@ -85,6 +85,19 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         Agent.instrument_all(False)
 
 
+@pytest.fixture
+async def complex_agent_mcp() -> AsyncIterator[None]:
+    """Keep the shared agent's subprocess across activities, then close it before its event loop ends."""
+    from ._shared import complex_mcp_transport
+
+    # The agent is shared across modules with separate event loops. Leaving its keep-alive
+    # transport open lets a later module inherit a connection task cancelled by loop teardown.
+    try:
+        yield
+    finally:
+        await complex_mcp_transport.close()
+
+
 # One dev server (and thus one xdist group) per test module so the four temporal files can
 # run on four xdist workers concurrently instead of forming one serial chain. `start_local`
 # picks the port: anyio's `free_tcp_port_factory` only probes and releases, so the port sits

@@ -16,6 +16,7 @@ from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -44,7 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -65,9 +66,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Token estimation
 # ---------------------------------------------------------------------------
-
-CHARS_PER_TOKEN = 4
-"""Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
@@ -158,36 +156,23 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available, and
-    # the schemas themselves travel in the request's tool definitions. Those schemas are not free
-    # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
-    # context it does not see (tracked separately); skipping the part is not a claim that the
-    # reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | ModelSettingsDeltaPart):
+    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
+    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
+    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
+    # skipping the part is not a claim that the reveal was free.
+    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
         return []
     elif isinstance(part, CompactionPart):
         # A summary the application wrote, sent as text.
         return [part.content or '']
     elif isinstance(part, SpeechPart):
-        # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
-        # words the provider bills against the window -- not the binary audio, which has no
-        # character-count meaning (as with `FilePart`).
-        #
-        # `SpeechPart` is the last member of the union today, so pyright sees this `isinstance` as
-        # redundant, but it is kept explicit so the `else` stays a real branch at runtime rather
-        # than dead code -- see the `else` comment.
+        # Count the transcript the provider bills against the window, not the binary audio.
+        # The explicit `isinstance` keeps the `else` a real runtime branch.
         return [part.transcript or '']
     else:
-        # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
-        # this runs on every request to decide whether to compact, so an unrecognised part must
-        # not take the run down -- which is exactly what the old `str(part.content)` fallback did
-        # once a part without `content` existed (#577).
-        #
-        # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on purpose. It
-        # still makes the chain exhaustive at type-check time, so a new upstream part fails
-        # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
-        # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
-        # change exists to remove.
+        # A part type newer than this code: skip it, since this runs on every request.
+        # `assert_never` under `TYPE_CHECKING` keeps the chain exhaustive for pyright
+        # without crashing at runtime on a newer pydantic-ai.
         if TYPE_CHECKING:
             assert_never(part)
         return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
@@ -340,7 +325,7 @@ def estimate_message_tokens(
     """
     counts = [
         max(
-            _estimate_segments(segments, tokenizer),
+            _count_segments(segments, tokenizer),
             message.usage.output_tokens if isinstance(message, ModelResponse) else 0,
         )
         for message, segments in zip(messages, _message_segments(messages))
@@ -355,12 +340,6 @@ def estimate_message_tokens(
         shares[0] += span - sum(shares)
         counts[start:end] = shares
     return counts
-
-
-def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
@@ -1157,7 +1136,9 @@ def rebuild_with_cleared(
                     and part.tool_call_id in clear_input_ids
                     and part.args != _CLEARED_TOOL_ARGS
                 ):
-                    response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS))
+                    # The OpenAI Responses API resolves an item ID to its stored copy and ignores the
+                    # args sent with it, so a cleared call can't keep its ID.
+                    response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS, id=None))
                     changed = True
                 else:
                     response_parts.append(part)

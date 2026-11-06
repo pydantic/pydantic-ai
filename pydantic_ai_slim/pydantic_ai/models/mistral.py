@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -159,6 +159,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -899,15 +902,22 @@ class MistralStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
                             yield event
 
-                # Handle the explicit tool calls
-                for index, dtc in enumerate(choice.delta.tool_calls or []):
-                    # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=index,
-                        tool_name=dtc.function.name,
-                        args=dtc.function.arguments,
-                        tool_call_id=dtc.id,
-                    )
+                for event in self._handle_tool_call_deltas(choice.delta.tool_calls or []):
+                    yield event
+
+    def _handle_tool_call_deltas(self, tool_calls: list[MistralToolCall]) -> Iterator[ModelResponseStreamEvent]:
+        """Accumulate streamed tool-call fragments that share a wire `index` into one call.
+
+        Continuation deltas can carry an empty name, and the SDK fills an absent id with `'null'`;
+        both are normalized to `None` so the first name and id are retained.
+        """
+        for dtc in tool_calls:
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=dtc.index,
+                tool_name=dtc.function.name or None,
+                args=dtc.function.arguments,
+                tool_call_id=None if dtc.id == 'null' else dtc.id,
+            )
 
     @property
     def model_name(self) -> MistralModelName:

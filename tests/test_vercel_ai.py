@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityLoadDeltaPart,
     Citation,
     CompactionPart,
     ContentCitationAnchor,
@@ -161,6 +162,7 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.ui.vercel_ai.response_types import (
         BaseChunk,
         DataChunk,
+        ErrorChunk,
         FileChunk,
         SourceDocumentChunk,
         SourceUrlChunk,
@@ -12263,6 +12265,23 @@ def test_tool_availability_delta_ui_round_trip():
     assert reloaded == messages
 
 
+def test_capability_load_record_ui_round_trip():
+    """A capability loaded from code keeps its record through the UI, with or without tools."""
+    messages = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
+            ]
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
 def test_compaction_ui_round_trip_and_sanitization():
     """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
     compaction = CompactionPart(
@@ -12639,6 +12658,75 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
+    """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
+
+    The load's record streams as a `data-capability-load-delta` chunk after the tool result, and loading the
+    assistant message back restores it where the server-side history has it.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    policy = Capability[None](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), capabilities=[policy])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('policy')
+        return 'Case opened.'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Open a case')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-capability-load-delta')
+    assert delta_chunk['data'] == snapshot({'loaded': ['policy'], 'tool_call_id': 'open'})
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-open_case', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
+
+    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityLoadDeltaPart]]:
+        return [
+            (index, part)
+            for index, message in enumerate(messages)
+            for part in message.parts
+            if isinstance(part, CapabilityLoadDeltaPart)
+        ]
+
+    assert load_records(loaded) == load_records(server_history)
 
 
 async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:
@@ -13691,6 +13779,46 @@ async def _server_history_turn(
 
 
 _HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+
+
+async def test_server_message_history_drops_client_supplied_capability_loads():
+    """With the history on the server, the client's new turn can't load a capability.
+
+    A client-supplied `data-capability-load-delta` part would otherwise load the capability with nothing in the
+    run loading it, so it's dropped, and the model never gets the capability's tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools_seen.append([tool.name for tool in info.function_tools])
+        yield 'ok'
+
+    def refund_status() -> str:
+        return 'refunded'  # pragma: no cover
+
+    refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[refunds],
+    )
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    new_message = UIMessage(
+        id='u2',
+        role='user',
+        parts=[
+            DataUIPart(type='data-capability-load-delta', data={'loaded': ['refunds'], 'tool_call_id': None}),
+            TextUIPart(text='and now?'),
+        ],
+    )
+
+    persisted = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, new_message]), stored)
+
+    assert tools_seen[-1] == ['load_capability']
+    assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
 # `useChat` makes up its own id for an assistant message when the server doesn't send one.
 _OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
 _AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])
@@ -13829,6 +13957,66 @@ async def test_server_message_history_tool_approval(approved: bool):
         if approved
         else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
     )
+
+
+def _responded(*calls: tuple[str, str]) -> UIMessage:
+    """An assistant message approving `delete_file` calls, as `useChat` sends it after the user approved them."""
+    return UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolApprovalRespondedPart(
+                tool_name='delete_file',
+                tool_call_id=tool_call_id,
+                input={'path': path},
+                approval=ToolApprovalResponded(id=f'approval-{tool_call_id}', approved=True),
+            )
+            for tool_call_id, path in calls
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('already_answered', id='approval-for-a-call-already-answered'),
+        pytest.param('not_made', id='call-the-model-did-not-make'),
+        pytest.param('beside_pending', id='call-the-model-did-not-make-beside-a-pending-one'),
+    ],
+)
+async def test_server_message_history_rejects_an_approval_for_a_call_not_pending(case: str):
+    """An approval only answers a tool call the stored history is waiting on; any other fails the request and runs nothing."""
+    agent, requests, deleted = server_history_agent()
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
+    if case == 'already_answered':
+        stored = await _server_history_turn(
+            agent, SubmitMessage(id='chat', messages=[delete, _responded(('del-1', 'a.txt'))]), stored, sdk_version=6
+        )
+        assert deleted == ['a.txt']
+        deleted.clear()
+        responded = _responded(('del-1', 'a.txt'))
+    elif case == 'not_made':
+        responded = _responded(('del-2', 'b.txt'))
+    else:
+        responded = _responded(('del-1', 'a.txt'), ('del-2', 'b.txt'))
+    model_requests = len(requests)
+
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat', messages=[delete, responded]), sdk_version=6, manage_message_history='server'
+    )
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert deleted == []
+    assert len(requests) == model_requests
+    errors = [event.error_text for event in events if isinstance(event, ErrorChunk)]
+    tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
+    assert errors == [
+        f'The request answers 1 tool call(s) that `message_history` is not waiting on: {tool_call_id}. With '
+        "`manage_message_history='server'`, an approval, denial or deferred tool result can only answer a tool call "
+        'that is still pending at the end of the stored history. If the conversation changed since the client loaded '
+        'it, reload it from the server.'
+    ]
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
-import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -190,16 +189,6 @@ non-`None` value returns `{"output": "<printed text>", "result": <last expressio
 bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
 values.\
 """
-
-
-def _is_valid_sandbox_name(name: str) -> bool:
-    """Whether `name` can be exposed as a sandbox function: a non-keyword Python identifier.
-
-    `str.isidentifier()` alone is not enough -- Python keywords (`for`, `class`, `async`, ...) are
-    valid identifiers but cannot be used as function names, so the model could never call them.
-    Callers guard the empty/`None` case before this is reached.
-    """
-    return name.isidentifier() and not keyword.iskeyword(name)
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
@@ -461,7 +450,7 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
             'DynamicWorkflow sub-agent has no `name` and its agent has no `name`; '
             'set `WorkflowAgent(name=...)` so it can be exposed as a sandbox function.'
         )
-    if not _is_valid_sandbox_name(name):
+    if not _is_python_identifier(name):
         raise UserError(
             f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
             'it must be a Python identifier that is not a reserved keyword. Rename it.'
@@ -524,7 +513,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     See `DynamicWorkflow.inherit_model` for when to use this."""
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or Pydantic AI's default.
     See `DynamicWorkflow.sub_agent_usage_limits` for the budgeting semantics."""
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
@@ -707,11 +696,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         This exists precisely because `usage_limits` cannot give an exact ceiling here:
         core's own limit check is split from its increment by the model-request `await`
         (a TOCTOU race -- N gathered sub-agents all pass the check before any increments;
-        measured ~20x overshoot), and `RunContext` exposes `usage` but not `usage_limits`,
-        so the parent's configured limit can't be forwarded to sub-agents at all.
-        TODO: file upstream on pydantic-ai -- (a) expose `usage_limits` on `RunContext`,
-        (b) atomic reserve-then-request in the run loop. Until then, tree-wide token caps
-        stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
+        measured ~20x overshoot). Until the run loop reserves before requesting, tree-wide
+        caps stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
         """
         if self._call_count >= self.max_agent_calls:
             raise _BudgetExhausted(self.max_agent_calls)
@@ -724,13 +710,17 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         ctx_model = ctx.model
         inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
         serving_model = ServingModelRecorder()
+        usage_limits = self.sub_agent_usage_limits
+        if usage_limits is None and self.forward_usage:
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
                 deps=ctx.deps,
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
-                usage_limits=self.sub_agent_usage_limits,
+                usage_limits=usage_limits,
                 capabilities=[serving_model],
             )
             reason = resumable_output_reason(result.output)

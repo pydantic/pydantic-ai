@@ -25,7 +25,7 @@ from uuid import UUID
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import (
     NOT_HANDLED,
@@ -89,7 +89,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
 from pydantic_ai_harness._code_tools import sanitize_tool_name
 from pydantic_ai_harness._monty_exec import MontyExecutor
-from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
+from pydantic_ai_harness.code_mode import (
+    FOLD_INTO_CODE_MODE,
+    CodeModeResourceLimits,
+    CodeModeReturnSchemaWarning,
+    CodeModeToolset,
+)
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
@@ -682,8 +687,9 @@ class TestCodeMode:
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
         assert advertised is not None
-        submodules = [module for module in re.findall(r'`([\w.]+)`', advertised.group(1)) if '.' in module]
-        candidates = sorted(sys.stdlib_module_names) + submodules
+        listed = re.findall(r'`([\w.]+)`', advertised.group(1))
+        # The listed names are probed too: Monty can import modules newer than the host Python, such as `annotationlib`.
+        candidates = sorted(set(sys.stdlib_module_names) | set(listed))
         # A first call leaves the REPL non-fresh, so the probe skips the type check that rejects unknown imports.
         await wrapper.call_tool('run_code', {'code': 'ok = []'}, ctx, tools['run_code'])
         probe = ''.join(
@@ -1888,6 +1894,54 @@ class TestCodeMode:
         )
         assert result.return_value == {'output': 'user-result company-result\n'}
 
+    @staticmethod
+    async def _run_code_with_tools(code: str, *tool_defs: ToolDefinition) -> Any:
+        """Run `code` through Monty against fresh tools, as only the first snippet of a session is type checked."""
+        static = _StaticToolset(list(tool_defs), results={td.name: 'ok' for td in tool_defs})
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        return result.return_value
+
+    @pytest.mark.parametrize(
+        'right,wrong',
+        [
+            pytest.param("sync_user(user={'email': 'x'})", "sync_user(user={'age': 1})", id='bug-1-param-vs-return'),
+            pytest.param("tool_a(wrap={'user': {'name': 'x'}})", "tool_a(wrap={'user': {'id': 1}})", id='bug-2-nested'),
+            pytest.param("tool_b(user={'name': 'x'})", "tool_b(user={'id': 1})", id='bug-3-shared'),
+        ],
+    )
+    async def test_type_checker_sees_the_types_of_renamed_conflicts(self, right: str, wrong: str) -> None:
+        """#8816: on main each `wrong` call got past the checker, as its annotation named a missing or rebound class."""
+        user_name: type[BaseModel] = create_model('User', name=(str, ...))
+        user_id: type[BaseModel] = create_model('User', id=(int, ...))
+        user_email: type[BaseModel] = create_model('User', email=(str, ...))
+        user_age: type[BaseModel] = create_model('User', age=(int, ...))
+        wrapper: type[BaseModel] = create_model('Wrapper', user=(user_name, ...))
+        ret_wrap: type[BaseModel] = create_model('RetWrap', user=(user_age, ...))
+
+        def tool(name: str, returns: dict[str, Any] | None = None, **params: Any) -> ToolDefinition:
+            fields: dict[str, Any] = {k: (v, ...) for k, v in params.items()}
+            args: type[BaseModel] = create_model('Args', **fields)
+            return ToolDefinition(
+                name=name,
+                parameters_json_schema=args.model_json_schema(),
+                return_schema=returns or {'type': 'string'},
+            )
+
+        # Order matters: bug 3 needed the shared `User` to be the first one seen.
+        tools = (
+            tool('tool_a', wrap=wrapper),
+            tool('tool_b', user=user_name),
+            tool('tool_c', user=user_id),
+            tool('sync_user', returns=ret_wrap.model_json_schema(), user=user_email),
+        )
+        assert await self._run_code_with_tools(f'print(await {right})', *tools) == {'output': 'ok\n'}
+        with pytest.raises(ModelRetry, match='Type error in code'):
+            await self._run_code_with_tools(f'await {wrong}', *tools)
+
     # ---------------------------------------------------------------------------
     # Deferred tools
     # ---------------------------------------------------------------------------
@@ -1993,6 +2047,30 @@ class TestCodeMode:
         # ...but the code-execution tool stays native and is not folded into run_code.
         assert 'run_workflow' not in description
         assert 'run_workflow' in tools
+
+    async def test_code_execution_tool_folded_when_its_metadata_asks(self) -> None:
+        """`FOLD_INTO_CODE_MODE` folds a code-execution tool anyway, keeping its `code_arg_name`."""
+        td_shell = ToolDefinition(
+            name='shell',
+            description='Run a shell command.',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'command': {'type': 'string'}},
+                'required': ['command'],
+            },
+            return_schema={'type': 'string'},
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell', FOLD_INTO_CODE_MODE: True},
+        )
+        static = _StaticToolset([td_shell])
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def shell' in description
+        assert 'shell' not in tools
 
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""
@@ -2692,6 +2770,106 @@ class TestCodeMode:
         # Only the first tool survives.
         assert description.count('get_weather') >= 1
         assert 'Get weather (dots)' not in description
+
+    async def test_parameter_names_that_are_not_identifiers_dispatch_under_their_schema_names(self) -> None:
+        """Keyword and non-identifier parameter names are renamed in the sandbox and restored for the tool call.
+
+        Object fields keep their schema names, so the type-checked snippet passes `@type` and `from` as `dict` keys.
+        """
+        received: list[dict[str, Any]] = []
+
+        def search(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'found'
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'properties': {'@type': {'type': 'string'}, 'from': {'type': 'integer'}},
+                    'required': ['@type'],
+                },
+            },
+            'required': ['from', 'user-id', 'filter'],
+        }
+        code = "await search(from_='me', user_id='u-1', filter={'@type': 'mail', 'from': 3})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(search, name='search', description='Search.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Search.')
+
+        assert received == snapshot([{'from': 'me', 'user-id': 'u-1', 'filter': {'@type': 'mail', 'from': 3}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('found')
+
+    async def test_functional_typed_dicts_reference_types_defined_later(self) -> None:
+        """A functional TypedDict can name itself and types rendered after it, under the type check."""
+        received: list[dict[str, Any]] = []
+
+        def walk(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'walked'
+
+        schema = {
+            'type': 'object',
+            'properties': {'node': {'$ref': '#/$defs/Node'}},
+            'required': ['node'],
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        '@id': {'type': 'string'},
+                        'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}},
+                        'meta': {
+                            'type': 'object',
+                            'title': 'Meta',
+                            'properties': {'label': {'type': 'string'}},
+                            'required': ['label'],
+                        },
+                    },
+                    'required': ['@id'],
+                }
+            },
+        }
+        code = "await walk(node={'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(walk, name='walk', description='Walk a tree.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Walk.')
+
+        assert received == snapshot([{'node': {'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('walked')
 
     async def test_sanitized_name_collision_with_native_tool(self) -> None:
         """A sanitized name that collides with a native (already valid) tool is dropped."""

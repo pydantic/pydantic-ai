@@ -1,8 +1,8 @@
 # Smart Search
 
-Plain-English code search: the agent describes the behavior it is looking for in plain English and gets back ranked
-source excerpts with file and line ranges, judged by any Pydantic AI model, with a decision model served over the
-System One API, or TypeSafe's Jev, as the recommended judge.
+Code search by behavior: the agent describes what it is looking for in plain English and gets back ranked source
+excerpts with file and line ranges. Any Pydantic AI model can judge relevance; a decision model served over the
+System One API, or TypeSafe's Jev, is the recommended judge.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_search/)
 
@@ -55,9 +55,19 @@ inside the workspace's working directory. If no source may leave the machine, ju
 | `concurrency` | `8` | Snippets judged at once. |
 | `cache_index` | `False` | Keep each searched directory's index in memory between searches, for the life of the agent. Up to four directories (each with its `glob`) are kept, least recently searched evicted first; later searches re-read every file but only re-index changed ones. |
 | `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_search` before exploratory text search, `''` for none. |
+| `id` | `'smart_search'` | Stable identity, under which durable execution records each search's judgments; see [Two of them](#two-of-them). |
 
 A search is capped at 200,000 files (counted after `glob`), 50 million lines and 2 GiB of source; past that it asks
 the model to narrow `directory` or `glob`.
+
+## Two of them
+
+`SmartSearch` declares the default `id` `'smart_search'`, under which durable execution records each search's
+judgments. Two `SmartSearch`s on one agent that share it become one when they agree, and the agent raises a
+`UserError` when it's built if they differ, since a merge could send the source to a judge neither chose. To keep
+two, give each its own `id` and wrap them in `PrefixTools`, since both register `smart_search`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run started.
 
 ## Telemetry
 

@@ -30,7 +30,7 @@ with try_import() as imports_successful:
     from hypothesis import HealthCheck, settings
     from hypothesis.stateful import (
         RuleBasedStateMachine,
-        run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
+        run_state_machine_as_test,
     )
 
     from ._elevenlabs_agents import ElevenLabsAgentsMachine, ElevenLabsAgentsOptions, ElevenLabsAgentsSimulation
@@ -2845,6 +2845,26 @@ def test_live_delegation_during_a_tool_round_joins_the_reply() -> None:
         sim.settle()
 
     run_clean(LiveSimulation(), scenario)
+
+
+@known('8763c #3')
+def test_known_live_tool_results_sent_while_an_unread_delegation_speaks() -> None:
+    """A delegation the model started, still unread when a tool round's results go out, settles first.
+
+    Its settling ends the reply under way, so the wait for the round's answer returns before that answer.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.backend_finish(deliver=False)
+        sim.delegate()
+        sim.backend_call(deliver=False)
+        sim.backend_finish(status='failed', deliver=False)
+        sim.wait_for_reply()
+        sim.settle()
+
+    reproduce('8763c #3', LiveSimulation(), scenario)
 
 
 def test_scenario_a_provider_reply_before_our_item_is_added_is_not_ours() -> None:

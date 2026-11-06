@@ -73,6 +73,8 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -284,6 +286,11 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
+}
+
+DBOS_CHILD_WORKFLOW_NAMES = {
+    'compat__function_toolset__<agent>.call_tool__child_workflow',
+    'compat__function_toolset__functions.call_tool__child_workflow',
 }
 
 RENDER_TASK_NAMES = {
@@ -520,6 +527,22 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     assert registered_names == DBOS_OPERATION_NAMES
+    # Child workflows are registered only for toolsets that can select one.
+    assert durability._child_workflow_toolsets == {}  # pyright: ignore[reportPrivateUsage]
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[SetToolMetadata(dbos={'child_workflow': {}}), DBOSDurability()],
+    )
+    child_workflow_durability = DBOSDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    child_workflow_names = {
+        registration.dbos_function_name
+        for toolset in child_workflow_durability._child_workflow_toolsets.values()  # pyright: ignore[reportPrivateUsage]
+        for registration in toolset.durable_registrations
+    }
+    assert child_workflow_names == DBOS_CHILD_WORKFLOW_NAMES
 
     with_workspace = Agent(
         TestModel(),
@@ -1011,6 +1034,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='call'),
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
@@ -1045,6 +1069,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        CapabilityLoadDeltaEvent(part=CapabilityLoadDeltaPart(loaded=['refunds'])),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),

@@ -154,7 +154,7 @@ async def model_request(
     model_instance = _prepare_model(model, instrument)
     check_resumable(model_instance, messages)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    deadline = start_request_deadline(model_instance, model_settings)
+    deadline = start_request_deadline(model_instance, model_settings, stream=False)
     with enforce_request_deadline(deadline):
         return await model_instance.request(
             _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
@@ -269,20 +269,34 @@ async def model_request_batch(
             poll_interval=poll_interval,
             max_poll_interval=max_poll_interval,
         )
-        retry: list[batch_models.BatchRequest] = []
-        for request in unanswered:
-            result = results[request.custom_id]
-            try:
-                if isinstance(result, ModelAPIError):
-                    raise result
-                outcomes[request.custom_id] = model_instance.batch_decode(result, request)
-            except ModelAPIError as error:
-                outcomes[request.custom_id] = error
-                if resubmissions < max_resubmissions and _resubmittable(result, error):
-                    retry.append(request)
-        unanswered = retry
+        unanswered = _record_outcomes(
+            model_instance, unanswered, results, outcomes, resubmit=resubmissions < max_resubmissions
+        )
         resubmissions += 1
     return [outcomes[request.custom_id] for request in requests]
+
+
+def _record_outcomes(
+    model: models.Model,
+    requests: Sequence[batch_models.BatchRequest],
+    results: dict[str, batch_models.BatchResult | ModelAPIError],
+    outcomes: dict[str, messages.ModelResponse | ModelAPIError],
+    *,
+    resubmit: bool,
+) -> list[batch_models.BatchRequest]:
+    """Record each request's response or error in `outcomes`, and return the requests to submit again."""
+    retry: list[batch_models.BatchRequest] = []
+    for request in requests:
+        result = results[request.custom_id]
+        try:
+            if isinstance(result, ModelAPIError):
+                raise result
+            outcomes[request.custom_id] = model.batch_decode(result, request)
+        except ModelAPIError as error:
+            outcomes[request.custom_id] = error
+            if resubmit and _resubmittable(result, error):
+                retry.append(request)
+    return retry
 
 
 async def _run_batches(
@@ -321,23 +335,32 @@ async def _run_batches(
             )
         results: dict[str, batch_models.BatchResult | ModelAPIError] = {}
         for batch, custom_ids in zip(batches, batch_custom_ids, strict=True):
-            try:
-                batch_results = {result.custom_id: result for result in await model.batch_results(batch)}
-            except BatchJobError as error:
-                # The job ended without results, so its error is each of its requests' outcome.
-                results.update(dict.fromkeys(custom_ids, error))
-            else:
-                unlisted = model._batch_unlisted_status(batch)  # pyright: ignore[reportPrivateUsage]
-                for custom_id in custom_ids:
-                    results[custom_id] = batch_results.get(custom_id) or (
-                        missing_result_error(model.model_name, batch.id)
-                        if unlisted is None
-                        else batch_models.BatchResult(custom_id=custom_id, status=unlisted)
-                    )
+            results.update(await _batch_request_results(model, batch, custom_ids))
     except BaseException:
         await _cancel_batches(model, batches)
         raise
     return results
+
+
+async def _batch_request_results(
+    model: models.Model, batch: batch_models.Batch, custom_ids: list[str]
+) -> dict[str, batch_models.BatchResult | ModelAPIError]:
+    """The result of each of an ended batch's requests, by `custom_id`."""
+    try:
+        batch_results = {result.custom_id: result for result in await model.batch_results(batch)}
+    except BatchJobError as error:
+        # The job ended without results, so its error is each of its requests' outcome.
+        return dict.fromkeys(custom_ids, error)
+    unlisted = model._batch_unlisted_status(batch)  # pyright: ignore[reportPrivateUsage]
+    return {
+        custom_id: batch_results.get(custom_id)
+        or (
+            missing_result_error(model.model_name, batch.id)
+            if unlisted is None
+            else batch_models.BatchResult(custom_id=custom_id, status=unlisted)
+        )
+        for custom_id in custom_ids
+    }
 
 
 def _chunks(
