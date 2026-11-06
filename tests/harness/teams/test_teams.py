@@ -26,8 +26,8 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness import Team
-from pydantic_ai_harness.planning import PlanItem, TaskStatus
-from pydantic_ai_harness.subagents import MAX_EVENT_TEXT_CHARS
+from pydantic_ai_harness.planning import InMemoryClaimablePlanStore, OwnedPlanItem, TaskStatus
+from pydantic_ai_harness.subagents import MAX_EVENT_TEXT_CHARS, DelegationTasks
 from pydantic_ai_harness.teams import (
     TeammateIdleEvent,
     TeamTaskCompletingEvent,
@@ -76,7 +76,8 @@ def _transcript(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
                 lines.append(('user-prompt', str(part.content)))
             elif isinstance(part, TextPart):
                 lines.append(('text', part.content))
-            elif isinstance(part, ToolCallPart):
+            else:
+                assert isinstance(part, ToolCallPart)
                 lines.append(('call', f'{part.tool_name}({part.args_as_json_str()})'))
     return lines
 
@@ -93,11 +94,16 @@ def _keep_working_once(seen: list[TeammateIdleEvent], feedback: str = 'Run the t
     return gate
 
 
-def _board(items: list[PlanItem], *, owner: str) -> Capability[object]:
+def _team(gates: Sequence[AbstractCapability[object]] = ()) -> Team[object]:
+    """A team over an owner and board that no run here binds, so it adds only its gates and idle gate."""
+    return Team[object](DelegationTasks(), board=InMemoryClaimablePlanStore(), gates=gates)
+
+
+def _board(items: list[OwnedPlanItem], *, owner: str) -> Capability[object]:
     """Minimal board tools that call the team's task gates, as the team's own board tools will."""
 
     async def add_task(ctx: RunContext[object], content: str) -> str:
-        item = PlanItem(id=str(len(items) + 1), content=content)
+        item = OwnedPlanItem(id=str(len(items) + 1), content=content)
         await check_task_creating(ctx, item)
         items.append(item)
         return f'Added task {item.id}.'
@@ -115,7 +121,7 @@ class TestTeam:
     async def test_idle_gate_keeps_a_member_working(self):
         """An `asap` enqueue from the idle gate's `after_node_run` keeps the member's run going."""
         seen: list[TeammateIdleEvent] = []
-        team = Team[object](gates=[_keep_working_once(seen)])
+        team = _team([_keep_working_once(seen)])
         agent = Agent(
             _scripted([TextPart('Fixed the bug.')], [TextPart('Tests pass.')]),
             capabilities=[team.member_capability('alice')],
@@ -138,7 +144,7 @@ class TestTeam:
 
     async def test_idle_gate_keeps_a_streamed_member_working(self):
         seen: list[TeammateIdleEvent] = []
-        team = Team[object](gates=[_keep_working_once(seen)])
+        team = _team([_keep_working_once(seen)])
         agent = Agent(
             _scripted([TextPart('Fixed the bug.')], [TextPart('Tests pass.')]),
             capabilities=[team.member_capability('alice')],
@@ -162,7 +168,7 @@ class TestTeam:
         ),
     )
     async def test_stream_consumers_see_the_final_idle_event(self):
-        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[Team[object]().member_capability('alice')])
+        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[_team().member_capability('alice')])
 
         async with agent.run_stream_events('Go.') as stream:
             streamed = [event async for event in stream if isinstance(event, TeammateIdleEvent)]
@@ -177,9 +183,7 @@ class TestTeam:
         async def check_idle(ctx: RunContext[object], event: TeammateIdleEvent) -> None:
             seen.append(event)
 
-        agent = Agent(
-            _scripted([TextPart('Done.')]), capabilities=[Team[object](gates=[gate]).member_capability('bob')]
-        )
+        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[_team([gate]).member_capability('bob')])
 
         result = await agent.run('Go.')
 
@@ -192,9 +196,9 @@ class TestTeam:
 
         @gate.on.event(CapabilityEvent)
         async def record(ctx: RunContext[object], event: CapabilityEvent) -> None:
-            emitted.append(event)
+            emitted.append(event)  # pragma: no cover -- the lead's run emits no team event.
 
-        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[Team[object](gates=[gate])])
+        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[_team([gate])])
 
         result = await agent.run('Go.')
 
@@ -203,7 +207,7 @@ class TestTeam:
 
     async def test_final_output_is_bounded(self):
         seen: list[TeammateIdleEvent] = []
-        team = Team[object](gates=[_keep_working_once(seen)])
+        team = _team([_keep_working_once(seen)])
         long_output = 'x' * (MAX_EVENT_TEXT_CHARS + 10)
         agent = Agent(_scripted([TextPart(long_output)]), capabilities=[team.member_capability('alice')])
 
@@ -215,7 +219,7 @@ class TestTeam:
 
     async def test_structured_output_reaches_the_gate_as_text(self):
         seen: list[TeammateIdleEvent] = []
-        team = Team[object](gates=[_keep_working_once(seen, 'Double-check it.')])
+        team = _team([_keep_working_once(seen, 'Double-check it.')])
         agent = Agent(
             _scripted(
                 [ToolCallPart('final_result', {'response': 41})],
@@ -254,7 +258,7 @@ class TestTeam:
         # Listed after the member capability: the idle gate still runs its `after_node_run` last.
         agent = Agent(
             _scripted([TextPart('Fixed.')], [TextPart('Changelog updated.')]),
-            capabilities=[Team[object](gates=[gate]).member_capability('alice'), FollowUp()],
+            capabilities=[_team([gate]).member_capability('alice'), FollowUp()],
         )
 
         result = await agent.run('Fix it.')
@@ -264,7 +268,7 @@ class TestTeam:
 
     async def test_member_paused_for_approval_is_not_idle(self):
         seen: list[TeammateIdleEvent] = []
-        team = Team[object](gates=[_keep_working_once(seen)])
+        team = _team([_keep_working_once(seen)])
         agent = Agent(
             _scripted([ToolCallPart('deploy', {})]),
             output_type=[str, DeferredToolRequests],
@@ -291,8 +295,8 @@ class TestTeam:
             if 'done when' not in event.item.content:
                 event.reject('Say when the task is done.')
 
-        team = Team[object](gates=[gate])
-        items: list[PlanItem] = []
+        team = _team([gate])
+        items: list[OwnedPlanItem] = []
         agent = Agent(
             _scripted(
                 [ToolCallPart('add_task', {'content': 'Write docs'}, tool_call_id='first')],
@@ -328,8 +332,8 @@ class TestTeam:
             tested.append(True)
             return 'All tests pass.'
 
-        team = Team[object](gates=[gate])
-        items = [PlanItem(id='1', content='Fix the bug', status=TaskStatus.in_progress)]
+        team = _team([gate])
+        items = [OwnedPlanItem(id='1', content='Fix the bug', status=TaskStatus.in_progress)]
         agent = Agent(
             _scripted(
                 [ToolCallPart('complete_task', {'item_id': '1'})],
@@ -359,10 +363,10 @@ class TestTeam:
         async def require_estimate(ctx: RunContext[object], event: TeamTaskCreatingEvent) -> None:
             event.reject('Add an estimate.')
 
-        items: list[PlanItem] = []
+        items: list[OwnedPlanItem] = []
         agent = Agent(
             _scripted([ToolCallPart('add_task', {'content': 'Write docs'})], [TextPart('Gave up.')]),
-            capabilities=[Team[object](gates=[first, second]), _board(items, owner='lead')],
+            capabilities=[_team([first, second]), _board(items, owner='lead')],
         )
 
         result = await agent.run('Plan.')
@@ -381,7 +385,7 @@ class TestTeam:
         async def check_idle(ctx: RunContext[object], event: TeammateIdleEvent) -> None:
             seen.append(event)
 
-        team = Team[object](gates=[gate])
+        team = _team([gate])
         for name in ('alice', 'bob'):
             agent = Agent(_scripted([TextPart(f'{name} done.')]), capabilities=[team.member_capability(name)])
             await agent.run('Go.')
@@ -403,10 +407,10 @@ class TestTeam:
         async def reject_completion(ctx: RunContext[object], event: TeamTaskCompletingEvent) -> None:
             event.reject('Not yet.')
 
-        items = [PlanItem(id='1', content='Fix the bug')]
+        items = [OwnedPlanItem(id='1', content='Fix the bug')]
         agent = Agent(
             _scripted([ToolCallPart('complete_task', {'item_id': '1'})], [TextPart('Stopped.')]),
-            capabilities=[Team[object](gates=[gate]).member_capability('alice'), _board(items, owner='alice')],
+            capabilities=[_team([gate]).member_capability('alice'), _board(items, owner='alice')],
         )
         agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
 
@@ -438,9 +442,8 @@ class TestTeam:
             assert [span['team.gate'] for span in spans] == ['task_completing', 'teammate_idle']
 
     async def test_team_without_gates_changes_nothing(self):
-        agent = Agent(
-            _scripted([TextPart('Done.')]), capabilities=[Team[object](), Team[object]().member_capability('a')]
-        )
+        team = _team()
+        agent = Agent(_scripted([TextPart('Done.')]), capabilities=[team, team.member_capability('a')])
 
         result = await agent.run('Go.')
 

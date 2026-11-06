@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.planning import PlanItem
+from pydantic_ai_harness.planning import OwnedPlanItem
 from pydantic_ai_harness.teams._events import TeamTaskCompletingEvent, TeamTaskCreatingEvent
 
 
@@ -27,7 +27,7 @@ def joined(feedback: Sequence[str]) -> str:
     return '\n\n'.join(feedback)
 
 
-async def check_task_creating(ctx: RunContext[AgentDepsT], item: PlanItem) -> None:
+async def check_task_creating(ctx: RunContext[AgentDepsT], item: OwnedPlanItem) -> None:
     """Ask the team's gates whether a tool call may add `item` to the team board.
 
     Call it from a board tool, before the item is stored. It emits a `TeamTaskCreatingEvent`, so
@@ -42,7 +42,7 @@ async def check_task_creating(ctx: RunContext[AgentDepsT], item: PlanItem) -> No
         raise ModelRetry(f'The task was not added to the board.\n\n{joined(event.feedback)}')
 
 
-async def check_task_completing(ctx: RunContext[AgentDepsT], item: PlanItem, *, owner: str) -> None:
+async def check_task_completing(ctx: RunContext[AgentDepsT], item: OwnedPlanItem, *, owner: str) -> None:
     """Ask the team's gates whether a tool call by `owner` may mark `item` completed.
 
     Call it from a board tool, before the status change is stored. It emits a

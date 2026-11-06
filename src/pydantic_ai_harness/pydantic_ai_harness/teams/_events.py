@@ -16,7 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydantic_ai import CapabilityEvent
-from pydantic_ai_harness.planning import OwnedPlanItem, PlanItem
+from pydantic_ai_harness.planning import OwnedPlanItem
+from pydantic_ai_harness.teams._types import MemberState, TeamMember, TeamMessage
 
 TEAMS_EVENTS = 'teams'
 
@@ -36,6 +37,38 @@ class BoardItemChangedEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='board
 
     previous: OwnedPlanItem | None
     """The step before the change, or `None` when it was just added."""
+
+
+@dataclass(kw_only=True)
+class TeammateSpawnedEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='teammate_spawned'):
+    """A team member was started, so a UI can add it to the roster."""
+
+    member: TeamMember
+    """The new member, with the model it is pinned to."""
+
+    prompt: str
+    """Its task, cut at `MAX_EVENT_TEXT_CHARS`."""
+
+    truncated: bool = False
+    """Whether `prompt` was cut."""
+
+
+@dataclass(kw_only=True)
+class TeammateStateEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='teammate_state'):
+    """A team member's state changed: it started or finished a turn, or was stopped."""
+
+    member: TeamMember
+    """The member as it is now."""
+
+    previous: MemberState | None
+    """Its state before, or `None` the first time the team sees it, such as after a restart."""
+
+
+@dataclass(kw_only=True)
+class TeamMessageEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='team_message'):
+    """A message was sent between the team's lead, a member, or the user."""
+
+    message: TeamMessage
 
 
 @dataclass(kw_only=True)
@@ -68,8 +101,8 @@ class TeammateIdleEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='teammate_
 class _TaskGateEvent(CapabilityEvent, namespace=TEAMS_EVENTS, dispatch='immediate', abstract=True):
     """A team board change a listener can reject, turning the tool call that asked for it into a retry."""
 
-    item: PlanItem
-    """The board item the change is about."""
+    item: OwnedPlanItem
+    """The board item the change is about, with its owner."""
 
     feedback: list[str] = field(default_factory=list[str])
     """Why listeners rejected the change, sent to the model as a tool retry. Empty when it may go ahead."""
@@ -103,4 +136,4 @@ class TeamTaskCompletingEvent(_TaskGateEvent, name='task_completing'):
     """
 
     owner: str
-    """The name of the member completing the item."""
+    """Who is completing the item: a member's name, or `'lead'`. The item's own `owner` is who holds it."""

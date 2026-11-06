@@ -188,6 +188,9 @@ class MemberRun:
 
     run_id: str
 
+    usage_limits: UsageLimits | None = None
+    """The member's budget for each turn, when the runner passes none to `run`."""
+
     async def run(
         self,
         *,
@@ -207,8 +210,8 @@ class MemberRun:
             workspace: A workspace the runner owns, which outlives the turn; wrapped in a `ReadOnlyWorkspace`
                 when `read_only` is set.
             usage: The member's own usage, to accumulate across its turns.
-            usage_limits: The member's budget. A turn that exceeds it fails, and the member is not woken again
-                until a message arrives.
+            usage_limits: The member's budget for this turn, else `self.usage_limits`. A turn that exceeds it fails,
+                and the member is not woken again until a message arrives.
             capabilities: More capabilities for the turn, such as the team's gates.
         """
         if self.read_only:
@@ -221,7 +224,7 @@ class MemberRun:
             deps=deps,
             workspace=workspace,
             usage=usage,
-            usage_limits=usage_limits,
+            usage_limits=usage_limits or self.usage_limits,
             capabilities=[*self.capabilities, *capabilities],
             event_stream_handler=self.event_stream_handler,
             message_history=self.message_history,

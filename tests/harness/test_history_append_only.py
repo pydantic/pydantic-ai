@@ -71,6 +71,7 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.planning import InMemoryClaimablePlanStore
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -85,6 +86,7 @@ from pydantic_ai_harness.subagents import (
     is_task_report,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
+from pydantic_ai_harness.teams import Team
 
 from ..append_only import (
     CLOCK,
@@ -727,6 +729,17 @@ def _team_messages(
     Like a background task's report, it reaches the lead's next run when it would otherwise end, and adds one
     more request.
     """
+    return _team_conversation(tmp_path, TeamMessages)
+
+
+def _team(tmp_path: Path) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """`_team_messages`, with the whole `Team` on the lead: its instructions and tools don't move between runs."""
+    return _team_conversation(tmp_path, lambda owner: Team(owner, board=InMemoryClaimablePlanStore()))
+
+
+def _team_conversation(
+    tmp_path: Path, make: Callable[[DelegationTasks], AbstractCapability[Any]]
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
     owner = DelegationTasks(directory=tmp_path / 'tasks')
 
     @asynccontextmanager
@@ -762,7 +775,7 @@ def _team_messages(
         between_runs=message,
     )
     capabilities: list[AbstractCapability[Any]] = [
-        TeamMessages(owner),
+        make(owner),
         DelegationReports(owner, conversation_id='parent'),
     ]
     return capabilities, scenario, delivered_once
@@ -771,6 +784,7 @@ def _team_messages(
 CONVERSATIONS = {
     'DelegationReports': _delegation_reports,
     'TeamMessages': _team_messages,
+    'Team': _team,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
     ),

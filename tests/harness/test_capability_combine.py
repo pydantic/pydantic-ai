@@ -75,6 +75,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.planning import InMemoryClaimablePlanStore
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import AgentOverride, DelegationTasks
@@ -328,7 +329,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
-    'Team': Anonymous('a bundle of gate listeners; two install both sets of gates'),
+    'Team': Narrows(
+        "fixed board, spawn and message tool names; two owners or boards would mix two teams' work",
+        lambda cls: (
+            cls(DelegationTasks(), board=InMemoryClaimablePlanStore()),
+            cls(DelegationTasks(), board=InMemoryClaimablePlanStore()),
+        ),
+    ),
     '_IdleGate': Anonymous("one per member run, added by `Team.member_capability` with the member's name"),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'DelegationReports': Anonymous(
