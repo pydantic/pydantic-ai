@@ -21,7 +21,7 @@ import json
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -452,15 +452,14 @@ def test_the_announcement_starts_with_the_first_mid_conversation_system_prompt(
     changes its cached prefix once, at the request that first carries one. The first request is rendered before the
     conversation has a mid-conversation system prompt, at the request that adds one, and at a later request.
     """
-    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key='mock-api-key'))
+    model = GoogleModel(
+        'gemini-3.8-flash',
+        provider=GoogleProvider(api_key='mock-api-key'),
+        settings={'framing_announcement': framing_announcement},
+    )
     conversation = history()
 
-    renders = [
-        rendered(
-            model.prepare_messages(conversation[:end], model_settings={'framing_announcement': framing_announcement})
-        )[0]
-        for end in (1, 3, len(conversation))
-    ]
+    renders = [rendered(model.prepare_messages(conversation[:end]))[0] for end in (1, 3, len(conversation))]
 
     assert renders == expected
 
@@ -487,6 +486,68 @@ async def test_the_agent_model_settings_choose_the_announcement(framing_announce
     assert any(
         isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT for part in first_request.parts
     ) is (framing_announcement == 'always')
+
+
+@pytest.mark.parametrize(
+    'on_change, announced',
+    [
+        pytest.param('append', True, id='append'),
+        pytest.param(
+            'rewrite',
+            False,
+            id='rewrite',
+            marks=pytest.mark.moves_cache_prefix(
+                reason='a rewrite-mode instruction change rewrites the standing prompt'
+            ),
+        ),
+    ],
+)
+async def test_an_instruction_change_is_announced_only_when_appended(
+    on_change: Literal['append', 'rewrite'], announced: bool
+):
+    """An appended instruction change reaches the model as a `<system>` block, so it brings the announcement with it.
+
+    A change to a `'rewrite'` block rewrites the instructions at the start instead, with nothing added mid-conversation,
+    so the standing prompt stays as written.
+    """
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_system_voice = True
+
+    agent = Agent(
+        AnnouncingFunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=False)),
+        deps_type=State,
+        system_prompt='Be brief.',
+    )
+
+    @agent.instructions(name='state', on_change=on_change)
+    def state(ctx: RunContext[State]) -> str:
+        return ctx.deps.fact or ''
+
+    first = await agent.run('Hi', deps=State('The on-call engineer is Frank.'))
+    await agent.run('Who is on call?', deps=State('The on-call engineer is Bob.'), message_history=first.all_messages())
+
+    def announces(messages: list[ModelMessage]) -> bool:
+        first_request = messages[0]
+        assert isinstance(first_request, ModelRequest)
+        return any(
+            isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT
+            for part in first_request.parts
+        )
+
+    assert [announces(messages) for messages in received] == [False, announced]
+    wrapped_change = any(
+        isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('<system>')
+        for message in received[1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+    assert wrapped_change is announced
 
 
 @pytest.mark.parametrize(

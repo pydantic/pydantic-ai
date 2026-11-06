@@ -4,7 +4,7 @@ import functools
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, PydanticSchemaGenerationError, TypeAdapter, with_config
@@ -548,8 +548,6 @@ class TemporalModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
-        *,
-        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
         """Pre-process messages using the currently active model's profile.
 
@@ -561,7 +559,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             return messages
-        return current.prepare_messages(messages, model_request_parameters, model_settings=model_settings)
+        return current.prepare_messages(messages, model_request_parameters)
 
     def _reprepare_messages(self, params: _RequestParams, model_for_request: Model) -> list[ModelMessage]:
         """Re-run `prepare_messages` against the concrete model, where the workflow couldn't.
@@ -581,10 +579,11 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
+        # The setting isn't serialized with the parameters, so it's restored from the request's settings.
+        model_settings = cast(ModelSettings | None, params.model_settings) or {}
         prepared = model_for_request.prepare_messages(
             params.messages,
-            params.model_request_parameters,
-            model_settings=cast(ModelSettings | None, params.model_settings),
+            replace(params.model_request_parameters, _framing_announcement=model_settings.get('framing_announcement')),
         )
         if prepared is params.messages:
             return prepared

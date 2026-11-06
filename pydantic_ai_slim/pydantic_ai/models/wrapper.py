@@ -237,10 +237,8 @@ class WrapperModel(Model):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
-        *,
-        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
-        return self.wrapped.prepare_messages(messages, model_request_parameters, model_settings=model_settings)
+        return self.wrapped.prepare_messages(messages, model_request_parameters)
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         return self.wrapped.unsupported_native_tool_settings(native_tool)

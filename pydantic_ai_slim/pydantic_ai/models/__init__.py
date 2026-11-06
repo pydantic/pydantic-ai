@@ -168,6 +168,7 @@ from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import (
     CacheSetting,
+    FramingAnnouncement,
     ModelSettingName,
     ModelSettings,
     ThinkingEffort,
@@ -302,6 +303,10 @@ class ModelRequestParameters:
         default=None, repr=False, compare=False
     )
     """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
+    _framing_announcement: Annotated[FramingAnnouncement | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """The request's `ModelSettings['framing_announcement']`, for `Model.prepare_messages`; `None` when unset."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -1706,8 +1711,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
-        *,
-        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
         """Pre-process the message history before it's handed to the adapter's message-prep step.
 
@@ -1780,8 +1783,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 the profile alone can't answer. Omitting it falls back to the adapter's effective mode,
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
-            model_settings: The settings this history will be sent with, merged over the model's own
-                `settings`. Only `framing_announcement` is read here.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
@@ -1912,7 +1913,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 wrapped=messages is not unwrapped,
                 standing_prompt_count=standing_prompt_count,
                 model_request_parameters=model_request_parameters,
-                model_settings=model_settings,
             ):
                 messages = _announce_system_voice(messages)
 
@@ -1930,7 +1930,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         wrapped: bool,
         standing_prompt_count: int,
         model_request_parameters: ModelRequestParameters | None,
-        model_settings: ModelSettings | None,
     ) -> bool:
         """Whether `prepare_messages` adds `SYSTEM_VOICE_ANNOUNCEMENT` to a history whose mid-conversation system prompts it has `<system>`-wrapped.
 
@@ -1938,10 +1937,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         block for it to explain, so an agent that never sends a mid-conversation system prompt keeps its standing
         prompt as written. `wrapped` is decided by the messages alone, so a replay or a later run of the same history
         renders the same. The sentence joins an existing standing prompt or instructions, never creates one.
+
+        The agent passes the setting in on the request parameters, from the run's merged settings; without it, the
+        model's own `settings` apply.
         """
         if not self._announces_system_voice:
             return False
-        mode = (merge_model_settings(self.settings, model_settings) or {}).get('framing_announcement', 'when_needed')
+        mode = (
+            (model_request_parameters._framing_announcement if model_request_parameters else None)  # pyright: ignore[reportPrivateUsage]
+            or (self.settings or {}).get('framing_announcement')
+            or 'when_needed'
+        )
         if mode == 'never' or (mode == 'when_needed' and not wrapped):
             return False
         return bool(

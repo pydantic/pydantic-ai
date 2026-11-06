@@ -104,7 +104,10 @@ def _prepare_messages_carrying_a_retry(
         if isinstance(message, messages.ModelRequest)
         for part in message.parts
     ):
-        return model.prepare_messages(msgs, model_request_parameters, model_settings=model_settings)
+        framing_announcement = (model_settings or {}).get('framing_announcement')
+        return model.prepare_messages(
+            msgs, dataclasses.replace(model_request_parameters, _framing_announcement=framing_announcement)
+        )
     return msgs
 
 

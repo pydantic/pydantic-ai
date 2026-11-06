@@ -346,8 +346,10 @@ class ModelSettings(TypedDict, total=False):
     request that has a system prompt or instructions:
 
     - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
-      every request after it. An agent that never sends one keeps its standing prompt as written; one that does
-      changes its cached prompt prefix once, at that request, and keeps it stable from then on.
+      every request after it. That includes an instruction change appended mid-conversation, by a dynamic
+      instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
+      An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
+      prefix once, at that request, and keeps it stable from then on.
     - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
       conversations that never need it.
     - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the

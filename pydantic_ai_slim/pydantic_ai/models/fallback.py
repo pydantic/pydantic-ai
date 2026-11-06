@@ -260,9 +260,7 @@ class FallbackModel(Model):
             try:
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                prepared_messages = pinned.prepare_messages(
-                    messages, model_request_parameters, model_settings=model_settings
-                )
+                prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 with enforce_request_deadline(deadline):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
@@ -322,9 +320,7 @@ class FallbackModel(Model):
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
-                prepared_messages = model.prepare_messages(
-                    messages, model_request_parameters, model_settings=model_settings
-                )
+                prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings, stream=False)
                 with enforce_request_deadline(deadline):
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
@@ -392,9 +388,7 @@ class FallbackModel(Model):
                 try:
                     with suppress_unsupported_setting_warnings():
                         _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = pinned.prepare_messages(
-                        messages, model_request_parameters, model_settings=model_settings
-                    )
+                    prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         request_stream_until_first_event(
                             pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
@@ -433,9 +427,7 @@ class FallbackModel(Model):
                     try:
                         with suppress_unsupported_setting_warnings():
                             _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                        prepared_messages = model.prepare_messages(
-                            messages, model_request_parameters, model_settings=model_settings
-                        )
+                        prepared_messages = model.prepare_messages(messages, model_request_parameters)
                         deadline = start_request_deadline(model, model_settings, stream=True)
                         streamed_response = await stack.enter_async_context(
                             request_stream_until_first_event(
@@ -569,8 +561,6 @@ class FallbackModel(Model):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
-        *,
-        model_settings: ModelSettings | None = None,
     ) -> list[ModelMessage]:
         # `FallbackModel` doesn't have its own profile; dispatch applies each inner model's profile instead.
         return messages

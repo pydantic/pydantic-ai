@@ -3314,8 +3314,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = replace(
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            # Read by `prepare_messages`, which isn't given the settings.
+            _framing_announcement=(model_settings or {}).get('framing_announcement'),
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -3330,7 +3332,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
-            prepared = model.prepare_messages(messages, model_request_parameters, model_settings=model_settings)
+            prepared = model.prepare_messages(messages, model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
@@ -3402,9 +3404,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
-                messages = _merge_consecutive_messages(
-                    model.prepare_messages(list(messages), model_request_parameters, model_settings=model_settings)
-                )
+                messages = _merge_consecutive_messages(model.prepare_messages(list(messages), model_request_parameters))
                 request_context.messages = messages
 
         # The limits were checked at the start of the step, before the first attempt. A later attempt is checked
