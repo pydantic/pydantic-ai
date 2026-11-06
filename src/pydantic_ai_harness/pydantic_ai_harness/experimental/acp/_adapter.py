@@ -27,7 +27,7 @@ from acp.interfaces import Client
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied, UsageLimitExceeded, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinishReason,
@@ -189,7 +189,7 @@ class _TurnCancelled(Exception):
 
 
 @dataclass
-class _RequestModelTracker(AbstractCapability[AgentDepsT]):
+class _RequestModelTracker(Generic[AgentDepsT]):
     model: Model | None = None
 
     async def prepare_model_request(
@@ -683,9 +683,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         stop_reason: schema.StopReason = 'end_turn'
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
-        output_type = [self._agent.output_type, DeferredToolRequests]
         final_usage: RequestUsage | None = None
         model_tracker = _RequestModelTracker[AgentDepsT]()
+        model_hooks = Hooks[AgentDepsT](prepare_model_request=model_tracker.prepare_model_request)
         approval_names, known_non_approval_names = self._scan_approval_names(config)
         turn = _TurnState(
             conn=conn,
@@ -704,26 +704,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         captured: list[ModelMessage] = []
         try:
             while True:
-                with capture_run_messages() as captured:
-                    async with self._agent.run_stream_events(
-                        run_input,
-                        message_history=history,
-                        deferred_tool_results=deferred_results,
-                        output_type=output_type,
-                        deps=config.deps,
-                        capabilities=[*(config.capabilities or ()), model_tracker],
-                        toolsets=config.toolsets,
-                        workspace=config.workspace,
-                        # Per-run override for the client's model config choice; `None` uses the
-                        # agent's own model, never mutating the shared agent. A `model_resolver` (if
-                        # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
-                        # can't parse.
-                        model=self._resolve_run_model(state.model),
-                        usage_limits=self._usage_limits,
-                    ) as stream:
-                        result = await self._forward_events(turn, stream)
-
-                assert result is not None, 'run_stream_events always yields a final result event'
+                result = await self._run_model_pass(
+                    state, turn, model_hooks, run_input, history, deferred_results, captured
+                )
                 final_usage = result.response.usage
                 history = result.all_messages()
                 usage += result.usage
@@ -778,20 +761,62 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 )
                 stop_reason = 'cancelled'
 
-        # Report the final request's usage, not the run-wide total.
-        if final_usage is not None:
-            assert model_tracker.model is not None
-            window = resolve_context_window(model_tracker.model)
-            await turn.conn.session_update(
-                session_id=turn.session_id,
-                update=schema.UsageUpdate(
-                    session_update='usage_update',
-                    used=final_usage.total_tokens,
-                    size=window if window is not None else DEFAULT_CONTEXT_WINDOW,
-                ),
-            )
+        await self._send_usage_update(turn, final_usage, model_tracker.model)
 
         return schema.PromptResponse(stop_reason=stop_reason, usage=_to_acp_usage(usage))
+
+    async def _send_usage_update(
+        self, turn: _TurnState, request_usage: RequestUsage | None, run_model: Model | None
+    ) -> None:
+        """Send the final request's token usage with the serving model's context window."""
+        if request_usage is None:
+            return
+        assert run_model is not None
+        window = resolve_context_window(run_model)
+        await turn.conn.session_update(
+            session_id=turn.session_id,
+            update=schema.UsageUpdate(
+                session_update='usage_update',
+                used=request_usage.total_tokens,
+                size=window if window is not None else DEFAULT_CONTEXT_WINDOW,
+            ),
+        )
+
+    async def _run_model_pass(
+        self,
+        state: SessionState[AgentDepsT],
+        turn: _TurnState,
+        model_hooks: Hooks[AgentDepsT],
+        run_input: list[UserContent] | None,
+        history: list[ModelMessage],
+        deferred_results: DeferredToolResults | None,
+        captured: list[ModelMessage],
+    ) -> AgentRunResult[object]:
+        config = state.config
+        with capture_run_messages() as pass_captured:
+            try:
+                async with self._agent.run_stream_events(
+                    run_input,
+                    message_history=history,
+                    deferred_tool_results=deferred_results,
+                    output_type=[self._agent.output_type, DeferredToolRequests],
+                    deps=config.deps,
+                    capabilities=[*(config.capabilities or ()), model_hooks],
+                    toolsets=config.toolsets,
+                    workspace=config.workspace,
+                    # Per-run override for the client's model config choice; `None` uses the
+                    # agent's own model, never mutating the shared agent. A `model_resolver` (if
+                    # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
+                    # can't parse.
+                    model=self._resolve_run_model(state.model),
+                    usage_limits=self._usage_limits,
+                ) as stream:
+                    result = await self._forward_events(turn, stream)
+            finally:
+                captured[:] = pass_captured
+
+        assert result is not None, 'run_stream_events always yields a final result event'
+        return result
 
     async def _forward_events(
         self, turn: _TurnState, stream: AsyncIterable[AgentStreamEvent | AgentRunResultEvent[object]]
