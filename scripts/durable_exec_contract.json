@@ -5063,17 +5063,6 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::RenderCompactMessagesTransport.dump"
       ]
     },
-    "ModelRequestParameters._framing_announcement": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._reprepare_messages"
-      ]
-    },
     "ModelRequestParameters._telemetry_mcp_url_ids": {
       "engines": [
         "temporal"
@@ -5237,6 +5226,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.request_stream"
+      ]
+    },
+    "_with_framing_announcement": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
       ]
     },
     "infer_model": {

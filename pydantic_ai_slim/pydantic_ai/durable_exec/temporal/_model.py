@@ -4,7 +4,7 @@ import functools
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, PydanticSchemaGenerationError, TypeAdapter, with_config
@@ -22,6 +22,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _with_framing_announcement,  # pyright: ignore[reportPrivateUsage]
     infer_model_profile,
     parse_model_id,
 )
@@ -579,11 +580,12 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
-        # The setting isn't serialized with the parameters, so it's restored from the request's settings.
-        model_settings = cast(ModelSettings | None, params.model_settings) or {}
+        # `framing_announcement` isn't serialized with the parameters, so it's restored from the request's settings.
         prepared = model_for_request.prepare_messages(
             params.messages,
-            replace(params.model_request_parameters, _framing_announcement=model_settings.get('framing_announcement')),
+            _with_framing_announcement(
+                params.model_request_parameters, cast(ModelSettings | None, params.model_settings)
+            ),
         )
         if prepared is params.messages:
             return prepared

@@ -547,6 +547,60 @@ async def test_direct_requests_apply_the_setting(model_settings: ModelSettings |
     )
 
 
+@pytest.mark.parametrize('framing_announcement, announcements', [('never', 0), ('always', 1)])
+@pytest.mark.parametrize('caller', ['agent', 'direct', 'fallback-agent', 'fallback-direct', 'fallback-direct-stream'])
+async def test_every_caller_of_prepare_messages_applies_the_setting(
+    caller: str, framing_announcement: FramingAnnouncement, announcements: int
+):
+    """Every path that prepares messages applies the request's `framing_announcement`, not the default.
+
+    `prepare_messages` takes no settings, so each caller passes them through `models._with_framing_announcement`.
+    Without that, a `FallbackModel` child would prepare with the default `'when_needed'`, which announces here.
+    """
+    from pydantic_ai.direct import model_request_stream
+
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def stream_respond(messages: list[ModelMessage], info: AgentInfo):
+        respond(messages, info)
+        yield 'ok'
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_system_voice = True
+
+    model = AnnouncingFunctionModel(
+        respond, stream_function=stream_respond, profile=ModelProfile(supports_inline_system_prompts=False)
+    )
+    target = FallbackModel(model) if caller.startswith('fallback') else model
+    settings: ModelSettings = {'framing_announcement': framing_announcement}
+    # The retry feedback is a `<system>` block, so the default `'when_needed'` would announce here too.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Be brief.'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='Please return text.', retry=RetryInfo(cause='no_output'))]),
+    ]
+
+    if caller.endswith('direct-stream'):
+        async with model_request_stream(target, history, model_settings=settings) as stream:
+            async for _ in stream:
+                pass
+    elif caller.endswith('direct'):
+        await model_request(target, history, model_settings=settings)
+    else:
+        await Agent(target, model_settings=settings).run(message_history=history)
+
+    [[first_request, *_]] = received
+    assert isinstance(first_request, ModelRequest)
+    assert [part.content for part in first_request.parts if isinstance(part, SystemPromptPart)] == [
+        'Be brief.',
+        *[SYSTEM_VOICE_ANNOUNCEMENT] * announcements,
+    ]
+
+
 @pytest.mark.parametrize(
     'run_setting, announced',
     [

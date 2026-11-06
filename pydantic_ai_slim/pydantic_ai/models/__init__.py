@@ -3938,6 +3938,22 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     )
 
 
+def _with_framing_announcement(  # pyright: ignore[reportUnusedFunction]
+    params: ModelRequestParameters, model_settings: ModelSettings | None
+) -> ModelRequestParameters:
+    """`params` carrying the request's `framing_announcement` setting, or none where `model_settings` doesn't set it.
+
+    `prepare_messages` reads the setting from the parameters, since it isn't given the settings. So every caller that
+    prepares a request's messages passes its parameters through this first: the agent graph, the direct API,
+    `FallbackModel` for its candidates, and a durable activity that re-prepares, where the private field isn't
+    serialized. A caller that skips it gets the model's own `settings` or the default instead of the request's setting.
+    """
+    framing_announcement = (model_settings or {}).get('framing_announcement')
+    if framing_announcement == params._framing_announcement:  # pyright: ignore[reportPrivateUsage]
+        return params
+    return replace(params, _framing_announcement=framing_announcement)
+
+
 def _has_mid_conversation_system_prompt(messages: list[ModelMessage], standing_prompt_count: int) -> bool:
     """Whether any request has a `SystemPromptPart` other than the first request's standing prompt."""
     requests = [message for message in messages if isinstance(message, ModelRequest)]
