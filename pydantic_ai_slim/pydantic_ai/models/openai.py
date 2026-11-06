@@ -1392,8 +1392,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead. The same goes
     for a response without a digest, as there's no telling whether it has changed.
-    A history missing its earlier messages counts as changed too, so pass `all_messages()` rather than
-    `new_messages()`, or the model won't see what was left out.
+    A history missing its earlier messages counts as changed too, so pass
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] rather than
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages], or the model won't see what
+    was left out.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
