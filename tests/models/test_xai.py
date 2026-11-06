@@ -4559,9 +4559,9 @@ async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: N
                             {
                                 'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Please provide a valid response
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                             }
                         ],

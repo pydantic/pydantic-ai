@@ -8515,9 +8515,9 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8572,12 +8572,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
+                    {'text': '</pyai:tool_result>'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8622,7 +8622,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': '<tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
+                    {'text': '<pyai:tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
                     {
                         'document': {
                             'name': 'Document 1',
@@ -8630,7 +8630,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
                         }
                     },
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]

@@ -15,7 +15,7 @@ _BACKGROUND_RESULT_ORIGIN = 'pydantic-ai-harness.background_tools.result.v1'
 def tool_result_tags(tool_name: str, tool_call_id: str, *, failed: bool = False) -> tuple[str, str]:
     """The tags framing a background tool's output, which reaches the model on the user channel.
 
-    They match the `<tool_result>` tags core puts around tool files it moves to the user channel, so the
+    They match the `<pyai:tool_result>` tags core puts around tool files it moves to the user channel, so the
     model can tell the tool's output from what the user said. A failed call is marked `outcome="failed"`,
     like [`ToolReturnPart.outcome`][pydantic_ai.messages.ToolReturnPart.outcome].
     """

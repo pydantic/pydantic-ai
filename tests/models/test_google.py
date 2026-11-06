@@ -6890,9 +6890,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]

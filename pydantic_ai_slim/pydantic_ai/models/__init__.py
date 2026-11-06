@@ -833,7 +833,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     prompt parts joined into one string with no separator.
     """
     _relocates_tool_files: ClassVar[bool] = False
-    """Whether this adapter moves the files a tool returned onto the user channel, framed as `<tool_result>`.
+    """Whether this adapter moves the files a tool returned onto the user channel, framed as `<pyai:tool_result>`.
 
     Set by adapters whose tool result channel carries text only, so `prepare_messages` knows such a request has a
     frame in it.
@@ -1754,7 +1754,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Translates each retry part into the part that carries it on the wire, by its `retry.cause`: a
         `RetryFeedbackPart` for a `'validation_error'` or `'model_retry'` becomes a `UserPromptPart`
-        fenced in `<validation_errors>` or `<retry_feedback>` behind an application attribution line,
+        fenced in `<pyai:validation_errors>` or `<pyai:retry_feedback>` behind an application attribution line,
         since either can quote the model's own output, and only `'no_output'`, whose text is the
         framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
@@ -2025,7 +2025,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
         An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
-        system-voice tag opener (`<system`, `<pyai:context`, `<pyai:context_diff`) gets a `SystemPromptPart` next to it,
+        system-voice tag opener (`<system`, `<pyai:context`, `<pyai:context_diff`) or a copy of one of the framework's
+        data frames (`<pyai:tool_result` and the rest, but not a plain `<tool_result`) gets a `SystemPromptPart` next to it,
         which on a model without inline system messages becomes a `<system>` block later on, saying the text is the
         user's, the tool's or the file author's (`lookalike_frame_note`). Nothing in the item itself changes. The
         note goes ahead of a user prompt and after the request's tool results, or wherever this adapter's ClassVars
@@ -2155,7 +2156,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The notes for tool result `part`'s lookalikes in `request`, naming its tool and call id.
 
         Where this adapter moves the result's files onto the user channel (`relocated`), they go out in a user
-        `<tool_result>` block after the tool results and their notes, so a lookalike in a text file gets a note of its
+        `<pyai:tool_result>` block after the tool results and their notes, so a lookalike in a text file gets a note of its
         own worded "following", and one in the result's own text keeps `preceding`.
         """
         if relocated and isinstance(part, ToolReturnPart):
@@ -4570,7 +4571,7 @@ def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelReq
 
 
 def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
-    """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
+    """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags and data frames it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
     result is checked whole, its text files included. Retry feedback is checked for the text it quotes, and a
@@ -4589,7 +4590,7 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
 
 
 def _tool_result_lookalike_tags(part: ToolReturnPart) -> tuple[list[str], list[str]]:
-    """The system-voice tags lookalikes open in tool result `part`: in its own text, and in its text files."""
+    """The system-voice tags and data frames lookalikes open in tool result `part`: in its own text, and in its text files."""
     in_text: list[str] = []
     in_files: list[str] = []
     for item in part.content_items(mode='str', wrap_if_error=False):
@@ -5010,7 +5011,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
     replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
-    so a call, its result (a retried one included), and the `<tool_result>` tags rendered from the result's ID keep
+    so a call, its result (a retried one included), and the `<pyai:tool_result>` tags rendered from the result's ID keep
     pairing up.
 
     IDs are assigned in history order, and an ID whose replacement is already taken by an earlier,

@@ -402,7 +402,7 @@ is implemented.
 Use `DelegationReports` on the parent run to deliver settled background reports through core's
 queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
 `<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
-didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
+didn't succeed, like a background tool's `<pyai:tool_result>`. The output was written by a model, so it
 never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
 the frame: the acceptance receipt the parent got at launch already said a report would follow.
 

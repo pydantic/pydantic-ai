@@ -145,7 +145,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         return [tool_return_text(part)]
     elif isinstance(part, RetryFeedbackPart):
         # Retry feedback that answers no tool call. It is stored model-neutral and translated at
-        # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
+        # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
         # occupies the window like the parts above. `model_response()` rather than
         # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
         # and this renders it the way the model sees it.

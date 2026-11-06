@@ -685,7 +685,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
-            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+            'from the user):\n<pyai:retry_feedback>\noutput invalid\n</pyai:retry_feedback>',
         ),
         ('UserPromptPart', 'file from c'),
     ]

@@ -757,9 +757,9 @@ The stored part carries no wording at all; each model turns it into a sendable p
 
 | `cause` | What the model is sent | Why |
 |---|---|---|
-| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
-| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<retry_feedback>…</retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
-| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<retry_feedback>` like a `'model_retry'`. |
+| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<pyai:validation_errors>…</pyai:validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
+| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<pyai:retry_feedback>…</pyai:retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
+| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. A `'no_output'` part with any other content, such as one your own code builds, goes out fenced in `<pyai:retry_feedback>` like a `'model_retry'`. |
 
 The text inside these wrappers goes in as written ([details](message-history.md#framework-frames-and-content-fidelity)).
 

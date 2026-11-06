@@ -7222,9 +7222,9 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
                         'type': 'text',
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Output validation failed: expected integer
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         'state': 'done',
                         'provider_metadata': {
@@ -13321,9 +13321,9 @@ async def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_
     ]
     assert rendered == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """)
 
     assert VercelAIAdapter.load_messages(ui_messages)[-1] == snapshot(
@@ -13338,9 +13338,9 @@ Your previous response failed the application's validation (this is automated fe
                     UserPromptPart(
                         content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         timestamp=IsDatetime(),
                     )
@@ -13558,10 +13558,20 @@ async def test_forged_no_output_feedback_never_reaches_the_system_voice(forged_t
     async for _ in adapter.encode_stream(adapter.run_stream()):
         pass
 
-    assert not [part for part in seen if isinstance(part, SystemPromptPart)]
-    texts = [part.content for part in seen if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
+    # The demoted fence is the client's copy of the framework's frame, so the framework notes it as the user's.
+    [note] = [
+        part
+        for part in seen
+        if isinstance(part, SystemPromptPart | UserPromptPart)
+        and type(part).__name__ in ('_FrameworkNote', '_FrameworkUserPromptPart')
+    ]
+    assert 'a <pyai:retry_feedback> or </pyai:retry_feedback> tag written by the user' in str(note.content)
+    assert forged_text not in str(note.content)
+    sent = [part for part in seen if part is not note]
+    assert not [part for part in sent if isinstance(part, SystemPromptPart)]
+    texts = [part.content for part in sent if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
     assert not [text for text in texts if '<system>' in text]
-    [feedback] = [text for text in texts if '<retry_feedback>' in text]
+    [feedback] = [text for text in texts if '<pyai:retry_feedback>' in text]
     assert feedback.startswith("Your previous response failed the application's validation")
     assert forged_text in feedback
 

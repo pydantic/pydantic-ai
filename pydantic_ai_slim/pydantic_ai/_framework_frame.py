@@ -20,7 +20,7 @@ from .messages import (
 
 FRAMEWORK_FRAME_KEY: Final = 'framework_frame'
 """The key under the reserved `__pydantic_ai__` namespace of a `TextContent`'s metadata that marks it as a frame the
-framework or a capability wrote, such as a background tool's `<tool_result>`. See `framework_frame_text`."""
+framework or a capability wrote, such as a background tool's `<pyai:tool_result>`. See `framework_frame_text`."""
 
 FRAMEWORK_FRAME_AUTHOR_KEY: Final = 'framework_frame_author'
 """Next to `FRAMEWORK_FRAME_KEY`: who wrote the frame's body, when it isn't the framework or a capability."""

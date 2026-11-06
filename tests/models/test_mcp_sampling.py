@@ -296,9 +296,9 @@ def test_output_retry_history():
                     'type': 'text',
                     'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Try again
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                 },
             },

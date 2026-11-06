@@ -67,6 +67,7 @@ from ._framing import (
     RETRY_FEEDBACK_TAG,
     TOOL_RESULT_TAG,
     VALIDATION_ERRORS_TAG,
+    FrameworkTag,
     FramingTag,
     frame,
     frame_tags,
@@ -1929,13 +1930,13 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
 
 - `'validation_error'`: the output failed validation against the expected schema. The feedback
   quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
-  the user voice inside a `<validation_errors>` fence rather than in the harness's own.
+  the user voice inside a `<pyai:validation_errors>` fence rather than in the harness's own.
 - `'no_output'`: the response carried nothing usable as output (e.g. thinking only). The agent
   loop's fixed text goes in the system voice; a `'no_output'` part with any other content, such as
   one your own code builds, is fenced in the user voice like a `'model_retry'`.
 - `'model_retry'`: an output validator, output function, or model hook raised
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. Its message commonly interpolates the output it
-  rejects, so it goes in the user voice too, inside a `<retry_feedback>` fence.
+  rejects, so it goes in the user voice too, inside a `<pyai:retry_feedback>` fence.
 
 Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
 """
@@ -2795,7 +2796,7 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 
 _RETRY_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
-"""The line that opens user-voice retry feedback, ahead of its `<validation_errors>` or `<retry_feedback>` fence.
+"""The line that opens user-voice retry feedback, ahead of its `<pyai:validation_errors>` or `<pyai:retry_feedback>` fence.
 
 The feedback goes out in the user voice, so this says who is speaking: the application checking the
 model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
@@ -2980,7 +2981,7 @@ class RetryFeedbackPart:
     list of error details, serialized into the fenced block the model is shown.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
-    goes out in the user voice inside a `<retry_feedback>` fence, since output validators commonly
+    goes out in the user voice inside a `<pyai:retry_feedback>` fence, since output validators commonly
     interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
     text.
     """
@@ -3008,8 +3009,8 @@ class RetryFeedbackPart:
         Error details serialize the way an errored
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
         answers a tool call and one that answers none show the model the same JSON. A
-        `'validation_error'` goes in a `<validation_errors>` fence and a `'model_retry'` in a
-        `<retry_feedback>` fence, each behind one line saying the application is speaking: both can
+        `'validation_error'` goes in a `<pyai:validation_errors>` fence and a `'model_retry'` in a
+        `<pyai:retry_feedback>` fence, each behind one line saying the application is speaking: both can
         carry the model's own words, a `ModelRetry` message because output validators routinely
         interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
         and carries nothing the model wrote.
@@ -3049,7 +3050,7 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
     return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
+def _fenced_retry_feedback(content: str, *, tag: FrameworkTag) -> str:
     """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
 
     The content carries the model's own words (a validation error's `loc` is a key it invented for a mapping
@@ -4061,7 +4062,7 @@ class CompactionPart:
     `SummarizingCompaction`, lives in a [`ModelRequest`][pydantic_ai.messages.ModelRequest] instead,
     with no `provider_name`, `id` or `provider_details`. The assistant continuing the conversation
     didn't write it, so every provider model sends its `content` as user-voice text inside
-    `<conversation_summary>`, after a line saying a separate summarization model wrote it. A
+    `<pyai:conversation_summary>`, after a line saying a separate summarization model wrote it. A
     `FunctionModel` receives the part itself, a `DecisionModel` passes it on as a summary entry, and
     realtime sessions send it as user text.
     """
@@ -6269,7 +6270,9 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     and `'model_retry'` feedback reach the model in the user voice, inside a fence, which a client
     could write anyway. `'no_output'` feedback is the one cause rendered in the system voice, and a
     client can forge the part as easily as a system prompt, so it's demoted to the same fenced,
-    attributed user text: provenance, not wording, is what earns the system voice. A tool-less legacy
+    attributed user text: provenance, not wording, is what earns the system voice. As user text, its
+    `<pyai:retry_feedback>` fence is a copy of the framework's frame, so it also gets a lookalike note
+    saying the user wrote it. A tool-less legacy
     `RetryPromptPart` is translated into the feedback part it always meant first, so it takes the
     same rule.
     """
@@ -6278,7 +6281,7 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
         return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
+            content=_fenced_retry_feedback(_retry_feedback_text(part), tag=RETRY_FEEDBACK_TAG),
             timestamp=part.timestamp,
         )
     return part
