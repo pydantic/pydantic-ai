@@ -66,11 +66,14 @@ _FILTERS: tuple[SourceFilter, ...] = (None, 'clai', *IMPORT_SOURCES)
 """What `f` cycles through: every session, CLAI's own, then each agent's imports."""
 
 
-def colored(text: str, *, role: str | None = None, bold: bool = False) -> str:
-    """Use the terminal's own foreground by default, and a brand role only where one marks state."""
-    if role is None:
-        return f'\x1b[1m{plain(text)}\x1b[0m' if bold else plain(text)
+def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
+    """Use the shared brand palette, including the 16-color fallback."""
     return f'{theme.sgr(role, bold=bold)}{plain(text)}\x1b[0m'
+
+
+def _heading(text: str, *, focused: bool) -> str:
+    """Use the terminal's own foreground, bold while the pane has focus."""
+    return f'\x1b[1m{plain(text)}\x1b[0m' if focused else plain(text)
 
 
 class SessionBrowser:
@@ -278,7 +281,7 @@ class SessionBrowser:
         budget = max(1, height - 5)
         shown = ', archived included' if self.archived else ''
         source = f' | Source: {self.source_name()}' if self.source is not None else ''
-        header = colored(
+        header = plain(
             f'CLAI > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
         )
         if self.mode == 'preview':
@@ -310,7 +313,7 @@ class SessionBrowser:
         chosen = (self.project, self.checkout)
         cursor = rows.index(chosen) if chosen in rows else 0
         start = max(0, cursor - budget + 2)
-        lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
+        lines = [_heading('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', focused=self.mode == 'projects')]
         for index, _ in enumerate(rows[start : start + budget - 1], start):
             lines.append(self._project_row(rows, index, chosen=chosen))
         return lines
@@ -342,11 +345,11 @@ class SessionBrowser:
             if self.checkout:
                 location += f' / {self.checkout_label(self.project, self.checkout)}'
         lines = [
-            colored(
+            _heading(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
                 f'{location} | '
                 f'Sort: {("recent", "messages", "tokens")[self.sort]}',
-                bold=self.mode == 'sessions',
+                focused=self.mode == 'sessions',
             )
         ]
         last_day = ''
