@@ -109,9 +109,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `sequential=False` still gets `True`.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
@@ -120,11 +122,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide tools from the model until they're revealed by tool search,
                 `load_capability`, or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `defer_loading=False` still gets `True`.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
                 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
@@ -723,15 +726,20 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
+        # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
+        # passed here.
+        tool.sequential = sequential
         tool.requires_approval = requires_approval
+        tool.defer_loading = defer_loading
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
-        when the tool sets none.
+        The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
+        its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
+        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
 
         Args:
             tool: The tool to add.
@@ -740,8 +748,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if tool.strict is None and self.strict is not None:
+            tool.strict = self.strict
+        if tool.include_return_schema is None and self.include_return_schema is not None:
+            tool.include_return_schema = self.include_return_schema
+        if self.sequential:
+            tool.sequential = True
         if self.requires_approval:
             tool.requires_approval = True
+        if self._defer_loading:
+            tool.defer_loading = True
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
