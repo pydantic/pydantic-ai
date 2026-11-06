@@ -321,6 +321,22 @@ async def local_backed_factory_pool() -> AsyncIterator[MagicMock]:
 
 
 class TestCodeMode:
+    async def test_local_backed_factory_keeps_execution_time_limit(self, local_backed_factory_pool: MagicMock) -> None:
+        """A factory pool must receive the sandbox execution limit in addition to its own transport deadline."""
+        agent = Agent(
+            _snippets_model('while True:\n    pass'),
+            capabilities=[
+                CodeMode(
+                    monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
+                    resource_limits={'max_duration_secs': 0.01},
+                )
+            ],
+        )
+        result = await agent.run('exhaust the configured execution time limit')
+        (retry,) = _retries(result.all_messages())
+        assert 'ran longer than its time limit' in str(retry.content)
+        assert local_backed_factory_pool.checkout.call_args.kwargs['limits']['max_feed_duration_secs'] == 0.01
+
     @pytest.mark.parametrize(
         ('causes', 'expected_cause', 'expected_status', 'expected_checkouts'),
         [

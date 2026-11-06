@@ -594,8 +594,9 @@ def sandbox_pool() -> AsyncMontyRemote:
 agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
 ```
 
-That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
-in place of `max_duration_secs`.
+That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
+The configured `max_duration_secs` still applies outside Temporal. Inside a Temporal workflow,
+Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
 
 For Logfire Agent Sandboxes, install Logfire 5.4.0 or later with its sandbox extra:
 
