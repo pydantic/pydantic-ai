@@ -41,7 +41,6 @@ from pydantic_ai.models.test import TestModel
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
-from .conftest import json_objects
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -728,14 +727,17 @@ async def test_anthropic_reads_the_summary(
     # A summary the application wrote doesn't switch on Anthropic's server-side compaction.
     assert 'context_management' not in body
     assert 'compact-2026-01-12' not in request_capture.headers[0].get('anthropic-beta', '')
-    # Sonnet 5.5 gets the sealed `<system>` rendering, so the announcement ends the top-level system prompt.
+    # Sonnet 5.5 gets the sealed `<system>` rendering, and the summary is a frame to explain, so the announcement
+    # follows the standing system prompt.
     assert body['messages'] == [
         {
             'role': 'user',
             'content': [{'type': 'text', 'text': FRAMED}, {'type': 'text', 'text': QUESTION}],
         },
     ]
-    assert json_objects(body['system'])[-1]['text'] == lookalike_note_announcement(system_role=False, sealed=True)
+    assert body['system'] == (
+        f'You are a concise assistant.\n\n{lookalike_note_announcement(system_role=False, sealed=True)}'
+    )
 
 
 @pytest.mark.parametrize('include_content', [True, False])

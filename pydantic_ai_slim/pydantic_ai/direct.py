@@ -73,6 +73,7 @@ def _ensure_instruction_parts(
 def _prepare_messages_carrying_a_retry(
     model: models.Model,
     msgs: Sequence[messages.ModelMessage],
+    model_settings: settings.ModelSettings | None,
     model_request_parameters: models.ModelRequestParameters,
 ) -> list[messages.ModelMessage]:
     """Run the model's message preparation, for the one history shape that cannot go out without it.
@@ -103,7 +104,10 @@ def _prepare_messages_carrying_a_retry(
         if isinstance(message, messages.ModelRequest)
         for part in message.parts
     ):
-        return model.prepare_messages(msgs, model_request_parameters)
+        framing_announcement = (model_settings or {}).get('framing_announcement')
+        return model.prepare_messages(
+            msgs, dataclasses.replace(model_request_parameters, _framing_announcement=framing_announcement)
+        )
     return msgs
 
 
@@ -157,7 +161,7 @@ async def model_request(
     deadline = start_request_deadline(model_instance, model_settings, stream=False)
     with enforce_request_deadline(deadline):
         return await model_instance.request(
-            _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
+            _prepare_messages_carrying_a_retry(model_instance, messages, model_settings, mrp),
             model_settings,
             mrp,
         )
@@ -549,7 +553,7 @@ def model_request_stream(
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return open_request_stream(
         model_instance,
-        _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
+        _prepare_messages_carrying_a_retry(model_instance, messages, model_settings, mrp),
         model_settings,
         mrp,
     )

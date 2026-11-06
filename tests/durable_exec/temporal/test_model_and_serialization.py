@@ -3176,14 +3176,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the instructions end with what `<system>` means.
+    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': [
-                    {'type': 'text', 'text': 'leading'},
-                    {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
-                ],
+                'system': f'leading\n\n{lookalike_note_announcement(system_role=False)}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},

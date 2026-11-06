@@ -441,10 +441,12 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     mock_client.chat.completions.create = create
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(openai_client=mock_client))
 
-    await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
+    await Agent(
+        model, instructions='Stable instructions.', model_settings={'cache': '1h', 'framing_announcement': 'always'}
+    ).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions start with the
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so with `'always'` the instructions start with the
     # announcement; it never changes, so the breakpoint after the instructions covers it too.
     announcement, system_message = request['messages'][:2]
     assert system_message == {

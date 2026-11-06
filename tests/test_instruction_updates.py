@@ -14,7 +14,6 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -1383,11 +1382,7 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions start with what `<system>` means.
-    assert bodies[0]['system'] == [
-        {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
-        {'type': 'text', 'text': 'Stable.'},
-    ]
+    assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1864,16 +1859,22 @@ def wire_model(
     anthropic_api_key: str,
     openrouter_api_key: str,
 ) -> Model:
+    # These tests pin a prefix that never changes, so the fallback cases get the announcement from the first request.
+    # With the default `'when_needed'`, it would join the system prompt with the first update, the one change to the
+    # prefix it makes, which `tests/test_framework_frames.py` covers.
+    always: ModelSettings = {'framing_announcement': 'always'}
     if case.provider == 'openrouter':
         # OpenRouter opts out of inline system prompts, so this is the `<system>`-wrapped fallback path.
         model = OpenRouterModel(
             case.model_name,
             provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+            settings=always,
         )
     elif case.provider == 'anthropic':
         model = AnthropicModel(
             case.model_name,
             provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+            settings=always,
         )
     else:
         settings: OpenAIResponsesModelSettings = {'openai_store': True, 'openai_reasoning_effort': 'none'}

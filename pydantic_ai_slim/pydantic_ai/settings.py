@@ -90,6 +90,9 @@ class ToolOrOutput:
 ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
 """Type alias for all valid tool_choice values."""
 
+FramingAnnouncement: TypeAlias = Literal['always', 'when_needed', 'never']
+"""When to tell a model what the `<system>` tag means; see [`ModelSettings.framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement]."""
+
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
 
@@ -332,6 +335,30 @@ class ModelSettings(TypedDict, total=False):
 
     It only applies to streamed requests: on a non-streamed one, `request_timeout` covers the same wait. It is not
     sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
+    """
+
+    framing_announcement: FramingAnnouncement
+    """When to add a sentence to the standing system prompt saying what the `<system>` tag means, on models that get mid-conversation system prompts as `<system>`-tagged user text.
+
+    A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
+    `<system>` block in a user turn, and follows it far more reliably once its standing prompt has said what the tag
+    means. Pydantic AI adds that one fixed sentence after the leading system prompts, ahead of the instructions, on a
+    request that has a system prompt or instructions:
+
+    - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
+      every request after it. That includes an instruction change appended mid-conversation, by a dynamic
+      instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
+      An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
+      prefix once, at that request, and keeps it stable from then on.
+    - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
+      conversations that never need it.
+    - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
+      text added. Models then follow a `<system>`-tagged change less reliably.
+
+    Every `<system>` tag in user prompt and tool return text is escaped on those models whatever this is set to.
+    Models that take mid-conversation system messages natively never get the sentence. It is applied by Pydantic AI
+    for every model and is not sent to the provider. See
+    [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts).
     """
 
     max_retries: int
@@ -741,6 +768,7 @@ ModelSettingName: TypeAlias = Literal[
     'timeout',
     'request_timeout',
     'first_event_timeout',
+    'framing_announcement',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',

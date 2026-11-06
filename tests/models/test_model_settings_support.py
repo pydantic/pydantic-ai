@@ -168,8 +168,8 @@ WARNED_SETTINGS = frozenset(
 HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
-FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout'})
-"""Fields Pydantic AI enforces itself for every model, so no model sends them or declares that it ignores them."""
+FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
+"""Fields Pydantic AI applies itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
@@ -182,6 +182,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'timeout': (987.654,),
     'request_timeout': (876.543,),
     'first_event_timeout': (765.432,),
+    'framing_announcement': ('always', 'never'),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),

@@ -178,6 +178,7 @@ from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import (
     CacheSetting,
+    FramingAnnouncement,
     ModelSettingName,
     ModelSettings,
     ThinkingEffort,
@@ -312,6 +313,10 @@ class ModelRequestParameters:
         default=None, repr=False, compare=False
     )
     """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
+    _framing_announcement: Annotated[FramingAnnouncement | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """The request's `ModelSettings['framing_announcement']`, for `Model.prepare_messages`; `None` when unset."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -821,10 +826,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     See `lookalike_note_announcement`.
 
-    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the start of the
-    instructions; elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a frame or a
-    lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model in: the
-    test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
+    Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes in the system prompt (see
+    `_framing_announcement`); elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a
+    frame or a lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model
+    in: the test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
     prompt parts joined into one string with no separator.
     """
     _relocates_tool_files: ClassVar[bool] = False
@@ -1644,6 +1649,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         model_settings, params = self._resolve_cache(model_settings, params)
+        params = _with_framing_announcement(params, model_settings)
 
         if native_tools := params.native_tools:
             # Deduplicate native tools
@@ -1777,7 +1783,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`; a request-scoped one the API clears itself
         (`supports_request_scoped_system_prompts`) gets the same tags and stays a `SystemPromptPart`. On such a
-        profile the instructions open with a sentence saying what the tag means (see `_get_instruction_parts`).
+        profile the system prompt also says what the tag means, from the request the `framing_announcement` setting
+        says (see `_announce_in_standing_prompt` and `_get_instruction_parts`).
         Nothing the user or a tool wrote is
         rewritten. A user, tool, file, compaction summary, retry feedback or carried reasoning item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
@@ -1854,7 +1861,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the
             # wire carries. The pass below fits the parts rendered after this.
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
-        messages = self._note_lookalike_frames(authored, messages)
+        framing_announcement = self._framing_announcement(model_request_parameters)
+        messages, has_frame = self._note_lookalike_frames(authored, messages, announce=framing_announcement != 'never')
+        # Looked for before answered request-scoped prompts are dropped, so the announcement stays once it's in.
+        had_system_prompt = _has_mid_conversation_system_prompt(messages, standing_prompt_count)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
@@ -1933,12 +1943,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
-            # The announcement goes at the start of the instructions; see `_get_instruction_parts`.
+            unwrapped = messages
             messages = _wrap_non_leading_system_prompts(
                 messages,
                 standing_prompt_count=standing_prompt_count,
                 sealed=self._seals_system_blocks,
                 keep_request_scoped=clears_request_scoped_prompts,
+            )
+            messages = self._announce_in_standing_prompt(
+                messages,
+                framing_announcement,
+                # A rendered tool-availability delta is a `<system>` block too, so a wrap counts.
+                needed=any((has_frame, had_system_prompt, messages is not unwrapped)),
+                standing_prompt_count=standing_prompt_count,
+                model_request_parameters=model_request_parameters or ModelRequestParameters(),
             )
 
         messages = _order_tool_results_by_call(messages)
@@ -1997,8 +2015,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return False
 
-    def _note_lookalike_frames(self, authored: list[ModelMessage], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def _note_lookalike_frames(
+        self, authored: list[ModelMessage], messages: list[ModelMessage], *, announce: bool
+    ) -> tuple[list[ModelMessage], bool]:
         """Note each item whose text resembles a framework frame, and announce the notes where needed.
+
+        Also returns whether any request has a frame or a note to explain, which on a model without inline system
+        messages decides whether the `'when_needed'` announcement goes in the system prompt.
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
         An item from the user or a tool (an uploaded text file or a tool's text file included) whose text contains a
@@ -2015,17 +2038,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         request right before it, such as one that opens the history, gets its note in the next request instead.
 
         On a model with inline system messages, the first request with a frame on the user channel or a note also
-        gets the announcement, as a mid-conversation `SystemPromptPart` (on the others it opens the
-        instructions instead; see `_get_instruction_parts`). The frames counted are the retry feedback fences, a
-        compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
-        request is found from the history alone, so the announcement stays in the same place on every later request.
+        gets the announcement when `announce` is set (see `_framing_announcement`), as a mid-conversation
+        `SystemPromptPart` (on the others it goes in the system prompt instead; see `_announce_in_standing_prompt` and
+        `_get_instruction_parts`). The frames counted are the retry feedback fences, a compaction summary, a tool's
+        files moved onto the user channel and reasoning carried into a user turn. The request is found from the history
+        alone, so the announcement stays in the same place on every later request.
 
         Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither.
         """
         if in_second_model_prompt():
-            return messages
+            return messages, False
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        pending_announcement = inline_system and self._announces_lookalike_notes
+        pending_announcement = inline_system and announce
+        has_frame = False
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
         new_messages: list[ModelMessage] = []
         changed = False
@@ -2040,6 +2065,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             following = messages[index + 1 : index + 2]
             earlier = _replies_noted_later(messages, index)
             frame_at = self._frame_index_with_thinking(parts, frame_at, following=[*following, *earlier])
+            has_frame = has_frame or frame_at is not None
             if frame_at is not None and pending_announcement:
                 pending_announcement = False
                 announcement = _FrameworkNote(
@@ -2052,7 +2078,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 message = replace(message, parts=parts)
                 changed = True
             new_messages.append(message)
-        return new_messages if changed else messages
+        return (new_messages if changed else messages), has_frame
 
     def _request_with_lookalike_notes(
         self,
@@ -2518,23 +2544,93 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         synthesizing them from `ModelRequest.instructions` in message history when it's `None` (e.g. direct
         `model.request()` calls).
 
-        Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the
-        announcement is the first part, so the application's own instructions keep the last word in the system
-        prompt: with the announcement after them, Gemini acted more often on requests quoted in a tool result that
-        an operator instruction seemed to cover. It goes out unchanged on every request from the
-        first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
-        `second_model_prompt()` doesn't get it.
+        Where the profile's `supports_inline_system_prompts` is `False`, the `framing_announcement` setting is
+        `'always'` and there's a standing prompt, the announcement is the first part, so the application's own
+        instructions keep the last word in the system prompt: with the announcement after them, Gemini acted more often
+        on requests quoted in a tool result that an operator instruction seemed to cover. It goes out unchanged on every
+        request from the first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
+        `second_model_prompt()` doesn't get it. With `'when_needed'`, `prepare_messages` adds it to the standing
+        prompt instead (see `_announce_in_standing_prompt`).
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
-            self._announces_lookalike_notes
-            and not in_second_model_prompt()
+            self._framing_announcement(model_request_parameters) == 'always'
             and not self.profile.get('supports_inline_system_prompts', False)
             and (parts or _first_request_has_standing_prompt(messages))
         ):
             announcement = lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks)
             parts = [_FrameworkInstructionPart(content=announcement), *(parts or [])]
         return parts
+
+    def _framing_announcement(self, model_request_parameters: ModelRequestParameters | None) -> FramingAnnouncement:
+        """When a request with these parameters gets the announcement of what lookalike notes mean.
+
+        `'never'` where `_announces_lookalike_notes` isn't set and inside `second_model_prompt()`. Otherwise the
+        `framing_announcement` setting: from the parameters, where the agent puts the run's settings, then from this
+        model's own `settings`, and `'when_needed'` by default.
+        """
+        if not self._announces_lookalike_notes or in_second_model_prompt():
+            return 'never'
+        requested = model_request_parameters and model_request_parameters._framing_announcement  # pyright: ignore[reportPrivateUsage]
+        return requested or (self.settings or {}).get('framing_announcement', 'when_needed')
+
+    def _announce_in_standing_prompt(
+        self,
+        messages: list[ModelMessage],
+        framing_announcement: FramingAnnouncement,
+        *,
+        needed: bool,
+        standing_prompt_count: int,
+        model_request_parameters: ModelRequestParameters,
+    ) -> list[ModelMessage]:
+        """Add the announcement to the first request's standing system prompt, for the `'when_needed'` setting.
+
+        Only with that setting and where `needed`: the history has a mid-conversation system prompt, a lookalike note or a frame on the user
+        channel. With `'always'`, the announcement goes at the start of the instructions instead; see
+        `_get_instruction_parts`. It goes after the standing prompt's own parts, which every adapter lifts into the provider's system field,
+        ahead of the instructions. Like the `'always'` announcement, only where there is a system prompt or
+        instructions for it to join. The history alone decides whether it's needed, so once it's in, it's in the same
+        place on every later request: the cached prefix changes once, at the request that first needs it.
+        """
+        if framing_announcement != 'when_needed' or not needed:
+            return messages
+        if not standing_prompt_count and not _instruction_parts_of(messages, model_request_parameters):
+            return messages
+        first_request_idx, first_request = next(
+            (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
+        )
+        announcement = _FrameworkNote(
+            content=lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks),
+            timestamp=first_request.timestamp or _utils.now_utc(),
+        )
+        parts = [
+            *first_request.parts[:standing_prompt_count],
+            announcement,
+            *first_request.parts[standing_prompt_count:],
+        ]
+        return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
+
+
+def _with_framing_announcement(
+    params: ModelRequestParameters, model_settings: ModelSettings | None
+) -> ModelRequestParameters:
+    """`params` carrying the `framing_announcement` setting, where `model_settings` sets it.
+
+    For `Model._get_instruction_parts`, on a request whose parameters didn't come from an agent run, which sets it.
+    """
+    if model_settings and (framing_announcement := model_settings.get('framing_announcement')):
+        return replace(params, _framing_announcement=framing_announcement)
+    return params
+
+
+def _has_mid_conversation_system_prompt(messages: list[ModelMessage], standing_prompt_count: int) -> bool:
+    """Whether any request has a `SystemPromptPart` other than the first request's standing prompt."""
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    return any(
+        isinstance(part, SystemPromptPart)
+        for index, request in enumerate(requests)
+        for part in request.parts[standing_prompt_count if index == 0 else 0 :]
+    )
 
 
 class _FrameworkAdded:
@@ -4309,7 +4405,7 @@ def _wrap_non_leading_system_prompts(
     are these blocks, followed it less often.
 
     The content goes in as written; a `<system>` tag in text the user or a tool wrote gets a note instead, as the
-    announcement at the start of the instructions says.
+    announcement in the system prompt says.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything

@@ -327,9 +327,9 @@ def lookalike_note_announcement(*, system_role: bool, sealed: bool = False) -> s
     """Tell the model what the notes on text that resembles a framework frame mean.
 
     `system_role` is whether the model has a mid-conversation system role. Without one, the application's
-    mid-conversation messages are `<system>` blocks in user turns, the announcement says so too, and it goes at the
-    start of the instructions. With one, it goes in a native system message the first time the conversation
-    has a frame or a note to explain.
+    mid-conversation messages are `<system>` blocks in user turns, the announcement says so too, and it goes in the
+    system prompt, from the request the `framing_announcement` model setting says. With one, it goes in a native system
+    message the first time the conversation has a frame or a note to explain.
 
     The wording was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models, against
     announcing a marker attribute on the application's frames.
