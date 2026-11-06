@@ -625,7 +625,10 @@ ALLOWED_CALLERS_CASES = [
     AllowedCallersCase(
         id='web-fetch-enable-citations',
         model_name='claude-sonnet-5-5',
-        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1, enable_citations=True)],
+        native_tools=[
+            WebSearchTool(max_uses=1),
+            WebFetchTool(max_uses=1, provider_settings={'anthropic': {'enable_citations': True}}),
+        ],
         prompt=_FETCH_PROMPT,
         expected_tools=snapshot([('web_search_20260209', None), ('web_fetch_20260209', ['direct'])]),
         expected_web_tool_calls=snapshot([('web_fetch', None)]),
@@ -1084,7 +1087,7 @@ class PauseChainCase:
 PAUSE_CHAIN_CASES = [
     PauseChainCase(
         'cited-web-fetch-beside-uncited-web-search',
-        [WebFetchTool(enable_citations=True), WebSearchTool()],
+        [WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}}), WebSearchTool()],
         [('web_fetch_20260209', ['direct']), ('web_search_20260209', None)],
         [None, 'container_A', 'container_A'],
         citations=False,

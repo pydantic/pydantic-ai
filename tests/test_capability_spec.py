@@ -818,6 +818,8 @@ def test_model_json_schema_with_capabilities():
                 'AnthropicWebFetchToolSettings': {
                     'additionalProperties': True,
                     'properties': {
+                        'enable_citations': {'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {'title': 'Max Content Tokens', 'type': 'integer'},
                         'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
                         'response_inclusion': {
                             'enum': ['full', 'excluded'],
@@ -2052,10 +2054,16 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Blocked Domains',
                         },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'enable_citations': {
+                            'default': False,
+                            'deprecated': True,
+                            'title': 'Enable Citations',
+                            'type': 'boolean',
+                        },
                         'max_content_tokens': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
+                            'deprecated': True,
                             'title': 'Max Content Tokens',
                         },
                     },

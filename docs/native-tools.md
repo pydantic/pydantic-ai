@@ -701,8 +701,9 @@ agent = Agent(
             WebFetchTool(
                 allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
                 max_uses=10,
-                enable_citations=True,
-                max_content_tokens=50000,
+                provider_settings={
+                    'anthropic': {'enable_citations': True, 'max_content_tokens': 50000}
+                },
             )
         )
     ],
@@ -726,8 +727,8 @@ _(This example is complete, it can be run "as is")_
 | `max_uses` | ✅ | ❌ |
 | `allowed_domains` | ✅ | ❌ |
 | `blocked_domains` | ✅ | ❌ |
-| `enable_citations` | ✅ | ❌ |
-| `max_content_tokens` | ✅ | ❌ |
+| `provider_settings.anthropic.enable_citations` | ✅ | ❌ |
+| `provider_settings.anthropic.max_content_tokens` | ✅ | ❌ |
 | `provider_settings.anthropic.use_cache` | ✅ | ❌ |
 | `provider_settings.anthropic.response_inclusion` | ✅ | ❌ |
 

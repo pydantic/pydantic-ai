@@ -537,6 +537,15 @@ class CodeExecutionTool(AbstractNativeTool):
 class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
 
+    enable_citations: bool
+    """Whether fetched content is cited. Maps to `citations={'enabled': True}`.
+
+    The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
+    """
+
+    max_content_tokens: int
+    """Maximum length, in tokens, of the fetched content that Anthropic adds to the context."""
+
     use_cache: bool
     """Whether Anthropic may return cached web content.
 
@@ -603,8 +612,10 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
     """
 
-    enable_citations: bool = False
+    enable_citations: Annotated[bool, _moved_to_provider_settings('anthropic', 'enable_citations')] = False
     """If True, enables citations for fetched content.
+
+    Deprecated: use `provider_settings.anthropic.enable_citations` instead.
 
     The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
 
@@ -613,8 +624,10 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic
     """
 
-    max_content_tokens: int | None = None
+    max_content_tokens: Annotated[int | None, _moved_to_provider_settings('anthropic', 'max_content_tokens')] = None
     """Maximum content length in tokens for fetched content.
+
+    Deprecated: use `provider_settings.anthropic.max_content_tokens` instead.
 
     Supported by:
 
@@ -626,6 +639,14 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _check_moved_fields(
+            self,
+            'anthropic',
+            (self.provider_settings or {}).get('anthropic', {}),
+            {'enable_citations': (self.enable_citations, False), 'max_content_tokens': (self.max_content_tokens, None)},
+        )
 
     @property
     def restricting_settings(self) -> frozenset[str]:

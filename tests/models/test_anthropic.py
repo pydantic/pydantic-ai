@@ -4339,7 +4339,9 @@ async def test_anthropic_citations_request_setting(
 
     await Agent(
         model,
-        capabilities=[NativeTool(WebFetchTool(enable_citations=enable_citations))],
+        capabilities=[
+            NativeTool(WebFetchTool(provider_settings={'anthropic': {'enable_citations': enable_citations}}))
+        ],
         model_settings=ModelSettings(citations=citations),
     ).run(
         [
@@ -9228,8 +9230,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     web_fetch_tool = WebFetchTool(
         max_uses=5,
         allowed_domains=['example.com', 'ai.pydantic.dev'],
-        enable_citations=True,
-        max_content_tokens=50000,
+        provider_settings={'anthropic': {'enable_citations': True, 'max_content_tokens': 50000}},
     )
 
     model_request_parameters = ModelRequestParameters(

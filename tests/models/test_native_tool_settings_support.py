@@ -241,7 +241,9 @@ def test_restricting_settings():
     assert ALL_WEB_SEARCH_RESTRICTIONS.restricting_settings == snapshot(
         frozenset({'allowed_domains', 'blocked_domains', 'max_uses', 'external_web_access'})
     )
-    assert WebFetchTool(max_content_tokens=1000).restricting_settings == frozenset()
+    assert (
+        WebFetchTool(provider_settings={'anthropic': {'max_content_tokens': 1000}}).restricting_settings == frozenset()
+    )
     assert ALL_WEB_FETCH_RESTRICTIONS.restricting_settings == snapshot(
         frozenset({'allowed_domains', 'blocked_domains', 'max_uses'})
     )
@@ -399,6 +401,8 @@ ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
         'excluded',
     ),
     (WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}), 'use_cache', False),
+    (WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}}), 'citations', {'enabled': True}),
+    (WebFetchTool(provider_settings={'anthropic': {'max_content_tokens': 1000}}), 'max_content_tokens', 1000),
     (
         AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
         'caching',
@@ -504,6 +508,8 @@ class TestProviderSettings:
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'partial_images', 2),
             (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'quality', 'high'),
             (_anthropic_request_tool, AdvisorTool, {'model': 'advisor'}, 'anthropic', 'caching', '5m'),
+            (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'enable_citations', True),
+            (_anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'max_content_tokens', 1000),
             (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'instructions', 'search these'),
             (_xai_request_search, FileSearchTool, {'file_store_ids': ['store']}, 'xai', 'retrieval_mode', 'keyword'),
         ],
@@ -525,6 +531,10 @@ class TestProviderSettings:
         [
             (ImageGenerationTool, {'quality': 'high', 'provider_settings': {'openai': {'quality': 'low'}}}),
             (AdvisorTool, {'model': 'advisor', 'caching': '5m', 'provider_settings': {'anthropic': {'caching': '1h'}}}),
+            (
+                WebFetchTool,
+                {'max_content_tokens': 1000, 'provider_settings': {'anthropic': {'max_content_tokens': 2000}}},
+            ),
             (
                 FileSearchTool,
                 {
