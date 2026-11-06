@@ -8,6 +8,7 @@ from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
@@ -101,6 +102,7 @@ class GroqProvider(Provider[AsyncGroq]):
             profile,
             groq_model_profile(model_name),
             ModelProfile(supports_inline_system_prompts=True),
+            special_token_route_profile('groq', model_name),
         )
 
     @overload

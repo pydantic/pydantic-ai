@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Generator
 from pathlib import Path
@@ -60,6 +61,8 @@ def test_recovery_reaches_the_same_decision(dbos: DBOS) -> None:
         attempts.append(agent.run_sync('Summarize missing.txt').all_messages())
         if len(attempts) == 1:
             raise _Crash
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
 
     model_calls.clear()
     workflow_id = str(uuid.uuid4())

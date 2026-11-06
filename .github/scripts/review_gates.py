@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ReviewGate = Literal['douwebot']
@@ -157,6 +157,12 @@ def douwebot_approval(
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
+            if (engine := marker[3]) == 'claude' or engine == 'opencode':
+                suffix = '\n\n' + REVIEW_ENGINES[engine]
+                if body.endswith(suffix):
+                    body = body[: -len(suffix)]
+                else:
+                    verdict.failures.append('Douwebot review engine attribution is missing.')
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
