@@ -2604,6 +2604,21 @@ class TestTaskControlBoundaries:
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
 
+    async def test_durable_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self) -> None:
+        def delegate(task: str) -> ModelResponse:
+            args = {'agent_name': 'researcher', 'task': task, 'background': True}
+            return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='call_0')])
+
+        parent = Agent(
+            scripted(delegate('First.'), delegate('Second.'), text('Waiting.'), text('Done.')),
+            name='durable',
+            capabilities=[controlled(), RecordingDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        first, second = (task_id_in(receipt) for receipt in tool_returns(result.all_messages()))
+        assert first != second
+
     async def test_a_durable_task_reports_when_the_run_goes_idle(self) -> None:
         completed = anyio.Event()
 

@@ -330,11 +330,19 @@ def _local_abilities(ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT
     return sub_agent.resumable, sub_agent.can_ask_questions
 
 
-def _new_task_id(ctx: RunContext[Any]) -> str:
-    """A new task's ID: under durable execution, one replay derives again from the run and the recorded tool call."""
-    if ctx.in_durable_context:
-        return uuid5(NAMESPACE_URL, f'{ctx.run_id}:{ctx.tool_call_id}').hex
-    return uuid4().hex
+def _new_task_id(ctx: RunContext[Any], owner: DelegationTasks) -> str:
+    """A new task's ID: under durable execution, one replay derives again from the run and the recorded tool call.
+
+    A provider can reuse a tool call ID within a run, so a taken ID is derived again with a counter.
+    """
+    if not ctx.in_durable_context:
+        return uuid4().hex
+    seed = f'{ctx.run_id}:{ctx.tool_call_id}'
+    task_id, count = uuid5(NAMESPACE_URL, seed).hex, 0
+    while task_id in owner.records:
+        count += 1
+        task_id = uuid5(NAMESPACE_URL, f'{seed}:{count}').hex
+    return task_id
 
 
 async def _emit_delegation(
@@ -867,7 +875,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 return exhausted
             resumable, can_ask = _local_abilities(ctx, sub_agent)
         self._check_running_limit(ctx, owner, agent_name, conversation_id)
-        task_id = resume or _new_task_id(ctx)
+        task_id = resume or _new_task_id(ctx, owner)
         start_type = TaskAssignedEvent if previous is None else TaskFollowUpEvent
         # The task counts as running while listeners see it, so concurrent delegations can't overrun the limit.
         with owner.starting(conversation_id):
