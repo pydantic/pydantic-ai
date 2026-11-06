@@ -909,7 +909,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             preserved = preserved[find_safe_cutoff(preserved, 1) :]
         elif self.keep_tokens is None:
             retained_tail_slots = max(1, self.keep_messages - len(extra))
-            displaced = find_safe_cutoff(preserved, retained_tail_slots) if len(preserved) > retained_tail_slots else 0
+            displaced = find_safe_cutoff(preserved, retained_tail_slots)
             if displaced:
                 # The copies took tail slots, so the messages they displaced go to the summary too, and the
                 # copies are re-picked as the newest user turns of that larger prefix, as many as before.

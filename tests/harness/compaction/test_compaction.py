@@ -4434,7 +4434,7 @@ class TestKeepUserMessages:
         comp = SummarizingCompaction(
             model='test:m',
             max_messages=3,
-            keep_messages=2,
+            keep_messages=3,
             keep_user_messages=True,
             bridge_prefix=False,
         )
@@ -4444,14 +4444,23 @@ class TestKeepUserMessages:
             conversation_id='conversation-1',
             metadata={'source': 'caller'},
         )
-        messages: list[ModelMessage] = [_user('zero'), _assistant('z'), original, _assistant('a')]
+        messages: list[ModelMessage] = [
+            _user('zero'),
+            _assistant('z'),
+            _user('older'),
+            _assistant('o'),
+            original,
+            _assistant('a'),
+            _user('second'),
+            _assistant('b'),
+        ]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S1')):
             first = await comp.compact(messages, _make_ctx())
         retained = next(message for message in first if isinstance(message, ModelRequest) and message.run_id == 'run-1')
         # The copy is recognized by the marker on its text; the request's own metadata is left as it was.
         assert retained.metadata == {'source': 'caller'}
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S2')):
-            second = await comp.compact([*first, _assistant('b')], _make_ctx())
+            second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
 
     async def test_a_retained_copy_whose_text_has_dict_metadata_survives_a_merge(self):
