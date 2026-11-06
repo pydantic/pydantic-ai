@@ -276,7 +276,10 @@ jobs:
           UV_NO_SYNC: "1"
         run: >-
           uv run pytest
-          .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_gh_aw_agent.py
+          .github/scripts/test_agentic_workflow_scripts.py
+          .github/scripts/test_verify_weekly_ce_publication.py
+          .github/scripts/test_forward_agent_traces.py
           .github/scripts/test_review_lifecycle.py
           .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
@@ -318,29 +321,15 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_check_complexity.py
 
-      # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
-      # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
-      # included, must refresh it.
-      - name: Check the gh-aw runner's script lock is up to date
+      # The composition imports the workspace harness, so a syntax error, a bad import
+      # or a withdrawn symbol fails here before a workflow run discovers it.
+      - name: Import the workflow agent composition
+        env:
+          UV_NO_SYNC: "1"
+          PYDANTIC_AI_NO_BANNER: "1"
         run: >-
-          uv lock --script .github/scripts/pydantic-ai-runner --check
-          || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
-
-      # The tests above import the shim inside this job's workspace venv, which is not
-      # the environment it runs in: gh-aw executes it via `uv run --script` against the
-      # runner's own locked dependency set. Run it there, with no argv, so it reaches
-      # the empty-prompt short-circuit without touching the network. This catches
-      # general shim breakage — a syntax error, a bad import, a module the runner lock
-      # doesn't carry. It is not what guards against importing an unreleased
-      # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
-      # the shim's library the same checkout as its code. The shim exits non-zero on
-      # that path, so the assertion is on its output, never its status: `|| true` holds
-      # whether or not the shell has `pipefail` (the default `run` shell here is
-      # `bash -e`, but `shell: bash` would add it).
-      - name: Smoke-test the gh-aw shim against the runner's own dependencies
-        run: |
-          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log || true
-          grep -q 'empty prompt' /tmp/shim-smoke.log
+          PYTHONPATH=.github/scripts uv run python -c
+          "import gh_aw_agent; assert gh_aw_agent.agent.name == 'gh-aw-agent'"
 
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the

@@ -2,27 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-import io
 import json
 import subprocess
 import sys
-from collections.abc import AsyncIterator
-from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
 import yaml
 
-from pydantic_ai import RunContext
-from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
-
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pydantic_ai_gh_aw_shim import READ_ONLY_SUBAGENT_TOOLS, cli, shared
 from weekly_ce_audit import (
     Entry,
     classify,
@@ -883,81 +872,84 @@ def test_rewritten_proposal_after_review_is_rejected(
         validate_review(root, source, revision, directory, changed, directory / 'review/task.log')
 
 
-def test_actual_task_stream_can_authorize_current_candidate(
-    reviewed_candidate: tuple[Path, str, str, dict[str, object]],
-):
-    """Exercise the real stream formatter instead of assuming full tool results reach the execution log."""
-    root, source, revision, proposal = reviewed_candidate
-    directory = root / '.ce-audit'
-    report = (directory / 'review/result.txt').read_text()
+def test_task_review_reads_the_engine_session_events(tmp_path: Path) -> None:
+    """The public engine records delegates as tool.execution_start/complete events."""
+    from weekly_ce_audit import task_review
 
-    async def events() -> AsyncIterator[FunctionToolResultEvent]:
-        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='Task', content=report, tool_call_id='review-task'))
-        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='Task', content='x' * 500, tool_call_id='control'))
+    prompt = 'Review this candidate independently.'
+    log = tmp_path / 'agent-session.jsonl'
+    log.write_text(
+        '\n'.join(
+            json.dumps(event)
+            for event in (
+                {
+                    'type': 'tool.execution_start',
+                    'data': {
+                        'toolCallId': 'delegate-1',
+                        'toolName': 'delegate_task',
+                        'input': {'agent_name': 'self', 'task': prompt},
+                    },
+                },
+                {
+                    'type': 'tool.execution_complete',
+                    'data': {
+                        'toolCallId': 'delegate-1',
+                        'toolName': 'delegate_task',
+                        'success': True,
+                        'output': 'current digest',
+                    },
+                },
+            )
+        )
+    )
 
-    buffer = io.StringIO()
-    ctx = RunContext[object](deps=None, model=TestModel(), usage=RunUsage())
-    with redirect_stdout(buffer):
-        asyncio.run(cli._stream_events(ctx, events()))  # pyright: ignore[reportPrivateUsage]
-    emitted = [json.loads(line)['message']['content'][0]['content'] for line in buffer.getvalue().splitlines()]
-    assert emitted[0] == report
-    assert len(report) == 72 and len(report) <= cli.MAX_LIVE_TOOL_RESULT_CHARS
-    assert '…[+' in emitted[1]
-    log = directory / 'review/task.log'
-    call = log.read_text().splitlines()[0]
-    log.write_text(call + '\n' + buffer.getvalue())
-    validate_review(root, source, revision, directory, proposal, log)
+    assert task_review(log, prompt) == 'current digest'
 
 
-def test_task_reads_diff_with_stable_policy_and_fresh_history(
-    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
-):
-    """Exercise the actual Task-to-Read path without inheriting candidate instructions or parent history."""
-    root, source = repository
-    candidate = root / '.ce-audit/candidate'
-    candidate.parent.mkdir()
-    git(root, 'worktree', 'add', '--detach', str(candidate), source)
-    (candidate / 'AGENTS.md').write_text('CANDIDATE_ONLY_POLICY')
-    review = root / '.ce-audit/review'
-    review.mkdir()
-    (review / 'candidate.diff').write_text('- Old wording\n+ Concise wording\n')
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(root))
-    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.z.ai/api/anthropic')
-    shared.reset_context_state()
-    seen: list[list[ModelMessage]] = []
-    tool_names: set[str] = set()
+def test_task_review_rejects_an_incomplete_engine_delegate(tmp_path: Path) -> None:
+    """A delegate that never completed its report is not independent evidence."""
+    from weekly_ce_audit import task_review
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo):
-        seen.append(list(messages))
-        tool_names.update(tool.name for tool in info.function_tools)
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            yield 'current independent report'
-        else:
-            yield {
-                0: DeltaToolCall(name='Read', json_args=json.dumps({'file_path': '.ce-audit/review/candidate.diff'}))
+    prompt = 'Review this candidate independently.'
+    log = tmp_path / 'agent-session.jsonl'
+    log.write_text(
+        json.dumps(
+            {
+                'type': 'tool.execution_start',
+                'data': {
+                    'toolCallId': 'delegate-1',
+                    'toolName': 'delegate_task',
+                    'input': {'agent_name': 'self', 'task': prompt},
+                },
             }
+        )
+    )
 
-    model = FunctionModel(stream_function=stream)
-    ctx = RunContext[object](
-        deps=None,
-        model=model,
-        usage=RunUsage(),
-        messages=[ModelRequest(parts=[UserPromptPart('PARENT_PRIVATE_HISTORY')])],
+    with pytest.raises(ValueError, match='incomplete'):
+        task_review(log, prompt)
+
+
+def test_validate_agent_checks_the_reviewed_proposal(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+):
+    """The agent post-step validates coverage and the reviewed proposal without safe outputs."""
+    root, source, _, _ = reviewed_candidate
+    directory = root / '.ce-audit'
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        [
+            'audit',
+            'validate-agent',
+            '--root',
+            str(root),
+            '--source',
+            source,
+            '--directory',
+            str(directory),
+            '--agent-log',
+            str(directory / 'review/task.log'),
+        ],
     )
-    result = asyncio.run(
-        cli.task(ctx, 'Independent pre-push candidate', 'Review only the frozen diff under stable root policy.')
-    )
-    assert result == 'current independent report'
-    assert tool_names == set(READ_ONLY_SUBAGENT_TOOLS)
-    assert not {'Bash', 'Write', 'Edit', 'MultiEdit', 'Task'}.intersection(tool_names)
-    first_user_parts = [
-        part.content for message in seen[0] for part in message.parts if isinstance(part, UserPromptPart)
-    ]
-    assert first_user_parts == [cli.RUN_TRIGGER]
-    returned = '\n'.join(
-        str(part.content) for message in seen[-1] for part in message.parts if isinstance(part, ToolReturnPart)
-    )
-    assert 'context: AGENTS.md' in returned and 'First line' in returned
-    assert 'Concise wording' in returned
-    assert 'CANDIDATE_ONLY_POLICY' not in returned
-    assert 'PARENT_PRIVATE_HISTORY' not in str(seen)
+    main()
+    assert (directory / 'summary.md').is_file()

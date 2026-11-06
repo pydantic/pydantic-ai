@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import ssl
 import sys
 import threading
@@ -35,7 +36,61 @@ from agent_provider_health import (
     _scope_for,  # pyright: ignore[reportPrivateUsage]
     _write_health,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_gh_aw_shim import cli as shim
+from gh_aw_agent._result import RunTimeLimitExceeded, _failure_details  # pyright: ignore[reportPrivateUsage]
+
+
+def _emit_result(
+    text: str,
+    *,
+    usage: RunUsage | None = None,
+    session_id: str = 's',
+    is_error: bool = False,
+    num_turns: int = 0,
+    duration_ms: int = 0,
+    error: BaseException | None = None,
+) -> None:
+    """Write the terminal record the shim and the composition both produce."""
+    token_usage = {
+        'input_tokens': 0,
+        'output_tokens': 0,
+        'cache_creation_input_tokens': 0,
+        'cache_read_input_tokens': 0,
+    }
+    if usage is not None:
+        token_usage = {
+            'input_tokens': usage.input_tokens,
+            'output_tokens': usage.output_tokens,
+            'cache_creation_input_tokens': usage.cache_write_tokens,
+            'cache_read_input_tokens': usage.cache_read_tokens,
+        }
+    try:
+        attempt = int(os.environ.get('PYDANTIC_AI_RUN_ATTEMPT', '1'))
+    except ValueError:
+        attempt = 1
+    provider_health: dict[str, object] = {
+        'workflow': os.environ.get('GITHUB_WORKFLOW'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
+        'run_attempt': attempt if attempt > 0 else 1,
+    }
+    if is_error and error is not None:
+        provider_health['failure'] = _failure_details(error)
+    print(
+        json.dumps(
+            {
+                'type': 'result',
+                'subtype': 'error' if is_error else 'success',
+                'is_error': is_error,
+                'result': text,
+                'session_id': session_id,
+                'num_turns': num_turns,
+                'duration_ms': duration_ms,
+                'total_cost_usd': 0,
+                'usage': token_usage,
+                'provider_health': provider_health,
+            }
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -938,6 +993,43 @@ def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None
     )
 
 
+def test_result_parser_reads_the_engine_terminal_file(tmp_path: Path) -> None:
+    """The composition writes the same record to a JSON file the agent artifact carries."""
+    artifact = tmp_path / 'agent'
+    artifact.mkdir()
+    provider_health: dict[str, object] = {
+        'workflow': 'CI Review',
+        'task_key': 'task-1',
+        'trigger_event': 'workflow_run',
+        'run_attempt': 2,
+        'failure': {'kind': 'plan_limit', 'http_status': 429},
+    }
+    (artifact / 'provider-health-result.json').write_text(
+        json.dumps({'type': 'result', 'provider_health': provider_health})
+    )
+
+    assert health.parse_run_result(tmp_path, expected_attempt=2) == health.RunResult(
+        'CI Review', 'task-1', 'workflow_run', 2, health.Failure('plan_limit', 429, None)
+    )
+
+
+def test_result_parser_dedupes_the_shim_log_and_the_engine_file(tmp_path: Path) -> None:
+    """Both channels carry the same record during the migration; it is one result."""
+    artifact = tmp_path / 'agent'
+    artifact.mkdir()
+    provider_health: dict[str, object] = {
+        'workflow': 'CI Review',
+        'task_key': 'task-1',
+        'trigger_event': 'workflow_run',
+        'run_attempt': 1,
+    }
+    record = {'type': 'result', 'provider_health': provider_health}
+    (artifact / 'agent-stdio.log').write_text(json.dumps(record))
+    (artifact / 'provider-health-result.json').write_text(json.dumps(record))
+
+    assert health.parse_run_result(tmp_path) == health.RunResult('CI Review', 'task-1', 'workflow_run', 1, None)
+
+
 def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None:
     """Two distinct terminal records from eligible agent logs do not select an authority."""
     first_log = tmp_path / 'agent' / 'agent-stdio.log'
@@ -1246,7 +1338,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    shim.emit_result(
+    _emit_result(
         'agent run failed',
         usage=RunUsage(requests=5, input_tokens=23, output_tokens=9, cache_read_tokens=4, cache_write_tokens=2),
         session_id='workflow-run-1',
@@ -1351,8 +1443,8 @@ def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    shim.emit_result(
-        'run timed out after 28min', usage=None, session_id='s', is_error=True, error=shim.RunTimeLimitExceeded()
+    _emit_result(
+        'run timed out after 28min', usage=None, session_id='s', is_error=True, error=RunTimeLimitExceeded()
     )
     agent_artifact = tmp_path / 'agent-stdio.log'
     agent_artifact.write_text(capsys.readouterr().out)
@@ -1409,7 +1501,7 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    shim.emit_result(
+    _emit_result(
         'stale attempt result',
         usage=RunUsage(requests=1),
         session_id='old-attempt',

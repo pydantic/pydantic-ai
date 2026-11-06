@@ -57,11 +57,9 @@ import argparse
 import json
 import posixpath
 import re
-import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeGuard, cast
@@ -117,7 +115,6 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # The version argument of the hand-written AWF install step. Both the script path and
 # the version may be quoted, and the capture must not swallow those quotes: a pin that
 # only differs from the compiled version by a pair of them is the same pin.
-AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
 # The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
 # which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
@@ -517,116 +514,53 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     ]
 
 
-def check_compiled_runner_contract(lock: Path) -> list[Violation]:
-    """The generated agent command must retain the interface our runner implements."""
+def check_compiled_engine_contract(lock: Path) -> list[Violation]:
+    """The compiled agent job must run the published engine and our composition."""
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
-    steps = agent.get('steps')
-    commands: list[list[str]] = []
-    for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
-        run = _as_mapping(raw_step).get('run')
-        if not isinstance(run, str) or 'pydantic-ai-runner-launch' not in run:
+    steps_value = agent.get('steps')
+    steps = cast(list[Any], steps_value) if isinstance(steps_value, list) else []
+    engine_commands = 0
+    composition = None
+    model = None
+    for raw_step in steps:
+        step = _as_mapping(raw_step)
+        run = step.get('run')
+        if not isinstance(run, str):
             continue
-        with suppress(ValueError):
-            outer_arguments = shlex.split(run)
-            for index, argument in enumerate(outer_arguments[:-1]):
-                if argument != '-c' or 'pydantic-ai-runner-launch' not in outer_arguments[index + 1]:
-                    continue
-                with suppress(ValueError):
-                    inner_arguments = shlex.split(outer_arguments[index + 1])
-                    for runner_index, inner_argument in enumerate(inner_arguments):
-                        if inner_argument.endswith('/pydantic-ai-runner-launch'):
-                            commands.append(inner_arguments[runner_index:])
-    if len(commands) != 1:
+        if 'pydantic-ai-runner-launch' in run:
+            return [
+                Violation(
+                    str(lock),
+                    'compiled-engine-contract',
+                    'the compiled agent job still invokes the retired shim launcher.',
+                )
+            ]
+        if 'pydantic-ai_harness.cjs' in run and 'cat <<' not in run:
+            engine_commands += 1
+            env = _as_mapping(step.get('env'))
+            composition = env.get('PAI_AGENT')
+            model = env.get('PAI_MODEL')
+    if engine_commands != 1:
         return [
             Violation(
                 str(lock),
-                'compiled-runner-contract',
-                'the `agent` job must contain exactly one invocation of '
-                '`pydantic-ai-runner-launch`. The custom runner is the compatibility '
-                'boundary between gh-aw and Pydantic AI.',
+                'compiled-engine-contract',
+                'the `agent` job must invoke the published `pydantic-ai` engine exactly once.',
             )
         ]
-
-    command = commands[0]
-    missing: list[str] = []
-    if '--output-format' not in command or command.index('--output-format') == len(command) - 1:
-        missing.append('`--output-format stream-json`')
-    elif command[command.index('--output-format') + 1] != 'stream-json':
-        missing.append('`--output-format stream-json`')
-    if '--mcp-config' not in command or command.index('--mcp-config') == len(command) - 1:
-        missing.append('`--mcp-config`')
-    if '--allowed-tools' not in command or command.index('--allowed-tools') == len(command) - 1:
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
-    elif 'mcp__safeoutputs' not in command[command.index('--allowed-tools') + 1].split(','):
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
-    if not missing:
+    problems: list[str] = []
+    if composition != 'gh_aw_agent:agent':
+        problems.append('`PAI_AGENT=gh_aw_agent:agent`')
+    if not isinstance(model, str) or not model.startswith('anthropic/'):
+        problems.append('an `anthropic/` model in `PAI_MODEL`')
+    if not problems:
         return []
     return [
         Violation(
             str(lock),
-            'compiled-runner-contract',
-            f'the generated Pydantic AI runner invocation is missing {", ".join(missing)}. '
-            'Recompiling changed the gh-aw interface that the custom runner implements.',
-        )
-    ]
-
-
-def check_awf_binary_version(lock: Path) -> list[Violation]:
-    """The hand-pinned AWF binary must be the one gh-aw compiled the lock against.
-
-    `GH_AW_INFO_AWF_VERSION` is what gh-aw bundles and what it writes the firewall
-    config against; the install step's argument is maintained by hand because
-    `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
-    first and leaves the second, and the older binary then refuses the newer config.
-
-    A lock that pins a version but declares none also fails: the comparison has lost
-    its reference, and passing there would disarm the check on a gh-aw rename.
-    """
-    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
-    pinned: set[str] = set()
-    bundled: set[str] = set()
-    for raw_job in _as_mapping(workflow.get('jobs')).values():
-        steps = _as_mapping(raw_job).get('steps')
-        for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
-            step = _as_mapping(raw_step)
-            run = step.get('run')
-            # `finditer`, not `search`: one `run:` block can invoke the installer more than
-            # once, and the last call is the binary the agent ends up with. Every invocation
-            # has to match, so stopping at the first would let a stale later one through.
-            if isinstance(run, str):
-                pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
-            version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
-            if isinstance(version, str):
-                bundled.add(version)
-
-    # No install step means this lock does not use the shim, so there is no hand-written
-    # pin to drift.
-    if not pinned:
-        return []
-    # A pin with nothing to compare it against is the check losing its reference, not a
-    # pass. Returning empty here would let a gh-aw rename of `GH_AW_INFO_AWF_VERSION`
-    # disarm this check silently, and the next skew would ship green exactly as #8041 did.
-    if not bundled:
-        return [
-            Violation(
-                str(lock),
-                'awf-binary-version',
-                f'the AWF install step pins {", ".join(sorted(pinned))} but the lock declares no '
-                '`GH_AW_INFO_AWF_VERSION` to check it against. gh-aw stopped reporting the AWF '
-                'version it bundles, so this check needs a new source before the pin can be trusted.',
-            )
-        ]
-    unexpected = sorted(pinned - bundled)
-    if not unexpected:
-        return []
-    return [
-        Violation(
-            str(lock),
-            'awf-binary-version',
-            f'the AWF install step pins {", ".join(unexpected)} but gh-aw compiled this lock against '
-            f'{", ".join(sorted(bundled))}. Update the version in the `pre-steps` that re-run '
-            '`install_awf_binary.sh` and recompile; an older binary rejects the newer firewall config.',
+            'compiled-engine-contract',
+            f'the agent step is missing {", ".join(problems)}.',
         )
     ]
 
@@ -778,10 +712,22 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
     return violations
 
 
+ZAI_ANTHROPIC_ENDPOINT = 'https://api.z.ai/api/anthropic'
+ZAI_CREDENTIAL = '${{ secrets.ZAI_API_KEY }}'
+AGENT_ENGINE_ENDPOINT = ZAI_ANTHROPIC_ENDPOINT
+AGENT_COMPOSITION = 'gh_aw_agent:agent'
+SHARED_ENGINE_RELATIVE = 'shared/engine-pydantic-ai.md'
+PUBLISHED_ENGINE_RELATIVE = 'pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main'
+
+
 def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
     imports = _as_strings(frontmatter.get('imports'))
     engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
-    return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
+    return (
+        SHARED_ENGINE_RELATIVE in imports
+        or 'shared/engine-zai.md' in imports
+        or engine_env.get('ANTHROPIC_BASE_URL') == ZAI_ANTHROPIC_ENDPOINT
+    )
 
 
 def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
@@ -834,65 +780,77 @@ def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]
 
 
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """Shared and workflow-local engines must use the shared provider configuration."""
-    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
-    if not engine_path.is_file():
-        return [Violation(str(engine_path), 'provider-engine-config', 'Shared Z.AI engine configuration is missing.')]
-
-    engine_config = parse_frontmatter(engine_path)
-    shared_engine = _as_mapping(engine_config.get('engine'))
-    shared_env = _as_mapping(shared_engine.get('env'))
-    endpoint = shared_env.get('ANTHROPIC_BASE_URL')
-    credential = shared_env.get('ANTHROPIC_API_KEY')
-    if not isinstance(endpoint, str) or not endpoint or not isinstance(credential, str) or not credential:
-        return [
-            Violation(
-                str(engine_path),
-                'provider-engine-config',
-                'The shared agent engine must define a nonempty `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.',
-            )
-        ]
-
-    shared_engines: tuple[tuple[str, object], ...] = (
-        (
-            'threat-detection',
-            _as_mapping(_as_mapping(engine_config.get('safe-outputs')).get('threat-detection')).get('engine'),
-        ),
-    )
+    """Every Z.AI workflow must use the shared engine, endpoint and credential."""
+    shared_path = workflows_dir / 'shared' / 'engine-pydantic-ai.md'
+    if not shared_path.is_file():
+        return [Violation(str(shared_path), 'provider-engine-config', 'Shared engine configuration is missing.')]
+    shared = parse_frontmatter(shared_path)
+    detection_env = _as_mapping(
+        _as_mapping(_as_mapping(shared.get('safe-outputs')).get('threat-detection')).get('engine')
+    ).get('env')
     violations: list[Violation] = []
-    for engine_name, engine_value in shared_engines:
-        engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
-        if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
+    if (
+        _as_mapping(detection_env).get('ANTHROPIC_BASE_URL') != ZAI_ANTHROPIC_ENDPOINT
+        or _as_mapping(detection_env).get('ANTHROPIC_API_KEY') != ZAI_CREDENTIAL
+    ):
+        violations.append(
+            Violation(
+                str(shared_path),
+                'provider-engine-config',
+                'The shared threat-detection engine must use the Z.AI endpoint and credential.',
+            )
+        )
+
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        imports = _as_strings(frontmatter.get('imports'))
+        if SHARED_ENGINE_RELATIVE not in imports or PUBLISHED_ENGINE_RELATIVE not in imports:
             violations.append(
                 Violation(
-                    str(engine_path),
+                    str(source),
                     'provider-engine-config',
-                    f'The shared {engine_name} engine must use the shared agent engine endpoint and credential.',
+                    'A Z.AI workflow must import the published engine and the shared engine configuration.',
                 )
             )
-
-    source_paths = list(workflows_dir.glob(AGENTIC_GLOB))
-    for source in (workflows_dir / 'shared' / 'provider-health.md', workflows_dir / 'agent-provider-health.yml'):
-        if source.is_file():
-            source_paths.append(source)
-    for source in source_paths:
-        frontmatter = parse_frontmatter(source) if source.suffix == '.md' else {}
-        local_engines: tuple[object, ...] = (
-            frontmatter.get('engine'),
-            _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine'),
-        )
-        for local_engine in local_engines:
-            local_env = _as_mapping(_as_mapping(local_engine).get('env'))
-            if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
-                local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
-            ):
-                violations.append(
-                    Violation(
-                        str(source),
-                        'provider-engine-config',
-                        'A workflow-local engine override must use the shared engine endpoint and credential.',
-                    )
+            continue
+        engine = _as_mapping(frontmatter.get('engine'))
+        engine_env = _as_mapping(engine.get('env'))
+        model = engine.get('model')
+        problems: list[str] = []
+        if engine.get('id') != 'pydantic-ai':
+            problems.append('`engine.id: pydantic-ai`')
+        if not isinstance(model, str) or not model.startswith('anthropic/'):
+            problems.append('an `anthropic/` model')
+        if engine_env.get('PAI_AGENT') != AGENT_COMPOSITION:
+            problems.append(f'`PAI_AGENT: {AGENT_COMPOSITION}`')
+        if engine_env.get('ANTHROPIC_BASE_URL') != AGENT_ENGINE_ENDPOINT:
+            problems.append(f'`ANTHROPIC_BASE_URL: {AGENT_ENGINE_ENDPOINT}`')
+        if engine_env.get('ANTHROPIC_API_KEY') != ZAI_CREDENTIAL:
+            problems.append(f'`ANTHROPIC_API_KEY: {ZAI_CREDENTIAL}`')
+        if problems:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-engine-config',
+                    f'The workflow engine is missing {", ".join(problems)}.',
                 )
+            )
+        local_detection = _as_mapping(
+            _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine')
+        ).get('env')
+        if local_detection and (
+            _as_mapping(local_detection).get('ANTHROPIC_BASE_URL') != ZAI_ANTHROPIC_ENDPOINT
+            or _as_mapping(local_detection).get('ANTHROPIC_API_KEY') != ZAI_CREDENTIAL
+        ):
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-engine-config',
+                    'A workflow-local threat-detection engine must use the Z.AI endpoint and credential.',
+                )
+            )
     return violations
 
 
@@ -989,7 +947,19 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
 
 def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """The gate and shim must receive the same stable workflow task identity."""
-    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
+    candidates = [
+        workflows_dir / 'shared' / 'engine-zai.md',
+        workflows_dir / 'shared' / 'engine-pydantic-ai.md',
+        *sorted(workflows_dir.glob(AGENTIC_GLOB)),
+    ]
+    engine_path = next(
+        (
+            source
+            for source in candidates
+            if source.is_file() and 'PYDANTIC_AI_TASK_KEY:' in source.read_text(encoding='utf-8')
+        ),
+        workflows_dir / AGENTIC_GLOB,
+    )
     health_path = workflows_dir / 'shared' / 'provider-health.md'
     if not engine_path.is_file() or not health_path.is_file():
         return [
@@ -1044,8 +1014,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     expected_task_key = task_key
     for source in workflows_dir.glob(AGENTIC_GLOB):
         frontmatter = parse_frontmatter(source)
-        imports = _as_strings(frontmatter.get('imports'))
-        if not _is_zai_workflow(frontmatter) or 'shared/engine-zai.md' in imports:
+        if not _is_zai_workflow(frontmatter):
             continue
         engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
         if (
@@ -1547,8 +1516,7 @@ def run_checks(
     violations: list[Violation] = []
     for lock in locks:
         violations += check_dangling_needs(lock)
-        violations += check_compiled_runner_contract(lock)
-        violations += check_awf_binary_version(lock)
+        violations += check_compiled_engine_contract(lock)
         violations += check_ai_credits_accounting(lock)
         violations += check_daily_aic_guardrail(lock)
     for source in sources:

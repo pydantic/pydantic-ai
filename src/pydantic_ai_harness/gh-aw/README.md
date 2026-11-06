@@ -388,6 +388,15 @@ same place gh-aw already keeps them. There is no configuration in this engine th
 puts a provider key in the agent's hands, and adding one is not possible without a
 change to gh-aw.
 
+**Pointing `anthropic/` at a compatible endpoint.** A workflow whose model uses the
+`anthropic/` prefix may set `ANTHROPIC_BASE_URL` and name its credential as
+`ANTHROPIC_API_KEY` in `engine.env`. gh-aw's api-proxy injects that secret and excludes
+the name from the agent sandbox, which is the same boundary the built-in Claude engine
+uses. The definition lists the key in `behaviors.supported-env-var-keys`, so strict mode
+accepts it. The check that reads those keys runs before imported definitions register in
+gh-aw v1.0.1; use a gh-aw release that consults an imported definition's supported keys
+before adding the key.
+
 ## Troubleshooting
 
 Only mechanisms that have been checked against a compiled workflow are listed.

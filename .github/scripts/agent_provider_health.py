@@ -856,19 +856,30 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     if path.is_file() and path.name != 'agent-stdio.log':
         return None
     if path.is_dir():
-        eligible = sorted(
-            file
-            for file in path.rglob('agent-stdio.log')
-            if file.is_file()
-            and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
+        # The engine writes its terminal record to `provider-health-result.json`; the
+        # shim wrote the same record to `agent-stdio.log`. A downloaded artifact keeps
+        # both files in the same directory, so resolve to that directory and read all
+        # JSON records inside it.
+        result_files = {'agent-stdio.log', 'provider-health-result.json'}
+        artifacts = sorted(
+            {
+                file.parent
+                for file in path.rglob('*')
+                if file.is_file()
+                and file.name in result_files
+                and (
+                    file.parent.name == 'agent'
+                    or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None
+                )
+            }
         )
         if expected_attempt is None:
-            if len(eligible) != 1:
+            if len(artifacts) != 1:
                 return None
-            path = eligible[0]
+            path = artifacts[0]
         else:
             results_by_artifact: list[set[RunResult]] = []
-            for artifact in eligible:
+            for artifact in artifacts:
                 results = {
                     result
                     for value in _json_values(artifact)

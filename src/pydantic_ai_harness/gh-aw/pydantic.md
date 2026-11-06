@@ -37,6 +37,12 @@ engine:
     name: github
   behaviors:
     secret-strategy: universal-llm-consumer
+    # An `anthropic/` workflow may point `ANTHROPIC_BASE_URL` at a compatible
+    # endpoint and name its credential in `engine.env`. gh-aw excludes that key
+    # from the agent sandbox and the api-proxy injects the real value, so strict
+    # mode allows it exactly as the built-in Claude engine does.
+    supported-env-var-keys:
+      - ANTHROPIC_API_KEY
     # Repository paths gh-aw treats as this engine's configuration: it protects them
     # from pull-request modification and derives the inline sub-agent and skill
     # directories from the first prefix (.pydantic-ai/agents, .pydantic-ai/skills).

@@ -48,6 +48,11 @@ safe-outputs:
       env:
         AGENT_RESULT: ${{ needs.agent.result }}
       run: test "$AGENT_RESULT" = success
+    - name: Require the published PR to be the independently reviewed proposal
+      run: >-
+        python3 .github/scripts/verify_weekly_ce_publication.py
+        --safe-outputs /tmp/gh-aw/safeoutputs.jsonl
+        --reviewed /tmp/gh-aw/reviewed-proposal.json
   create-pull-request:
     max: 1
     draft: false
@@ -75,14 +80,32 @@ env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '30'
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 max-daily-ai-credits: -1
+engine:
+  id: pydantic-ai
+  # The CLI cap stays above every workflow cap; `gh_aw_agent` enforces
+  # `PYDANTIC_AI_REQUEST_LIMIT` itself so a safe output on the last request is
+  # not lost to pydantic-ai's own pre-hook limit check.
+  args: ['--request-limit', '500']
+  model: anthropic/glm-5.3-flash
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    PAI_AGENT: gh_aw_agent:agent
+    PYTHONPATH: /tmp/gh-aw/agent-module
+    PYDANTIC_AI_OTEL_EXPORT_PATH: /tmp/gh-aw/agent/otel-spans.jsonl
+    GITHUB_WORKFLOW: ${{ github.workflow }}
+    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
+    # The engine's own harness retries would repeat a whole task on a partial run.
+    GH_AW_HARNESS_MAX_RETRIES: '0'
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/checkout.md
-  - shared/engine-zai.md
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/engine-pydantic-ai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
-  - shared/pre-agent-steps.md
 pre-agent-steps:
   - name: Inventory tracked CE and skip an existing workflow PR before inference
     env:
@@ -123,9 +146,13 @@ post-steps:
     env:
       SOURCE: ${{ github.sha }}
     run: |
-      python3 "$RUNNER_TEMP/weekly-ce-audit/validate.py" validate --source "$SOURCE" \
-        --agent-output /tmp/gh-aw/agent_output.json --agent-log /tmp/gh-aw/agent-stdio.log \
+      python3 "$RUNNER_TEMP/weekly-ce-audit/validate.py" validate-agent --source "$SOURCE" \
+        --agent-log /tmp/gh-aw/agent-session.jsonl \
         --issue-evidence "$RUNNER_TEMP/weekly-ce-audit/issue"
+      mkdir -p /tmp/gh-aw/agent
+      if [ -f .ce-audit/review/proposal.json ]; then
+        cp .ce-audit/review/proposal.json /tmp/gh-aw/agent/reviewed-proposal.json
+      fi
   - name: Publish audit coverage
     if: always()
     run: |
@@ -145,6 +172,9 @@ post-steps:
         .ce-audit/review/
       include-hidden-files: true
       retention-days: 14
+jobs:
+  detection:
+    timeout-minutes: 22
 ---
 <!-- Hoist the health job before activation: ${{ needs.provider_health.outputs.ready }} -->
 
@@ -185,7 +215,7 @@ Choose one coherent change with concrete evidence; leave unrelated findings in t
 
 ## Coverage
 
-Read the manifest first. Partition canonical paths into bounded batches using read-only `Task` delegates.
+Read the manifest first. Partition canonical paths into bounded batches using read-only `delegate_task` delegations.
 Give each delegate exact paths and require complete reads with continuation ranges and concrete findings.
 Do not send the entire corpus to one delegate or read it into one monolithic prompt.
 Use paged reads until each assigned file ends; a truncated tool result is a partial read.
@@ -249,11 +279,11 @@ python3 .github/scripts/weekly_ce_audit.py prepare-review --source SOURCE --bran
 
 Substitute the manifest source, committed candidate branch, and default branch named above.
 If the default branch moved, preserve findings and emit `noop` for a fresh audit next run.
-Read `.ce-audit/review/instructions.md` and pass its exact contents as a new `Task` prompt.
-Launch the Task from the unchanged policy checkout.
+Read `.ce-audit/review/instructions.md` and pass its exact contents as the `task` argument of a new `delegate_task` call.
+Launch the delegate from the unchanged policy checkout.
 Do not mutate the candidate or root checkout during review.
 Keep one candidate review attempt per run; findings, timeout, unavailable tools, or incomplete review mean `noop`.
-Preserve the actual Task response verbatim in `.ce-audit/review/result.txt`.
+Preserve the actual delegate response verbatim in `.ce-audit/review/result.txt`.
 Do not synthesize an approval or treat an audit report as independent review.
 Only `current DIGEST` for the unchanged frozen bundle permits the PR safe output.
 Use the exact title and body the independent reviewer assessed.

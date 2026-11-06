@@ -450,6 +450,15 @@ the engine's
 [README](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 covers that path.
 
+**Pointing `anthropic/` at a compatible endpoint.** A workflow whose model uses the
+`anthropic/` prefix may set `ANTHROPIC_BASE_URL` and name its credential as
+`ANTHROPIC_API_KEY` in `engine.env`. gh-aw's api-proxy injects that secret and excludes
+the name from the agent sandbox, which is the same boundary the built-in Claude engine
+uses. The definition lists the key in `behaviors.supported-env-var-keys`, so strict mode
+accepts it. The check that reads those keys runs before imported definitions register in
+gh-aw v1.0.1; use a gh-aw release that consults an imported definition's supported keys
+before adding the key.
+
 ### Threat detection
 
 With safe outputs declared, gh-aw runs a

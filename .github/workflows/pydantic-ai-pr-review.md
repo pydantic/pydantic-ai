@@ -1,7 +1,7 @@
 ---
 emoji: "🔎"
 name: "CI Review"
-description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "AI-driven PR review on the published Pydantic AI gh-aw engine, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Review a PR once it is about to merge, not on every push. One agent slot serves
   # every PR (`engine.concurrency` below), so a review per passing push queued for
@@ -143,42 +143,44 @@ safe-outputs:
         ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
         ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
-# The Z.AI engine from `shared/engine-zai.md`, inlined rather than imported: gh-aw allows
-# one `engine` across a workflow and its imports, and only this workflow sets
-# `concurrency`. Keep everything else here equal to that file, including the
-# `runtimes`, `max-ai-credits` and `safe-outputs.threat-detection` it sets.
-runtimes:
-  uv: {}
-max-ai-credits: -1
 engine:
-  id: claude
-  model: ${{ vars.GH_AW_MODEL }}
-  command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  id: pydantic-ai
+  # The CLI cap stays above every workflow cap; `gh_aw_agent` enforces
+  # `PYDANTIC_AI_REQUEST_LIMIT` itself so a safe output on the last request is
+  # not lost to pydantic-ai's own pre-hook limit check.
+  args: ['--request-limit', '500']
+  model: anthropic/glm-5.3-flash
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    PAI_AGENT: gh_aw_agent:agent
+    PYTHONPATH: /tmp/gh-aw/agent-module
+    PYDANTIC_AI_OTEL_EXPORT_PATH: /tmp/gh-aw/agent/otel-spans.jsonl
     GITHUB_WORKFLOW: ${{ github.workflow }}
     PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
     PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
-    # The custom shim is stateless, so an outer retry repeats the whole task.
-    GH_AW_HARNESS_MAX_RETRIES: "0"
+    # The engine's own harness retries would repeat a whole task on a partial run.
+    GH_AW_HARNESS_MAX_RETRIES: '0'
   # One review at a time across all PRs, on the shared Z.AI account. gh-aw applies
   # this group by default, but drops it for a workflow with `pull_request*` triggers.
   concurrency:
-    group: "gh-aw-claude-${{ github.workflow }}"
+    group: "gh-aw-pydantic-ai-${{ github.workflow }}"
     queue: max
 timeout-minutes: 30
 env:
-  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # Must equal `timeout-minutes` above. The workflow composition subtracts teardown headroom from it
   # so the agent stops itself and emits a result instead of being killed mid-flight.
   # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+  PYDANTIC_AI_REQUEST_LIMIT: "400"
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/engine-pydantic-ai.md
   - uses: shared/review-publication.md
     with:
       dependencies: [agent, safe_outputs, eligibility]
@@ -195,8 +197,6 @@ imports:
   - shared/review-context.md
   - shared/checkout.md
   - shared/provider-health.md
-  - shared/pre-steps.md
-  - shared/pre-agent-steps.md
 pre-agent-steps:
   # The agent job waits its turn in gh-aw's per-workflow agent slot (the compiled
   # `gh-aw-<engine>-<workflow>` concurrency group, `queue: max`), which serves one
@@ -292,6 +292,8 @@ pre-agent-steps:
       fi
 
 jobs:
+  detection:
+    timeout-minutes: 22
   eligibility:
     # Everything that decides whether this PR is worth a review happens here, in
     # shell, before a single token is spent. Every eligibility decision writes `reason` so a

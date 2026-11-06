@@ -86,14 +86,34 @@ safe-outputs:
     allowed-events: [COMMENT]
 timeout-minutes: 30
 env:
-  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # Must equal `timeout-minutes` above. The workflow composition subtracts teardown headroom from it
   # so the agent stops itself and emits a result instead of being killed mid-flight.
   # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+  PYDANTIC_AI_REQUEST_LIMIT: "400"
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
+engine:
+  id: pydantic-ai
+  # The CLI cap stays above every workflow cap; `gh_aw_agent` enforces
+  # `PYDANTIC_AI_REQUEST_LIMIT` itself so a safe output on the last request is
+  # not lost to pydantic-ai's own pre-hook limit check.
+  args: ['--request-limit', '500']
+  model: anthropic/glm-5.3-flash
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    PAI_AGENT: gh_aw_agent:agent
+    PYTHONPATH: /tmp/gh-aw/agent-module
+    PYDANTIC_AI_OTEL_EXPORT_PATH: /tmp/gh-aw/agent/otel-spans.jsonl
+    GITHUB_WORKFLOW: ${{ github.workflow }}
+    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
+    # The engine's own harness retries would repeat a whole task on a partial run.
+    GH_AW_HARNESS_MAX_RETRIES: '0'
 imports:
   - uses: shared/review-publication.md
     with:
@@ -110,10 +130,9 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-zai.md
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/engine-pydantic-ai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
-  - shared/pre-agent-steps.md
   - shared/security-findings.md
 pre-agent-steps:
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/` (pr-details, diffs,
@@ -142,6 +161,8 @@ pre-agent-steps:
       fi
 
 jobs:
+  detection:
+    timeout-minutes: 22
   detect:
     # Cheap, no-AI path filter: does this PR touch the UI security surface?
     # The agent job's top-level `if:` keys on this output. Replaces the old

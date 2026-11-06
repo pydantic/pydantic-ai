@@ -1,7 +1,7 @@
 ---
 emoji: "🔍"
 name: "Pydantic AI Stale Issues Finder"
-description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
+description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the published Pydantic AI gh-aw engine; the task prompt is iterable from a Logfire managed variable."
 # Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
 # Adjust to 'daily' or another weekly schedule to change frequency.
 on:
@@ -41,27 +41,25 @@ network:
 # prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
 # (injected by the AWF api-proxy, excluded from the agent container). Z.AI Coding Plan
 # exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
-runtimes:
-  uv: {}
 engine:
-  id: claude
-  # Pulled from the repo's `vars.GH_AW_MODEL` (set out-of-band).
-  # gh-aw compiles this into the engine command's `--model <name>` argv,
-  # which the harness reads via `args.model`.
-  model: ${{ vars.GH_AW_MODEL }}
-  # The checked-out workspace is mounted no-exec in the AWF sandbox, so a
-  # pre-step stages a launcher in gh-aw's exec-able /tmp/gh-aw/bin that runs
-  # `uv run --script` against the workspace harness.
-  command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  id: pydantic-ai
+  # The CLI cap stays above every workflow cap; `gh_aw_agent` enforces
+  # `PYDANTIC_AI_REQUEST_LIMIT` itself so a safe output on the last request is
+  # not lost to pydantic-ai's own pre-hook limit check.
+  args: ['--request-limit', '500']
+  model: anthropic/glm-5.3-flash
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    PAI_AGENT: gh_aw_agent:agent
+    PYTHONPATH: /tmp/gh-aw/agent-module
+    PYDANTIC_AI_OTEL_EXPORT_PATH: /tmp/gh-aw/agent/otel-spans.jsonl
     GITHUB_WORKFLOW: ${{ github.workflow }}
     PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
     PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
-    # The custom shim is stateless, so an outer retry repeats the whole task.
-    GH_AW_HARNESS_MAX_RETRIES: "0"
+    # The engine's own harness retries would repeat a whole task on a partial run.
+    GH_AW_HARNESS_MAX_RETRIES: '0'
 tools:
   github:
     mode: gh-proxy
@@ -104,12 +102,13 @@ safe-outputs:
         GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
-  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # Must equal `timeout-minutes` above. The workflow composition subtracts teardown headroom from it
   # so the agent stops itself and emits a result instead of being killed mid-flight.
   # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
+  PYDANTIC_AI_REQUEST_LIMIT: "400"
 # Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
 # active — it is not, and no `models.providers` entry accompanies it. See
 # `shared/engine-zai.md` for why pricing the configured model there can stop the agent.
@@ -121,38 +120,25 @@ if: ${{ needs.provider_health.outputs.ready == 'true' }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
+  - shared/engine-pydantic-ai.md
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
   - shared/provider-health.md
-pre-steps:
-  # Setting engine.command makes gh-aw skip ALL engine installation steps,
-  # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
-  # own installer (the same call it makes for non-custom-command jobs).
-  - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
-
 pre-agent-steps:
   # Stage the committed launcher script at gh-aw's exec-able
   # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
   # gh-aw's repository checkout happens between pre-steps and
   # pre-agent-steps, and this step reads from .github/scripts/ in the
   # workspace.
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
   # Install ripgrep and expose uv+rg inside the AWF chroot.
   # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH
   # and also reads $GITHUB_PATH entries added before the engine step.
-  - name: Install tools for AWF sandbox (ripgrep)
-    run: bash .github/scripts/install-sandbox-tools.sh
   # Warm the harness's uv script environment on the OPEN network so the
   # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Fetch all open issues before the AWF firewall blocks gh CLI access.
   # The script writes one JSON file per issue and pre-groups issues into
   # batch folders for subagent fan-out.
@@ -166,6 +152,10 @@ pre-agent-steps:
       bash .github/scripts/prefetch-open-issues.sh
 
 jobs:
+  detection:
+    timeout-minutes: 22
+  agent:
+    timeout-minutes: 62
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -24,8 +24,7 @@ from agentic_workflow_guard import (
     changed_files,
     check_ai_credits_accounting,
     check_assigned_alert_metadata_gate,
-    check_awf_binary_version,
-    check_compiled_runner_contract,
+    check_compiled_engine_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
     check_daily_aic_guardrail,
@@ -674,153 +673,66 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
     assert check_compiler_versions([a, b]) == []
 
 
-def test_compiled_runner_contract_rejects_drift_from_the_gh_aw_shim(tmp_path: Path):
-    """The generated agent command is the seam between gh-aw and our custom runner."""
+def test_compiled_engine_contract_rejects_the_retired_shim(tmp_path: Path):
+    """The compiled agent job must run the published engine, not the old launcher."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
 jobs:
   agent:
     steps:
-      - name: Run agent
+      - name: Execute
+        run: awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --print'
+""",
+    )
+
+    violations = check_compiled_engine_contract(lock)
+
+    assert [v.check for v in violations] == ['compiled-engine-contract']
+    assert 'retired shim' in violations[0].message
+
+
+def test_compiled_engine_contract_accepts_the_published_engine(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Write Pydantic AI harness script
         run: |
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
-""",
-    )
-
-    violations = check_compiled_runner_contract(lock)
-
-    assert [v.check for v in violations] == ['compiled-runner-contract']
-    assert '`mcp__safeoutputs`' in violations[0].message
-
-
-def test_compiled_runner_contract_accepts_the_supported_interface(tmp_path: Path):
-    lock = _write(
-        tmp_path / 'w.lock.yml',
-        """
-jobs:
-  agent:
-    steps:
-      - name: Run agent
-        run: >-
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools "Read,mcp__safeoutputs"
-          --output-format stream-json
-          --mcp-config mcp-servers.json'
-""",
-    )
-
-    assert check_compiled_runner_contract(lock) == []
-
-
-# --- AWF binary pin (the #8041 skew) ------------------------------------------
-
-_AWF_LOCK = """
-jobs:
-  agent:
-    steps:
-      - name: Setup Scripts
-        run: bash setup.sh
+          cat <<'EOF' > "${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs"
+          // harness source
+          EOF
+      - name: Execute Pydantic AI CLI
+        run: node "${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs" clai2
         env:
-          GH_AW_INFO_AWF_VERSION: "v0.27.44"
-      - name: Install AWF firewall binary (skipped by custom engine.command)
-        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" {pinned}
-"""
+          PAI_AGENT: gh_aw_agent:agent
+          PAI_MODEL: anthropic/glm-5.3-flash
+""",
+    )
+
+    assert check_compiled_engine_contract(lock) == []
 
 
-def test_awf_binary_version_catches_the_gh_aw_upgrade_skew(tmp_path: Path):
-    """The shape #8041 shipped: gh-aw moved to AWF v0.27.44, the hand-written pin stayed.
-
-    The v0.27.42 binary then rejected the v0.27.44 firewall config with
-    `config.apiProxy.providers is not supported`, so the agent job exited before
-    the model ever started.
-    """
-    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.42'))
-
-    violations = check_awf_binary_version(lock)
-
-    assert [v.check for v in violations] == ['awf-binary-version']
-    assert 'v0.27.42' in violations[0].message and 'v0.27.44' in violations[0].message
-
-
-def test_awf_binary_version_accepts_a_matched_pin(tmp_path: Path):
-    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.44'))
-
-    assert check_awf_binary_version(lock) == []
-
-
-def test_awf_binary_version_accepts_a_quoted_version(tmp_path: Path):
-    """The pin is hand-written, so a quoted argument is a shape a maintainer will produce."""
-    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='"v0.27.44"'))
-
-    assert check_awf_binary_version(lock) == []
-
-
-def test_awf_binary_version_reads_every_installer_invocation_in_one_step(tmp_path: Path):
-    """The last install wins, so a stale second call must not hide behind a correct first."""
+def test_compiled_engine_contract_requires_the_composition(tmp_path: Path):
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
 jobs:
   agent:
     steps:
-      - name: Setup Scripts
+      - name: Execute Pydantic AI CLI
+        run: node "${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs" clai2
         env:
-          GH_AW_INFO_AWF_VERSION: "v0.27.44"
-      - name: Install AWF firewall binary (skipped by custom engine.command)
-        run: |
-          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
-          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+          PAI_MODEL: anthropic/glm-5.3-flash
 """,
     )
 
-    violations = check_awf_binary_version(lock)
+    violations = check_compiled_engine_contract(lock)
 
-    assert [v.check for v in violations] == ['awf-binary-version']
-    assert 'v0.27.42' in violations[0].message
-
-
-def test_awf_binary_version_ignores_a_lock_without_the_hand_written_install(tmp_path: Path):
-    """Only workflows setting `engine.command` re-run the installer themselves."""
-    lock = _write(
-        tmp_path / 'w.lock.yml',
-        """
-jobs:
-  agent:
-    steps:
-      - name: Setup Scripts
-        env:
-          GH_AW_INFO_AWF_VERSION: "v0.27.44"
-      - name: Run agent
-        run: awf -- /bin/bash -c 'agent'
-  detect:
-    runs-on: ubuntu-latest
-""",
-    )
-
-    assert check_awf_binary_version(lock) == []
-
-
-def test_awf_binary_version_rejects_a_pin_with_no_declared_version_to_check(tmp_path: Path):
-    """A pin gh-aw no longer declares a version for is an unchecked pin, not a passing one.
-
-    Returning empty here is how the check would disarm itself if gh-aw ever renamed
-    `GH_AW_INFO_AWF_VERSION` — and the next skew would then ship green, as #8041 did.
-    """
-    lock = _write(
-        tmp_path / 'w.lock.yml',
-        """
-jobs:
-  agent:
-    steps:
-      - run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
-""",
-    )
-
-    violations = check_awf_binary_version(lock)
-
-    assert [v.check for v in violations] == ['awf-binary-version']
-    assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
+    assert [v.check for v in violations] == ['compiled-engine-contract']
+    assert 'PAI_AGENT' in violations[0].message
 
 
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
@@ -1284,143 +1196,85 @@ jobs:
     assert 'prompt-path-outside-workspace' in {violation.check for violation in violations}
 
 
-def test_provider_engine_config_rejects_drift_from_shared_values(tmp_path: Path):
-    workflows = tmp_path / '.github' / 'workflows'
-    shared = workflows / 'shared'
-    engine = _write(
-        shared / 'engine-zai.md',
-        """---
-engine:
-  env:
-    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-safe-outputs:
-  threat-detection:
-    engine:
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
----
-""",
-    )
-    _write(shared / 'provider-health.md', '---\n# provider health\n---\n')
-    local = _write(
-        workflows / 'pydantic-ai-local.md',
-        '---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
-        '    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n---\nPrompt\n',
+def _engine_source(
+    endpoint: str = 'https://api.z.ai/api/anthropic', credential: str = '${{ secrets.ZAI_API_KEY }}'
+) -> str:
+    return (
+        '---\nimports:\n'
+        '  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main\n'
+        '  - shared/engine-pydantic-ai.md\n'
+        'engine:\n  id: pydantic-ai\n  model: anthropic/glm-5.3-flash\n  env:\n'
+        f'    ANTHROPIC_BASE_URL: {endpoint}\n    ANTHROPIC_API_KEY: {credential}\n'
+        '    PAI_AGENT: gh_aw_agent:agent\n---\nPrompt\n'
     )
 
-    alternate_endpoint = 'https://provider.example/api/anthropic'
-    alternate_credential = '${{ secrets.CURRENT_PROVIDER_API_KEY }}'
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8')
-        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
-        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
+
+def _shared_engine_source(
+    endpoint: str = 'https://api.z.ai/api/anthropic', credential: str = '${{ secrets.ZAI_API_KEY }}'
+) -> str:
+    return (
+        '---\nsafe-outputs:\n  threat-detection:\n    engine:\n      env:\n'
+        f'        ANTHROPIC_BASE_URL: {endpoint}\n        ANTHROPIC_API_KEY: {credential}\n---\n'
     )
-    _write(
-        local,
-        local.read_text(encoding='utf-8')
-        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
-        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
-    )
+
+
+def test_provider_engine_config_accepts_the_shared_engine(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    _write(shared / 'engine-pydantic-ai.md', _shared_engine_source())
+    source = _write(workflows / 'pydantic-ai-local.md', _engine_source())
 
     assert check_provider_engine_config(workflows) == []
 
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8').replace(
-            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
-            + alternate_endpoint,
-            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
-            1,
-        ),
-    )
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+    alternate = 'https://provider.example/api/anthropic'
+    _write(source, _engine_source(endpoint=alternate))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8').replace(
-            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
-            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
-            + alternate_endpoint,
-            1,
-        ),
-    )
-    _write(local, local.read_text(encoding='utf-8').replace(alternate_credential, '${{ secrets.OTHER_API_KEY }}'))
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+    _write(source, _engine_source(credential='${{ secrets.OTHER_API_KEY }}'))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
-    _write(local, local.read_text(encoding='utf-8').replace('${{ secrets.OTHER_API_KEY }}', alternate_credential))
-    _write(
-        local,
-        local.read_text(encoding='utf-8').replace(alternate_endpoint, 'https://provider.example/anthropic'),
-    )
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+    _write(source, _engine_source().replace('    PAI_AGENT: gh_aw_agent:agent\n', ''))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8').replace(
-            'ANTHROPIC_API_KEY: ' + alternate_credential,
-            'ANTHROPIC_API_KEY: ""',
-            1,
-        ),
-    )
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
 
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8').replace(
-            'ANTHROPIC_BASE_URL: ' + alternate_endpoint, 'ANTHROPIC_BASE_URL: ""', 1
-        ),
-    )
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+def test_provider_engine_config_checks_shared_threat_detection(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    source = _write(workflows / 'pydantic-ai-local.md', _engine_source())
+    engine = _write(shared / 'engine-pydantic-ai.md', _shared_engine_source())
+
+    assert check_provider_engine_config(workflows) == []
+
+    _write(engine, _shared_engine_source(endpoint='https://provider.example/api/anthropic'))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
+
+    _write(engine, _shared_engine_source(credential='${{ secrets.OTHER_API_KEY }}'))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
+
+    _write(engine, _shared_engine_source())
+    _write(source, _engine_source().replace('  - shared/engine-pydantic-ai.md\n', ''))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
 
 def test_provider_engine_config_checks_workflow_local_threat_detection(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     shared = workflows / 'shared'
-    _write(
-        shared / 'engine-zai.md',
-        """---
-engine:
-  env:
-    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-safe-outputs:
-  threat-detection:
-    engine:
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
----
-""",
-    )
-    _write(
+    _write(shared / 'engine-pydantic-ai.md', _shared_engine_source())
+    local = _write(
         workflows / 'pydantic-ai-local.md',
-        """---
-safe-outputs:
-  threat-detection:
-    engine:
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
----
-Prompt
-""",
+        _engine_source() + 'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n'
+        '        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
+        '        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n',
     )
 
     assert check_provider_engine_config(workflows) == []
 
-    local = workflows / 'pydantic-ai-local.md'
-    matching_config = local.read_text(encoding='utf-8')
-    _write(
-        local,
-        matching_config.replace('https://api.z.ai/api/anthropic', 'https://provider.example/api/anthropic'),
-    )
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+    matching = local.read_text(encoding='utf-8')
+    _write(local, matching.replace('https://api.z.ai/api/anthropic', 'https://provider.example/api/anthropic'))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
-    _write(local, matching_config.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
-    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+    _write(local, matching.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    assert 'provider-engine-config' in {v.check for v in check_provider_engine_config(workflows)}
 
 
 def test_provider_health_wiring_requires_the_shared_gate_and_compiled_activation_dependency(tmp_path: Path):

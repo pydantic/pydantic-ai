@@ -361,7 +361,13 @@ def prepare_review(root: Path, source: str, branch: str, default_branch: str, di
 
 
 def task_review(log: Path, prompt: str) -> str:
-    """Match local Task evidence; this is not attestation against a compromised coordinator."""
+    """Match one completed delegate whose task is the review prompt.
+
+    The public engine records `tool.execution_start` and `tool.execution_complete`
+    events in `agent-session.jsonl`; the Claude stream-json shape is kept for
+    artifacts recorded before the migration. This is execution evidence, not
+    attestation against a compromised coordinator.
+    """
     calls: set[str] = set()
     reports: list[str] = []
     for line in log.read_text(encoding='utf-8').splitlines():
@@ -372,6 +378,9 @@ def task_review(log: Path, prompt: str) -> str:
         if not is_container(payload) or isinstance(payload, list):
             continue
         event = mapping(payload)
+        if event.get('type') in {'tool.execution_start', 'tool.execution_complete'}:
+            _delegate_event(event, prompt, calls, reports)
+            continue
         if 'message' not in event:
             continue
         content = mapping(event['message']).get('content')
@@ -379,8 +388,8 @@ def task_review(log: Path, prompt: str) -> str:
             continue
         for item in content:
             part = mapping(item)
-            if part.get('type') == 'tool_use' and part.get('name') == 'Task':
-                supplied_prompt = mapping(part.get('input')).get('prompt')
+            if part.get('type') == 'tool_use' and part.get('name') in {'Task', 'delegate_task'}:
+                supplied_prompt = mapping(part.get('input')).get('prompt') or mapping(part.get('input')).get('task')
                 call_id = part.get('id')
                 if (
                     isinstance(supplied_prompt, str)
@@ -396,6 +405,25 @@ def task_review(log: Path, prompt: str) -> str:
     if len(calls) != 1 or len(reports) != 1:
         raise ValueError('Missing or incomplete independent Task review in the agent log')
     return reports[0]
+
+
+def _delegate_event(event: dict[str, object], prompt: str, calls: set[str], reports: list[str]) -> None:
+    data = mapping(event.get('data'))
+    if data.get('toolName') != 'delegate_task':
+        return
+    call_id = data.get('toolCallId')
+    if not isinstance(call_id, str):
+        return
+    if event.get('type') == 'tool.execution_start':
+        supplied = mapping(data.get('input')).get('task')
+        if isinstance(supplied, str) and supplied.strip() == prompt.strip():
+            calls.add(call_id)
+        return
+    if call_id in calls and data.get('success'):
+        result = data.get('output')
+        if not isinstance(result, str):
+            raise ValueError('Independent Task result must be text')
+        reports.append(result.strip())
 
 
 def validate_review(
@@ -468,10 +496,76 @@ def validate_review(
         raise ValueError('Nontrivial PR must close its aligned issue')
 
 
+def coverage_report(
+    entries: list[Entry], source: str, directory: Path, paths: list[str]
+) -> tuple[list[str], list[str], list[str]]:
+    """Return the summary lines, unread paths and findings for the audit receipt."""
+    receipt_path = directory / 'receipt.json'
+    unread = sorted(entry.path for entry in entries if entry.scope in {'editable', 'report-only'})
+    findings: list[str] = []
+    if receipt_path.is_file():
+        receipt: object = json.loads(receipt_path.read_text())
+        unread = reconcile(entries, receipt, source)
+        for finding in sequence(mapping(receipt).get('findings', []), 'Receipt findings must be a list'):
+            if not isinstance(finding, str):
+                raise ValueError('Receipt findings must contain text')
+            findings.append(finding)
+    summary: list[str] = [
+        '# Weekly agent instructions audit coverage',
+        f'Source: `{source}`',
+        f'Reported canonical coverage: {"incomplete" if unread else "complete"}.',
+        'A receipt attests reads; structural validation does not prove comprehension.',
+        f'Canonical files: {sum(entry.scope in {"editable", "report-only"} for entry in entries)}.',
+        f'Alias loading paths: {sum(entry.scope == "alias" for entry in entries)}.',
+        '## Findings',
+        *([f'- {finding}' for finding in findings] or ['No findings reported.']),
+        '## Report-only paths',
+        *[f'- `{entry.path}`' for entry in entries if entry.scope == 'report-only'],
+        '## Unread or incompletely reported paths',
+        *[f'- `{path}`' for path in unread],
+        '## Proposed edits',
+        *[f'- `{path}`' for path in paths],
+    ]
+    return summary, unread, findings
+
+
+def validate_agent(
+    root: Path,
+    source: str,
+    directory: Path,
+    log: Path | None,
+    issue_evidence: Path | None,
+) -> None:
+    """Validate the reviewed proposal without reading the safe-output sink.
+
+    The agent post-step owns coverage, the edit boundary and the independent Task
+    review. The safe-outputs step separately proves the published item is exactly
+    the proposal this validated.
+    """
+    entries = inventory(root, source)
+    proposal_path = directory / 'review/proposal.json'
+    paths: list[str] = []
+    if proposal_path.is_file():
+        reviewed = mapping(json.loads(proposal_path.read_text()))
+        branch = reviewed.get('branch')
+        if not isinstance(branch, str) or not branch.startswith(BRANCH_PREFIX):
+            raise ValueError('Invalid weekly audit branch')
+        revision = f'refs/heads/{branch}'
+        git(root, 'merge-base', '--is-ancestor', source, revision)
+        paths = sorted(validate_edits(root, source, entries, revision))
+        if log is None:
+            raise ValueError('Publication needs independent Task execution evidence')
+        validate_review(root, source, revision, directory, reviewed, log, issue_evidence)
+    summary, unread, _ = coverage_report(entries, source, directory, paths)
+    (directory / 'summary.md').write_text('\n'.join(summary) + '\n')
+    if (paths or proposal_path.is_file()) and unread:
+        raise ValueError('Incomplete audit cannot publish trimming edits')
+
+
 def main() -> None:
     """Prepare an inventory or validate the agent's coverage and proposed edits."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare', 'prepare-review', 'validate'])
+    parser.add_argument('command', choices=['prepare', 'prepare-review', 'validate', 'validate-agent'])
     parser.add_argument('--root', type=Path, default=Path.cwd())
     parser.add_argument('--source', required=True)
     parser.add_argument('--directory', type=Path, default=Path('.ce-audit'))
@@ -485,6 +579,9 @@ def main() -> None:
     parser.add_argument('--default-branch')
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=True)
+    if args.command == 'validate-agent':
+        validate_agent(args.root, args.source, args.directory, args.agent_log, args.issue_evidence)
+        return
     if args.command == 'prepare-review':
         if not args.branch or not args.default_branch:
             raise ValueError('Review preparation needs branch and default-branch')
@@ -523,32 +620,7 @@ def main() -> None:
             validate_review(
                 args.root, args.source, branch, args.directory, proposal, args.agent_log, args.issue_evidence
             )
-    receipt_path = args.directory / 'receipt.json'
-    unread = sorted(entry.path for entry in entries if entry.scope in {'editable', 'report-only'})
-    findings: list[str] = []
-    if receipt_path.is_file():
-        receipt: object = json.loads(receipt_path.read_text())
-        unread = reconcile(entries, receipt, args.source)
-        for finding in sequence(mapping(receipt).get('findings', []), 'Receipt findings must be a list'):
-            if not isinstance(finding, str):
-                raise ValueError('Receipt findings must contain text')
-            findings.append(finding)
-    summary: list[str] = [
-        '# Weekly agent instructions audit coverage',
-        f'Source: `{args.source}`',
-        f'Reported canonical coverage: {"incomplete" if unread else "complete"}.',
-        'A receipt attests reads; structural validation does not prove comprehension.',
-        f'Canonical files: {sum(entry.scope in {"editable", "report-only"} for entry in entries)}.',
-        f'Alias loading paths: {sum(entry.scope == "alias" for entry in entries)}.',
-        '## Findings',
-        *([f'- {finding}' for finding in findings] or ['No findings reported.']),
-        '## Report-only paths',
-        *[f'- `{entry.path}`' for entry in entries if entry.scope == 'report-only'],
-        '## Unread or incompletely reported paths',
-        *[f'- `{path}`' for path in unread],
-        '## Proposed edits',
-        *[f'- `{path}`' for path in paths],
-    ]
+    summary, unread, _ = coverage_report(entries, args.source, args.directory, paths)
     (args.directory / 'summary.md').write_text('\n'.join(summary) + '\n')
     if (paths or publication is not None) and unread:
         raise ValueError('Incomplete audit cannot publish trimming edits')
