@@ -26,9 +26,9 @@ function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
-/** A row per project, the current one first, which starts in its current checkout, else its main one, else its first; an unfolded
- * project's checkouts, including Git worktrees without sessions, follow it, leaving out removed ones. The current
- * directory comes first on its own when no project holds it. */
+/** A row per project, the current one first, which starts in its current checkout, else its main one, else its first;
+ * an unfolded project's checkouts, including Git worktrees without sessions, follow it, leaving out removed ones. The
+ * current directory comes first on its own when no project holds it. */
 function places(projects: Project[], unfolded: (key: string) => boolean, current?: string): Place[] {
   const found: Place[] = []
   const holds = (project: Project) =>
