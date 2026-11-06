@@ -676,6 +676,10 @@ _CONFUSABLES: Final = str.maketrans(
         'о': 'o', 'О': 'O', 'ο': 'o', 'Ο': 'O',
         'х': 'x', 'Х': 'X', 'Χ': 'X',
         'Ν': 'N', 'і': 'i', 'І': 'I', 'ԁ': 'd',
+        # Latin small capitals, which NFKC leaves alone and `re.IGNORECASE` doesn't match to ASCII.
+        'ᴀ': 'a', 'ʙ': 'b', 'ᴄ': 'c', 'ᴅ': 'd', 'ᴇ': 'e', 'ꜰ': 'f', 'ɢ': 'g', 'ʜ': 'h', 'ɪ': 'i', 'ᴊ': 'j',
+        'ᴋ': 'k', 'ʟ': 'l', 'ᴍ': 'm', 'ɴ': 'n', 'ᴏ': 'o', 'ᴘ': 'p', 'ʀ': 'r', 'ꜱ': 's', 'ᴛ': 't', 'ᴜ': 'u',
+        'ᴠ': 'v', 'ᴡ': 'w', 'ʏ': 'y', 'ᴢ': 'z',
     }
 )  # fmt: skip
 
@@ -685,7 +689,7 @@ def _comparable(text: str) -> str:
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
     `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
-    Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin. Entities are decoded again
+    Cyrillic, Greek and small-capital look-alikes of the letters in the system-voice tags folded to Latin. Entities are decoded again
     after that, as folding can leave one behind, such as from a full-width `&`.
     """
     text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
