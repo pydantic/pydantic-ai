@@ -841,7 +841,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
-            extra, preserved = self._retain_user_turns(to_summarize, preserved)
+            to_summarize, extra, preserved = self._retain_user_turns(split, to_summarize, preserved)
         elif self.preserve_first_user_message:
             first_user_msg = _first_user_message(split)
             if first_user_msg is not None:
@@ -890,9 +890,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         return result
 
     def _retain_user_turns(
-        self, to_summarize: list[ModelMessage], preserved: list[ModelMessage]
-    ) -> tuple[list[ModelMessage], list[ModelMessage]]:
-        """The user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
+        self, split: list[ModelMessage], to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], list[ModelMessage], list[ModelMessage]]:
+        """The prefix to summarize, the user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
         extra = self._kept_user_messages(to_summarize)
         extra = extra[-self.keep_messages :] if self.keep_messages else []
         if self.keep_tokens == 0:
@@ -909,9 +909,15 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             preserved = preserved[find_safe_cutoff(preserved, 1) :]
         elif self.keep_tokens is None:
             retained_tail_slots = max(1, self.keep_messages - len(extra))
-            if len(preserved) > retained_tail_slots:
-                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
-        return extra, preserved
+            displaced = find_safe_cutoff(preserved, retained_tail_slots)
+            if displaced:
+                # The copies took tail slots, so the messages they displaced go to the summary too, and the
+                # copies are re-picked as the newest user turns of that larger prefix, as many as before.
+                preserved = preserved[displaced:]
+                to_summarize = split[: len(split) - len(preserved)]
+                newest = self._kept_user_messages(to_summarize)
+                extra = newest[len(newest) - len(extra) :]
+        return to_summarize, extra, preserved
 
     def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
         """Rebuild each summarized user turn as a preserved, size-bounded user message."""

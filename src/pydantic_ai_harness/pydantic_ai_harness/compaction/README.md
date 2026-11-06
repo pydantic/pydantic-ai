@@ -912,7 +912,9 @@ the newest user turns from the summarized prefix alongside the summary. In messa
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
 messages survive together, except that one tail slot is reserved for the request being
 answered when retained user turns would otherwise consume it; compaction therefore does not
-grow retained copies on each cycle. With a positive `keep_tokens`, the original suffix takes
+grow retained copies on each cycle. The tail messages the retained turns leave no room for are
+summarized with the rest of the prefix, and the retained turns are the newest user turns of
+everything summarized. With a positive `keep_tokens`, the original suffix takes
 precedence: `keep_messages` caps only the additional older user turns, which do not reduce the
 retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the
 newest tail message still survives.
