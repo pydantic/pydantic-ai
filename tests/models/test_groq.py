@@ -61,7 +61,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_im
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, NotGiven
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -6299,13 +6299,13 @@ def get_mock_chat_completion_kwargs(mock_client: AsyncGroq) -> list[dict[str, An
         ('auto', 'auto'),
         ('default', 'on_demand'),
         ('flex', 'flex'),
-        ('priority', NOT_GIVEN),
+        ('priority', None),  # no Groq equivalent: the tier is omitted
     ],
 )
 async def test_groq_unified_service_tier_mapped_values(
     allow_model_requests: None,
     service_tier: ServiceTier,
-    expected: str | NotGiven,
+    expected: str | None,
 ) -> None:
     """The unified `service_tier` is mapped onto Groq's tiers; `priority` has no Groq equivalent."""
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
@@ -6316,7 +6316,7 @@ async def test_groq_unified_service_tier_mapped_values(
     await agent.run('hello', model_settings=GroqModelSettings(service_tier=service_tier))
 
     request = get_mock_chat_completion_kwargs(mock_client)[0]
-    if expected is NOT_GIVEN:
+    if expected is None:
         assert request['service_tier'] is NOT_GIVEN
     else:
         assert request['service_tier'] == expected

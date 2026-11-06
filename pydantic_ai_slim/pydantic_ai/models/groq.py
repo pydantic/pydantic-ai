@@ -210,6 +210,25 @@ class GroqModelSettings(ModelSettings, total=False):
     """
 
 
+def _resolve_service_tier(
+    model_settings: GroqModelSettings,
+) -> Literal['auto', 'on_demand', 'flex', 'performance'] | NotGiven:
+    """Resolve the tier to request: `groq_service_tier` takes precedence over the unified `service_tier`."""
+    groq_service_tier = model_settings.get('groq_service_tier')
+    if groq_service_tier is not None:
+        return groq_service_tier
+    # Unified `priority` is omitted: Groq's `performance` tier is enterprise-only, reachable
+    # only via `groq_service_tier` (not typed in the SDK's request literal, hence the cast).
+    unified_tier = model_settings.get('service_tier')
+    if unified_tier == 'auto':
+        return 'auto'
+    elif unified_tier == 'default':
+        return 'on_demand'
+    elif unified_tier == 'flex':
+        return 'flex'
+    return NOT_GIVEN
+
+
 @dataclass(init=False)
 class GroqModel(Model[AsyncGroq]):
     """A model that uses the Groq API.
@@ -503,20 +522,6 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        # Resolve the tier to request: `groq_service_tier` takes precedence over the unified
-        # `service_tier`, mapped ('auto' -> 'auto', 'default' -> 'on_demand', 'flex' -> 'flex').
-        # Unified `priority` is omitted: Groq's `performance` tier is enterprise-only, reachable
-        # only via `groq_service_tier` (not typed in the SDK's request literal, hence the cast).
-        groq_service_tier = model_settings.get('groq_service_tier')
-        if groq_service_tier is None:
-            unified_tier = model_settings.get('service_tier')
-            if unified_tier == 'auto':
-                groq_service_tier = 'auto'
-            elif unified_tier == 'default':
-                groq_service_tier = 'on_demand'
-            elif unified_tier == 'flex':
-                groq_service_tier = 'flex'
-
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await with_max_retries(self.client, model_settings).chat.completions.create(
                 model=self._model_name,
@@ -537,7 +542,7 @@ class GroqModel(Model[AsyncGroq]):
                 reasoning_format=self._translate_thinking(model_settings, model_request_parameters, disable_via_effort),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                service_tier=cast(Any, groq_service_tier or NOT_GIVEN),
+                service_tier=cast(Any, _resolve_service_tier(model_settings)),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 search_settings=search_settings,
