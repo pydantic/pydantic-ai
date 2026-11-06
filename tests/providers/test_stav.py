@@ -163,6 +163,21 @@ def test_stav_provider_region_country_code():
     assert provider.client.default_headers['X-Stav-Runs-In'] == 'no'
 
 
+@pytest.mark.parametrize(
+    ('region', 'expected'),
+    [(['no', 'se'], 'no,se'), (('eu',), 'eu'), (['no', ' se '], 'no,se')],
+)
+def test_stav_provider_region_list(region: list[str] | tuple[str, ...], expected: str):
+    provider = StavProvider(api_key='api-key', region=region)
+    assert provider.client.default_headers['X-Stav-Runs-In'] == expected
+
+
+@pytest.mark.parametrize('region', [[], '', ['no', '']])
+def test_stav_provider_region_empty(region: list[str] | str):
+    with pytest.raises(UserError, match=re.escape('`region` must be a region or a non-empty list of regions')):
+        StavProvider(api_key='api-key', region=region)
+
+
 def test_stav_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key', base_url='https://api.stav.ai/v1')
     provider = StavProvider(openai_client=openai_client)

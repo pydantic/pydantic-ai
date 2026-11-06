@@ -283,7 +283,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-By default Stav may route a request to any region. To keep compute inside the EU or the EEA, or in one country, pass `region` (`'eu'`, `'eea'`, or an ISO 3166-1 alpha-2 country code such as `'no'`). The provider sends it as the `X-Stav-Runs-In` header on every request; it can narrow, but never widen, a region already set on the API key or workspace:
+By default Stav may route a request to any region. To keep compute inside the EU or the EEA, or in one country, pass `region`: `'eu'`, `'eea'`, an ISO 3166-1 alpha-2 country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. This is a jurisdiction, not a cloud site. The provider sends it as the `X-Stav-Runs-In` header on every request; it can narrow, but never widen, a region already set on the API key or workspace. Stav refuses a request it cannot serve inside the region instead of sending it elsewhere:
 
 ```python
 from pydantic_ai import Agent

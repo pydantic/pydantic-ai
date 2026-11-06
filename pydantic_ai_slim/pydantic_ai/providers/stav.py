@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Sequence
 from typing import Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -34,6 +35,16 @@ else:
 __all__ = ['StavProvider']
 
 _RUNS_IN_HEADER = 'X-Stav-Runs-In'
+
+
+def _runs_in_header_value(region: str | Sequence[str] | None) -> str | None:
+    if region is None:
+        return None
+    parts = [region] if isinstance(region, str) else list(region)
+    parts = [part.strip() for part in parts]
+    if not parts or not all(parts):
+        raise UserError("`region` must be a region or a non-empty list of regions, like `'eu'` or `['no', 'se']`.")
+    return ','.join(parts)
 
 
 def _openai_model_profile(model_name: str) -> ModelProfile | None:
@@ -100,7 +111,7 @@ class StavProvider(_OpenAISDKProvider):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        region: Literal['eu', 'eea'] | str | None = None,
+        region: Literal['eu', 'eea'] | str | Sequence[str] | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
@@ -112,7 +123,7 @@ class StavProvider(_OpenAISDKProvider):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        region: Literal['eu', 'eea'] | str | None = None,
+        region: Literal['eu', 'eea'] | str | Sequence[str] | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -123,11 +134,12 @@ class StavProvider(_OpenAISDKProvider):
                 will be used if available.
             base_url: The base URL of the Stav API. If not provided, the `STAV_BASE_URL` environment variable
                 will be used if available, falling back to `https://api.stav.ai/v1`.
-            region: Where Stav may run requests: `'eu'`, `'eea'`, or an ISO 3166-1 alpha-2 country code.
-                `None` (the default) lets Stav route globally. The region is sent as the `X-Stav-Runs-In` header
-                on every request, and can only narrow a region already set on the API key or workspace.
-                The header requires a Stav gateway release that reads it; on an older one, pass
-                `extra_body={'provider': {'runs_in': 'eu'}}` in the model settings instead.
+            region: The jurisdiction Stav may run requests in: `'eu'`, `'eea'`, an ISO 3166-1 alpha-2 country
+                code such as `'no'`, or a list of these (`['no', 'se']`), which allows any of them. This is a
+                jurisdiction, not a cloud site like Bedrock's `region_name='eu-north-1'`. `None` (the default)
+                lets Stav route globally. The region is sent as the `X-Stav-Runs-In` header on every request,
+                and can only narrow a region already set on the API key or workspace. Stav refuses a request it
+                cannot serve inside the region rather than sending it elsewhere.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url`, `region`
                 and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
@@ -150,7 +162,8 @@ class StavProvider(_OpenAISDKProvider):
             )
 
         self._base_url = base_url or os.getenv('STAV_BASE_URL', 'https://api.stav.ai/v1')
-        default_headers = {_RUNS_IN_HEADER: region} if region is not None else None
+        runs_in = _runs_in_header_value(region)
+        default_headers = {_RUNS_IN_HEADER: runs_in} if runs_in is not None else None
         self._client = self._create_openai_client(
             base_url=self._base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
         )
