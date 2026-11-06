@@ -334,6 +334,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         items: list[ModelResponsePart] = []
 
+        if reasoning := choice.message.reasoning:
+            items.append(ThinkingPart(reasoning))
         if content:
             items.extend(
                 split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
@@ -609,6 +611,13 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
+                # Handle the reasoning part of the response
+                if reasoning := choice.delta.reasoning:
+                    for event in self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='reasoning',
+                        content=reasoning,
+                    ):
+                        yield event
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:

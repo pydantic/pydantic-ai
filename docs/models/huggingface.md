@@ -101,6 +101,9 @@ agent = Agent(model)
 ...
 ```
 
+## Thinking
+
+Some Inference Providers return reasoning for models like DeepSeek R1 and Qwen in the response's native `reasoning` field, and some embed it in the content as `<think>` tags. Pydantic AI parses both into [`ThinkingPart`s][pydantic_ai.messages.ThinkingPart] on the response message, and sends them back to the provider as text in the model's thinking tags on subsequent requests over the same message history. See [Thinking](../capabilities/thinking.md) for the general thinking support.
 ## Streaming cancellation
 
 !!! note "Transport cancellation"
