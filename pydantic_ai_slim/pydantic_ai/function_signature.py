@@ -20,6 +20,7 @@ __all__ = (
     'UnionTypeExpr',
 )
 
+import keyword
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
@@ -103,6 +104,34 @@ _DOC_INDENT = '    '
 _DESCRIPTION_ESCAPES = str.maketrans({'\\': '\\\\', '\0': '\\x00', '"': '\\"'})
 
 
+_NON_IDENTIFIER_CHAR_RE = re.compile(r'[^a-zA-Z0-9_]')
+
+
+def _is_python_identifier(name: str) -> bool:
+    """Whether `name` can be written as a Python parameter or class attribute name."""
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def _to_python_identifier(name: str) -> str:
+    """Turn a JSON schema property name into a valid Python identifier.
+
+    Replaces characters outside `[a-zA-Z0-9_]` with `_`, prepends `_` if the result starts
+    with a digit, and appends `_` if it is a Python keyword (`from` becomes `from_`).
+    """
+    sanitized = _NON_IDENTIFIER_CHAR_RE.sub('_', name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f'_{sanitized}'
+    if keyword.iskeyword(sanitized):
+        sanitized = f'{sanitized}_'
+    return sanitized or '_'
+
+
+def _render_comment(text: str, indent: str = '') -> list[str]:
+    """Render a description as a list of indented `#` comment lines."""
+    # compile() rejects null bytes anywhere in the source, comments included.
+    return [f'{indent}# {line}'.rstrip() for line in text.strip().replace('\0', '\\x00').splitlines()]
+
+
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
     text = text.strip().translate(_DESCRIPTION_ESCAPES)
@@ -128,13 +157,26 @@ class TypeFieldSignature:
 
     def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
-        type_str = str(self.type)
-        if not self.required:
-            type_str = f'NotRequired[{type_str}]'
-        lines: list[str] = [f'    {self.name}: {type_str}']
+        lines: list[str] = [f'    {self.name}: {_field_annotation(self)}']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
         return '\n'.join(lines)
+
+
+def _field_annotation(f: TypeFieldSignature) -> str:
+    type_str = str(f.type)
+    return type_str if f.required else f'NotRequired[{type_str}]'
+
+
+def _render_functional_field(f: TypeFieldSignature) -> str:
+    """Render a field as an entry of a functional `TypedDict(...)` definition's field dict.
+
+    The key keeps the schema name, quoted. A description can't follow the entry as a docstring,
+    so it goes in a comment above it.
+    """
+    lines = _render_comment(f.description, indent='    ') if f.description else []
+    lines.append(f'    {f.name!r}: {_field_annotation(f)},')
+    return '\n'.join(lines)
 
 
 @dataclass(kw_only=True)
@@ -185,6 +227,8 @@ class TypeSignature:
 
     def _render_definition(self) -> str:
         """Render the full TypedDict class definition (internal, assumes overrides are set)."""
+        if not all(_is_python_identifier(name) for name in self.fields):
+            return self._render_functional_definition()
         lines = [f'class {self.display_name}(TypedDict):']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
@@ -194,6 +238,18 @@ class TypeSignature:
         else:
             for f in self.fields.values():
                 lines.append(str(f))
+        return '\n'.join(lines)
+
+    def _render_functional_definition(self) -> str:
+        """Render the definition with the functional `TypedDict` syntax.
+
+        Used when a field name is a Python keyword (`from`) or not an identifier (`@type`), which the class
+        syntax can't declare. The sandbox sees such an object as a `dict`, so the keys keep their schema names.
+        """
+        lines = _render_comment(self.description) if self.description else []
+        lines.append(f'{self.display_name} = TypedDict({self.display_name!r}, {{')
+        lines.extend(_render_functional_field(f) for f in self.fields.values())
+        lines.append('})')
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
@@ -218,6 +274,11 @@ class FunctionParam:
     """A single parameter in a function signature."""
 
     name: str
+    """The Python identifier the parameter renders as.
+
+    This differs from its key in `FunctionSignature.params`, the JSON schema property name, when that name
+    is a Python keyword or not an identifier: `from` renders as `from_` and `user-id` as `user_id`.
+    """
     type: TypeExpr
     default: str | None = None
     description: str | None = None
@@ -243,7 +304,8 @@ class FunctionSignature:
     name: str
     description: str | None = None
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
-    """Function parameters, all rendered as keyword-only (JSON schema doesn't distinguish positional/keyword)."""
+    """Function parameters keyed by JSON schema property name, all rendered as keyword-only (JSON schema doesn't
+    distinguish positional/keyword)."""
 
     return_type: TypeExpr
     """The return type expression."""
@@ -602,6 +664,7 @@ def _build_params_from_schema(
     """Convert a JSON schema to a dict of FunctionParam objects."""
     properties = schema.get('properties', {})
     required = set(schema.get('required', []))
+    param_names = _python_param_names(properties)
 
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
@@ -610,29 +673,53 @@ def _build_params_from_schema(
         prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
         description = prop_schema.get('description', '') or None
+        param_name = param_names[prop_name]
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
             optional_params[prop_name] = FunctionParam(
-                name=prop_name, type=type_expr, default=default_str, description=description
+                name=param_name, type=type_expr, default=default_str, description=description
             )
         elif prop_name in required:
             required_params[prop_name] = FunctionParam(
-                name=prop_name, type=type_expr, default=None, description=description
+                name=param_name, type=type_expr, default=None, description=description
             )
         else:
             # Optional without default — add | None
             if _schema_allows_null(prop_schema):
                 optional_params[prop_name] = FunctionParam(
-                    name=prop_name, type=type_expr, default='None', description=description
+                    name=param_name, type=type_expr, default='None', description=description
                 )
             else:
                 nullable_expr = UnionTypeExpr(members=[type_expr, _NONE])
                 optional_params[prop_name] = FunctionParam(
-                    name=prop_name, type=nullable_expr, default='None', description=description
+                    name=param_name, type=nullable_expr, default='None', description=description
                 )
 
     return {**required_params, **optional_params}
+
+
+def _python_param_names(property_names: Iterable[str]) -> dict[str, str]:
+    """Map each schema property name to the Python identifier its parameter renders as.
+
+    A name that is already a valid identifier keeps it. Any other name is sanitized by
+    `_to_python_identifier`, then numbered (`user_id_2`, `user_id_3`, ...) if another parameter
+    already has that name.
+    """
+    names = list(property_names)
+    taken = {name for name in names if _is_python_identifier(name)}
+    param_names: dict[str, str] = {}
+    for name in names:
+        if _is_python_identifier(name):
+            param_names[name] = name
+            continue
+        param_name = base = _to_python_identifier(name)
+        suffix = 2
+        while param_name in taken:
+            param_name, suffix = f'{base}_{suffix}', suffix + 1
+        taken.add(param_name)
+        param_names[name] = param_name
+    return param_names
 
 
 def _schema_allows_null(schema: dict[str, Any]) -> bool:

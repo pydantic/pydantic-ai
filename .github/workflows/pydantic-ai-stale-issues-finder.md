@@ -149,8 +149,11 @@ pre-agent-steps:
   # and also reads $GITHUB_PATH entries added before the engine step.
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
+  # Check out the workflow's commit at /tmp/gh-aw/runner-src, where the
+  # launcher runs the shim and its library from, and fail the job if it
+  # cannot. Then warm that checkout's uv script environment on the OPEN
+  # network so the firewalled agent reuses a warm cache. The warm-up is
+  # non-fatal on failure.
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Fetch all open issues before the AWF firewall blocks gh CLI access.

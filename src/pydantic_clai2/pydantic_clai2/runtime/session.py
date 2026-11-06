@@ -398,6 +398,20 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     return ref is not None and ref.provider == 'local' and ref != WorkspaceRef(provider='local', id=workspace)
 
 
+def _report_context_usage(messages: Sequence[ModelMessage], report: Callable[[int], None]) -> None:
+    """Tell `report` the context size of the latest response that counted its input tokens, if any did."""
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse) and message.usage.input_tokens:
+            report(context_tokens(message))
+            return
+
+
+def _first_title(text: str | None) -> str:
+    """A new conversation's title: its first prompt's printable text on one line, cut to 64 characters."""
+    printable = ''.join(c for c in (text or '') if c.isprintable() or c.isspace())
+    return ' '.join(printable.split())[:64] or 'New session'
+
+
 class StockAgent(Agent[DepsT, OutputT]):
     """A CLAI-owned agent whose configuration can be rebuilt with active plugins."""
 
@@ -931,14 +945,41 @@ class Session(Generic[DepsT, OutputT]):
         self._monty_notes.clear()
         return notes
 
-    async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
-        """Execute the complete native agent loop, including tool calls."""
-        if self._running:
-            raise RuntimeError('A conversation can only run one prompt at a time')
+    def _prompt_content(self, text: str | None, images: Sequence[BinaryContent]) -> str | Sequence[UserContent] | None:
+        """What a prompt sends: `text` and `images`, after the notes on the cells run since the last prompt."""
         content: str | Sequence[UserContent] | None = [*([text] if text else []), *images] if images else text
         if content is not None and (notes := self._take_monty_notes()):
             # Monty holds what the user's cells did; tell the model before this prompt.
             content = [*notes, *([content] if isinstance(content, str) else content)]
+        return content
+
+    def _bind_prompt(
+        self, text: str | None, previous: Sequence[ModelMessage]
+    ) -> tuple[str | None, list[AgentCapability[DepsT]], Literal['new'] | None]:
+        """`_bind` for a prompt, plus its task reports and CLAI's `LocalWorkspace`, and the run's `workspace`.
+
+        The `workspace` is `'new'` when `previous` last worked in another local directory.
+        """
+        run_model, capabilities = self._bind()
+        if self.delegations is not None:
+            capabilities.append(
+                DelegationReports(
+                    self.delegations,
+                    conversation_id=self.summary.id,
+                    priority='asap' if text is None else 'when_idle',
+                )
+            )
+        workspace: Literal['new'] | None = None
+        if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
+            # A conversation resumed from another directory: work in this session's.
+            workspace = 'new'
+        return run_model, capabilities, workspace
+
+    async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
+        """Execute the complete native agent loop, including tool calls."""
+        if self._running:
+            raise RuntimeError('A conversation can only run one prompt at a time')
+        content = self._prompt_content(text, images)
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
@@ -949,9 +990,7 @@ class Session(Generic[DepsT, OutputT]):
                 candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
                 if self.conversations is not None:
                     if self.summary.revision == 0:
-                        printable = ''.join(c for c in (text or '') if c.isprintable() or c.isspace())
-                        title = ' '.join(printable.split())[:64]
-                        candidate = replace(candidate, title=title or 'New session')
+                        candidate = replace(candidate, title=_first_title(text))
                     accepted: list[ModelMessage] = [*previous, *submitted]
                     self.summary = await self.conversations.save(
                         summary=await self._with_checkout(replace(candidate, outcome='running')), messages=accepted
@@ -965,19 +1004,7 @@ class Session(Generic[DepsT, OutputT]):
                         # The first save titles a new conversation. Inside the handlers below, so a
                         # failed or cancelled observer still finalizes the `running` head saved above.
                         await self._publish()
-                        run_model, capabilities = self._bind()
-                        if self.delegations is not None:
-                            capabilities.append(
-                                DelegationReports(
-                                    self.delegations,
-                                    conversation_id=self.summary.id,
-                                    priority='asap' if text is None else 'when_idle',
-                                )
-                            )
-                        workspace: Literal['new'] | None = None
-                        if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
-                            # A conversation resumed from another directory: work in this session's.
-                            workspace = 'new'
+                        run_model, capabilities, workspace = self._bind_prompt(text, previous)
                         result = await self.agent.run(
                             content,
                             deps=self.deps,
@@ -1042,34 +1069,36 @@ class Session(Generic[DepsT, OutputT]):
         self._pending_steering.clear()
         if self.on_context_window is not None and (window := ctx.model.context_window):
             self.on_context_window(window)
-
-        async def observed() -> AsyncIterable[AgentStreamEvent]:
-            reported: ModelResponse | None = None
-            async for event in events:
-                if self.on_usage is not None:
-                    latest = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
-                    if latest is not None and latest is not reported:
-                        reported = latest
-                        self.on_usage(ctx.messages)
-                if self.on_context_usage is not None:
-                    for message in reversed(ctx.messages):
-                        if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(context_tokens(message))
-                            break
-                if self.on_stream_event is not None:
-                    await self.on_stream_event(event)
-                yield event
-            self._accepting_steering = False
-            self._run_context = None
-
         # Preserve a supplied agent's handler instead of replacing its observers.
         handler = self.agent.event_stream_handler
         try:
             if handler is not None:
-                await handler(ctx, observed())
+                await handler(ctx, self._observed(ctx, events))
             else:
-                async for _ in observed():
+                async for _ in self._observed(ctx, events):
                     pass
         finally:
             self._accepting_steering = False
             self._run_context = None
+
+    async def _observed(
+        self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """`events` as they pass, reported to the observers the shell set.
+
+        `on_usage` hears of each new response, `on_context_usage` of the context size, `on_stream_event` of each event.
+        """
+        reported: ModelResponse | None = None
+        async for event in events:
+            if self.on_usage is not None:
+                latest = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
+                if latest is not None and latest is not reported:
+                    reported = latest
+                    self.on_usage(ctx.messages)
+            if self.on_context_usage is not None:
+                _report_context_usage(ctx.messages, self.on_context_usage)
+            if self.on_stream_event is not None:
+                await self.on_stream_event(event)
+            yield event
+        self._accepting_steering = False
+        self._run_context = None

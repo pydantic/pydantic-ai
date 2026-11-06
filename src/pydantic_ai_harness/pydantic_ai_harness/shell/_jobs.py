@@ -80,8 +80,7 @@ watch_logs() {{
 }}
 stop_watcher() {{
   [ -z "$watcher" ] || {{
-    true 2> /dev/null > "$dir/watch.stop"
-    [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
+    true 2> /dev/null > "$dir/watch.stop" && [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
     wait "$watcher" 2> /dev/null
   }}
 }}
@@ -121,7 +120,9 @@ size doesn't clear it at every check. The watcher starts before `max_file_bytes`
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
 own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only once
 the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its last
-check. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
+check. When `watch.stop` cannot be created, as when the command removed the job directory, the wrapper sends `TERM`
+regardless: the logs that last check would clear are gone, and a watcher sent neither would keep the wrapper waiting on
+it. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM`
 ignored, at its next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a
 `sleep` without fractional seconds gets 1.
 
@@ -224,20 +225,14 @@ class Job:
         job_id: str | None = None,
     ) -> Job:
         directory = posixpath.join(base, job_id or uuid.uuid4().hex)
-        mode = 'combined' if combined else 'separate'
-        assignments = ' '.join(
-            f'{name}={shlex.quote(value)}'
-            for name, value in (
-                ('dir', directory),
-                ('exclusive', '1' if job_id is not None else '0'),
-                ('mode', mode),
-                ('limit', '' if file_limit is None else str(file_limit)),
-                ('log_limit', '' if log_limit is None else str(log_limit)),
-                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
-                ('wrapper', _WRAPPER),
-            )
+        script = cls._launch_script(
+            directory,
+            cwd,
+            exclusive=job_id is not None,
+            combined=combined,
+            file_limit=file_limit,
+            log_limit=log_limit,
         )
-        script = f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
         result = await run_model_command(
             workspace, lambda cmd: ['sh', '-c', script, 'sh', cmd], command, env=env, timeout=CONTROL_TIMEOUT
         )
@@ -259,6 +254,26 @@ class Job:
             raise ModelRetry(f'Shell supervisor exited with {result.exit_code}: {detail}')
         pgid = int(fields[1]) if fields[1].isdigit() else None
         return cls(workspace=workspace, directory=directory, pid=int(fields[0]), pgid=pgid, combined=combined)
+
+    @staticmethod
+    def _launch_script(
+        directory: str, cwd: str, *, exclusive: bool, combined: bool, file_limit: int | None, log_limit: int | None
+    ) -> str:
+        """The `sh` script that runs `_LAUNCHER` in `cwd`, its variables set for a job in `directory`."""
+        mode = 'combined' if combined else 'separate'
+        assignments = ' '.join(
+            f'{name}={shlex.quote(value)}'
+            for name, value in (
+                ('dir', directory),
+                ('exclusive', '1' if exclusive else '0'),
+                ('mode', mode),
+                ('limit', '' if file_limit is None else str(file_limit)),
+                ('log_limit', '' if log_limit is None else str(log_limit)),
+                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
+                ('wrapper', _WRAPPER),
+            )
+        )
+        return f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
 
     @classmethod
     async def attach(cls, workspace: Workspace, directory: str, *, combined: bool) -> Job | None:
