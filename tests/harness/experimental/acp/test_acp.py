@@ -685,6 +685,22 @@ class TestStreaming:
         [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
         assert update.used == request_usage.total_tokens == 120
 
+    async def test_prompt_sends_usage_update_once_per_prompt_with_model_usage_and_window(self) -> None:
+        model = TestModel(custom_output_text='done', profile={'context_window': 123_456})
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(model))
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        first = await adapter.prompt(prompt=[acp.text_block('first')], session_id=session_id)
+        second = await adapter.prompt(prompt=[acp.text_block('second')], session_id=session_id)
+
+        assert first.usage is not None and second.usage is not None
+        updates = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert [(update.used, update.size) for update in updates] == [
+            (first.usage.total_tokens, 123_456),
+            (second.usage.total_tokens, 123_456),
+        ]
+
     async def test_usage_update_is_skipped_without_a_connection(self) -> None:
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
 
