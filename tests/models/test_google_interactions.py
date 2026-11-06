@@ -429,8 +429,12 @@ async def test_multimodal_tool_return(
 
 @pytest.mark.parametrize('direction', ['to_interactions', 'to_generate_content'])
 async def test_cross_api_history(
-    interactions_model: GoogleInteractionsModel, direction: str, allow_model_requests: None
+    interactions_model: GoogleInteractionsModel,
+    request_capture: RequestCapture,
+    direction: str,
+    allow_model_requests: None,
 ):
+    """GenerateContent native parts carry no Interactions steps, so continuing on Interactions omits them."""
     from pydantic_ai.models.google import GoogleModel
 
     provider = interactions_model.provider
@@ -441,19 +445,33 @@ async def test_cross_api_history(
         if direction == 'to_interactions'
         else (interactions_model, generate_content)
     )
-    agent = Agent(source)
+    native = direction == 'to_interactions'
+    agent = Agent(source, capabilities=[NativeTool(CodeExecutionTool())] if native else [])
 
     @agent.tool_plain
     def get_secret() -> str:
         """Look up the secret phrase."""
         return 'emerald tiger'
 
-    first = await agent.run('Call get_secret to get the secret phrase.')
+    first = await agent.run(
+        'Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.'
+        if native
+        else 'Call get_secret to get the secret phrase.'
+    )
     history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+    assert native == any(
+        isinstance(part, NativeToolCallPart)
+        for message in history
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
     assert (
         'emerald tiger'
         in (await agent.run('Repeat the secret phrase.', model=target, message_history=history)).output.lower()
     )
+    if native:
+        steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(request_capture.body(index=-1)['input'])
+        assert not any(str(step.get('type')).startswith('code_execution') for step in steps)
 
 
 async def test_vertex(vertex_provider: GoogleProvider, allow_model_requests: None):

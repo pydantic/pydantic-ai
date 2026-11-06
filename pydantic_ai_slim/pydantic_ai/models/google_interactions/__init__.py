@@ -751,9 +751,10 @@ class GoogleInteractionsModel(Model[Client]):
     def _map_native_part(
         self, message: ModelResponse, part: NativeToolCallPart | NativeToolReturnPart
     ) -> list[dict[str, JsonValue]]:
-        if not self.accepts_stateless_artifacts(message, part):
-            return []
         raw = JSON_OBJECT.validate_python(part.provider_details or {})
+        # GenerateContent history shares the canonical system but carries no Interactions step to replay.
+        if 'type' not in raw or not self.accepts_stateless_artifacts(message, part):
+            return []
         return [
             replay_step(
                 {key: value for key, value in raw.items() if not key.startswith('google_interactions_')}, [part]

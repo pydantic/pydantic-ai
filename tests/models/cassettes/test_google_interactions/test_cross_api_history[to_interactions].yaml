@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1849"
+      - "2076"
       content-type:
       - application/json
       host:
@@ -31,32 +31,38 @@ interactions:
             properties: {}
             type: object
           type: function
+        - type: code_execution
         input:
         - type: user_input
           content:
           - type: text
-            text: Call get_secret to get the secret phrase.
+            text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
         - type: thought
           signature: >-
-            ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M/CiIUBN4DwHUh7Lo/j+ae74lxGF+BS3wtK3DUreC0j+6mS4Vs+SfKORI7FhW/m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz/ZJuB0fxbyHVj/ALai/p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB/go5DVc31V+/4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ//j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u/8zUFOASfRxUGlY+kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N/FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX+DyEOUe0TT/OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO/u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt+9QTt/IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP/h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+            EskECsYEAWkUfRO64d0IC5pLrJ3M96c5MAs9zgERmjQ8mkY+BbIT7wpyPzOzF4RGlT4D/YMfUKKfVaHoxgdzhFnjjwx5FULjKxCjg8NqRE1ap1+/TQkX4bfHIqJC1lmp2IrPLrfHgToKaygr5LNNDIpgw+RFsHCfaqcTFf7wvSwHgbxhahf/YsLPpjOjqxe6wcXEYA8QLCDWnhT68+8dg9nkDYON7xXhOuSeqDDPHr3kn4AIa1gxAROrES4hwQAPF37PHZ/GqgIZdHbRkMfa0RCoo0uBdseFq/pnXMU6oZGOul6DVeS8vLeMQT5pF/ZhnJKWOfpZ9ztUs1MqXBKjfZm6P4sNDpkaJ54OBqSJEn0QKzEy5s+DFMN2XOBOYegmxStmlGmB0yawnfxw9Y6HMieqwqVju3lvO+20pz0zAC6ZgXvKqMEfOj7awC3Xz2t3U2k+pYKw7y4d7bqiclTHUuTl6GgUE8xgtX0XbZZKkt4ZPS0Md62gAobwg3uc9z8KLST3Jmcj6dp7mr12sUrO417g0oB1aoVX6u6VEXlz6A0oNOdy2MLpwwAzPpfdmaIJx71cDE2qyuKi9KTC579LPH1ea2nZeNhlqrt4Xa2Uwg0F4OXxi8nwzq1A5fD2yILvNkuabXh5FK8q0jyqQ85064clNcUm7BNvW8CRgFT1L/qJfYZV78uJC1PQt3EaUSO9bf81FQYwit7f+c8IUQFWh0rjmYZUWYO0L7etMuGnodlBmB+3xpGFP0VQIVXxsIKEysW8x8oODpVhEE3f
         - type: function_call
-          id: call_386216
+          id: call_14053763028014287047
           name: get_secret
           arguments: {}
         - type: function_result
           name: get_secret
-          call_id: call_386216
+          call_id: call_14053763028014287047
           is_error: false
           result:
           - type: text
             text: emerald tiger
         - type: thought
           signature: >-
-            ErwBCrkBAWkUfRNguauzWgItwfYZ8+ulUqsIsaOHZoEnycmt8colsLCUFzF3hKcI0tPoCNOqBQ64t4PsMJF/3IU/PLVx8/rHkrxVHuJaQMACGb5wswOwH4b/CvRYl36LM133WBst952vdK52Cuz1YQEoJydAgpb76UK6oxlkc3l1T/qJ5HXSJApQRwKh0Ndh9LQ4XgQB3Mc8v/tQmMr5/sAnVmiG2G65bn0gOdQWFTY+2lYb9etS1F7MukZ0Mbs=
+            EtUBCtIBAWkUfRM8wFXzi98N+uPNRiRo7AgR1tkD8AlAxYwhnKryt/VCGls8UPbAQe/JIB/0evvWpDDqPSwF0OFno2WbsJIIDoqX5eMGRLs0o/GiYYLaBEFdBM8GQXV1rvQbF9rNWAH/TlOt4Mxq3u9WhYWNeOXjwmrCwqjlgfc+7JSAndUte1RTKK+w6DSpIMMebhPtqwSmlVQYDOolsdUu6ZuvT0Py+7VECt9AjSrOBlCAJH5f2bNqRIrFbbsN8qHW9PO5IlPJXQKRAg0gjEQjqDJcuPMt
         - type: model_output
           content:
           - type: text
-            text: The secret phrase is **emerald tiger**.
+            text: |-
+              The calculation $17 \times 23$ yields **391**.
+
+              The secret phrase retrieved is **"emerald tiger"**.
         - type: user_input
           content:
           - type: text
@@ -69,7 +75,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - gfet4t7; dur=1925
+      - gfet4t7; dur=2040
       transfer-encoding:
       - chunked
       vary:
@@ -81,22 +87,22 @@ interactions:
       content:
         status: completed
         usage:
-          total_tokens: 243
-          total_input_tokens: 207
+          total_tokens: 284
+          total_input_tokens: 258
           input_tokens_by_modality:
           - modality: text
-            tokens: 207
+            tokens: 258
           total_cached_tokens: 0
           total_output_tokens: 8
           total_tool_use_tokens: 0
-          total_thought_tokens: 28
-          initial_input_tokens: 195
-        created: 2026-11-05T15:43:28Z
-        updated: 2026-11-05T15:43:28Z
+          total_thought_tokens: 18
+          initial_input_tokens: 244
+        created: 2026-11-06T17:07:02Z
+        updated: 2026-11-06T17:07:02Z
         service_tier: standard
         steps:
         - signature: >-
-            EukBCuYBAWkUfRNG0cWmALjRzGs/B+GhOsmdpWHqWvEddzQgsFrCzbjTBOm8VTvNVIbaMZPI/5/vARevNn7kN1ajBt1m1E6ibchvZPH6iWAVUVuct2bGQs6dBxfgEJuczpRna3uOl/xmoRnXcJHTXcp8kojUDet8OaghXPjHqxoJMqC9AxyJL124+X+qHEvhmLSCBrEqYr2q5lC1aCMGOJpUBm5PmqgQ6mUSPRg7WuKD94sTWam+Ox4jJTQeHwEDW9vjpbmd7SdyDClIHWDLaq9JxqQQ4WuNqi61MZSl7zVaPh2YmjnFR0ygmqY=
+            EroBCrcBAWkUfRPN44ynSAnxYC2tX4Kf6vt89F3PmUc3CfrvU1iON80Gr+i6zx+BxvkSm9d9MtUoR3BhGA6StFkFT2wgzRIHqkYfsDDX7w8+PJDe85XSzoIRnkt4Qm3yBOq4O0GpjP48CI2R1htsAHgmQj900L9JhJlMhhMkVDTrT8SWgEyiS+paOcX1ucwJ2fr0NdPFTKqczqBB7/6DqtZZavVTp1klXBEeaQhxLZK9z6geGrnvvP1b9N8+
           type: thought
         - content:
           - text: The secret phrase is **emerald tiger**.
@@ -104,7 +110,7 @@ interactions:
           type: model_output
         object: interaction
         model: gemini-3.8-flash
-  recorded_at: 2026-11-05T15:43:28.130616+00:00
+  recorded_at: 2026-11-06T17:07:02.453119+00:00
 - request:
     method: POST
     uri: >-
@@ -117,7 +123,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "419"
+      - "528"
       content-type:
       - application/json
       host:
@@ -127,9 +133,12 @@ interactions:
       content:
         contents:
         - parts:
-          - text: Call get_secret to get the secret phrase.
+          - text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
           role: user
         tools:
+        - codeExecution: {}
         - functionDeclarations:
           - description: Look up the secret phrase.
             name: get_secret
@@ -140,6 +149,7 @@ interactions:
         toolConfig:
           functionCallingConfig:
             mode: VALIDATED
+          includeServerSideToolInvocations: true
         generationConfig:
           responseModalities:
           - TEXT
@@ -151,7 +161,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7716
+      - gfet4t7; dur=3968
       transfer-encoding:
       - chunked
       vary:
@@ -164,28 +174,36 @@ interactions:
         candidates:
         - content:
             parts:
+            - executableCode:
+                language: PYTHON
+                code: |
+                  print(17 * 23)
+                id: call_14053763028014284866
+              thoughtSignature: >-
+                EskECsYEAWkUfRO64d0IC5pLrJ3M96c5MAs9zgERmjQ8mkY+BbIT7wpyPzOzF4RGlT4D/YMfUKKfVaHoxgdzhFnjjwx5FULjKxCjg8NqRE1ap1+/TQkX4bfHIqJC1lmp2IrPLrfHgToKaygr5LNNDIpgw+RFsHCfaqcTFf7wvSwHgbxhahf/YsLPpjOjqxe6wcXEYA8QLCDWnhT68+8dg9nkDYON7xXhOuSeqDDPHr3kn4AIa1gxAROrES4hwQAPF37PHZ/GqgIZdHbRkMfa0RCoo0uBdseFq/pnXMU6oZGOul6DVeS8vLeMQT5pF/ZhnJKWOfpZ9ztUs1MqXBKjfZm6P4sNDpkaJ54OBqSJEn0QKzEy5s+DFMN2XOBOYegmxStmlGmB0yawnfxw9Y6HMieqwqVju3lvO+20pz0zAC6ZgXvKqMEfOj7awC3Xz2t3U2k+pYKw7y4d7bqiclTHUuTl6GgUE8xgtX0XbZZKkt4ZPS0Md62gAobwg3uc9z8KLST3Jmcj6dp7mr12sUrO417g0oB1aoVX6u6VEXlz6A0oNOdy2MLpwwAzPpfdmaIJx71cDE2qyuKi9KTC579LPH1ea2nZeNhlqrt4Xa2Uwg0F4OXxi8nwzq1A5fD2yILvNkuabXh5FK8q0jyqQ85064clNcUm7BNvW8CRgFT1L/qJfYZV78uJC1PQt3EaUSO9bf81FQYwit7f+c8IUQFWh0rjmYZUWYO0L7etMuGnodlBmB+3xpGFP0VQIVXxsIKEysW8x8oODpVhEE3f
             - functionCall:
                 name: get_secret
                 args: {}
-                id: call_386216
-              thoughtSignature: >-
-                ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M/CiIUBN4DwHUh7Lo/j+ae74lxGF+BS3wtK3DUreC0j+6mS4Vs+SfKORI7FhW/m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz/ZJuB0fxbyHVj/ALai/p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB/go5DVc31V+/4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ//j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u/8zUFOASfRxUGlY+kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N/FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX+DyEOUe0TT/OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO/u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt+9QTt/IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP/h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+                id: call_14053763028014287047
+            - codeExecutionResult:
+                outcome: OUTCOME_OK
+                output: |
+                  391
+                id: call_14053763028014284866
             role: model
           finishReason: STOP
-          index: 0
-          finishMessage: Model generated function call(s).
         usageMetadata:
-          promptTokenCount: 38
-          candidatesTokenCount: 10
-          totalTokenCount: 168
+          promptTokenCount: 52
+          candidatesTokenCount: 33
+          totalTokenCount: 203
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 38
-          thoughtsTokenCount: 120
+            tokenCount: 52
+          thoughtsTokenCount: 118
           serviceTier: standard
         modelVersion: gemini-3.8-flash
-        responseId: FKTsavXtGsnT0_gPquqOuA8
-  recorded_at: 2026-11-05T15:43:24.019848+00:00
+        responseId: LQnuarOVG4e-ytMP_IrUiQ4
+  recorded_at: 2026-11-06T17:06:57.249541+00:00
 - request:
     method: POST
     uri: >-
@@ -198,7 +216,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1443"
+      - "1893"
       content-type:
       - application/json
       host:
@@ -208,24 +226,38 @@ interactions:
       content:
         contents:
         - parts:
-          - text: Call get_secret to get the secret phrase.
+          - text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
           role: user
         - parts:
+          - executableCode:
+              code: |
+                print(17 * 23)
+              language: PYTHON
+              id: call_14053763028014284866
+            thoughtSignature: >-
+              EskECsYEAWkUfRO64d0IC5pLrJ3M96c5MAs9zgERmjQ8mkY-BbIT7wpyPzOzF4RGlT4D_YMfUKKfVaHoxgdzhFnjjwx5FULjKxCjg8NqRE1ap1-_TQkX4bfHIqJC1lmp2IrPLrfHgToKaygr5LNNDIpgw-RFsHCfaqcTFf7wvSwHgbxhahf_YsLPpjOjqxe6wcXEYA8QLCDWnhT68-8dg9nkDYON7xXhOuSeqDDPHr3kn4AIa1gxAROrES4hwQAPF37PHZ_GqgIZdHbRkMfa0RCoo0uBdseFq_pnXMU6oZGOul6DVeS8vLeMQT5pF_ZhnJKWOfpZ9ztUs1MqXBKjfZm6P4sNDpkaJ54OBqSJEn0QKzEy5s-DFMN2XOBOYegmxStmlGmB0yawnfxw9Y6HMieqwqVju3lvO-20pz0zAC6ZgXvKqMEfOj7awC3Xz2t3U2k-pYKw7y4d7bqiclTHUuTl6GgUE8xgtX0XbZZKkt4ZPS0Md62gAobwg3uc9z8KLST3Jmcj6dp7mr12sUrO417g0oB1aoVX6u6VEXlz6A0oNOdy2MLpwwAzPpfdmaIJx71cDE2qyuKi9KTC579LPH1ea2nZeNhlqrt4Xa2Uwg0F4OXxi8nwzq1A5fD2yILvNkuabXh5FK8q0jyqQ85064clNcUm7BNvW8CRgFT1L_qJfYZV78uJC1PQt3EaUSO9bf81FQYwit7f-c8IUQFWh0rjmYZUWYO0L7etMuGnodlBmB-3xpGFP0VQIVXxsIKEysW8x8oODpVhEE3f
           - functionCall:
-              id: call_386216
+              id: call_14053763028014287047
               args: {}
               name: get_secret
-            thoughtSignature: >-
-              ErEECq4EAWkUfRNWJoJtLTJaHDrw5xUm7hwv7M_CiIUBN4DwHUh7Lo_j-ae74lxGF-BS3wtK3DUreC0j-6mS4Vs-SfKORI7FhW_m8tQ4JE3XWjs0OTlDDFNc2MZAldv4Q9z9azUPhFOVdq9S6lPZ9A5uw5DsqdxPz_ZJuB0fxbyHVj_ALai_p6wa4addiVVuTYnz4BPbJceLGFH2ECgOviOF4ynpfAlRtKR0bE0unvQ2oPVCtB_go5DVc31V-_4aGFZsC2W7sus5m4DHsEDnJaEmpmeYVM1nTMS3rd207P3mJVIWH2zMXoyWc6CLtORqhsWeVl6zu3YTFAaNRw1dYsfpVHnRDV5EXO9iTtFOaGnVZ__j0bEJr8uyUWFhvl85DgNbcw0CgwMUHVwAOUZpwZh1u_8zUFOASfRxUGlY-kC0oYO0fmP5Q3e3dwMlzm6kHgDb0sL5N_FbWhUdTAeJVhJIXXxz4vdxvujKc2u9BX-DyEOUe0TT_OUhVmM6wkuWgKQLZAt8pZR6f8H1MLrYJCzshsn14P0kNjVTShjjyiQxb4gm0o5N6AzmAJmbyGR3qHORc3iBevYIZ3YHIdGbyLJNV8ROCXsEmD6JRBykYA9StDFzm3rxZO_u6eESD9IxrResxtTguj1sPNoDKK7eEDvSMCyVnvuiz6Tskt-9QTt_IOPqJxoaXeVc2DzdEPO9Re0HDoXcCjkIVunbP_h4xL3WL9aSc3IUfQEEqckkhCvev9Qv
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+          - codeExecutionResult:
+              outcome: OUTCOME_OK
+              output: |
+                391
+              id: call_14053763028014284866
           role: model
         - parts:
           - functionResponse:
-              id: call_386216
+              id: call_14053763028014287047
               name: get_secret
               response:
                 return_value: emerald tiger
           role: user
         tools:
+        - codeExecution: {}
         - functionDeclarations:
           - description: Look up the secret phrase.
             name: get_secret
@@ -236,6 +268,7 @@ interactions:
         toolConfig:
           functionCallingConfig:
             mode: VALIDATED
+          includeServerSideToolInvocations: true
         generationConfig:
           responseModalities:
           - TEXT
@@ -247,7 +280,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2109
+      - gfet4t7; dur=2658
       transfer-encoding:
       - chunked
       vary:
@@ -260,21 +293,24 @@ interactions:
         candidates:
         - content:
             parts:
-            - text: The secret phrase is **emerald tiger**.
+            - text: |-
+                The calculation $17 \times 23$ yields **391**.
+
+                The secret phrase retrieved is **"emerald tiger"**.
               thoughtSignature: >-
-                ErwBCrkBAWkUfRNguauzWgItwfYZ8+ulUqsIsaOHZoEnycmt8colsLCUFzF3hKcI0tPoCNOqBQ64t4PsMJF/3IU/PLVx8/rHkrxVHuJaQMACGb5wswOwH4b/CvRYl36LM133WBst952vdK52Cuz1YQEoJydAgpb76UK6oxlkc3l1T/qJ5HXSJApQRwKh0Ndh9LQ4XgQB3Mc8v/tQmMr5/sAnVmiG2G65bn0gOdQWFTY+2lYb9etS1F7MukZ0Mbs=
+                EtUBCtIBAWkUfRM8wFXzi98N+uPNRiRo7AgR1tkD8AlAxYwhnKryt/VCGls8UPbAQe/JIB/0evvWpDDqPSwF0OFno2WbsJIIDoqX5eMGRLs0o/GiYYLaBEFdBM8GQXV1rvQbF9rNWAH/TlOt4Mxq3u9WhYWNeOXjwmrCwqjlgfc+7JSAndUte1RTKK+w6DSpIMMebhPtqwSmlVQYDOolsdUu6ZuvT0Py+7VECt9AjSrOBlCAJH5f2bNqRIrFbbsN8qHW9PO5IlPJXQKRAg0gjEQjqDJcuPMt
             role: model
           finishReason: STOP
           index: 0
         usageMetadata:
-          promptTokenCount: 185
-          candidatesTokenCount: 8
-          totalTokenCount: 209
+          promptTokenCount: 197
+          candidatesTokenCount: 29
+          totalTokenCount: 258
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 185
-          thoughtsTokenCount: 16
+            tokenCount: 197
+          thoughtsTokenCount: 32
           serviceTier: standard
         modelVersion: gemini-3.8-flash
-        responseId: HKTsaozVDbDGiLMPkumgmAc
-  recorded_at: 2026-11-05T15:43:26.158103+00:00
+        responseId: MQnuauuwJa6rytMPgpr2iQ4
+  recorded_at: 2026-11-06T17:07:00.110521+00:00

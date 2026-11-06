@@ -1309,15 +1309,34 @@ async def test_native_replay_without_response_metadata(
     assert sent[:2] == steps
 
 
-async def test_unknown_own_native_tool_is_not_silently_dropped(
-    mock_model: GoogleInteractionsModel, allow_model_requests: None
+async def test_native_history_without_interactions_steps(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Inject native history without a supported replay step and reject it before a provider request."""
+    """Pin native parts GenerateContent history carries without Interactions steps; cassettes ignore the payload."""
+    system = mock_model.system
     response = ModelResponse(
-        parts=[NativeToolCallPart('unknown', {}, 'call', provider_name='google')], provider_name='google'
+        parts=[
+            NativeToolCallPart('code_execution', {'code': '1+1', 'language': 'PYTHON'}, 'call', provider_name=system),
+            NativeToolReturnPart(
+                'code_execution', {'outcome': 'OUTCOME_OK', 'output': '2'}, 'call', provider_name=system
+            ),
+            TextPart('2', provider_name=system),
+        ],
+        provider_name=system,
+        canonical_system=mock_model.canonical_system,
+    )
+    await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
+    assert mock_google.requests[-1]['input'] == [
+        {'type': 'model_output', 'content': [{'type': 'text', 'text': '2'}]},
+        {'type': 'user_input', 'content': [{'type': 'text', 'text': 'continue'}]},
+    ]
+    mismatched = NativeToolCallPart(
+        'web_search', {}, 'call', provider_name=system, provider_details={'type': 'code_execution_call', 'id': 'call'}
     )
     with pytest.raises(UnexpectedModelBehavior, match='unsupported Google Interactions replay step'):
-        await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
+        await model_request(
+            mock_model, [ModelResponse(parts=[mismatched], provider_name=system), ModelRequest.user_text_prompt('next')]
+        )
 
 
 async def test_provider_environment_and_foreign_file_history(
