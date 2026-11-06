@@ -624,6 +624,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    # `subprocess.run` polls with `time.sleep` while `gh auth token` runs, which the GitHub settings menu asks when it
+    # opens.
+    ('time.sleep', 'pydantic_clai2/gh_cli.py', 'gh_token'),
     # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
     # for the module's lock while another thread, such as CLAI's import warm-up, imports it.
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
