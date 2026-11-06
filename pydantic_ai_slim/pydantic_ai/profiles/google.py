@@ -197,6 +197,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
     """
 
+    google_supports_penalties: bool
+    """Whether the model accepts `presence_penalty` and `frequency_penalty`. Default: `True`.
+
+    The Gemini API rejects them for every model, so `GoogleModel` turns this off when its client talks to the Gemini
+    API. On Google Cloud (Vertex AI), Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models
+    reject them with a 400.
+    """
+
     google_supports_batch_api: bool
     """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
     Default: `False`.
@@ -235,6 +243,20 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
     ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Live model name prefixes mapped to the thinking levels they accept."""
+
+
+_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS = ('gemini-3.5-flash-lite', 'gemini-3.6', 'gemini-3.7', 'gemini-3.8', 'gemini-4')
+"""The models Google Cloud rejects `presence_penalty` and `frequency_penalty` for (verified live 2026-11-04).
+
+They answer `Penalty is not enabled for this model`, as do the Gemini 3 image models. The Gemini API answers that for
+every model. Other models, including ones this doesn't recognize, like a tuned model's endpoint, keep sending them.
+"""
+
+
+def _google_cloud_supports_penalties(model_name: str) -> bool:
+    if model_name.startswith(_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS):
+        return False
+    return not ('image' in model_name and model_name.startswith('gemini-3'))
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
@@ -297,6 +319,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
+        google_supports_penalties=_google_cloud_supports_penalties(model_name),
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels

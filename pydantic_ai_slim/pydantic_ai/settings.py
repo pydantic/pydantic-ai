@@ -196,12 +196,12 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
-    * Anthropic
+    * Anthropic (not sent with thinking, unless it is `1`)
     * Google
     * Groq
     * Cohere
     * Mistral
-    * Bedrock
+    * Bedrock (not sent with thinking on Claude, unless it is `1`)
     * MCP Sampling
     * xAI
     * HuggingFace
@@ -227,12 +227,14 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
-    * Anthropic
+    * Anthropic (not sent below `0.95` with thinking, nor together with a temperature on Claude Haiku 4.5,
+      Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6)
     * Google
     * Groq
     * Cohere
     * Mistral
-    * Bedrock
+    * Bedrock (not sent on Claude below `0.95` with thinking, nor together with a temperature on Claude
+      Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6)
     * xAI
     * HuggingFace
     * Cerebras
@@ -253,10 +255,10 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic
+    * Anthropic (not sent with thinking)
     * Google
     * Cohere
-    * Bedrock (Anthropic and Amazon Nova models only)
+    * Bedrock (Anthropic and Amazon Nova models only, and not with thinking on Claude)
     """
 
     timeout: int | float | Timeout
@@ -465,11 +467,10 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google
+    * Google (Google Cloud only, and not for Gemini 3.5 Flash-Lite, 3.6 Flash and newer, or Gemini 3 image models)
     * Groq
     * Cohere
     * Mistral
-    * xAI
     * HuggingFace
     * Cerebras
     * Crusoe
@@ -487,11 +488,10 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI Chat Completions
-    * Google
+    * Google (Google Cloud only, and not for Gemini 3.5 Flash-Lite, 3.6 Flash and newer, or Gemini 3 image models)
     * Groq
     * Cohere
     * Mistral
-    * xAI
     * HuggingFace
     * Cerebras
     * Crusoe
@@ -533,7 +533,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * MCP Sampling
-    * xAI
+    * xAI (Grok 4.20 non-reasoning models only)
     * HuggingFace
     * Cerebras
     * Crusoe

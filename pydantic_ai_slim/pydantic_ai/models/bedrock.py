@@ -106,6 +106,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_sampling import drop_conflicting_sampling_settings
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -1158,19 +1159,28 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        if prepared_settings and (
-            self.profile.get('anthropic_disallows_sampling_settings', False)
-            or self.profile.get('bedrock_disallows_sampling_settings', False)
-        ):
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not any(
             key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
         ):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request, like `AnthropicModel`."""
+        profile = cast(BedrockModelProfile, self.profile)
+        if profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
+            'bedrock_disallows_sampling_settings', False
+        ):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.

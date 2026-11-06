@@ -107,6 +107,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_sampling import drop_conflicting_sampling_settings
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
@@ -1492,6 +1493,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        elif prepared_settings:
+            prepared_settings = (
+                drop_conflicting_sampling_settings(
+                    prepared_settings,
+                    profile,
+                    thinking=_request_thinking_type(profile, prepared_settings, model_request_parameters) is not None,
+                )
+                or None
+            )
         # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not any(
             key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS

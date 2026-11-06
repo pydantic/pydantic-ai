@@ -58,6 +58,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnsupportedSettingWarning,
     UserError,
     UserPromptPart,
     VideoUrl,
@@ -1873,28 +1874,49 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
     assert get_mock_chat_create_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
 
 
-async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
+async def test_xai_penalties_are_not_sent(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400, so they're dropped silently."""
+    m = XaiModel('grok-4.3', provider=xai_provider)
+    agent = Agent(m, model_settings=ModelSettings(temperature=0.7, presence_penalty=0.5, frequency_penalty=0.3))
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output == snapshot('ok')
+
+
+async def test_xai_penalties_are_not_passed_to_the_sdk(allow_model_requests: None) -> None:
     response = create_response(content='test response')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(temperature=0.7, presence_penalty=0.5, frequency_penalty=0.3))
 
-    settings = ModelSettings(
-        temperature=0.7,
-        presence_penalty=0.5,
-        frequency_penalty=0.3,
-        parallel_tool_calls=False,
-    )
+    await agent.run('Hello')
 
-    agent = Agent(m, model_settings=settings)
-    result = await agent.run('Hello')
-
-    # Check that all settings were passed to the xAI SDK
     kwargs = get_mock_chat_create_kwargs(mock_client)[0]
     assert kwargs['temperature'] == 0.7
-    assert kwargs['presence_penalty'] == 0.5
-    assert kwargs['frequency_penalty'] == 0.3
-    assert kwargs['parallel_tool_calls'] is False
-    assert result.output == 'test response'
+    assert 'presence_penalty' not in kwargs
+    assert 'frequency_penalty' not in kwargs
+
+
+async def test_xai_reasoning_model_drops_stop_sequences(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Grok models other than the Grok 4.20 non-reasoning ones reject `stop_sequences`, so they're dropped with a warning."""
+    m = XaiModel('grok-4.3', provider=xai_provider)
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`stop_sequences`'):
+        result = await agent.run('Reply with just: ok')
+
+    assert result.output == snapshot('ok')
+
+
+async def test_xai_non_reasoning_model_sends_stop_sequences(allow_model_requests: None) -> None:
+    mock_client = MockXai.create_mock([create_response(content='ok')])
+    m = XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    await agent.run('Hello')
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['stop'] == ['zzz']
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
@@ -3832,8 +3854,6 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             temperature=0.7,
             max_tokens=200,
             top_p=0.95,
-            presence_penalty=0.1,
-            frequency_penalty=0.2,
             seed=123,
             # xAI-specific settings
             xai_logprobs=True,
@@ -3863,8 +3883,6 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'temperature': 0.7,
                 'max_tokens': 200,
                 'top_p': 0.95,
-                'presence_penalty': 0.1,
-                'frequency_penalty': 0.2,
                 'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,

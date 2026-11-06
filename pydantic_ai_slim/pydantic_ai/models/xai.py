@@ -359,8 +359,6 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'max_tokens': 'max_tokens',
     'stop_sequences': 'stop',
     'parallel_tool_calls': 'parallel_tool_calls',
-    'presence_penalty': 'presence_penalty',
-    'frequency_penalty': 'frequency_penalty',
     'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
@@ -379,8 +377,19 @@ class XaiModel(Model[AsyncClient]):
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
 
+    # Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400 (verified live 2026-11-04).
     unsupported_settings = frozenset(
-        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'presence_penalty',
+            'service_tier',
+            'timeout',
+            'top_k',
+        }
     )
 
     _model_name: str
@@ -427,6 +436,11 @@ class XaiModel(Model[AsyncClient]):
     @cached_property
     def profile(self) -> GrokModelProfile:
         return cast(GrokModelProfile, super().profile)
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('grok_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -921,7 +935,7 @@ class XaiModel(Model[AsyncClient]):
             response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
-        xai_settings = _map_model_settings(model_settings)
+        xai_settings = _map_model_settings(model_settings, self._unsupported_settings())
 
         # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
@@ -1437,12 +1451,12 @@ def _map_json_object() -> chat_pb2.ResponseFormat:
     return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
 
 
-def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
-    """Map pydantic_ai ModelSettings to xAI SDK parameters."""
+def _map_model_settings(model_settings: XaiModelSettings, unsupported: frozenset[str]) -> dict[str, Any]:
+    """Map pydantic_ai ModelSettings to xAI SDK parameters, leaving out the ones the model doesn't support."""
     return {
         _XAI_MODEL_SETTINGS_MAPPING[key]: value
         for key, value in model_settings.items()
-        if key in _XAI_MODEL_SETTINGS_MAPPING
+        if key in _XAI_MODEL_SETTINGS_MAPPING and key not in unsupported
     }
 
 
