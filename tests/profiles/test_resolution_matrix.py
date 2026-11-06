@@ -46,6 +46,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.providers import Provider
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -3081,7 +3082,7 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
-def _route_provider(provider_name: str) -> Any:
+def _route_provider(provider_name: str) -> type[Provider[Any]]:
     """The provider class behind a route name in the forced-tool-choice route tests below."""
     return {
         'anthropic': AnthropicProvider,
@@ -3190,6 +3191,7 @@ _GPT_OSS = ('cerebras', 'gpt-oss-120b')
             id='deepseek-v4.1-together',
             marks=_diverges('#12069', "Together's DeepSeek V4 guard keys on `deepseek-v4-`, which V4.1 ids miss"),
         ),
+        # OpenRouter's `/models` lists both `deepseek/deepseek-v4.1-flash` and this dated id (checked 2026-11-04).
         pytest.param(
             _DEEPSEEK_V4_1,
             ('openrouter', 'deepseek/deepseek-v4.1-flash-1017'),
