@@ -21,15 +21,16 @@ __all__ = (
 )
 
 import re
+from collections import Counter
+from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast
 
-# Set during rendering to map original type names to prefixed names for
-# dedup conflict resolution (e.g. {'User': 'tool_a_User'}).
-# Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
+# Set during rendering and consulted by TypeSignature.display_name. Not being empty means some names had to change,
+# so a type uses the name `get_conflicting_type_names` stored on it. The mapping (e.g. {'User': 'tool_a_User'}) is only
+# the fallback for a set of names that call didn't resolve.
 _type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
-
 
 # =============================================================================
 # Type expression tree
@@ -146,11 +147,17 @@ class TypeSignature:
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
     kind: Literal['type'] = 'type'
+    # Set by `FunctionSignature.get_conflicting_type_names` when this type's name has to change.
+    # Left out of `__init__`, `repr` and `==`: it comes from the signatures rendered together, not from the type.
+    _resolved_name: str | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def display_name(self) -> str:
-        """The type name, with tool-name prefix applied if rendering context is set."""
-        return _type_name_overrides.get().get(self.name, self.name)
+        """The type name, or the one rendering context calls for when some names have to change."""
+        overrides = _type_name_overrides.get()
+        if overrides and self._resolved_name:
+            return self._resolved_name
+        return overrides.get(self.name, self.name)
 
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
@@ -164,9 +171,8 @@ class TypeSignature:
         Args:
             owner_name: The owning tool name, used to build prefixed type names
                 for conflicting types (e.g. `get_user_Address`).
-            conflicting_type_names: Set of type names that need tool-name prefixes
-                (from `get_conflicting_type_names`). Only effective when `owner_name`
-                is also provided.
+            conflicting_type_names: The set returned by a `get_conflicting_type_names` call made
+                just before rendering. Only effective when `owner_name` is also provided.
         """
         if owner_name and conflicting_type_names:
             overrides = {n: f'{owner_name}_{n}' for n in conflicting_type_names}
@@ -191,7 +197,11 @@ class TypeSignature:
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
-        """Compare two TypeSignatures structurally, ignoring descriptions."""
+        """Compare two TypeSignatures structurally, ignoring descriptions.
+
+        Nested types compare by name only, so this can call two types equal that
+        `FunctionSignature.get_conflicting_type_names` keeps apart.
+        """
         if set(self.fields.keys()) != set(other.fields.keys()):
             return False
         for name, f in self.fields.items():
@@ -265,7 +275,8 @@ class FunctionSignature:
             name: The function name (also used for dedup prefix resolution). Falls back to `self.name`.
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
-            conflicting_type_names: Set of type names that need tool-name prefixes (from `get_conflicting_type_names`).
+            conflicting_type_names: The set returned by a `get_conflicting_type_names` call made just before rendering.
+                Types named by the last such call use those names whenever any non-empty set is passed.
         """
         render_name = name or self.name
         description = description if description is not None else self.description
@@ -354,9 +365,10 @@ class FunctionSignature:
         # Merge referenced types, deduplicating structurally identical types within this signature.
         # Cross-signature collisions are handled later by get_conflicting_type_names.
         all_referenced = list(param_referenced.values())
+        classes = _structure_classes(_with_nested_types([*all_referenced, *return_referenced.values()]))
         for ret_type in return_referenced.values():
             existing = param_referenced.get(ret_type.name)
-            if existing is not None and existing.structurally_equal(ret_type):
+            if existing is not None and classes[id(existing)] == classes[id(ret_type)]:
                 continue  # already present from param schema
             all_referenced.append(ret_type)
 
@@ -369,39 +381,84 @@ class FunctionSignature:
 
     @staticmethod
     def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
-        """Identify TypedDict name conflicts across multiple tool signatures.
+        """Identify TypedDict name conflicts across multiple tool signatures, and name the types involved.
 
         Each signature keeps all its referenced types (so it remains self-contained),
-        but identical types (same name and structure) are unified to the same object
-        instance.
+        but identical types (same name and structure all the way down) are unified to
+        the same object instance.
 
-        Returns the set of type names that have conflicts (same name, different
-        structure) and need tool-name prefixes at render time. Pass this set to
-        `FunctionSignature.render(conflicting_type_names=...)`.
+        A type keeps its name unless a different type has it too. Then it takes the name of the
+        first tool using it as a prefix (e.g. `get_user_Address`), and a number if that is taken.
+
+        The new names are stored on the types, and apply when this set is passed on to
+        `FunctionSignature.render(conflicting_type_names=...)`. Render straight after this
+        call, as resolving a signature again, among other signatures, replaces them.
+
+        Returns the set of type names that had to change.
 
         Use `collect_unique_referenced_types()` when rendering to emit each
         definition once.
         """
-        seen: dict[str, TypeSignature] = {}
-        prefixed: set[str] = set()
+        FunctionSignature._unify_identical_types(signatures)
+        types = FunctionSignature.collect_unique_referenced_types(signatures)
+        owners = FunctionSignature._type_owners(signatures)
+        counts = Counter(t.name for t in types)
+        conflicting = {name for name, count in counts.items() if count > 1}
+
+        # Names that stay are taken before any is generated, so a generated name can't take a real one.
+        used = counts.keys() - conflicting
+        for type_sig in types:
+            resolved = None
+            if type_sig.name in conflicting:
+                base = resolved = f'{owners[id(type_sig)]}_{type_sig.name}'
+                suffix = 2
+                while resolved in used:
+                    resolved, suffix = f'{base}_{suffix}', suffix + 1
+                used.add(resolved)
+            # The only place that sets this attribute: resolving names is this method's job.
+            type_sig._resolved_name = resolved  # pyright: ignore[reportPrivateUsage]
+        return frozenset(conflicting)
+
+    @staticmethod
+    def _unify_identical_types(signatures: list[FunctionSignature]) -> None:
+        """Make types with one name and one structure a single object everywhere, keeping the first seen."""
+        # Some types are named by an expression but not listed: an unresolved `$ref`, or a return type `from_schema` merged.
+        exprs = [expr for sig in signatures for expr in (*(p.type for p in sig.params.values()), sig.return_type)]
+        listed = (t for sig in signatures for t in sig.referenced_types)
+        types = _with_nested_types([*listed, *(t for expr in exprs for t in _types_in(expr))])
+
+        classes = _structure_classes(types)
+        first_of_class: dict[object, TypeSignature] = {}
+        canonical = {id(t): first_of_class.setdefault(classes[id(t)], t) for t in types}
 
         for sig in signatures:
-            deduped: list[TypeSignature] = []
-            for type_sig in sig.referenced_types:
-                name = type_sig.name
-                if name not in seen:
-                    seen[name] = type_sig
-                    deduped.append(type_sig)
-                elif seen[name].structurally_equal(type_sig):
-                    canonical = seen[name]
-                    _replace_type_refs(sig, type_sig, canonical)
-                    deduped.append(canonical)
-                else:
-                    prefixed.add(name)
-                    deduped.append(type_sig)
-            sig.referenced_types = deduped
+            sig.referenced_types = [canonical[id(t)] for t in sig.referenced_types]
+            for param in sig.params.values():
+                param.type = FunctionSignature._replace_types(param.type, canonical)
+            sig.return_type = FunctionSignature._replace_types(sig.return_type, canonical)
+        for type_sig in types:
+            for f in type_sig.fields.values():
+                f.type = FunctionSignature._replace_types(f.type, canonical)
 
-        return frozenset(prefixed)
+    @staticmethod
+    def _type_owners(signatures: list[FunctionSignature]) -> dict[int, str]:
+        """The name of the first signature listing each type, by type identity."""
+        owners: dict[int, str] = {}
+        for sig in signatures:
+            for type_sig in sig.referenced_types:
+                owners.setdefault(id(type_sig), sig.name)
+        return owners
+
+    @staticmethod
+    def _replace_types(expr: TypeExpr, canonical: dict[int, TypeSignature]) -> TypeExpr:
+        """Point an expression at canonical types."""
+        if isinstance(expr, TypeSignature):
+            return canonical[id(expr)]
+        if isinstance(expr, GenericTypeExpr):
+            expr.args = [FunctionSignature._replace_types(arg, canonical) for arg in expr.args]
+        elif isinstance(expr, UnionTypeExpr):
+            expr.members = [FunctionSignature._replace_types(member, canonical) for member in expr.members]
+        return expr
 
     @staticmethod
     def collect_unique_referenced_types(signatures: list[FunctionSignature]) -> list[TypeSignature]:
@@ -422,12 +479,11 @@ class FunctionSignature:
     ) -> list[str]:
         """Render unique TypedDict definitions for a set of function signatures.
 
-        For types whose names conflict across signatures (as identified by
-        `get_conflicting_type_names`), each definition is rendered with a
-        tool-name prefix (e.g. `get_user_Address`).
+        A type whose name had to change uses the one `get_conflicting_type_names` stored on it:
+        a tool-name prefix (e.g. `get_user_Address`), and a number if that is taken too.
 
         Args:
-            signatures: The function signatures (after `get_conflicting_type_names`).
+            signatures: The function signatures, straight after `get_conflicting_type_names`.
             conflicting_type_names: The set returned by `get_conflicting_type_names`.
 
         Returns:
@@ -437,17 +493,12 @@ class FunctionSignature:
         if not unique_types:
             return []
 
-        owner_for: dict[int, str] = {}
-        for sig in signatures:
-            for tsig in sig.referenced_types:
-                if tsig.name in conflicting_type_names and id(tsig) not in owner_for:
-                    owner_for[id(tsig)] = sig.name
+        owner_for = FunctionSignature._type_owners(signatures)
 
-        rendered: list[str] = []
-        for tsig in unique_types:
-            owner = owner_for.get(id(tsig))
-            rendered.append(tsig.render_definition(owner_name=owner, conflicting_type_names=conflicting_type_names))
-        return rendered
+        return [
+            tsig.render_definition(owner_name=owner_for[id(tsig)], conflicting_type_names=conflicting_type_names)
+            for tsig in unique_types
+        ]
 
 
 # Shared singletons
@@ -869,34 +920,55 @@ def _build_type_signature(
 # =============================================================================
 
 
-def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical: TypeSignature) -> None:
-    """Replace all references to old_ref with canonical in a signature's TypeExpr trees."""
-    # Replace in params
-    for param in sig.params.values():
-        param.type = _replace_in_expr(param.type, old_ref, canonical)
-
-    # Replace in return type
-    sig.return_type = _replace_in_expr(sig.return_type, old_ref, canonical)
-
-    # Replace in field types of referenced types
-    for type_sig in sig.referenced_types:
-        for f in type_sig.fields.values():
-            f.type = _replace_in_expr(f.type, old_ref, canonical)
+def _types_in(expr: TypeExpr) -> Iterator[TypeSignature]:
+    """The types an expression names, without looking inside them."""
+    if isinstance(expr, TypeSignature):
+        yield expr
+    elif isinstance(expr, (GenericTypeExpr, UnionTypeExpr)):
+        for child in expr.args if isinstance(expr, GenericTypeExpr) else expr.members:
+            yield from _types_in(child)
 
 
-def _replace_in_expr(expr: TypeExpr, old_ref: TypeSignature, canonical: TypeSignature) -> TypeExpr:
-    """`expr` with every reference to old_ref in its tree replaced with canonical, in place where it is nested."""
-    if expr is old_ref:
-        return canonical
-    match expr:
-        case GenericTypeExpr():
-            new_args = [_replace_in_expr(a, old_ref, canonical) for a in expr.args]
-            if any(new is not orig for new, orig in zip(new_args, expr.args)):
-                expr.args = new_args
-        case UnionTypeExpr():
-            new_members = [_replace_in_expr(m, old_ref, canonical) for m in expr.members]
-            if any(new is not orig for new, orig in zip(new_members, expr.members)):
-                expr.members = new_members
-        case _:
-            pass
-    return expr
+def _with_nested_types(types: Iterable[TypeSignature]) -> list[TypeSignature]:
+    """The given types and every type nested inside them, each once, in the order found."""
+    pending = list(types)
+    found: dict[int, TypeSignature] = {}
+    for type_sig in pending:
+        if id(type_sig) not in found:
+            found[id(type_sig)] = type_sig
+            for f in type_sig.fields.values():
+                pending.extend(_types_in(f.type))
+    return list(found.values())
+
+
+def _expr_key(expr: TypeExpr, classes: dict[int, object]) -> object:
+    """A comparable form of an expression, with each type in it standing as its structure class."""
+    if isinstance(expr, TypeSignature):
+        return TypeSignature, classes[id(expr)]
+    if isinstance(expr, GenericTypeExpr):
+        return (expr.base, *(_expr_key(arg, classes) for arg in expr.args))
+    if isinstance(expr, UnionTypeExpr):
+        return ('|', *(_expr_key(member, classes) for member in expr.members))
+    if isinstance(expr, (SimpleTypeExpr, LiteralTypeExpr)):
+        return str(expr)
+    assert_never(expr)
+
+
+def _fields_key(type_sig: TypeSignature, classes: dict[int, object]) -> object:
+    return frozenset((name, f.required, _expr_key(f.type, classes)) for name, f in type_sig.fields.items())
+
+
+def _structure_classes(types: list[TypeSignature]) -> dict[int, object]:
+    """Number the types so that two share a number exactly when they have one name and one structure all the way down.
+
+    Starts by grouping types by name, then splits any group whose members' fields differ, counting a nested type by
+    its group, until no group splits. Types in a cycle are only ever split by a real difference.
+    """
+    classes: dict[int, object] = {id(t): t.name for t in types}
+    count = len(set(classes.values()))
+    while True:
+        numbers: dict[object, int] = {}
+        classes = {id(t): numbers.setdefault((classes[id(t)], _fields_key(t, classes)), len(numbers)) for t in types}
+        if len(numbers) == count:
+            return classes
+        count = len(numbers)
