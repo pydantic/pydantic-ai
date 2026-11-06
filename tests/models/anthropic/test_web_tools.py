@@ -246,8 +246,8 @@ def test_anthropic_20260318_web_tools_implicit_code_execution(
     assert ('code_execution' in enabled_names) is enables_code_execution
 
 
-def test_anthropic_20260318_web_search_settings_forwarded_on_vertex():
-    """The settings select `web_search_20260318` on Vertex too, and Vertex's API decides whether to accept it."""
+def test_anthropic_response_inclusion_keeps_older_web_search_on_vertex():
+    """Vertex calls web search directly, where `response_inclusion` has no effect, so the version Vertex takes is kept."""
     model = AnthropicModel(
         'claude-sonnet-4-6',
         provider=AnthropicProvider(
@@ -268,13 +268,11 @@ def test_anthropic_20260318_web_search_settings_forwarded_on_vertex():
         [
             {
                 'name': 'web_search',
-                'type': 'web_search_20260318',
+                'type': 'web_search_20250305',
                 'max_uses': None,
                 'allowed_domains': None,
                 'blocked_domains': None,
                 'user_location': None,
-                'response_inclusion': 'full',
-                'allowed_callers': ['direct'],
             }
         ]
     )
@@ -650,7 +648,8 @@ ALLOWED_CALLERS_CASES = [
             WebSearchTool(max_uses=1, provider_settings={'anthropic': {'response_inclusion': 'full'}}),
             WebFetchTool(max_uses=1, provider_settings={'anthropic': {'use_cache': False}}),
         ],
-        expected_tools=snapshot([('web_search_20260318', ['direct']), ('web_fetch_20260318', ['direct'])]),
+        # Only code execution calls are affected by `response_inclusion`, so it keeps the older search version here.
+        expected_tools=snapshot([('web_search_20250305', None), ('web_fetch_20260318', ['direct'])]),
     ),
     AllowedCallersCase(
         id='settings-20260318-no-dynamic-filtering-setting-wins',
@@ -1395,11 +1394,11 @@ async def test_anthropic_web_tools_rejected_by_bedrock_messages_api(
     https://github.com/pydantic/pydantic-ai/issues/11481
     """
     if isinstance(tool, WebSearchTool):
-        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
+        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
         beta = None
     else:
         assert isinstance(tool, WebFetchTool)
-        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
+        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
     client = request.getfixturevalue('anthropic_bedrock_mantle_client')
 
     with pytest.raises(APIStatusError, match=rf"tool type '{tool_param['type']}' is not supported for this model"):

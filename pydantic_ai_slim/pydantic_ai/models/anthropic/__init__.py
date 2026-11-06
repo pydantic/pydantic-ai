@@ -951,6 +951,18 @@ def _resolve_anthropic_service_tier(
     return OMIT
 
 
+def _code_execution_may_call_web_tools(
+    supports_dynamic_filtering: bool, model_settings: AnthropicModelSettings
+) -> bool:
+    """Whether code execution may call the web tools.
+
+    Models with dynamic filtering allow it by default. Without it, the web tools are called directly unless
+    `anthropic_web_tools_allowed_callers` names a code execution caller.
+    """
+    allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers') or []
+    return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)
+
+
 @dataclass(init=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
@@ -2465,11 +2477,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool
+        tool: WebSearchTool, supports_dynamic_filtering: bool, code_execution_may_call: bool
     ) -> BetaWebSearchTool20260318Param | BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
         settings = (tool.provider_settings or {}).get('anthropic', {})
-        if 'response_inclusion' in settings:
+        # `response_inclusion` only changes results consumed by code execution, so it selects the newer version only
+        # when code execution may call the tool.
+        if 'response_inclusion' in settings and code_execution_may_call:
             web_search_tool = BetaWebSearchTool20260318Param(
                 name='web_search',
                 type='web_search_20260318',
@@ -2502,7 +2516,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool, code_execution_may_call: bool, include_citations: bool
     ) -> tuple[
         BetaWebFetchTool20260318Param | BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param,
         str | None,
@@ -2510,7 +2524,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         enable_citations = tool.enable_citations or include_citations
         citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
         settings = (tool.provider_settings or {}).get('anthropic', {})
-        if 'use_cache' in settings or 'response_inclusion' in settings:
+        # `use_cache` affects every call, but `response_inclusion` only matters when code execution may call the tool.
+        if 'use_cache' in settings or ('response_inclusion' in settings and code_execution_may_call):
             web_fetch_tool = BetaWebFetchTool20260318Param(
                 name='web_fetch',
                 type='web_fetch_20260318',
@@ -2564,10 +2579,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
+        code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
+                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(map_code_execution_tool(tool_version))
@@ -2577,7 +2593,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(
-                    tool, supports_dynamic_filtering, citations_included(model_settings, model_request_parameters)
+                    tool,
+                    supports_dynamic_filtering,
+                    code_execution_may_call,
+                    citations_included(model_settings, model_request_parameters),
                 )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:

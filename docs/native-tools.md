@@ -237,8 +237,7 @@ left out on models that don't support them.
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
-    The Anthropic-specific settings select `web_search_20260318` on every client, and Vertex decides whether
-    to accept it.
+    Without dynamic filtering, `response_inclusion` has no effect, so it keeps `web_search_20250305` on Vertex.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
