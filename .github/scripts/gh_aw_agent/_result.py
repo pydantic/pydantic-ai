@@ -4,8 +4,7 @@ On main the shim printed a `type: result` line carrying `provider_health` to
 stdout and `agent_provider_health.py` read it from `agent-stdio.log`. The
 engine sends stdout to devnull, so this module writes the same record once, at
 finish, to a file the `agent` artifact already carries
-(`/tmp/gh-aw/agent/provider-health-result.json`). The record is unsigned, as it
-was on main; signing is a separate decision.
+(`/tmp/gh-aw/agent/provider-health-result.json`).
 """
 
 from __future__ import annotations

@@ -49,6 +49,12 @@ on:
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
   bots: [pydantic-docs]
+# gh-aw's CTR-021 (`workflow-run-scope`) wants a positive branch list on every
+# `workflow_run`. Here the head branch is the reviewed PR's branch, so a branch
+# list would suppress every review; `eligibility` is the real gate instead.
+threat-detection-suppress:
+  - rule: CTR-021
+    reason: "The workflow_run trigger re-evaluates the reviewed head after CI for every PR head branch, so no positive branch list can express its scope; the eligibility job validates the exact head and the approver's repository permission before any model runs."
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the

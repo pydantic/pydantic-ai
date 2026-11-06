@@ -52,8 +52,10 @@ pre-agent-steps:
 post-steps:
   # gh-aw only allows a custom job before the agent or after detection, so this runs
   # in the agent job. It fetches the forwarder from the default branch and calls the
-  # interpreter and curl by absolute path: a checkout-controlled step can prepend
-  # directories through GITHUB_PATH, which an absolute path cannot be shadowed by.
+  # interpreter and curl by absolute path, so a directory prepended to PATH does not
+  # redirect these two calls. The rest of the step is not isolated: it declares no
+  # `shell:`, so `bash` itself still resolves through PATH, and GITHUB_ENV can set
+  # `BASH_ENV`, `LD_PRELOAD` or `PYTHONPATH` for it.
   - name: Forward agent spans to the OTLP endpoint
     if: always()
     continue-on-error: true

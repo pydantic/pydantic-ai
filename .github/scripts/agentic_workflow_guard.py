@@ -1568,7 +1568,8 @@ def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
             str(lock),
             'trace-forwarder-isolation',
             f'the forwarder step is missing {", ".join(missing)}; a checkout-controlled GITHUB_PATH entry can '
-            'shadow a PATH-resolved interpreter or curl while the step holds the OTLP credential.',
+            'shadow a PATH-resolved interpreter or curl. Absolute paths keep these two calls off PATH; they '
+            'do not isolate the rest of the step, whose shell still resolves through it.',
         )
     ]
 
