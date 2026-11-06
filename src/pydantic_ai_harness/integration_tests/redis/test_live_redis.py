@@ -1,4 +1,4 @@
-"""Live Redis conformance tests for `RedisSpendStore`.
+"""Live Redis conformance tests for `RedisSpendStore` and `RedisClaimablePlanStore`.
 
 The unit suite in `tests/spend` drives the store through a fake that reproduces the
 result `_ADD_SCRIPT` is meant to produce. It never runs the Lua, so what it cannot
@@ -17,6 +17,10 @@ answer decides whether the store is correct:
   and carried forward;
 - that the hash tag keeps every key of one response in one Redis Cluster slot, which a
   standalone server cannot show: it runs a multi-key `EVAL` whatever the keys hash to.
+
+The claimable board's unit suite likewise reproduces its compare-and-set script, so
+`TestLiveClaimableBoard` runs claims racing over several connections against the
+real script.
 
 This file covers exactly those. It is not a second copy of the unit suite --
 API-shape coverage belongs there, where it runs on every matrix leg.
@@ -68,11 +72,13 @@ from decimal import Decimal
 from typing import NoReturn
 from urllib.parse import urlsplit
 
+import anyio
 import pytest
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
+from pydantic_ai_harness.planning import OwnedPlanItem, PlanItem, RedisClaimablePlanStore, TaskStatus
 from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
 
 _NANOS = Decimal(10) ** 9
@@ -359,3 +365,78 @@ class TestLiveCluster:
                 await client.eval('return 1', 2, 'pydantic-ai-harness:spend:day', 'pydantic-ai-harness:spend:month')
         finally:
             await client.aclose()
+
+
+@pytest.fixture(params=[True, False], ids=['decoded', 'bytes'])
+async def board_client(request: pytest.FixtureRequest) -> AsyncGenerator[tuple[Redis, str], None]:
+    """A client on a reachable server and a key prefix unique to one test, removed afterwards."""
+    client = Redis.from_url(_redis_url(), decode_responses=request.param)  # pyright: ignore[reportUnknownMemberType]
+    try:
+        await client.ping()  # pyright: ignore[reportUnknownMemberType]
+    except (RedisError, OSError) as error:
+        await client.aclose()
+        _unavailable(f'no reachable Redis at {_redis_target(_redis_url())}: {error}')
+
+    prefix = f'harness-test:{uuid.uuid4().hex}'
+    try:
+        yield client, prefix
+    finally:
+        try:
+            keys = [key async for key in client.scan_iter(match=f'{prefix}*')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if keys:
+                await client.delete(*keys)  # pyright: ignore[reportUnknownArgumentType]
+        finally:
+            await client.aclose()
+
+
+class TestLiveClaimableBoard:
+    """The compare-and-set script, with claimers racing on one server."""
+
+    async def test_one_winner_per_contested_step_and_ttl(self, board_client: tuple[Redis, str]):
+        client, prefix = board_client
+        setup = RedisClaimablePlanStore(client, key_prefix=prefix, expire_seconds=300)
+        await setup.set_items([PlanItem(id=f'step-{index}', content=f'Step {index}') for index in range(4)])
+        contested: list[OwnedPlanItem | None] = []
+        following: list[OwnedPlanItem | None] = []
+
+        async def claim(name: str) -> None:
+            store = RedisClaimablePlanStore(client, key_prefix=prefix, expire_seconds=300)
+            contested.append(await store.claim('step-0', owner=name))
+            following.append(await store.claim(None, owner=name))
+
+        async with anyio.create_task_group() as group:
+            for index in range(20):
+                group.start_soon(claim, f'member-{index}')
+
+        assert len([item for item in contested if item is not None]) == 1
+        assert sorted(item.id for item in following if item is not None) == ['step-1', 'step-2', 'step-3']
+        assert 0 < await client.ttl(f'{prefix}:{{default}}') <= 300
+
+    async def test_concurrent_completions_unblock_a_dependent_once(self, board_client: tuple[Redis, str]):
+        client, prefix = board_client
+        prerequisites = [f'pre-{index}' for index in range(10)]
+        store = RedisClaimablePlanStore(client, key_prefix=prefix)
+        await store.set_items(
+            [
+                *(PlanItem(id=item_id, content=item_id) for item_id in prerequisites),
+                PlanItem(id='join', content='Join', status=TaskStatus.blocked, depends_on=prerequisites),
+            ]
+        )
+        for item_id in prerequisites:
+            await store.claim(item_id, owner=item_id)
+        changes: list[OwnedPlanItem] = []
+
+        async def complete(item_id: str) -> None:
+            changes.extend(
+                await RedisClaimablePlanStore(client, key_prefix=prefix).release(
+                    item_id, owner=item_id, status=TaskStatus.completed
+                )
+            )
+
+        async with anyio.create_task_group() as group:
+            for item_id in prerequisites * 2:
+                group.start_soon(complete, item_id)
+
+        assert [item.id for item in changes if item.id == 'join'] == ['join']
+        joined = await store.get_owned_item('join')
+        assert joined is not None and joined.status is TaskStatus.pending

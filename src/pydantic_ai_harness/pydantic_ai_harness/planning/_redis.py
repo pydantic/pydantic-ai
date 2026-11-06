@@ -17,8 +17,10 @@ from one task, or use `set_items` if you need atomic whole-plan writes. The
 from __future__ import annotations
 
 import json
-from typing import Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import Protocol, TypeVar, runtime_checkable
 
+from pydantic_ai_harness.planning._claimable import BOARD_ADAPTER, Board, BoardStore, apply_change
 from pydantic_ai_harness.planning._events import PlanEventEmitter
 from pydantic_ai_harness.planning._store import (
     apply_updates,
@@ -27,7 +29,9 @@ from pydantic_ai_harness.planning._store import (
     emit_mutation,
     warn_event_emitter,
 )
-from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
+from pydantic_ai_harness.planning._types import OwnedPlanItem, PlanItem, TaskStatus
+
+_T = TypeVar('_T')
 
 
 @runtime_checkable
@@ -142,3 +146,91 @@ class RedisPlanStore:
                 await emit_deleted(self._emitter, removed)
                 return True
         return False
+
+
+@runtime_checkable
+class ClaimableRedisClient(Protocol):
+    """The redis.asyncio-compatible client surface used by `RedisClaimablePlanStore`.
+
+    `redis.asyncio.Redis` and `redis.asyncio.RedisCluster` satisfy this. Declared as
+    returning an `Awaitable` rather than as `async def`, which is how `redis.asyncio`
+    types these methods.
+    """
+
+    def get(self, name: str, /) -> Awaitable[object]:
+        """Return the value at `name`, or `None`."""
+        ...  # pragma: no cover
+
+    def eval(self, script: str, numkeys: int, /, *keys_and_args: str) -> Awaitable[object]:
+        """Run a Lua script server-side and return what it returns."""
+        ...  # pragma: no cover
+
+
+_COMPARE_AND_SET = """
+local current = redis.call('GET', KEYS[1])
+if (current or '') ~= ARGV[1] then
+  return 0
+end
+if ARGV[3] == '' then
+  redis.call('SET', KEYS[1], ARGV[2])
+else
+  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+end
+return 1
+"""
+"""Replace the board only if it is still the document the change was computed from.
+
+`KEYS[1]` is the board key; `ARGV` is the expected document (empty for a missing
+key), the new document, and the expiry in seconds (empty for none). Redis runs a
+script without interleaving another client's commands, so the comparison and the
+write are one atomic step.
+"""
+
+
+class RedisClaimablePlanStore(BoardStore):
+    """Redis claimable board, scoped to a `session`, over a caller-owned client.
+
+    The board is one JSON document under one key, like `RedisPlanStore`, but under
+    its own key prefix (`claimable-plan` by default). Each write is optimistic: it
+    reads the board, applies the change in Python, and writes the result with a
+    Lua compare-and-set that succeeds only if the board has not changed since the
+    read; otherwise it reads again and retries. A failed attempt means another
+    writer's change landed, so concurrent writers always make progress. The
+    `{session}` hash tag keeps the key on one slot under Redis Cluster.
+
+    Pass `expire_seconds` to give the key a TTL, refreshed on every write.
+    """
+
+    def __init__(
+        self,
+        client: ClaimableRedisClient,
+        *,
+        session: str = 'default',
+        key_prefix: str = 'claimable-plan',
+        expire_seconds: int | None = None,
+    ) -> None:
+        self._client = client
+        self._key = f'{key_prefix}:{{{session}}}'
+        self._expire = '' if expire_seconds is None else str(expire_seconds)
+
+    async def _read(self) -> str:
+        raw = await self._client.get(self._key)
+        if raw is None:
+            return ''
+        return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+
+    async def get_owned_items(self) -> list[OwnedPlanItem]:
+        """Return every step for this session, with its owner, in insertion order."""
+        document = await self._read()
+        return BOARD_ADAPTER.validate_json(document) if document else []
+
+    async def _transact(self, change: Callable[[Board], _T]) -> _T:
+        while True:
+            expected = await self._read()
+            board = BOARD_ADAPTER.validate_json(expected) if expected else []
+            result, changed = apply_change(board, change)
+            if not changed:
+                return result
+            document = BOARD_ADAPTER.dump_json(board).decode()
+            if await self._client.eval(_COMPARE_AND_SET, 1, self._key, expected, document, self._expire) == 1:
+                return result

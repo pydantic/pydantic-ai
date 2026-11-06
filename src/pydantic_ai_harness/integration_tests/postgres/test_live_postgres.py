@@ -1,4 +1,4 @@
-"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore`, `PostgresMemoryStore` and `PostgresSpendStore`.
+"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore`, `PostgresMemoryStore`, `PostgresSpendStore` and `PostgresClaimablePlanStore`.
 
 The stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
 there is no in-process Postgres to run them against. The unit suites under
@@ -11,7 +11,10 @@ with the edges only a real server shows:
   text `$1` are stored and returned unchanged;
 - a NUL byte in a `TEXT` value is refused by the server rather than truncated;
 - `CREATE TABLE IF NOT EXISTS` racing from two store instances on one pool;
-- ordering by an identity `seq`, not by `step_index` or arrival in a heap scan.
+- ordering by an identity `seq`, not by `step_index` or arrival in a heap scan;
+- claims on a `PostgresClaimablePlanStore` racing over several pooled connections,
+  which the single-connection SQLite stand-in serializes before the advisory lock
+  is ever needed.
 
 Run against a local server with `make integration-postgres` after starting one,
 e.g. `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17`, or
@@ -80,6 +83,7 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
+from pydantic_ai_harness.planning import OwnedPlanItem, PlanItem, PostgresClaimablePlanStore, TaskStatus
 from pydantic_ai_harness.spend import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -1720,3 +1724,83 @@ async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> No
 
         with pytest.raises(ValueError, match='snapshot row has wrong types'):
             await store.latest_snapshot(run_id='r1')
+
+
+_CLAIMERS = 20
+
+
+async def test_claimable_board_has_one_winner_per_contested_step() -> None:
+    """Claimers on separate connections race for one step, then for the rest by `claim(None)`."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresClaimablePlanStore(pool, table=prefix).set_items(
+            [PlanItem(id=f'step-{index}', content=f'Step {index}') for index in range(4)]
+        )
+        contested: list[OwnedPlanItem | None] = []
+        following: list[OwnedPlanItem | None] = []
+
+        async def claim(name: str) -> None:
+            store = PostgresClaimablePlanStore(pool, table=prefix)
+            contested.append(await store.claim('step-0', owner=name))
+            following.append(await store.claim(None, owner=name))
+
+        async with anyio.create_task_group() as group:
+            for index in range(_CLAIMERS):
+                group.start_soon(claim, f'member-{index}')
+
+        assert len([item for item in contested if item is not None]) == 1
+        assert sorted(item.id for item in following if item is not None) == ['step-1', 'step-2', 'step-3']
+        board = await PostgresClaimablePlanStore(pool, table=prefix).get_owned_items()
+        assert all(item.status is TaskStatus.in_progress and item.owner is not None for item in board)
+
+
+async def test_claimable_board_unblocks_a_dependent_exactly_once() -> None:
+    """Concurrent completions of every prerequisite move the shared dependent to `pending` once."""
+    async with _live_tables() as (pool, prefix):
+        prerequisites = [f'pre-{index}' for index in range(_CLAIMERS // 2)]
+        store = PostgresClaimablePlanStore(pool, table=prefix)
+        await store.set_items(
+            [
+                *(PlanItem(id=item_id, content=item_id) for item_id in prerequisites),
+                PlanItem(id='join', content='Join', status=TaskStatus.blocked, depends_on=prerequisites),
+            ]
+        )
+        for item_id in prerequisites:
+            await store.claim(item_id, owner=item_id)
+        changes: list[OwnedPlanItem] = []
+
+        async def complete(item_id: str) -> None:
+            changes.extend(
+                await PostgresClaimablePlanStore(pool, table=prefix).release(
+                    item_id, owner=item_id, status=TaskStatus.completed
+                )
+            )
+
+        async with anyio.create_task_group() as group:
+            for item_id in prerequisites * 2:
+                group.start_soon(complete, item_id)
+
+        assert [item.id for item in changes if item.id == 'join'] == ['join']
+        assert sorted(item.id for item in changes if item.status is TaskStatus.completed) == sorted(prerequisites)
+
+
+async def test_claimable_board_set_items_keeps_concurrent_claims() -> None:
+    """Whole-board rewrites racing claims keep every owner."""
+    async with _live_tables() as (pool, prefix):
+        ids = [f'step-{index}' for index in range(_CLAIMERS // 2)]
+        await PostgresClaimablePlanStore(pool, table=prefix).set_items([PlanItem(id=i, content=i) for i in ids])
+
+        async def claim(item_id: str) -> None:
+            await PostgresClaimablePlanStore(pool, table=prefix).claim(item_id, owner=item_id)
+
+        async def rewrite(version: int) -> None:
+            await PostgresClaimablePlanStore(pool, table=prefix).set_items(
+                [PlanItem(id=i, content=f'{i} v{version}') for i in ids]
+            )
+
+        async with anyio.create_task_group() as group:
+            for index, item_id in enumerate(ids):
+                group.start_soon(claim, item_id)
+                group.start_soon(rewrite, index)
+
+        board = await PostgresClaimablePlanStore(pool, table=prefix).get_owned_items()
+        assert {item.id: item.owner for item in board} == {item_id: item_id for item_id in ids}

@@ -59,6 +59,21 @@ class PlanItem(BaseModel):
     )
 
 
+class OwnedPlanItem(PlanItem):
+    """A plan step on a shared board, with the agent that has claimed it.
+
+    `ClaimablePlanStore` returns these from its typed reads, `claim` and `release`.
+    Only `claim` and `release` change `owner`; the inherited `PlanStore` writes keep it.
+
+    Attributes:
+        owner: Name of the agent that claimed the step, or `None` while it is unclaimed.
+            A step keeps its owner when it is completed or cancelled, as a record of who
+            finished it.
+    """
+
+    owner: str | None = Field(default=None, description='Name of the agent that claimed this step.')
+
+
 class PlanStatusUpdate(BaseModel):
     """One entry of the `update_task_statuses` batch tool."""
 
