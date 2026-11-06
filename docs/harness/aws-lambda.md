@@ -144,6 +144,76 @@ Loop reuse has one more consequence: do not detach background work from a tool w
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and
 is not covered by durable execution's guarantees, and it can outlive the invocation that started it.
 
+## Approvals
+
+To have a person approve a tool call, attach [`DurableApprovals`](../capabilities/durable-approvals.md) next to
+`AWSLambdaDurability`. When the model calls a tool that needs approval (`requires_approval=True` or
+`ApprovalRequired`) or external execution (`CallDeferred`), the run creates a Lambda callback, calls
+your `announce` function with the callback ID inside a step, and suspends: the invocation returns, and
+nothing is billed while the execution waits. When the decision is sent to the callback, Lambda invokes
+the function again, the handler replays from its checkpoints without calling the model again, and the
+run continues with the approved calls executed and the denied ones reported to the model.
+
+```python {title="approvals_handler.py" test="skip" lint="skip"}
+from datetime import timedelta
+from typing import Any
+
+from aws_durable_execution_sdk_python import DurableContext, durable_execution
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai.capabilities import DurableApprovals
+
+from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
+
+
+async def announce(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
+    # Hand the callback ID to the approver: post to Slack, send an email, write a database row.
+    await notify_approver(callback_id, [call.tool_call_id for call in requests.approvals])
+
+
+agent = Agent(
+    '{{ bedrock:medium }}',
+    name='support',
+    capabilities=[AWSLambdaDurability(), DurableApprovals(announce, timeout=timedelta(days=1))],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+def issue_refund(order_id: str, amount: int) -> str:
+    return f'Refunded {amount} for order {order_id}'
+
+
+@durable_execution
+@durable_agent_handler
+async def handler(event: dict[str, Any], context: DurableContext) -> str:
+    result = await agent.run(str(event['prompt']))
+    return result.output
+```
+
+The approver sends the decision, the JSON form of `DeferredToolResults` keyed by tool call ID, to
+the callback:
+
+```bash
+aws lambda send-durable-execution-callback-success \
+  --callback-id <CALLBACK_ID> \
+  --cli-binary-format raw-in-base64-out \
+  --result '{"approvals": {"<TOOL_CALL_ID>": true}}'
+```
+
+From Python, call `boto3.client('lambda').send_durable_execution_callback_success(CallbackId=...,
+Result=json.dumps(decision))`. An approval can also deny the call with a message for the model, or
+approve it with different arguments; [The decision](../capabilities/durable-approvals.md#the-decision) lists every form.
+`send-durable-execution-callback-failure` ends the wait without a decision, like a timeout: every
+pending call is denied with a message saying why, and the run continues.
+
+The callback's `timeout` is set from `DurableApprovals(timeout=...)`, rounded up to whole seconds.
+Without one, the execution waits until its `ExecutionTimeout`. The announcement is a step like any
+other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
+run it again when it fails, so make it idempotent. A tool cannot wait for a decision itself, because
+it runs inside a step; that is rejected with a `UserError`.
+
+This replaces ending the run with `DeferredToolRequests` output and starting a second run with the
+results, which still works and is what an agent without `DurableApprovals` does.
+
 ## What gets checkpointed
 
 Step names are built from the agent's `name` and each toolset's `id`:
@@ -164,6 +234,8 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__dynamic_toolset__{id}.validate_args` | validating a dynamic toolset call's arguments |
 | `{name}__dynamic_toolset__{id}.call_tool:{tool}` | a dynamic toolset's tool call |
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
+| `{name}__external_event.deferred_tool_calls` | the callback a [`DurableApprovals`](#approvals) wait suspends on |
+| `{name}__external_event.deferred_tool_calls.announce` | announcing that callback's ID |
 
 A model operation that does not use the agent's default model records its model id in the step name
 (for example, `{name}__model.request.{model_id}`), so the execution history shows which model each

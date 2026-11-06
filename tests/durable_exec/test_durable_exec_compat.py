@@ -197,6 +197,10 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'ExternalEventError',
+        'ExternalEventWaiter',
+        'external_event_scope',
+        'wait_for_external_event',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 

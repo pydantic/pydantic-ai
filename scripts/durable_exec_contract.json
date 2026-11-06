@@ -2756,6 +2756,7 @@
     "AbstractCapability.wrap_run": {
       "engines": [
         "absurd",
+        "aws_lambda",
         "dbos",
         "durable_exec",
         "pgtask",
@@ -2770,6 +2771,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.wrap_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability.wrap_run",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_capability.py::AbsurdDurability.wrap_run",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::AWSLambdaDurability.wrap_run",
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::PGTaskDurability.wrap_run"
       ]
     },
@@ -2839,6 +2841,7 @@
     "WrapRunHandler": {
       "engines": [
         "absurd",
+        "aws_lambda",
         "dbos",
         "durable_exec",
         "pgtask",
@@ -2853,6 +2856,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_capability.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::<module>"
       ]
     },
@@ -3535,6 +3539,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_external_events.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_spec.py::<module>",
@@ -3561,6 +3566,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_context.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_bridge.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::<module>",
@@ -6076,6 +6082,7 @@
     "AgentRunResult": {
       "engines": [
         "absurd",
+        "aws_lambda",
         "dbos",
         "durable_exec",
         "pgtask",
@@ -6095,6 +6102,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_capability.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::<module>"
       ]
     },
