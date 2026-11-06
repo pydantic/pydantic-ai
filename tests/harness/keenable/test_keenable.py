@@ -38,6 +38,13 @@ from pydantic_ai_harness.keenable import (
 READINESS_WAIT_TIMEOUT = 10
 
 
+@pytest.fixture(autouse=True)
+def keyless_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test keyless against the default base URL, whatever the developer's environment sets."""
+    monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
+    monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+
+
 class _Budgets(TypedDict, total=False):
     num_results: int
     max_snippet_chars: int
@@ -127,11 +134,9 @@ class _StalledStream(httpx.AsyncByteStream):
 
 class TestKeenableSearch:
     @pytest.mark.vcr(additional_matchers=['json_body'])
-    async def test_agent_searches_and_reads_a_page(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_agent_searches_and_reads_a_page(self):
         # Recorded against the keyless public endpoints, so the cassette holds
         # no credential. The body matcher keeps `max_results` on the wire.
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
 
         def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             """Search, read one page, then answer: the loop the default instructions ask for."""
@@ -428,6 +433,14 @@ class TestKeenableSearchToolset:
         with pytest.raises(httpx.HTTPStatusError):
             await _toolset(client).web_search('cats')
 
+    async def test_a_custom_client_value_error_propagates(self):
+        # Only a body `HttpKeenableClient` could not read is retried as a
+        # malformed response; a custom client's own error is a bug to surface.
+        client = FakeClient(error=ValueError('bug in a custom client'))
+
+        with pytest.raises(ValueError, match=r'^bug in a custom client$'):
+            await _toolset(client).web_search('cats')
+
     async def test_network_errors_become_retries(self):
         client = FakeClient(error=httpx.ConnectError('unreachable'))
 
@@ -465,8 +478,6 @@ class TestHttpKeenableClient:
     """
 
     async def test_default_client_is_keyless(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
 
         await HttpKeenableClient().search('cats', max_results=5)
@@ -478,12 +489,10 @@ class TestHttpKeenableClient:
 
     @pytest.mark.parametrize('source', ['environment', 'argument'])
     async def test_api_key_selects_the_keyed_endpoint(self, monkeypatch: pytest.MonkeyPatch, source: str):
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         if source == 'environment':
             monkeypatch.setenv('KEENABLE_API_KEY', 'keen_live_x')
             client = HttpKeenableClient()
         else:
-            monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
             client = HttpKeenableClient(api_key='keen_live_x')
         seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
 
@@ -495,9 +504,7 @@ class TestHttpKeenableClient:
         # The key travels only as a header: never in the URL, never in the body.
         assert all('keen_live_x' not in str(request.url) and b'keen_live_x' not in request.content for request in seen)
 
-    async def test_an_injected_http_client_carries_every_request_and_stays_open(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+    async def test_an_injected_http_client_carries_every_request_and_stays_open(self):
         seen: list[httpx.Request] = []
 
         def respond(request: httpx.Request) -> httpx.Response:
@@ -513,8 +520,7 @@ class TestHttpKeenableClient:
 
         assert [request.url.path for request in seen] == ['/v1/search/public', '/v1/fetch/public']
 
-    async def test_the_api_key_never_follows_a_redirect(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
+    async def test_the_api_key_never_follows_a_redirect(self):
         seen: list[httpx.Request] = []
 
         def respond(request: httpx.Request) -> httpx.Response:
@@ -529,8 +535,19 @@ class TestHttpKeenableClient:
 
         assert [str(request.url) for request in seen] == ['https://api.keenable.ai/v1/search']
 
+    async def test_a_key_httpx_cannot_encode_propagates(self, monkeypatch: pytest.MonkeyPatch):
+        # A `UnicodeEncodeError` is a `ValueError`, but a key that cannot go in
+        # a header is configuration the model cannot fix.
+        _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
+        client = HttpKeenableClient(api_key='k\u00e9y')
+        toolset = KeenableSearchToolset[None](
+            client=client, num_results=5, max_snippet_chars=500, max_page_chars=10_000
+        )
+
+        with pytest.raises(UnicodeEncodeError):
+            await toolset.web_search('cats')
+
     async def test_base_url_is_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
         monkeypatch.setenv('KEENABLE_API_URL', 'http://localhost:8080/')
         seen = _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json={'results': []}))
 
@@ -544,8 +561,6 @@ class TestHttpKeenableClient:
                 return httpx.Response(200, json={'results': [_result('https://example.com/one'), 'not-a-dict']})
             return httpx.Response(200, json={'content': '# A page'})
 
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         seen = _capture_requests(monkeypatch, respond)
         client = HttpKeenableClient()
 
@@ -563,8 +578,6 @@ class TestHttpKeenableClient:
     ):
         # Keenable always sends `results` with a 2xx, so reporting an empty
         # search here would hand the model a false negative.
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
@@ -575,8 +588,6 @@ class TestHttpKeenableClient:
     async def test_http_client_fetch_tolerates_unexpected_payloads(
         self, monkeypatch: pytest.MonkeyPatch, payload: object
     ):
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, json=payload))
 
         page = await HttpKeenableClient().fetch('https://example.com/one')
@@ -587,8 +598,6 @@ class TestHttpKeenableClient:
     async def test_malformed_2xx_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch, body: bytes):
         # A 2xx that is not JSON is neither an `httpx.HTTPError` nor a deliberate
         # exception; without this it would kill the run as a bare decode error.
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=body))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
@@ -599,8 +608,6 @@ class TestHttpKeenableClient:
 
     async def test_oversized_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(HttpKeenableClient, '_MAX_RESPONSE_BYTES', 32)
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, content=b'{"results": []}' + b' ' * 64))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
@@ -612,8 +619,6 @@ class TestHttpKeenableClient:
         # httpx timeout, so only the deadline on the whole request ends it.
         stream = _StalledStream()
         monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.001)
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
@@ -625,8 +630,6 @@ class TestHttpKeenableClient:
         # A tool timeout cancels from an anyio scope around the request, and
         # that cancels the response's close too unless the close is shielded.
         stream = _StalledStream()
-        monkeypatch.delenv('KEENABLE_API_KEY', raising=False)
-        monkeypatch.delenv('KEENABLE_API_URL', raising=False)
         _capture_requests(monkeypatch, lambda _request: httpx.Response(200, stream=stream))
         toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
 

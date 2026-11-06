@@ -37,6 +37,10 @@ class KeenableSource(TypedDict):
     title: str | None
 
 
+class _MalformedResponse(Exception):
+    """A 2xx response from Keenable whose body is not the JSON its API documents."""
+
+
 class KeenableClient(Protocol):
     """The subset of the Keenable API that `KeenableSearchToolset` calls.
 
@@ -186,7 +190,12 @@ class HttpKeenableClient:
         finally:
             with anyio.CancelScope(shield=True):
                 await stack.aclose()
-        return json.loads(content)
+        try:
+            return json.loads(content)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            # `json.loads` decodes bytes before parsing them, so a body in a
+            # broken encoding fails as a decode error, not a JSON one.
+            raise _MalformedResponse(str(error)) from error
 
     async def search(self, query: str, *, max_results: int) -> list[dict[str, object]]:
         """Search the web via `POST /v1/search`, or `/v1/search/public` when keyless."""
@@ -199,7 +208,7 @@ class HttpKeenableClient:
         if not is_object_list(results):
             # Keenable always sends `results` with a 2xx, so a body without the
             # list is a gateway or proxy answering, not an empty search.
-            raise ValueError('`results` is missing or not a list')
+            raise _MalformedResponse('`results` is missing or not a list')
         # `_string_keyed` maps anything that is not an object to `{}`, so filtering
         # on the result drops non-object entries without a second check.
         return [mapped for mapped in (self._string_keyed(entry) for entry in results) if mapped]
@@ -348,10 +357,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'Keenable request failed: {error}') from error
             except TimeoutError as error:
                 raise ModelRetry('Keenable request timed out.') from error
-            except ValueError as error:
-                # `json.loads` raises `JSONDecodeError`, or `UnicodeDecodeError`
-                # for a body in a broken encoding; both are `ValueError`s, like
-                # the one `search` raises for a body without `results`.
+            except _MalformedResponse as error:
+                # Only `HttpKeenableClient` raises this, so any other error,
+                # such as a custom client's bug or a key httpx cannot encode
+                # into a header, propagates as configuration.
                 raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
 
         return wrapper
