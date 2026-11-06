@@ -2760,17 +2760,24 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
 def test_scheduled_recovery_retires_dispatch_task_incidents_once_their_run_concluded(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A dispatch's task key names its run, so its incident blocks nothing once that run concludes."""
+    """A dispatch's task key names its run, so its incident blocks nothing once that run concludes or is deleted."""
+
+    class _UnreadableRun(FakeGitHub):
+        def request(self, method: str, path: str, payload: object | None = None) -> object:
+            if path == 'actions/runs/999':
+                raise health.urllib.error.HTTPError(path, 502, 'Bad Gateway', Message(), None)
+            return super().request(method, path, payload)
 
     def task(number: int, key: str) -> health.Issue:
         return _issue(number, health.IncidentMarker('task', f'Bug Hunter:Bug Hunter:{key}', 'other', str(number), None))
 
-    client = FakeGitHub(
+    client = _UnreadableRun(
         [
             task(1, 'workflow_dispatch:main:aaa:123'),
             task(2, 'workflow_dispatch:main:bbb:456'),
             task(3, 'workflow_dispatch:main:ccc:789'),
             task(4, 'schedule:main:ddd:'),
+            task(5, 'workflow_dispatch:main:eee:999'),
         ]
     )
     client.workflow_runs = {
@@ -2783,14 +2790,16 @@ def test_scheduled_recovery_retires_dispatch_task_incidents_once_their_run_concl
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
 
-    assert 'Could not retire task incident #3' in capsys.readouterr().out
-    assert client.closed == [1]
+    # Only a run GitHub no longer has retires on a failed read; any other failure leaves the incident open.
+    assert 'Could not retire task incident #5' in capsys.readouterr().out
+    assert client.closed == [1, 3]
+    suffix = (
+        ' This incident blocked only runs with its task key, so it no longer blocks anything. '
+        'It did not record a recovery of the failed run.'
+    )
     assert client.comments == [
-        (
-            1,
-            'Retired: Dispatch run 123 concluded `failure`. This incident blocked only runs with its task key, '
-            'so it no longer blocks anything. It did not record a recovery of the failed run.',
-        )
+        (1, f'Retired: Dispatch run 123 concluded `failure`.{suffix}'),
+        (3, f'Retired: Dispatch run 789 no longer exists.{suffix}'),
     ]
 
 

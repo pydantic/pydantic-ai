@@ -1331,6 +1331,7 @@ def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None
     The key ends in `<event>:<PR number, head branch under workflow_run, or ref>:<head SHA>:<id>`. The incident
     blocks only runs with that exact key, so once its PR closes or moves to another head it blocks nothing.
     A dispatch's id is its run ID, so its incident blocks only re-runs of that run, and nothing once it concludes.
+    GitHub deletes only a run that completed or is more than two weeks old, and a deleted run cannot be re-run.
     """
     parts = marker.key.rsplit(':', 3)
     if len(parts) != 4:
@@ -1338,7 +1339,13 @@ def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None
     prefix, target, head_sha, task_id = parts
     event = prefix.rpartition(':')[2]
     if event == 'workflow_dispatch' and task_id.isdecimal():
-        run = _mapping(client.request('GET', f'actions/runs/{task_id}'))
+        try:
+            response = client.request('GET', f'actions/runs/{task_id}')
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return f'Dispatch run {task_id} no longer exists.'
+            raise
+        run = _mapping(response)
         if run is None:
             raise ValueError('GitHub returned an invalid workflow run')
         if run.get('status') != 'completed':
