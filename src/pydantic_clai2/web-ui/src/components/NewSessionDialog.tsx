@@ -268,11 +268,15 @@ export function NewSessionDialog({
                   // A worktree is named with its project; a project of several says whether they show, as an option
                   // cannot carry `aria-expanded`.
                   aria-label={
-                    place.branch !== undefined
-                      ? place.label
-                      : place.worktrees > 0
-                        ? `${place.label}, ${place.worktrees} worktrees ${open ? 'shown' : 'hidden'}`
-                        : undefined
+                    place.branch === undefined && place.worktrees === 0
+                      ? undefined
+                      : [
+                          place.label,
+                          place.worktrees > 0 && `${place.worktrees} worktrees ${open ? 'shown' : 'hidden'}`,
+                          place.path === current && 'current',
+                        ]
+                          .filter(Boolean)
+                          .join(', ')
                   }
                   className={`dialog-option ${index === cursor ? 'active' : ''}`}
                   disabled={sending}
