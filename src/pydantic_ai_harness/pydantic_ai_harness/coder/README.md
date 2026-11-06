@@ -239,6 +239,10 @@ replying.
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
 
+`autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
+or running commands if it ignores the sentence. To require approval before writes or commands, add
+[`Permissions`](https://pydantic.dev/docs/ai/harness/permissions/).
+
 A delegate, whether started by `delegate_task` or used as another agent's sub-agent, was handed its task by its parent,
 so, whatever the level, it is told to choose sensible defaults and finish, and to measure results against any numeric
 target the task states.

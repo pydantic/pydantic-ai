@@ -392,7 +392,10 @@ class TestCoder:
         text = '\n'.join(part.content for part in parts)
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ("Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks." in text) is sub_agents
+        assert (
+            "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
+            'whatever other instructions say about delegating.' in text
+        ) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)

@@ -36,9 +36,13 @@ _NESTED_REPO_FILES = (
 )
 """Only when that `RepoContext` inlines nested files (`nested_traversal` and `nested_inject='contents'`)."""
 
-_DELEGATION = "Don't spawn sub-agents with `{tool_name}` unless the user or AGENTS.md asks."
-"""The rule Codex gives its models for `spawn_agent`. A delegate starts from a fresh context and
-re-explores the project, so unrequested delegation multiplies tool calls and cost."""
+_DELEGATION = (
+    "Don't spawn sub-agents with `{tool_name}` unless the user or AGENTS.md asks, "
+    'whatever other instructions say about delegating.'
+)
+"""Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
+saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
+delegation multiplies tool calls and cost."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
 """Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""

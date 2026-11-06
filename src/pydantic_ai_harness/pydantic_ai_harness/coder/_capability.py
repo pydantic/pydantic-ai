@@ -174,8 +174,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.
         instructions: Appended to the default instructions.
-        autonomy: How far the agent works on its own. `'low'` proposes a plan and waits
-            for approval before editing. `'medium'` works until done but asks when a
+        autonomy: How far the agent works on its own. This is guidance to the model, not a
+            limit on its tools: nothing stops it from editing if it ignores the sentence.
+            To require approval before writes or commands, add `Permissions`. `'low'` proposes
+            a plan and waits for approval before editing. `'medium'` works until done but asks when a
             choice really matters. `'high'` asks only for credentials, approvals, or
             real ambiguity, and measures results against any numeric target the task
             states. `'max'` never asks, chooses sensible defaults, and also deletes its
