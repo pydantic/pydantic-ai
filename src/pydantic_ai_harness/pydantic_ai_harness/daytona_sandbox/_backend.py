@@ -147,12 +147,19 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     retry as transient. A not-found answer is a missing `path` for a path operation, and a refused
     request otherwise.
     """
-    if (
-        path is not None
-        and isinstance(error, daytona.DaytonaError)
-        and (path_error := _path_error(error, path)) is not None
-    ):
-        return path_error
+    if path is not None and isinstance(error, daytona.DaytonaError):
+        # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
+        message = str(error).lower()
+        if 'too many levels of symbolic links' in message:
+            return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
+        for phrase, error_type in (
+            ('Not a directory', NotADirectoryError),
+            ('Is a directory', IsADirectoryError),
+            ('Permission denied', PermissionError),
+            ('File exists', FileExistsError),
+        ):
+            if phrase.lower() in message:
+                return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
     if path is not None and isinstance(error, daytona.DaytonaForbiddenError):
         # Toolbox authorization is about the requested file, not the API credentials.
         return PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
@@ -170,23 +177,6 @@ def _translate(error: Exception, context: str, *, path: str | None = None) -> Ex
     ):
         return WorkspaceError(f'{context}: {error}')
     return error
-
-
-def _path_error(error: daytona.DaytonaError, path: str) -> OSError | None:
-    """The `OSError` named by the POSIX `strerror` text of a failed path operation, or `None` if it names none."""
-    # Path failures carry the POSIX `strerror` text, as a 400 or, for a read, a 500.
-    message = str(error).lower()
-    if 'too many levels of symbolic links' in message:
-        return OSError(errno.ELOOP, 'Too many levels of symbolic links in the Daytona sandbox', path)
-    for phrase, error_type in (
-        ('Not a directory', NotADirectoryError),
-        ('Is a directory', IsADirectoryError),
-        ('Permission denied', PermissionError),
-        ('File exists', FileExistsError),
-    ):
-        if phrase.lower() in message:
-            return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
-    return None
 
 
 async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:

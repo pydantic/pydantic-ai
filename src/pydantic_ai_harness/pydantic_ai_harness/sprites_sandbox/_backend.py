@@ -52,7 +52,6 @@ it runs on asyncio only.
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import logging
 import math
@@ -313,34 +312,6 @@ async def _close_command(command: WSCommand) -> None:
             command.ws.transport.abort()
 
 
-async def _start_or_back_off(command: _ExecCommand, delay: float | None) -> bool:
-    """Start `command`, returning whether it started; after a handshake that failed before the socket opened, wait `delay`.
-
-    A failure after the socket opened, or on the last attempt (`delay` is `None`), raises.
-    """
-    try:
-        await command.start()
-    except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
-        if command.ws is not None:
-            raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
-        if delay is None:
-            raise NetworkError(f'Sprites exec handshake failed: {error}') from error
-        await anyio.sleep(delay)
-        return False
-    return True
-
-
-def _working_dir_to_confirm(
-    code: int, directory: str | None, marker: str, command: _ExecCommand, *, check: bool
-) -> str | None:
-    """The `directory` a command that exited 1 may have failed to enter, or `None` when there is none to confirm."""
-    # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
-    # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
-    if code == 1 and check and directory is not None and marker.encode() not in command.get_stdout():
-        return directory
-    return None
-
-
 async def _close_client(client: AsyncSpritesClient | None) -> None:
     if client is not None and (error := await _cleanup_call(client.aclose, timeout=_CLOSE_TIMEOUT)) is not None:
         logger.warning('Could not close Sprites SDK client: %r', error)
@@ -393,22 +364,6 @@ async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None
             raise WorkspaceUnavailableError(_gone_message(sprite.name)) from error
         except Exception:
             pass
-
-
-def _create_refused(error: Exception) -> bool:
-    """Whether a failed create's `error` is an API answer that rules out a committed Sprite.
-
-    A transport failure, a timeout, or a 409 conflict leaves the create possibly committed.
-    """
-    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or '(status 409)' in str(error))
-
-
-async def _recover_create(client: AsyncSpritesClient, name: str, error: Exception) -> AsyncSprite:
-    """Look up a Sprite whose failed create may have committed, re-raising the create's `error` if it is not visible."""
-    try:
-        return await client.get_sprite(name)
-    except (NotFoundError, NetworkError, TimeoutError):
-        raise error from None
 
 
 class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -543,14 +498,59 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._unfetched = True
             return sandbox
 
+        async def acquire() -> AsyncSprite:
+            with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+                if ref is not None:
+                    try:
+                        sandbox = await client.get_sprite(ref.id)
+                    except NotFoundError as error:
+                        if self._uncertain_create:
+                            # A 404 during eventual visibility is not proof that creation failed.
+                            raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+                        raise
+                else:
+                    try:
+                        sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+                    except (NetworkError, TimeoutError, SpriteError) as error:
+                        if isinstance(error, SpriteError) and not (
+                            isinstance(error, NetworkError) or '(status 409)' in str(error)
+                        ):
+                            raise
+                        # The create may have committed even if lookup is not yet visible. Keep its
+                        # preallocated name for failure hooks and use lookup only on future attempts.
+                        self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                        self._uncertain_create = True
+                        try:
+                            sandbox = await client.get_sprite(self._new_sprite_name)
+                        except (NotFoundError, NetworkError, TimeoutError):
+                            raise error from None
+                    # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+                    logger.info('Created Sprite %s', sandbox.name)
+                # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
+                self._sandbox = sandbox
+                self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
+                self._uncertain_create = False
+                self._attached_name = sandbox.name
+                self._unfetched = False
+                _lookups.record(_LookupCache.key(client, sandbox.name))
+                return sandbox
+            # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
+            # control plane is a transport failure, which propagates for a retry;
+            # `WorkspaceTimeoutError` is reserved for command deadlines.
+            if ref is None:
+                # A timed-out create may have committed; a subsequent call must only look it up.
+                self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+                self._uncertain_create = True
+            action = 'creation' if ref is None else 'connection'
+            raise TimeoutError(
+                f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
+                'the Sprites control plane may be unreachable.'
+            )
+
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
-            return await (
-                self._acquire(client, ref)
-                if ref is not None
-                else run_to_completion(functools.partial(self._acquire, client, ref))
-            )
+            return await (acquire() if ref is not None else run_to_completion(acquire))
         except SpriteError as error:
             if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
                 raise
@@ -558,51 +558,6 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # A lookup `get_sandbox()` made outside an operation also clears what later backends trust.
                 _lookups.forget(ref.id)
             raise mapped from error
-
-    async def _acquire(self, client: AsyncSpritesClient, ref: WorkspaceRef | None) -> AsyncSprite:
-        """Attach to the Sprite `ref` names, or create one, within `_ACQUIRE_TIMEOUT`, and record it."""
-        with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-            if ref is not None:
-                try:
-                    sandbox = await client.get_sprite(ref.id)
-                except NotFoundError as error:
-                    if self._uncertain_create:
-                        # A 404 during eventual visibility is not proof that creation failed.
-                        raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-                    raise
-            else:
-                try:
-                    sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                except (NetworkError, TimeoutError, SpriteError) as error:
-                    if _create_refused(error):
-                        raise
-                    # The create may have committed even if lookup is not yet visible. Keep its
-                    # preallocated name for failure hooks and use lookup only on future attempts.
-                    self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                    self._uncertain_create = True
-                    sandbox = await _recover_create(client, self._new_sprite_name, error)
-                # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
-                logger.info('Created Sprite %s', sandbox.name)
-            # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
-            self._sandbox = sandbox
-            self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
-            self._uncertain_create = False
-            self._attached_name = sandbox.name
-            self._unfetched = False
-            _lookups.record(_LookupCache.key(client, sandbox.name))
-            return sandbox
-        # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
-        # control plane is a transport failure, which propagates for a retry;
-        # `WorkspaceTimeoutError` is reserved for command deadlines.
-        if ref is None:
-            # A timed-out create may have committed; a subsequent call must only look it up.
-            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-            self._uncertain_create = True
-        action = 'creation' if ref is None else 'connection'
-        raise TimeoutError(
-            f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
-            'the Sprites control plane may be unreachable.'
-        )
 
     async def aclose(self) -> None:
         """Close the `AsyncSpritesClient` this backend created, if it created one.
@@ -700,7 +655,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
         # identifiers from the environment it passes on.
-        args = _ending_with(marker, capture, self._command_args(command, shell, env))
+        args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it.
         if sandbox is None:
@@ -714,9 +669,18 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 # Stdin EOF gates execution: a handshake that failed before the socket opened cannot
                 # have started the command, so it is retried with backoff; an opened socket never is.
                 for delay in (*_HANDSHAKE_RETRY_DELAYS, None):  # pragma: no branch - each breaks or raises
-                    if await _start_or_back_off(exec_command, delay):
+                    try:
+                        await exec_command.start()
                         break
-                    exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                    except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
+                        if exec_command.ws is not None:
+                            raise WorkspaceUnavailableError(
+                                'Sprites exec connection failed; command may have run'
+                            ) from error
+                        if delay is None:
+                            raise NetworkError(f'Sprites exec handshake failed: {error}') from error
+                        await anyio.sleep(delay)
+                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -724,63 +688,40 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
             if timeout is not None and deadline.cancelled_caught:
                 interrupted = True
-                raise await self._timed_out(exec_command, marker, capture, timeout, capture_stderr=capture_stderr)
+                # A handshake that never opened started no command, so there is no capture to read.
+                started = exec_command.ws is not None
+                await _close_command(exec_command)
+                partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
+                # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
+                stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
+                raise WorkspaceTimeoutError(
+                    f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
+                )
         except BaseException as error:
             # On a timeout or a cancellation, closing the socket is what ends the command in the Sprite.
-            mapped = await self._abandon_command(
-                error, exec_command, capture, sandbox.name, interrupted=interrupted, capture_stderr=capture_stderr
-            )
-            if mapped is None:
-                raise
-            raise mapped from error
+            if not interrupted:
+                started = exec_command.ws is not None
+                await _close_command(exec_command)
+                if capture_stderr and started:
+                    # Removes the capture file, as far as the shielded grace allows.
+                    await stop_shielded(lambda: self._read_capture(capture))
+            if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
+                raise mapped from error
+            raise
         await _close_command(exec_command)
         stdout, stderr = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         result = CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
-        unconfirmed = _working_dir_to_confirm(code, directory, marker, exec_command, check=check_working_dir)
-        if unconfirmed is not None:
-            await self._check_working_dir(sandbox, unconfirmed, result, timeout=timeout, deadline=deadline.deadline)
+        if (
+            code == 1
+            and check_working_dir
+            and directory is not None
+            and marker.encode() not in exec_command.get_stdout()
+        ):
+            # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
+            # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
+            await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
         await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
         return result
-
-    def _command_args(self, command: WorkspaceCommand, shell: bool, env: Mapping[str, str] | None) -> list[str]:
-        """`command`'s argv, run with the backend's environment and `env` over it."""
-        return _with_env(command_argv(command, shell), {**self._env, **(env or {})})
-
-    async def _timed_out(
-        self, exec_command: _ExecCommand, marker: str, capture: str, timeout: float, *, capture_stderr: bool
-    ) -> WorkspaceTimeoutError:
-        """Close a command that ran past `timeout` and build its timeout error with the output it left."""
-        # A handshake that never opened started no command, so there is no capture to read.
-        started = exec_command.ws is not None
-        await _close_command(exec_command)
-        partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
-        # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-        stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
-        return WorkspaceTimeoutError(
-            f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
-        )
-
-    async def _abandon_command(
-        self,
-        error: BaseException,
-        exec_command: _ExecCommand,
-        capture: str,
-        sprite_name: str,
-        *,
-        interrupted: bool,
-        capture_stderr: bool,
-    ) -> WorkspaceError | None:
-        """Close a command that failed or was cancelled, unless its timeout already closed it, and map `error`.
-
-        Returns the `WorkspaceError` to raise for `error`, or `None` to re-raise it unchanged.
-        """
-        if not interrupted:
-            started = exec_command.ws is not None
-            await _close_command(exec_command)
-            if capture_stderr and started:
-                # Removes the capture file, as far as the shielded grace allows.
-                await stop_shielded(lambda: self._read_capture(capture))
-        return _map_error(error, sprite_name) if isinstance(error, Exception) else None
 
     async def _check_working_dir(
         self, sandbox: AsyncSprite, directory: str, failed: CommandResult, *, timeout: float | None, deadline: float

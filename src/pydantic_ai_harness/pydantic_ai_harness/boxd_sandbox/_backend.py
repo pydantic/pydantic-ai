@@ -161,14 +161,6 @@ def _refusal(machine: Machine) -> str | None:
     return None
 
 
-def _check_attachable(machine_id: str, machine: Machine) -> None:
-    """Raise `WorkspaceUnavailableError` if `BoxdSandbox` refuses `machine`, or boxd deleted it or it failed."""
-    if (refusal := _refusal(machine)) is not None:
-        raise WorkspaceUnavailableError(refusal)
-    if machine.status in ('destroyed', 'failed'):
-        raise WorkspaceUnavailableError(_gone_message(machine_id))
-
-
 def _credentials_rejected(error: Exception) -> bool:
     """Whether `error` says boxd found no credentials or refused them, rather than that it could not be asked."""
     return isinstance(error, boxd.AuthenticationError | boxd.PermissionDeniedError)
@@ -570,7 +562,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                             f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
                             "for these credentials). Pass `workspace='new'` to start a fresh machine."
                         ) from error
-                    _check_attachable(machine_id, machine)
+                    if (refusal := _refusal(machine)) is not None:
+                        raise WorkspaceUnavailableError(refusal)
+                    if machine.status in ('destroyed', 'failed'):
+                        raise WorkspaceUnavailableError(_gone_message(machine_id))
                     try:
                         if machine.status == 'stopped':
                             await client.machines.start(machine.id)

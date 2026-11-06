@@ -112,7 +112,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
 
-        self._check_tool_options()
+        if self._allowed_commands and self._denied_commands:
+            raise ValueError('Specify allowed_commands or denied_commands, not both.')
+        if max_output_chars <= 0:
+            raise ValueError('max_output_chars must be a positive integer.')
+        if unknown := sorted(set(self._tools) - set(SHELL_TOOL_NAMES)):
+            raise ValueError(f'Unknown shell tools: {", ".join(unknown)}. Available: {", ".join(SHELL_TOOL_NAMES)}.')
+        if PERSISTENT_TOOL_NAME in self._tools and not 0 < default_timeout <= MAX_FOREGROUND_WAIT:
+            raise ValueError(
+                f'default_timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds '
+                'for the shell tool.'
+            )
 
         command_metadata = {'code_arg_name': 'command', 'code_arg_language': 'shell'}
         registrations: dict[str, Callable[..., Awaitable[str]]] = {
@@ -130,19 +140,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 if name in ('run_command', PERSISTENT_TOOL_NAME):
                     metadata['temporal'] = {'start_to_close_timeout': timedelta(seconds=MAX_FOREGROUND_WAIT + 30)}
                 self.add_function(registrations[name], name=name, metadata=metadata or None)
-
-    def _check_tool_options(self) -> None:
-        if self._allowed_commands and self._denied_commands:
-            raise ValueError('Specify allowed_commands or denied_commands, not both.')
-        if self._max_output_chars <= 0:
-            raise ValueError('max_output_chars must be a positive integer.')
-        if unknown := sorted(set(self._tools) - set(SHELL_TOOL_NAMES)):
-            raise ValueError(f'Unknown shell tools: {", ".join(unknown)}. Available: {", ".join(SHELL_TOOL_NAMES)}.')
-        if PERSISTENT_TOOL_NAME in self._tools and not 0 < self._default_timeout <= MAX_FOREGROUND_WAIT:
-            raise ValueError(
-                f'default_timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds '
-                'for the shell tool.'
-            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.
@@ -219,10 +216,18 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
         """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
         state: str | None = None
-        recorded: str | None
+        recorded: str | None = None
         if self._persist_cwd and ctx.run_id is not None:
             state = await self._cwd_state_path(ctx)
-            recorded = await self._read_cwd_state(ctx, state)
+            try:
+                recorded = (await ctx.workspace.read_bytes(state)).decode('utf-8')
+            except FileNotFoundError:
+                if self._cwd is not None and self._cwd_run_id == ctx.run_id:
+                    # This worker saw a saved cwd for this run; a missing file now is lost state.
+                    self._cwd = None
+                    raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
+            except UnicodeDecodeError:
+                pass
         else:
             recorded = self._cwd
         if recorded is not None:
@@ -238,19 +243,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'The previous directory was removed; now in {await ctx.workspace.working_dir()}.')
             return recorded
         return await ctx.workspace.working_dir()
-
-    async def _read_cwd_state(self, ctx: RunContext[AgentDepsT], state: str) -> str | None:
-        """The directory the run's state file at `state` holds, or `None` when it holds none."""
-        try:
-            return (await ctx.workspace.read_bytes(state)).decode('utf-8')
-        except FileNotFoundError:
-            if self._cwd is not None and self._cwd_run_id == ctx.run_id:
-                # This worker saw a saved cwd for this run; a missing file now is lost state.
-                self._cwd = None
-                raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
-        except UnicodeDecodeError:
-            pass
-        return None
 
     async def _cwd_state_path(self, ctx: RunContext[AgentDepsT]) -> str:
         # A run ID can contain path separators; hash it rather than letting it choose a filename.
