@@ -132,9 +132,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     home_dir: str | Path | None = None
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
 
-    A relative path resolves against the working directory. Setting it walks up to it even with
-    `walk_up=None`, and with `walk_up='all'` it stops the walk there. It cannot be combined with
-    `walk_up='repo_root'`.
+    A relative path resolves against the working directory. Symlinks in it are followed, as they are in the
+    working directory, so a linked spelling stops the walk-up at the directory it leads to. Setting it walks
+    up to it even with `walk_up=None`, and with `walk_up='all'` it stops the walk there. It cannot be
+    combined with `walk_up='repo_root'`.
     """
 
     filenames: Sequence[str] = ('AGENTS.md', 'CLAUDE.md')
@@ -267,7 +268,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(workspace)
         top: Path | None = None
         if self.home_dir is not None:
-            top = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
+            # The working directory has its symlinks resolved, so `home_dir` needs them resolved too to contain it.
+            top = Path(await workspace.realpath(workspace_path(Path(self.home_dir))))
         elif self.walk_up == 'repo_root':
             top = await find_root(workspace, working_dir, self.root_markers)
         elif self.walk_up == 'all':
