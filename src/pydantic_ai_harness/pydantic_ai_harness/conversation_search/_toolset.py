@@ -255,9 +255,10 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             | ModelSettingsDeltaPart()
         ):
             return None
-        case _:  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
-            # A part type newer than this code contributes nothing. `assert_never` under `TYPE_CHECKING`
-            # keeps the match exhaustive for pyright without crashing at runtime on a newer pydantic-ai.
+        # Reachable only on a pydantic-ai release newer than this one: a part type newer than this code contributes
+        # nothing. `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright without crashing at
+        # runtime on a newer pydantic-ai.
+        case _:  # pragma: no cover
             if TYPE_CHECKING:
                 assert_never(part)
             return None
