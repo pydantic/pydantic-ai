@@ -12,7 +12,12 @@ import pytest
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
+from tests.conftest import try_import
+
 from .test_engine_definition import CLAI2_SOURCE, definition, launch, parse_log, proxy_env
+
+with try_import() as exporter_installed:
+    import opentelemetry.exporter.otlp.json.file  # noqa: F401 # pyright: ignore[reportUnusedImport]
 
 pytestmark = pytest.mark.subprocess(reason='executes the generated protected launcher and its real tracing exporter')
 
@@ -91,6 +96,7 @@ def test_prewritten_noop_has_an_authenticated_terminal_record(tmp_path: Path) ->
     assert parsed.diagnostic_log_entries == []
 
 
+@pytest.mark.skipif(not exporter_installed(), reason='needs the `gh-aw-tracing` dependency group')
 def test_tracing_exports_locally_without_sandbox_credentials(tmp_path: Path) -> None:
     destination = tmp_path / 'private-spans.jsonl'
     invocation = launch(

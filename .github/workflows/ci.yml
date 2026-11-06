@@ -768,9 +768,12 @@ jobs:
 
       - run: uv sync --only-dev
 
+      # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
       - name: install harness and CLAI 2 test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
-        run: uv sync ${{ matrix.install.sync_command }}
+        run: |
+          uv sync ${{ matrix.install.sync_command }}
+          uv sync --inexact --only-group gh-aw-tracing
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
