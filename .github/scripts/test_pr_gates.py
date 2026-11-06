@@ -636,9 +636,9 @@ def test_failed_douwebot_publication_cannot_hide_a_finding_behind_another_receip
 
 @pytest.mark.parametrize('current', [False, True])
 def test_relocated_comment_uses_its_parent_review_head(current: bool):
-    # GitHub forwards commit_id for non-outdated comments. The immutable parent
-    # still says this comment was posted on the older head.
-    parent = review(9, head=HEAD if current else OLD_HEAD)
+    # GitHub forwards commit_id for the review and its non-outdated comments, as on #12375.
+    # Only the parent's marker still says this comment was posted on the older head.
+    parent = review(9, head=HEAD if current else OLD_HEAD).model_copy(update={'commit_id': HEAD})
     comment = review_gates.ReviewComment.model_validate(
         {
             'pull_request_review_id': parent.id,
@@ -647,6 +647,16 @@ def test_relocated_comment_uses_its_parent_review_head(current: bool):
             'commit_id': HEAD,
             'original_commit_id': OLD_HEAD,
         }
+    )
+    github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
+    assert bool(verdicts(github)['douwebot'].failures) is current
+
+
+@pytest.mark.parametrize('current', [False, True])
+def test_relocated_comment_under_an_unmarked_review_uses_its_original_head(current: bool):
+    parent = review(9, body='Unidentified review')
+    comment = review_gates.ReviewComment(
+        pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD if current else OLD_HEAD, body='finding'
     )
     github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
     assert bool(verdicts(github)['douwebot'].failures) is current

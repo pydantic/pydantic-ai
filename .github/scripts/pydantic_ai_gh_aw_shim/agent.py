@@ -167,6 +167,8 @@ def build_agent() -> Agent[None, str]:
             WorkflowPolicy(),
             # Inside `WorkflowPolicy`, whose run budget it reads through `wall_clock_caps`.
             cli.MarkTimedOutSpans(),
+            cli.RecordRunTotals(),
+            cli.CIReviewToolPolicy(),
             cli.RecoverMCPToolErrors(),
             PrepareTools(cli.hold_time_reserve_for_safe_output),
             *(

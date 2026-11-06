@@ -31,6 +31,12 @@ previous label-as-switch design left a window in which a push got *neither* revi
 `Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
 It never owns the merge-gate verdict.
 
+A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
+variable skips this review. It gets neither the review nor the `ui-security-review`
+Environment approval, and the skipped check reports as success. Separate branch names with
+commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
+left in the list also exempts any later branch with that name, compared case-insensitively.
+
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
@@ -56,7 +62,9 @@ PR has closed or moved to a new head. The engine's gh-aw harness must exit on a 
 (`hasNoopInSafeOutputs`). Any other engine harness, including
 `src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
 spends a full review. The `noop` does not skip the `detection` job, which still runs
-one threat-detection pass outside the agent slot.
+one threat-detection pass outside the agent slot. The shim withholds `noop` from the
+`CI Review` model, so this step writes the run's only `noop`. Keep `safe-outputs.noop`
+enabled for it.
 
 Both review workflows require a formal review from this run on the reviewed head.
 Their completion validator rejects placeholder noops and missing-data signals alone.
@@ -328,8 +336,8 @@ The provider-health job checks out the default branch and runs outside the agent
 container. It writes a decision summary and the `provider-health` artifact for every
 decision. A blocked gate must skip inference without emitting a passing review or other
 fabricated agent result. The non-model provider-health monitor owns incident issue
-creation and recovery; do not enable gh-aw's generic failure-as-issue reporting for these
-workflows.
+creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
+failed-job reporting (`report-failed-jobs`) for these workflows.
 
 The agent job waits for its engine concurrency slot after `provider_health` decides,
 sometimes for hours. Incidents and quota exhaustion from that wait must still stop
@@ -446,12 +454,16 @@ workflow requires to run its agent and publish results. After the corrected work
 is deployed, complete the existing UI Security review Environment approval for the
 fresh PR run.
 
-For workflow and task incidents, inspect the affected host stage and output, link that
-evidence to the incident, and close it manually. A green run that skips the model or
-affected stage is not proof.
-Resolve closed-PR tasks as retired only after API verification and representative
-workflow recovery. Record why each task is retired. Do not describe retired tasks as
-same-target recoveries.
+For workflow incidents, and task incidents the hourly run does not retire, inspect the
+affected host stage and output, link that evidence to the incident, and close it manually.
+A green run that skips the model or affected stage is not proof.
+
+The hourly scheduled run retires a task incident whose pull request head can no longer run.
+That is the case when the pull request is merged or closed, or its head moved off the SHA in
+the key. The run comments the pull request state it read once, then closes the incident. A
+retired incident records no recovery. Do not describe a retired task as a same-target
+recovery. Close a task incident manually when its key names no pull request head, such as
+a manual dispatch's key.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
@@ -463,7 +475,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |

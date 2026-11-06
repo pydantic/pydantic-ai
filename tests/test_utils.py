@@ -10,7 +10,8 @@ import itertools
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+import warnings
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
@@ -1548,3 +1549,33 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     with pytest.raises(ValueError, match='boom') as exc_info:
         awaiter.result()
     assert exc_info.value.__context__ is None
+
+
+def _run_sync() -> None:
+    Agent(TestModel()).run_sync('hello')
+
+
+def _run_stream_sync() -> None:
+    with Agent(TestModel()).run_stream_sync('hello') as result:
+        result.get_output()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
+    ],
+)
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
+    fresh_event_loop_policy: None, entry_point: Callable[[], None]
+):
+    """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
+
+    The warning fires when the policy has never had a loop set, as in a fresh interpreter's main thread, which the
+    `fresh_event_loop_policy` fixture recreates.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        entry_point()

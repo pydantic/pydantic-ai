@@ -123,6 +123,7 @@ def test_ci_review_stale_preflight_writes_noop_before_safe_outputs_setup(tmp_pat
         'PR': 'repos/pydantic/pydantic-ai/pulls/10450',
         'HEAD_SHA': 'old-head',
         'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary.md'),
+        'GITHUB_OUTPUT': str(tmp_path / 'github-output'),
     }
     result = subprocess.run(['bash', '-c', preflight['run']], env=env, text=True, capture_output=True, check=True)
     assert safe_outputs.exists(), result.stdout + result.stderr
@@ -131,6 +132,8 @@ def test_ci_review_stale_preflight_writes_noop_before_safe_outputs_setup(tmp_pat
         'type': 'noop',
         'message': 'Not reviewing old-head: the PR is now closed at new-head.',
     }
+    # Gates `Check out the PR head`, which would refuse a head the branch has moved past.
+    assert (tmp_path / 'github-output').read_text(encoding='utf-8') == 'skipped=true\n'
 
     subprocess.run(['bash', '-c', prepare['run']], env=env, check=True)
     assert safe_outputs.read_bytes() == original
@@ -1931,6 +1934,7 @@ imports:
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 safe-outputs:
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
 ---
@@ -1949,6 +1953,13 @@ Readiness: ${{ needs.provider_health.outputs.ready }}
     )
 
     assert check_provider_health_wiring(workflows) == []
+
+    # CI Review's sources disabled the other two reporters but left this one, which duplicated every task incident
+    # with an `[aw] Failed jobs` issue.
+    configured = source.read_text(encoding='utf-8')
+    source.write_text(configured.replace('  report-failed-jobs: false\n', '', 1), encoding='utf-8')
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == ['provider-health-reporting']
+    source.write_text(configured, encoding='utf-8')
 
     source.write_text(
         source.read_text(encoding='utf-8').replace(
@@ -2158,6 +2169,7 @@ jobs:
       actions: read
       contents: read
       issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@sha
         with:

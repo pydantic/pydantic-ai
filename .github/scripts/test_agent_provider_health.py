@@ -157,11 +157,26 @@ class FakeGitHub(health.GitHubClient):
         self.comments: list[tuple[int, str]] = []
         self.jobs: dict[tuple[str, int], list[dict[str, object]]] = {}
         self.pull_requests: dict[int, dict[str, object]] = {}
+        self.branch_pulls: dict[str, list[dict[str, object]]] = {}
         self.commit_pulls: dict[str, list[dict[str, object]]] = {}
         self.reviews: dict[int, list[dict[str, object]]] = {}
         self.default_branch_calls = 0
 
     def request(self, method: str, path: str, payload: object | None = None) -> object:
+        if method == 'GET' and path.startswith('pulls/'):
+            number = int(path.removeprefix('pulls/'))
+            if number not in self.pull_requests:
+                raise health.urllib.error.HTTPError(path, 404, 'Not Found', Message(), None)
+            return self.pull_requests[number]
+        if method == 'GET' and path.startswith('pulls?'):
+            head = health.urllib.parse.parse_qs(path.partition('?')[2])['head'][0]
+            return self.branch_pulls.get(head, [])
+        if method == 'POST' and path.endswith('/comments'):
+            self.comments.append((int(path.split('/')[1]), str((_mapping(payload) or {}).get('body'))))
+            return {}
+        if method == 'GET' and path.startswith('issues/') and '/comments' in path:
+            number = int(path.split('/')[1])
+            return [{'body': body} for commented, body in self.comments if commented == number]
         if method == 'GET':
             return [
                 {
@@ -2568,6 +2583,25 @@ def test_attempt_jobs_paginates_exact_attempt_and_uses_raw_page_length(monkeypat
     ]
 
 
+def test_default_branch_requests_the_repository_url_without_a_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitHub answers `repos/<repo>/` with 404, which failed every recovery dispatch's gate."""
+    requests: list[health.urllib.request.Request] = []
+
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector,
+        request: health.urllib.request.Request,
+        _data: object | None = None,
+        timeout: float = 30,
+    ) -> FakeHTTPResponse:
+        requests.append(request)
+        return FakeHTTPResponse({'default_branch': 'main'})
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+
+    assert health.GitHubClient('org/repo', 'token').default_branch() == 'main'
+    assert [request.full_url for request in requests] == [f'{health.API_ROOT}/repos/org/repo']
+
+
 def test_attempt_jobs_rejects_malformed_later_page(monkeypatch: pytest.MonkeyPatch) -> None:
     """A malformed later page fails closed instead of returning partial jobs."""
     pages: list[dict[str, object]] = [{'jobs': [{'id': index} for index in range(100)]}, {'jobs': None}]
@@ -2672,6 +2706,116 @@ def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypa
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
+
+
+def _pull(number: int, state: str, head_sha: str, *, merged: bool = False) -> dict[str, object]:
+    return {
+        'number': number,
+        'state': state,
+        'merged_at': '2026-11-01T00:00:00Z' if merged else None,
+        'head': {'sha': head_sha},
+    }
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
+    dry_run: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A task incident blocks only its exact PR head; once the PR closes or moves on, the hourly run closes it."""
+
+    def task(number: int, key: str) -> health.Issue:
+        return _issue(number, health.IncidentMarker('task', f'CI Review:CI Review:{key}', 'other', str(number), None))
+
+    client = FakeGitHub(
+        [
+            task(1, 'pull_request:7:aaa:'),
+            task(2, 'pull_request_review:8:bbb:'),
+            task(3, 'workflow_run:feature:ddd:'),
+            task(4, 'pull_request:10:eee:'),
+            task(5, 'workflow_dispatch:main:fff:123'),
+            task(6, 'workflow_run:gone:ggg:'),
+            task(7, 'pull_request:404:hhh:'),
+            _issue(8, health.IncidentMarker('workflow', 'CI Review', 'other', '8', None)),
+            _issue(9, health.IncidentMarker('provider', 'zai', 'rate_limit', '9', '2026-09-30T00:00:00Z')),
+        ]
+    )
+    client.pull_requests = {
+        7: _pull(7, 'closed', 'aaa', merged=True),
+        8: _pull(8, 'open', 'ccc'),
+        10: _pull(10, 'open', 'eee'),
+    }
+    client.branch_pulls = {
+        'org:feature': [_pull(12, 'open', 'ddd'), _pull(11, 'closed', 'old')],
+        'org:gone': [_pull(13, 'closed', 'ggg')],
+    }
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=dry_run, recover_issue=None)) == 0
+
+    out = capsys.readouterr().out
+    # An unreadable PR leaves its incident open without stopping provider recovery.
+    assert 'Could not retire task incident #7' in out
+    reasons = {
+        1: 'PR #7 is merged.',
+        2: 'PR #8 moved from `bbb` to `ccc`.',
+        6: 'PR #13 is closed without merging.',
+    }
+    if dry_run:
+        assert client.closed == []
+        assert client.comments == []
+        assert all(f'would retire task incident #{number}: {reason}' in out for number, reason in reasons.items())
+    else:
+        assert client.closed == [1, 2, 6, 9]
+        assert [(number, body.split(' This incident')[0]) for number, body in client.comments] == [
+            (number, f'Retired: {reason}') for number, reason in reasons.items()
+        ]
+
+
+def test_a_failed_retirement_write_is_retried_without_stopping_recovery(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed comment or close leaves that incident to the next hourly run, which comments only once."""
+
+    class _FailingWrites(FakeGitHub):
+        failures = {('POST', 'issues/1/comments'), ('PATCH', 'issues/2')}
+
+        def request(self, method: str, path: str, payload: object | None = None) -> object:
+            if (method, path) in self.failures:
+                self.failures.remove((method, path))
+                raise health.urllib.error.HTTPError(path, 502, 'Bad Gateway', Message(), None)
+            return super().request(method, path, payload)
+
+    client = _FailingWrites(
+        [
+            _issue(
+                number,
+                health.IncidentMarker(
+                    'task', f'CI Review:CI Review:pull_request:{number}:aaa:', 'other', str(number), None
+                ),
+            )
+            for number in (1, 2, 3)
+        ]
+        + [_issue(9, health.IncidentMarker('provider', 'zai', 'rate_limit', '9', '2026-09-30T00:00:00Z'))]
+    )
+    client.pull_requests = {number: _pull(number, 'closed', 'aaa') for number in (1, 2, 3)}
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+
+    out = capsys.readouterr().out
+    assert 'Could not retire task incident #1' in out
+    assert 'Could not retire task incident #2' in out
+    assert client.closed == [3, 9]
+
+    client.issues = [issue for issue in client.issues if issue.number not in client.closed]
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+
+    assert client.closed == [3, 9, 1, 2]
+    assert [number for number, _ in client.comments] == [2, 3, 1]
 
 
 def test_open_incidents_read_normalized_issue_creation_time() -> None:

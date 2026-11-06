@@ -28,6 +28,7 @@ safe-outputs:
   # `gh-aw.pydantic-ai-roundtrip-sweep`) via the otel-logfire import + the shim's
   # `instrument_pydantic_ai`, so we don't also file an auto-generated failure issue.
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:

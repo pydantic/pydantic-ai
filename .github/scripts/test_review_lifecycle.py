@@ -301,6 +301,22 @@ def test_compiled_publication_job_binds_each_workflow(workflow: str):
     assert 'flag_failed_review' not in workflow_frontmatter(workflow)['jobs']
 
 
+def test_compiled_stale_pr_skip_precedes_the_pr_head_checkout():
+    """Under `pull_request*` the base-restored config dirties the tree, and checking out a moved head then fails."""
+    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pydantic-ai-pr-review.lock.yml').read_text())
+    )
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
+    steps = TypeAdapter(list[dict[str, object]]).validate_python(jobs['agent']['steps'])
+    names = [step.get('name') for step in steps]
+    skip = steps[names.index('Skip a PR that closed or moved on while queued')]
+    checkout_index = names.index('Check out the PR head')
+    assert names.index(skip['name']) < checkout_index
+    assert skip['id'] == 'stale-pr'
+    assert 'echo \'skipped=true\' >> "$GITHUB_OUTPUT"' in str(skip['run'])
+    assert steps[checkout_index]['if'] == "steps.stale-pr.outputs.skipped != 'true'"
+
+
 @pytest.mark.parametrize(
     'live', [{'state': 'closed', 'head': {'sha': HEAD}}, {'state': 'open', 'head': {'sha': '2' * 40}}]
 )

@@ -991,12 +991,18 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
             )
         safe_outputs = _as_mapping(frontmatter.get('safe-outputs'))
         noop = _as_mapping(safe_outputs.get('noop'))
-        if safe_outputs.get('report-failure-as-issue') is not False or noop.get('report-as-issue') is not False:
+        # `report-failed-jobs` files an `[aw] Failed jobs` issue per run with a failed custom job, which
+        # duplicates the incident the provider-health monitor opens for the same run.
+        if (
+            safe_outputs.get('report-failure-as-issue') is not False
+            or safe_outputs.get('report-failed-jobs') is not False
+            or noop.get('report-as-issue') is not False
+        ):
             violations.append(
                 Violation(
                     str(source),
                     'provider-health-reporting',
-                    'Z.AI workflows must disable gh-aw generic failure-as-issue reporting.',
+                    'Z.AI workflows must disable gh-aw generic failure-as-issue and failed-job reporting.',
                 )
             )
         lock = source.with_suffix('.lock.yml')
@@ -1511,12 +1517,14 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
         'actions': 'read',
         'contents': 'read',
         'issues': 'write',
+        'pull-requests': 'read',
     }:
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-permissions',
-                'Monitor job permissions must be exactly `actions: read`, `contents: read`, and `issues: write`.',
+                'Monitor job permissions must be exactly `actions: read`, `contents: read`, `issues: write`, '
+                'and `pull-requests: read`.',
             )
         )
     if _as_mapping(triage_job.get('permissions')) != {'actions': 'read', 'contents': 'read'}:

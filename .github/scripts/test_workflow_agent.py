@@ -11,11 +11,13 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import Agent, PydanticAIDeprecationWarning, RunContext
+from pydantic_ai import Agent, ModelRetry, PydanticAIDeprecationWarning, RunContext
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
@@ -32,6 +34,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT
 from pydantic_clai2.cli.headless import run_headless
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -209,6 +212,165 @@ async def test_only_safe_output_tools_remain_inside_the_time_reserve(
     assert result.output == 'done'
     assert {'Task', 'safeoutputs_submit_pull_request_review'} < offered[0]
     assert offered[1:] == [{'safeoutputs_submit_pull_request_review'}]
+
+
+@pytest.mark.parametrize(
+    ('inside_reserve', 'withheld', 'args'),
+    [(False, 'safeoutputs_noop', {'message': 'progress note'}), (True, 'safeoutputs_probe', {})],
+)
+async def test_ci_review_withholds_noop_and_non_publishing_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inside_reserve: bool, withheld: str, args: dict[str, object]
+) -> None:
+    """CI Review is offered neither `noop` nor, inside the reserve, a non-publishing output; a call to one is answered."""
+    sink = tmp_path / 'safeoutputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    seconds_left = cli.RUN_TIME_RESERVE_SECS + (-1 if inside_reserve else 60)
+    monkeypatch.setattr(cli, '_run_seconds_left', lambda: seconds_left)
+    offered: list[set[str]] = []
+    withheld_returns: list[str] = []
+
+    def noop(message: str) -> str:
+        sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
+        return 'ok'
+
+    def probe() -> str:
+        return 'nothing new'
+
+    def submit_pull_request_review(body: str) -> str:
+        sink.write_text(json.dumps({'type': 'submit_pull_request_review', 'body': body}) + '\n')
+        return 'ok'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append({tool_def.name for tool_def in info.function_tools})
+        withheld_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == withheld
+        )
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        if not withheld_returns:
+            return ModelResponse(parts=[ToolCallPart(withheld, args)])
+        return ModelResponse(
+            parts=[ToolCallPart('safeoutputs_submit_pull_request_review', {'body': 'Review complete'})]
+        )
+
+    safe_outputs = FunctionToolset([noop, probe, submit_pull_request_review]).prefixed('safeoutputs')
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)):
+        result = await agent.run('Review', toolsets=[safe_outputs], usage_limits=UsageLimits(request_limit=400))
+    assert result.output == 'done'
+    assert withheld_returns == [
+        'error: this tool is not available to CI Review now. Finish by submitting your review with '
+        '`submit_pull_request_review`, as a COMMENT review if coverage is incomplete.'
+    ]
+    assert json.loads(sink.read_text())['type'] == 'submit_pull_request_review'
+    if inside_reserve:
+        assert offered == [{'safeoutputs_submit_pull_request_review'}] * 3
+    else:
+        assert {'shell', 'Task', 'safeoutputs_probe', 'safeoutputs_submit_pull_request_review'} <= offered[0]
+        assert all('safeoutputs_noop' not in tools for tools in offered)
+
+
+async def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gh-aw rejects a `noop` past its per-run limit; with one tool retry, the second rejection ended the run."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
+    sink = tmp_path / 'safeoutputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    noop_returns: list[str] = []
+
+    def noop(message: str) -> str:
+        if sink.exists():
+            error = McpError(ErrorData(code=-32602, message='calling "tools/call": E002: noop limit reached'))
+            raise ModelRetry(str(error)) from error
+        sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
+        return 'ok'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        noop_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'safeoutputs_noop'
+        )
+        if len(noop_returns) == 3:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('safeoutputs_noop', {'message': 'progress note'})])
+
+    safe_outputs = FunctionToolset([noop]).prefixed('safeoutputs')
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)):
+        result = await agent.run('Sweep', toolsets=[safe_outputs], usage_limits=UsageLimits(request_limit=400))
+    assert result.output == 'done'
+    assert noop_returns[0] == 'ok'
+    assert (
+        noop_returns[1:]
+        == [
+            'error: calling "tools/call": E002: noop limit reached. '
+            'The earlier calls are already recorded, so do not call this tool again.'
+        ]
+        * 2
+    )
+
+
+@pytest.mark.parametrize(
+    ('workflow_name', 'requested', 'before_reserve', 'expected'),
+    [
+        ('CI Review', 200, 90.5, 90),
+        ('CI Review', None, 900, MAX_FOREGROUND_WAIT),
+        ('CI Review', 60, 900, 60),
+        ('CI Review', 200, 0.5, None),
+        ('Pydantic AI Bug Hunter', 200, 90.5, 200),
+    ],
+)
+async def test_ci_review_shell_returns_when_the_time_reserve_starts(
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_name: str,
+    requested: float | None,
+    before_reserve: float,
+    expected: float | None,
+) -> None:
+    """A CI Review `timeout 900 uv run ...` started with 9 minutes left ran past the deadline with no review posted."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow_name)
+    monkeypatch.setattr(cli, '_run_seconds_left', lambda: cli.RUN_TIME_RESERVE_SECS + before_reserve)
+    timeouts: list[float] = []
+
+    async def run_persistent_command(*args: object, timeout: float, **kwargs: object) -> str:
+        del args, kwargs
+        timeouts.append(timeout)
+        return 'installed'
+
+    shell_returns: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        shell_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'shell'
+        )
+        if shell_returns:
+            return ModelResponse(parts=[TextPart('done')])
+        args: dict[str, object] = {'command': 'make install'}
+        if requested is not None:
+            args['timeout'] = requested
+        return ModelResponse(parts=[ToolCallPart('shell', args)])
+
+    agent = workflow.build_agent()
+    monkeypatch.setattr(
+        sys.modules['pydantic_ai_harness.shell._toolset'], 'run_persistent_command', run_persistent_command
+    )
+    with agent.override(model=streaming_model(respond)):
+        result = await agent.run('Review', usage_limits=UsageLimits(request_limit=400))
+    assert result.output == 'done'
+    if expected is None:
+        assert timeouts == []
+        assert shell_returns == ['error: the time budget is nearly spent; finish the task from what you already have']
+    else:
+        assert timeouts == [expected]
+        assert shell_returns == ['installed']
 
 
 async def test_attention_request_limit_is_enforced_and_reported(
@@ -438,6 +600,33 @@ async def test_run_budget_marks_the_spans_it_cuts_off(
     assert sorted(outcomes, key=repr) == [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')]
 
 
+async def test_root_run_span_records_the_whole_runs_usage(agent_spans: InMemorySpanExporter) -> None:
+    """The root span totals the delegate's requests, which `gen_ai.aggregated_usage.*` leaves out."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if cli.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            return ModelResponse(parts=[TextPart('found')])
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('Task', {'description': 'probe', 'prompt': 'look'})])
+
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)):
+        await agent.run('Review', usage_limits=UsageLimits(request_limit=400))
+    spans = agent_spans.get_finished_spans()
+    [root] = [span for span in spans if span.parent is None]
+    chats = [span.attributes or {} for span in spans if span.name.startswith('chat')]
+    root_attributes = root.attributes or {}
+    # Two root requests and the delegate's one.
+    assert root_attributes['gh_aw.total_usage.requests'] == len(chats) == 3
+    assert root_attributes['gh_aw.total_usage.input_tokens'] == sum(
+        int(str(chat['gen_ai.usage.input_tokens'])) for chat in chats
+    )
+    assert root_attributes['gh_aw.total_usage.output_tokens'] == sum(
+        int(str(chat['gen_ai.usage.output_tokens'])) for chat in chats
+    )
+
+
 async def test_tool_retry_is_reported_as_an_error(capsys: pytest.CaptureFixture[str]) -> None:
     """The pinned runtime reports a tool retry as a `RetryPromptPart`, which gh-aw must not read as success."""
     with warnings.catch_warnings():
@@ -490,3 +679,24 @@ async def test_compaction_retains_the_exact_workflow_task(monkeypatch: pytest.Mo
     assert compacted[0] is task
     assert len(compacted) < len(messages)
     assert compacted[-cli.COMPACTION_KEEP_RECENT :] == messages[-cli.COMPACTION_KEEP_RECENT :]
+
+
+async def test_compaction_fallback_resumes_at_the_tail_after_the_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed summary keeps the task, then the tail; the response after the task would precede another response."""
+    monkeypatch.setattr(cli, 'COMPACTION_TRIGGER_CHARS', 1)
+    task = ModelRequest(parts=[UserPromptPart('Review the pull request')])
+    messages: list[ModelMessage] = [task]
+    for i in range(12):
+        messages += [
+            ModelResponse(parts=[TextPart(f'Evidence {i}')]),
+            ModelRequest(parts=[UserPromptPart(f'Next {i}')]),
+        ]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages, info
+        raise RuntimeError('Summary unavailable')
+
+    ctx: RunContext[object] = RunContext(deps=None, model=FunctionModel(respond), usage=RunUsage())
+    compacted = await cli.compact_history(ctx, messages, preserve_prompt=True)
+    assert compacted == [task, *messages[-cli.COMPACTION_KEEP_RECENT :]]
+    assert isinstance(compacted[1], ModelResponse)
