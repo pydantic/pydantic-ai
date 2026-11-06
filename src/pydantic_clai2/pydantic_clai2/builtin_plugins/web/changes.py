@@ -21,7 +21,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
-from anyio import fail_after, run_process, to_thread
+from anyio import CancelScope, fail_after, run_process, to_thread
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import EditFileCallPart, ReplacementArgs, WriteFileCallPart
@@ -479,13 +479,18 @@ async def _uncommitted(workspace: Path, options: tuple[str, ...], *, diffs: bool
     (`git add --intent-to-add`), leaving the repository's own index untouched.
     """
     own = workspace / (await _git(workspace, 'rev-parse', '--git-path', 'index')).strip()
-    with TemporaryDirectory() as folder:
-        index = Path(folder) / 'index'
-        if own.exists():
+    # Off the loop: the web UI serves every session's requests from it.
+    folder = await to_thread.run_sync(TemporaryDirectory[str])
+    try:
+        index = Path(folder.name) / 'index'
+        if await to_thread.run_sync(own.exists):
             await to_thread.run_sync(shutil.copyfile, own, index)
         await _git(workspace, 'add', '--intent-to-add', '--', ':/', index=index)
         listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, 'HEAD', index=index)
         patch = await _git(workspace, 'diff', *options, 'HEAD', index=index) if diffs else None
+    finally:
+        with CancelScope(shield=True):
+            await to_thread.run_sync(folder.cleanup)
     return listing, patch
 
 

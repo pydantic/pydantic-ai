@@ -596,6 +596,105 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
+    # pydantic-clai2 reads keys once the event loop reports the terminal readable, and writes output straight to it.
+    ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
+    ('os.read', 'pydantic_clai2/cli/shell_terminal.py', '_key'),
+    ('os.write', 'pydantic_clai2/cli/shell_terminal.py', 'pass_through'),
+    ('os.write', 'pydantic_clai2/cli/self_update.py', '_print_line'),
+    # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
+    ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
+    ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
+    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
+    ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
+    # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
+    *(
+        (func, 'prompt_toolkit/history.py', ('load_history_strings', 'store_string'))
+        for func in ('os.stat', 'io.BufferedReader.read', 'io.BufferedWriter.write')
+    ),
+    # Pygments looks plugin lexers up in installed packages' metadata when a code block names a language it doesn't ship.
+    *((func, 'pygments/plugin.py', 'iter_entry_points') for func in ('os.stat', 'os.listdir', 'io.TextIOWrapper.read')),
+    # FastAPI finds an endpoint's source file the first time it serves the route, and caches it.
+    ('os.stat', 'fastapi/routing.py', '_extract_endpoint_context'),
+    # beartype's import hook writes a module's bytecode cache the first time it imports it.
+    ('io.BufferedWriter.write', 'beartype/claw/_importlib/_clawimpfileloader.py', 'get_code'),
+    # Whether a process still runs is read from `/proc`, which the kernel serves from memory.
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
+    # Configuring logfire at session start waits for the instance it replaces to shut down.
+    ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
+    ('sqlite3.Connection.execute', 'tests/clai2/test_sessions.py', 'model'),
+]
+
+
+# pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
+# commands, menus, and startup read and write synchronously. Every file and database call made in these modules may
+# block; their other blocking calls, and the code calling them, stay checked.
+BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
+    'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
+    'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
+    'src/pydantic_clai2/pydantic_clai2/mcp/store.py',
+    'src/pydantic_clai2/pydantic_clai2/builtin_plugins/workspaces/registry.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/prompt/input_history.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/telemetry_log.py',
+)
+
+
+# Functions elsewhere whose file and database calls may block, as (file, functions), for the reasons above each group.
+BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
+    # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
+    ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
+    ('pydantic_clai2/config/project_settings.py', '_present'),
+    ('pydantic_clai2/auth.py', '_connected'),
+    ('pydantic_clai2/models/github_copilot.py', 'login'),
+    ('pydantic_clai2/models/key_profiles.py', 'login'),
+    ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
+    ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
+    ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
+    ('pydantic_clai2/builtin_plugins/logfire_destination.py', 'remember'),
+    ('pydantic_clai2/builtin_plugins/web/__init__.py', ('_launcher', 'stop')),
+    ('pydantic_clai2/builtin_plugins/workspaces/backend.py', ('create', 'destroy')),
+    ('pydantic_clai2/mcp/form.py', 'saved_message'),
+    ('pydantic_clai2/mcp/runtime.py', ('log', '_build')),
+    ('pydantic_clai2/runtime/git_actions.py', ('_commit_paths', '_directory', '_run')),
+    ('pydantic_clai2/runtime/repl_state.py', ('copy', 'delete')),
+    ('pydantic_clai2/runtime/session_workspace.py', 'workspace_directory'),
+    ('pydantic_clai2/ui/rendering/spinners.py', ('_locked', '_replace', '_user_text', 'init')),
+    ('pydantic_clai2/cli/self_update.py', ('_write_overrides', 'command', 'tool_executable')),
+    # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
+    ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
+    # Sessions and the web UI resolve the directory they work in once, when they start.
+    ('pydantic_clai2/runtime/session.py', '__init__'),
+    ('pydantic_clai2/plugins/__init__.py', 'workspace'),
+    ('pydantic_clai2/cli/cli.py', '_latest_session'),
+    ('pydantic_clai2/cli/web.py', ('run_web', '_start_in')),
+    # A stock agent keeps its private settings in a temporary folder for as long as it is open.
+    ('pydantic_clai2/app.py', 'open_stock_agent'),
+    # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
+    (
+        'pydantic_clai2/plugins/process_plugins.py',
+        ('ensure_plugins_dir', '_discover', 'project_files', 'import_module'),
+    ),
+    ('pydantic_clai2/plugins/factories.py', 'import_file'),
+    ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
+    # Installing a plugin from Git makes and checks its checkout, and removes a partial one, once per install.
+    (
+        'pydantic_clai2/plugins/git.py',
+        ('checkout_dir', 'git_executable', 'install_git_plugin', '<genexpr>', 'remove_checkout', 'retry_readonly'),
+    ),
+    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session.
+    ('pydantic_clai2/cli/self_update.py', 'installed'),
+    ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
+    ('pydantic_clai2/builtin_plugins/logfire.py', ('__init__', '_instrument_httpx')),
+    ('pydantic_clai2/ui/telemetry.py', 'log_error'),
+    ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
+    # The GitHub CLI holds the token, and the GitHub settings menu asks it whether there is one when it opens.
+    ('pydantic_clai2/gh_cli.py', 'gh_token'),
+    # Tests' stand-ins, and the plugins tests write, record what happened in small files.
+    ('tests/clai2/test_live_runtimes.py', 'folder'),
+    ('tests/clai2/test_shell_passthrough.py', 'hold'),
+    ('/lifecycle.py', ('on_session_start', 'on_turn_end', 'on_session_end')),
+    ('nested/plugins/workspace.py', 'get_capabilities'),
 ]
 
 
@@ -627,10 +726,14 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
-    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
-    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
+    # The harness and CLAI aren't installed in every CI lane (the `pydantic-evals` one, say).
+    optional = [
+        package
+        for package in ('pydantic_ai_harness', 'pydantic_clai2')
+        if importlib.util.find_spec(package) is not None
+    ]
     bb = BlockBuster(
-        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:
@@ -639,6 +742,11 @@ def _configure_blockbuster(
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
+    local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
+    for filename, functions in local_files:
+        for function in local_io:
+            function.can_block_in(filename, functions)
     return bb
 
 

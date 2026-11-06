@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import anyio
 import pytest
 from fastmcp.client.auth.oauth import TokenStorageAdapter
 from mcp.shared.auth import OAuthToken
@@ -242,7 +243,8 @@ class EditedWhileOpen(ScriptedDialogs):
     async def choose(
         self, *, title: str, options: Sequence[Option], current: str | None = None, description: str = ''
     ) -> str | None:
-        self._path.write_text(json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'other'}}}))
+        text = json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'other'}}})
+        await anyio.to_thread.run_sync(self._path.write_text, text)
         return await super().choose(title=title, options=options, current=current, description=description)
 
 
