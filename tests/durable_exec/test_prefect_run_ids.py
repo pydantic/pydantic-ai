@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -36,18 +37,21 @@ def blockbuster_excluded_modules() -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize(
-    ('input_kind', 'follow_up'),
+    ('input_kind', 'follow_up', 'flow_storage'),
     [
-        ('prompt', False),
-        ('prompt', True),
-        ('binary', True),
-        ('deps', True),
-        ('metadata', True),
-        ('history', True),
-        ('spec_metadata_factory', True),
+        ('prompt', False, False),
+        ('prompt', True, False),
+        ('binary', True, False),
+        ('deps', True, False),
+        ('metadata', True, False),
+        ('history', True, False),
+        ('spec_metadata_factory', True, False),
+        pytest.param('prompt', False, True, id='shared-flow-storage'),
     ],
 )
-async def test_flow_retry_preserves_default_ids_after_branch_reordering(input_kind: str, follow_up: bool) -> None:
+async def test_flow_retry_preserves_default_ids_after_branch_reordering(
+    input_kind: str, follow_up: bool, flow_storage: bool, tmp_path: Path
+) -> None:
     model_calls: list[None] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -59,7 +63,7 @@ async def test_flow_retry_preserves_default_ids_after_branch_reordering(input_ki
     )
     attempts: list[dict[str, tuple[str, str]]] = []
 
-    @flow(retries=1)
+    @flow(retries=1, result_storage=tmp_path / 'shared' if flow_storage else None)
     async def reordered() -> None:
         ids: dict[str, tuple[str, str]] = {}
         attempts.append(ids)
@@ -101,9 +105,20 @@ async def test_flow_retry_preserves_default_ids_after_branch_reordering(input_ki
             if after is None:
                 first_done.set()
 
-        async with asyncio.TaskGroup() as group:
-            group.create_task(branch(first, None))
-            group.create_task(branch(second, first_done))
+        storage_settings = (
+            temporary_settings(
+                {
+                    PREFECT_RESULTS_LOCAL_STORAGE_PATH: tmp_path / f'worker-{len(attempts)}',
+                    PREFECT_TASKS_REFRESH_CACHE: False,
+                }
+            )
+            if flow_storage
+            else nullcontext()
+        )
+        with storage_settings:
+            async with asyncio.TaskGroup() as group:
+                group.create_task(branch(first, None))
+                group.create_task(branch(second, first_done))
         if len(attempts) == 1:
             raise RuntimeError('retry after both branches finish')
 

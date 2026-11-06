@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -4572,6 +4572,32 @@ async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them
 
     assert result.metadata is override
     assert calls == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'legacy-run-id'
+
+    capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
+    agent = Agent(TestModel(), capabilities=capabilities)
+    history = CountingHistory(
+        [
+            ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+            ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+        ]
+    )
+    await agent.run('hello', message_history=history)
+    # Legacy IDs need a collision scan; keep each path within its established traversal budget.
+    assert history.iterations <= (4 if legacy else 3)
 
 
 def test_unknown_tool():

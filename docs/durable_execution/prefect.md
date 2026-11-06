@@ -388,6 +388,15 @@ remain available across retries and workers; losing or refreshing it creates a n
 re-execute tasks keyed by the run ID. Generating a default ID adds one cached Prefect task per run;
 explicit run IDs bypass it.
 
+The default-ID task uses the enclosing flow's result storage, or Prefect's configured default
+storage. For workers on different machines, configure shared storage on the flow with
+`@flow(result_storage='s3-bucket/my-storage')`, or set `PREFECT_RESULTS_DEFAULT_STORAGE_BLOCK` in
+every worker environment. A shared mounted directory configured through
+`PREFECT_RESULTS_LOCAL_STORAGE_PATH` also works. See Prefect's
+[result storage configuration](https://docs.prefect.io/v3/advanced/results#result-storage).
+The model and tool `TaskConfig.result_storage` overrides configure those tasks only; they do not
+configure the default-ID task.
+
 Run identity uses only these [projected inputs](#caching-and-idempotency):
 
 - The [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] name (`name=`), which
