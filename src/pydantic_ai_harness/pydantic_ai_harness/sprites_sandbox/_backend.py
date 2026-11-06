@@ -89,7 +89,6 @@ from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
     check_provider,
-    check_timeout,
     command_argv,
     require_asyncio,
     run_to_completion,
@@ -340,6 +339,20 @@ def _working_dir_to_confirm(
     if code == 1 and check and directory is not None and marker.encode() not in command.get_stdout():
         return directory
     return None
+
+
+def _check_command_timeout(timeout: float | None) -> None:
+    """Raise `ValueError` unless a command `timeout` is a positive finite number or `None`.
+
+    Unlike `check_timeout`, which takes only `int` and `float`, this accepts any value `math.isfinite` and `<=`
+    accept, such as a `Fraction` or a NumPy number.
+    """
+    try:
+        invalid = timeout is not None and (not math.isfinite(timeout) or timeout <= 0)
+    except TypeError:
+        invalid = True
+    if invalid:
+        raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
 
 
 async def _close_client(client: AsyncSpritesClient | None) -> None:
@@ -694,7 +707,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         the backend's own commands, which must not recurse into another capture read or check. `sandbox` is for a
         command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory.
         """
-        check_timeout(timeout)
+        _check_command_timeout(timeout)
         directory = cwd or self._working_dir
         marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
