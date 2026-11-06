@@ -35,7 +35,7 @@ from pydantic_monty import MontyRefusedError
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -280,6 +280,15 @@ class RemoteCodeModeRefusalWorkflow:
         return str(result.output)  # pragma: no cover
 
 
+@workflow.defn
+class UncaughtRemoteCodeModeRefusalWorkflow:
+    """Let an uncaught sandbox refusal reach Temporal's workflow-task failure policy."""
+
+    @workflow.run
+    async def run(self) -> None:
+        await remote_code_mode_agent.run('Calculate 3 + 4')
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -426,6 +435,42 @@ async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, l
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
     assert replay_result.replay_failure is None
+
+
+async def test_uncaught_remote_setup_error_fails_workflow_task(client: Client) -> None:
+    """Unclassified setup errors fail a task, not the workflow or a model retry, under Temporal's default policy."""
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',))),
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[UncaughtRemoteCodeModeRefusalWorkflow],
+            plugins=[AgentPlugin(remote_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            handle = await client.start_workflow(
+                UncaughtRemoteCodeModeRefusalWorkflow.run,
+                id='test_code_mode_temporal_uncaught_remote_setup',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+            try:
+                failed_task = await anext(
+                    event
+                    async for event in handle.fetch_history_events(wait_new_event=True)
+                    if event.HasField('workflow_task_failed_event_attributes')
+                )
+                failure = failed_task.workflow_task_failed_event_attributes.failure
+                assert failure.application_failure_info.type == 'MontyRefusedError'
+                assert 'UNAUTHENTICATED' in failure.message
+                assert (await handle.describe()).status == WorkflowExecutionStatus.RUNNING
+                history = await handle.fetch_history()
+                assert not any(event.HasField('workflow_execution_failed_event_attributes') for event in history.events)
+                assert sum(event.HasField('activity_task_scheduled_event_attributes') for event in history.events) == 1
+            finally:
+                await handle.terminate('test verified the workflow-task failure')
 
 
 async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Client) -> None:

@@ -659,7 +659,8 @@ agent = Agent(
 )
 ```
 
-When your Logfire release uses the gRPC server root by default, pass the factory directly:
+When your Logfire release includes the gRPC default from
+[Logfire #2737](https://github.com/pydantic/logfire/pull/2737), pass the factory directly:
 `CodeMode(monty_sandbox=logfire.agent_sandboxes)`.
 
 Configure the sandbox credentials in Logfire, not in the model's instructions or tool arguments.
@@ -675,11 +676,13 @@ client no longer uses. The `run_code` description lists the modules Monty 1.5 ca
 
 ### Error handling
 
-Pool creation, connection, and session checkout errors propagate to the application caller. These
+Pool creation, connection, and session checkout errors propagate to the code calling the agent. These
 include missing or invalid credentials, an invalid server URL, and exceptions raised by a pool factory.
 They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
 refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
 if it still fails, the error propagates to the caller.
+Inside a Temporal workflow, the exception reaches workflow code and follows the
+[workflow failure policy](#temporal-durability), not the model retry policy.
 
 Errors the model can act on are returned as model retries:
 
@@ -744,6 +747,14 @@ Model requests and, by default, nested tool calls cross Temporal activity bounda
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets
 again against recorded activity results.
+
+Setup errors keep their original types in workflow code. `PydanticAIPlugin` treats `UserError` as a
+workflow failure. Other setup errors, such as `RuntimeError` and `MontyRefusedError`, follow Temporal's
+default: an uncaught error fails the workflow task, which Temporal retries until the deployment is
+fixed. The workflow remains running, and a client awaiting its result keeps waiting. The original
+error is available in the failed task's history and worker logs, not in a model retry.
+To end the workflow instead, catch the expected setup exceptions in your workflow and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 Keep workflow-side code deterministic. `mount` reads and writes, `os_access` callbacks, and
 host-clock calls happen again during replay; changing their results can change which activities the

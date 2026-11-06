@@ -122,7 +122,7 @@ CodeMode(
 )
 ```
 
-- `max_retries` (default 3): execution errors (including syntax/type errors) are sent back to the model to redraft, up to this many times. Pool creation, connection, and checkout errors propagate to the caller, not the model. Capacity refusals get one checkout retry after a short backoff before propagating.
+- `max_retries` (default 3): execution errors (including syntax/type errors) are sent back to the model to redraft, up to this many times. Pool creation, connection, and checkout errors propagate to the code calling the agent, not the model. Inside Temporal they follow the workflow failure policy below. Capacity refusals get one checkout retry after a short backoff before propagating.
 - `max_tool_calls` (default 100): nested calls per `run_code` call. A call past the budget fails at its call site; if uncaught, the model gets a retry listing the calls that already started.
 - The run's `UsageLimits(tool_calls_limit=...)` counts nested calls and the `run_code` call that makes them. A nested call that would exceed it ends the run with `UsageLimitExceeded`, even when the snippet catches the error. A call launched early by `speculate` counts from the moment it starts, including one the snippet never claims. A launch the limit refused runs cold if the snippet asks for it.
 - `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_secs`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_secs`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
@@ -223,7 +223,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_secs` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
-- For Logfire Agent Sandboxes, install `logfire[agent-sandboxes]>=5.4.0`. Logfire 5.4.0 still adds `/monty-ws/`, so use `partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev')` with the server root for your key's region. When your Logfire release uses the gRPC server root by default, pass `monty_sandbox=logfire.agent_sandboxes` directly. Configure credentials in Logfire, not in model-visible text.
+- For Logfire Agent Sandboxes, install `logfire[agent-sandboxes]>=5.4.0`. Logfire 5.4.0 still adds `/monty-ws/`, so use `partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev')` with the server root for your key's region. When your release includes the gRPC default from [Logfire #2737](https://github.com/pydantic/logfire/pull/2737), pass `monty_sandbox=logfire.agent_sandboxes` directly. Configure credentials in Logfire, not in model-visible text.
 
 ## Durable Execution
 
@@ -232,6 +232,13 @@ CodeMode(
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
 Inside a Temporal workflow `max_duration_secs` is disabled (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
+
+Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
+as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory
+errors fail the workflow task instead: Temporal retries it until the deployment is fixed, while the
+client keeps waiting. Inspect the task history or worker logs for the original error. To end the
+workflow, catch expected setup exceptions and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 ## Agent Specs
 
