@@ -10,9 +10,10 @@ import os
 import secrets
 import tempfile
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 
-from anyio import to_thread
+from anyio import CancelScope, to_thread
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
@@ -181,8 +182,9 @@ class WebPlugin(Plugin[WebSettings]):
         # An action waiting on a dialog nobody can now answer backs out, which also lets its menu close.
         self.service.dialogs.cancel_all()
         if self._launch_page is not None:
-            self._launch_page.unlink(missing_ok=True)
-            self._launch_page = None
+            launch_page, self._launch_page = self._launch_page, None
+            with CancelScope(shield=True):
+                await to_thread.run_sync(partial(launch_page.unlink, missing_ok=True))
         if server is not None:
             await server.stop()
         # Its chat is in the page alone: a turn no page can watch, or answer, stops.

@@ -9,11 +9,12 @@ import subprocess
 import sys
 from collections.abc import AsyncGenerator, Callable, Collection
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from pathlib import Path
 from types import TracebackType
 from urllib.parse import unquote, urlsplit
 
-from anyio import CancelScope, fail_after, move_on_after
+from anyio import CancelScope, fail_after, move_on_after, to_thread
 
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
@@ -69,7 +70,7 @@ async def install_git_plugin(
     # Keep incomplete checkouts out of drop-in discovery, including in other running CLAI sessions.
     destination = checkout_dir(plugins_dir, name)
     try:
-        destination.mkdir(parents=True)
+        await to_thread.run_sync(partial(destination.mkdir, parents=True))
     except FileExistsError as exc:
         raise ValueError(f'Plugin checkout already exists at {destination}; it has not been changed.') from exc
     try:
@@ -85,18 +86,21 @@ async def install_git_plugin(
         if returncode:
             detail = stderr.decode(errors='replace').strip()
             raise ValueError(f'Could not clone the plugin repository: {detail}')
-        entry = next(
-            (path for filename in ('__init__.py', 'plugin.py') if (path := destination / filename).is_file()),
-            None,
-        )
-        if entry is None or entry.is_symlink():
+        entry = await to_thread.run_sync(_entry_point, destination)
+        if entry is None:
             raise ValueError('A plugin repository must contain a regular __init__.py or plugin.py at its root.')
         yield PluginSettings(id=name, factory=name, path=str(entry))
     except BaseException:
         # Cleanup must not replace the installation error or cancellation.
-        with suppress(OSError):
-            remove_checkout(destination)
+        with suppress(OSError), CancelScope(shield=True):
+            await to_thread.run_sync(remove_checkout, destination)
         raise
+
+
+def _entry_point(checkout: Path) -> Path | None:
+    """The checkout's `__init__.py`, else its `plugin.py`, when that is a regular file and not a link."""
+    entry = next((path for filename in ('__init__.py', 'plugin.py') if (path := checkout / filename).is_file()), None)
+    return None if entry is None or entry.is_symlink() else entry
 
 
 def remove_checkout(destination: Path, *, windows: bool = os.name == 'nt') -> None:

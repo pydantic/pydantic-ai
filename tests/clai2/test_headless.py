@@ -193,7 +193,7 @@ async def test_cancel_saves_history_and_closes_plugins(
     agent = Agent(model)
     monkeypatch.setattr(headless, 'create_agent', lambda: agent)
     log = tmp_path / 'lifecycle'
-    plugin = tmp_path / 'lifecycle.py'
+    plugin = tmp_path / 'lifecycle_probe.py'
     plugin.write_text(
         'from pathlib import Path\n'
         'from pydantic_clai2.plugins import Plugin\n'
@@ -205,7 +205,7 @@ async def test_cancel_saves_history_and_closes_plugins(
         '        p.write_text(p.read_text() + ":" + event.reason)\n'
     )
     monkeypatch.setattr(
-        headless, 'STOCK_PLUGINS', (PluginSettings(id='lifecycle', factory='lifecycle', path=str(plugin)),)
+        headless, 'STOCK_PLUGINS', (PluginSettings(id='lifecycle', factory='lifecycle_probe', path=str(plugin)),)
     )
 
     async def run() -> None:

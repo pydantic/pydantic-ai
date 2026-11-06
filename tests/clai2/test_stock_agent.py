@@ -258,7 +258,7 @@ async def test_plugins_get_their_settings_and_close_on_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
 ) -> None:
     log = tmp_path / 'lifecycle'
-    plugin = tmp_path / 'lifecycle.py'
+    plugin = tmp_path / 'lifecycle_probe.py'
     plugin.write_text(
         'from pathlib import Path\n'
         'from pydantic import BaseModel\n'
@@ -274,7 +274,7 @@ async def test_plugins_get_their_settings_and_close_on_exit(
         "        p.write_text(p.read_text() + ':' + event.reason)\n"
     )
     stock = PluginSettings(
-        id='compaction', factory='lifecycle', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
+        id='compaction', factory='lifecycle_probe', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
     )
     monkeypatch.setattr(app, 'STOCK_PLUGINS', (stock,))
     with pytest.raises(RuntimeError, match='host failed') if fail else nullcontext():

@@ -112,7 +112,7 @@ async def _run(
     except TimeoutError:
         raise GitError(f'{_label(args)} did not finish within {timeout:g} seconds.') from None
     except OSError as exc:
-        if not workspace.is_dir():
+        if not await to_thread.run_sync(workspace.is_dir):
             # Gone, or replaced by a file, since it was checked.
             raise LookupError(f'{workspace} no longer exists.') from None
         if isinstance(exc, FileNotFoundError):
@@ -383,7 +383,9 @@ async def _commit_paths(root: Path, chosen: list[ChangedFile], *, message: str) 
     """Commit only `chosen`, whatever else is staged."""
     # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
     # is known already, and `add` would refuse one no longer in the index.
-    present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    present = await to_thread.run_sync(
+        lambda: [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    )
     if present:
         await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
     paths = [path for file in chosen for path in (file.path, file.original) if path is not None]

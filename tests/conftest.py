@@ -622,14 +622,19 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    # A first import waits for the module's lock while another thread, such as CLAI's import warm-up, imports it.
+    ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # A session, and a plugin host built outside the shell, work in the current directory unless given one.
+    ('os.getcwd', 'pydantic_clai2/runtime/session.py', '__init__'),
+    ('os.getcwd', 'pydantic_clai2/plugins/__init__.py', 'workspace'),
     # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
     ('sqlite3.Connection.execute', 'tests/clai2/test_sessions.py', 'model'),
 ]
 
 
 # pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
-# commands, menus, and startup read and write synchronously. Every file and database call made in these modules may
-# block; their other blocking calls, and the code calling them, stay checked.
+# commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
+# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O.
 BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
     'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
     'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
@@ -640,36 +645,26 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 )
 
 
-# Functions elsewhere whose file and database calls may block, as (file, functions), for the reasons above each group.
+# Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
+# database call beneath them is exempt too, so never list an async function: offload its I/O instead.
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_clai2/config/project_settings.py', '_present'),
     ('pydantic_clai2/auth.py', '_connected'),
-    ('pydantic_clai2/models/github_copilot.py', 'login'),
-    ('pydantic_clai2/models/key_profiles.py', 'login'),
     ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
     ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
     ('pydantic_clai2/builtin_plugins/logfire_destination.py', 'remember'),
-    ('pydantic_clai2/builtin_plugins/web/__init__.py', ('_launcher', 'stop')),
-    ('pydantic_clai2/builtin_plugins/workspaces/backend.py', ('create', 'destroy')),
+    ('pydantic_clai2/builtin_plugins/web/__init__.py', '_launcher'),
     ('pydantic_clai2/mcp/form.py', 'saved_message'),
     ('pydantic_clai2/mcp/runtime.py', ('log', '_build')),
-    ('pydantic_clai2/runtime/git_actions.py', ('_commit_paths', '_directory', '_run')),
+    ('pydantic_clai2/runtime/git_actions.py', '_directory'),
     ('pydantic_clai2/runtime/repl_state.py', ('copy', 'delete')),
     ('pydantic_clai2/runtime/session_workspace.py', 'workspace_directory'),
     ('pydantic_clai2/ui/rendering/spinners.py', ('_locked', '_replace', '_user_text', 'init')),
-    ('pydantic_clai2/cli/self_update.py', ('_write_overrides', 'command', 'tool_executable')),
     # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
     ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
-    # Sessions and the web UI resolve the directory they work in once, when they start.
-    ('pydantic_clai2/runtime/session.py', '__init__'),
-    ('pydantic_clai2/plugins/__init__.py', 'workspace'),
-    ('pydantic_clai2/cli/cli.py', '_latest_session'),
-    ('pydantic_clai2/cli/web.py', ('run_web', '_start_in')),
-    # A stock agent keeps its private settings in a temporary folder for as long as it is open.
-    ('pydantic_clai2/app.py', 'open_stock_agent'),
     # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
     (
         'pydantic_clai2/plugins/process_plugins.py',
@@ -677,11 +672,7 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     ),
     ('pydantic_clai2/plugins/factories.py', 'import_file'),
     ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
-    # Installing a plugin from Git makes and checks its checkout, and removes a partial one, once per install.
-    (
-        'pydantic_clai2/plugins/git.py',
-        ('checkout_dir', 'git_executable', 'install_git_plugin', '<genexpr>', 'remove_checkout', 'retry_readonly'),
-    ),
+    ('pydantic_clai2/plugins/git.py', ('checkout_dir', 'git_executable')),
     # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session.
     ('pydantic_clai2/cli/self_update.py', 'installed'),
     ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
@@ -690,11 +681,13 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
     # The GitHub CLI holds the token, and the GitHub settings menu asks it whether there is one when it opens.
     ('pydantic_clai2/gh_cli.py', 'gh_token'),
-    # Tests' stand-ins, and the plugins tests write, record what happened in small files.
+    # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
     ('tests/clai2/test_live_runtimes.py', 'folder'),
     ('tests/clai2/test_shell_passthrough.py', 'hold'),
-    ('/lifecycle.py', ('on_session_start', 'on_turn_end', 'on_session_end')),
-    ('nested/plugins/workspace.py', 'get_capabilities'),
+    ('tests/clai2/test_plugin_git.py', ('interrupted_clone', 'concurrent_clone')),
+    ('tests/clai2/test_plugin_git_cleanup.py', 'readonly_pack'),
+    ('/lifecycle_probe.py', ('on_session_start', 'on_turn_end', 'on_session_end')),
+    ('/cwd_probe.py', 'get_capabilities'),
 ]
 
 
