@@ -48,7 +48,8 @@ After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
-Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode> -->` receipt.
+Legacy receipts omit `engine`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
 Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
@@ -195,10 +196,11 @@ The helper uses at most two requests and verifies completeness before replacing 
 Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
-Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change or approves a cluster name under [PR clusters](#pr-clusters).
 Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
 
 Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
@@ -208,6 +210,39 @@ Use `pkg:core` for repository infrastructure. For changes spanning packages, cho
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
+
+#### PR clusters
+
+Your PR is in a cluster when it shares a theme with at least two other open PRs.
+Merged PRs do not count. A PR in a cluster keeps its label and prefix after the other PRs merge.
+Never delete a `cluster:` label, even after its work stream ends. Deleting it strips the label from every merged PR and erases the record.
+Bug fixes count when they share the theme, such as caching bugs or privilege-escalation bugs.
+Unrelated bug fixes do not form a cluster.
+
+Label every PR in a cluster `cluster:<name>`, and start its title with `[<name>] `.
+Name the cluster with one lowercase word, or two lowercase words joined by a hyphen: `cache`, `voice-authority`.
+Never apply the label without the prefix, or the prefix without the label.
+If creating or applying the label fails, apply neither. Tell the person driving you the cluster name and the error.
+After the prefix, the title follows the root `AGENTS.md` convention.
+
+A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
+It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent ownership area.
+
+Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
+You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.
+When your PR is in a cluster:
+
+1. If another PR in the cluster carries a `cluster:` label, apply that label and its prefix to your PR, and stop.
+2. Otherwise, propose a cluster name to the person driving you. Do not hold the PR for the answer.
+3. Once that person approves the name, create the label with a one-line description of the theme.
+4. Apply the label and the prefix to your PR.
+5. Tell the agents driving the other PRs in the cluster to apply both to their PRs.
+   If you cannot reach one, tell the person driving you which PRs still lack them.
+
+David (`dsfaccini`) asked for this convention. The prefix makes a cluster easy to spot in PR lists.
+Release notes list PR titles, and a prefix catches the eye more than title text does.
+Release-note readers then notice what the team is focusing on.
+Raise objections to the convention with David instead of dropping the prefix.
 
 ## Prose-only documentation
 
