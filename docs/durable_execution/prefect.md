@@ -388,13 +388,23 @@ remain available across retries and workers; losing or refreshing it creates a n
 re-execute tasks keyed by the run ID. Generating a default ID adds one cached Prefect task per run;
 explicit run IDs bypass it.
 
-Runs are distinguished by their [inputs](#caching-and-idempotency), including prompt, message
-history, dependencies and static metadata, along with incoming history's run and conversation IDs
-and any supplied conversation ID. Keep those incoming IDs stable across retries. Calls with
-identical inputs get distinct IDs by call order, so reordering them across a retry can associate
-results with different calls. Differences only in non-serializable dependencies or metadata do not
-distinguish runs; values returned by metadata callbacks are also excluded. Pass distinct,
-retry-stable `run_id=` values when such calls can reorder.
+Run identity uses only these [projected inputs](#caching-and-idempotency):
+
+- The [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] name (`name=`), which
+  defaults to the agent name.
+- The prompt and message history.
+- The incoming history's ordered `(run_id, conversation_id)` pairs and any supplied conversation ID.
+- The dependencies and effective static agent, spec and run metadata.
+
+Keep incoming IDs stable across retries. Calls with identical projected inputs get distinct IDs by
+call order, so reordering them across a retry can associate results with different calls.
+Non-serializable dependency and metadata values, and values returned by metadata callbacks, are
+excluded.
+
+Other run arguments, including `model=`, `instructions=`, `output_type=`, `model_settings=` and
+`toolsets=`, do not distinguish default IDs. Pass distinct, retry-stable `run_id=` values for calls
+that can reorder and differ only in excluded arguments or values, such as calls sending the same
+prompt to different models.
 
 !!! warning "Default ID format migration"
 
