@@ -285,10 +285,11 @@ async def chat(
                 if not last.reload_requested:
                     break
                 last.reload_requested = False
+                assert warming is not None, 'a reload follows a run, which started warming'
+                warming.join()
                 try:
                     shell = _reload_shell(
                         last,
-                        warming=warming,
                         agent=agent,
                         rebuild_stock=rebuild_stock,
                         deps=deps,
@@ -403,7 +404,6 @@ async def _close_home_shell(
 def _reload_shell(
     last: SessionRuntime[DepsT, OutputT],
     *,
-    warming: Thread | None,
     agent: AbstractAgent[DepsT, OutputT],
     rebuild_stock: Callable[[Sequence[AgentCapability[DepsT]]], AbstractAgent[DepsT, OutputT]] | None,
     deps: DepsT,
@@ -416,8 +416,6 @@ def _reload_shell(
     load_plugins: bool,
 ) -> SessionRuntime[DepsT, OutputT]:
     """Reload CLAI's modules and rebuild the session CLAI started with from `last`, the session shown last."""
-    if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
-        warming.join()
     return reload_clai(
         lambda shell=last: create_shell(
             rebuild_stock(()) if rebuild_stock is not None else agent,

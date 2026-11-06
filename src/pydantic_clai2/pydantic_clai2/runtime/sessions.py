@@ -323,7 +323,7 @@ class Sessions(Generic[DepsT, OutputT]):
 
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return _browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -337,7 +337,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=_browser_entries(entries, imports.listing(), limit=200, archived=False),
+                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -364,6 +364,15 @@ class Sessions(Generic[DepsT, OutputT]):
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
+
+    @staticmethod
+    def _browser_entries(
+        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+    ) -> list[ConversationSummary]:
+        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+        entries = merge(saved, imported, limit=limit)
+        return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
     async def _delete(self, source: ConversationSummary) -> None:
         """Delete a saved session, then the `run_code` REPL code mode kept for it; one another live session holds is refused."""
@@ -399,15 +408,6 @@ class Sessions(Generic[DepsT, OutputT]):
             + effects
             + conversation_text(list(reversed(saved.messages)))
         )
-
-
-def _browser_entries(
-    saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
-) -> list[ConversationSummary]:
-    """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
-    # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-    entries = merge(saved, imported, limit=limit)
-    return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
 
 async def _not_shown(conversation_id: str) -> str | None:
