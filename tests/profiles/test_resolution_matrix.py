@@ -255,6 +255,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -1362,6 +1363,7 @@ def test_bedrock_openai():
             'supports_thinking': True,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,
+            'default_framing_announcement': 'always',
             'supports_video_input': False,
         }
     )
@@ -1521,6 +1523,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2262,6 +2265,7 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
+            'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -2315,6 +2319,7 @@ def test_ollama_gpt_oss():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
+            'default_framing_announcement': 'always',
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2356,6 +2361,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_supports_document_input': False,
@@ -2774,6 +2780,7 @@ def test_vercel_anthropic_claude_sonnet():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'default_framing_announcement': 'always',
         }
     )
 
@@ -2899,6 +2906,7 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'default_framing_announcement': 'always',
         }
     )
 
@@ -3018,6 +3026,7 @@ def test_crusoe_harmony():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
         }

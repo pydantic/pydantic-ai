@@ -645,6 +645,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    if model_name.startswith('claude-sonnet-4-6'):
+        # Sonnet 4.6 follows the application's `<system verified>` blocks and its own reminder tags only once told
+        # what they mean, so it gets the announcement from the first request (see the field's docstring). It has no
+        # native mid-conversation system role on any transport, where the announcement would be a system message.
+        profile['default_framing_announcement'] = 'always'
     return profile
 
 

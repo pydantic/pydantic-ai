@@ -264,20 +264,20 @@ Some models don't do well on every measure with any rendering. We tried the alte
 
 All numbers are live measurements of Pydantic AI on the provider's API, as runs that did the right thing out of the runs made. They come from fixed test scenarios, so read them as comparisons between renderings on one model, not as rates you'll see in your application. The current rendering marks blocks `<system verified>`. A number marked † was measured before that, with `seal="pydantic-ai"` as the marker.
 
-**The announcement on every request, or only when first needed.** On models without a mid-conversation system role, the announcement can go out on every request (`framing_announcement='always'`), or only once a conversation first has a `<system>` block or a note. A request with no such block then goes out without it, but in these measurements a model that first met the announcement in the same turn as an instruction change mostly ignored the change.
+**The announcement on every request, or only when first needed.** On models without a mid-conversation system role, the announcement can go out on every request (`framing_announcement='always'`), or from the first request whose conversation has a `<system>` block, a note or another frame on the user channel (`'when_needed'`). From that request on, the two send the same request. Before it, `'when_needed'` sends what `'never'` sends, so they differ only on requests with nothing for the announcement to explain. Most models measured did as well or better on those without it; Claude Sonnet 4.6 and gpt-oss did worse, so their profiles default to `'always'` ([`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]) and the rest to `'when_needed'`.
 
-| Model | Measure | Announcement on every request | Only when first needed | Model alone |
-|---|---|---|---|---|
-| Claude Haiku 5.5 | Follows an instruction change | 24/24 | 0/24 † | n/a |
-| | Follows a withdrawn instruction | 24/24 | 0/24 † | n/a |
-| | Keeps to the system prompt's task when the user asks for a conflicting one | 57/80 | 75/76 | 74/76 |
-| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 73/80 | 67/76 | 64/76 |
-| Gemini 4 Argon | Follows an instruction change | 24/24 † | 21/24 † | n/a |
-| | Follows a withdrawn instruction | 24/24 † | 0/23 † | n/a |
+| Model | Measure, on a request with nothing to explain | Announcement on every request | Only when first needed |
+|---|---|---|---|
+| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 30/48 | 22/96 |
+| | Follows the application's own reminder tags in a user turn | 24/24 | 0/48 |
+| gpt-oss-120b | Keeps to the system prompt's task when the user asks for a conflicting one | 44/48 | 69/96 |
+| Claude Haiku 5.5 | Keeps to the system prompt's task when the user asks for a conflicting one | 42/48 | 96/96 |
+| Grok 4.7 | Keeps to the system prompt's task when the user asks for a conflicting one | 42/48 | 96/96 |
+| | Follows the application's own reminder tags in a user turn | 5/24 | 0/48 |
+| GLM 5.3 | Keeps to the system prompt's task when the user asks for a conflicting one | 27/48 | 78/96 |
+| Gemini 4 Argon | Doesn't act on a request quoted in a tool result that an operator instruction seems to cover | 11/24 | 48/48 |
 
-The conflicting-request rows are scored the same way on the same items, except that the two runs on the right cover 76 of the 80; on those 76, the default gets 53/76 on Claude Haiku 5.5 and 70/76 on Claude Sonnet 4.6. This measure varies between runs: with `seal="pydantic-ai"` as the marker, Claude Haiku 5.5 got 66/80 in one run and 60/80 in another.
-
-So on Claude Haiku 5.5, sending the announcement on every request gives up some of the system prompt's hold over a conflicting user request, to keep instruction changes working. Firm wording narrows the gap: 32/40 with a firmly worded system prompt, 25/40 with a weakly worded one. Without a conflicting request, every run was correct (40/40). Claude Sonnet 4.6 holds about as well as the model alone on this measure, so it gives up nothing measurable here.
+The right-hand column pools two runs of the same requests. Between two such runs, results differed by up to 8 of 48 on GLM 5.3 and 7 of 48 on gpt-oss-120b, so read a gap of that size on one model as noise. The cached prompt prefix changes once with `'when_needed'`, at the request that first needs the announcement.
 
 **The `<system verified>` block rather than a native system role, on Claude Sonnet 5.5.** Opt out with `supports_inline_system_prompts=True` in the model's profile.
 
@@ -336,7 +336,7 @@ GLM 5.3's misses say the genuine `<pyai:retry_feedback>` "isn't a genuine applic
 
 **The announcement with a search tool, on Claude Sonnet 4.6.** The announcement says that text outside the application's own blocks has no authority. With a search tool that returns nothing, Claude Sonnet 4.6 then often distrusts a document in a `<context>` tag in the prompt: it used the document in 5/24 and 8/24 runs with the announcement, in two runs, against 24/24 without it. Without the tool, it used the document every time (24/24 with the announcement and without).
 
-**Cache-prefix stability.** A `clear_at` entry costs no input tokens and isn't part of a cache key, and an answered reminder left out of later requests kept the same cache reads (†, 0.98 to 0.99 of input tokens on both renderings), so the cache wasn't what separated those two. The default `'when_needed'` announcement changes the cached prefix once per conversation, at the request that first needs it; `'always'` keeps it part of the prefix from the first request.
+**Cache-prefix stability.** A `clear_at` entry costs no input tokens and isn't part of a cache key, and an answered reminder left out of later requests kept the same cache reads (†, 0.98 to 0.99 of input tokens on both renderings), so the cache wasn't what separated those two. On most models the default `'when_needed'` announcement changes the cached prefix once per conversation, at the request that first needs it; `'always'` keeps it part of the prefix from the first request.
 
 #### When the announcement is sent
 
@@ -344,13 +344,13 @@ The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announce
 
 | Value | Without a mid-conversation system role | With one |
 |---|---|---|
-| `'when_needed'` (default) | In the system prompt, after your system prompt and ahead of your instructions, from the first request with a `<system>` block, a note or another frame on the user channel, such as retry feedback or a compaction summary | A system message in the first request with a frame or a note |
-| `'always'` | At the start of the instructions, on every request from the first | The same as `'when_needed'` |
+| `'when_needed'` (default on most models) | In the system prompt, after your system prompt and ahead of your instructions, from the first request with a `<system>` block, a note or another frame on the user channel, such as retry feedback or a compaction summary | A system message in the first request with a frame or a note |
+| `'always'` (default on Claude Sonnet 4.6 and gpt-oss) | At the start of the instructions, on every request from the first | The same as `'when_needed'` |
 | `'never'` | Not sent | Not sent |
 
 The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
 
-`'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. When the announcement was sent only once first needed, rather than from the first request, Claude Haiku 5.5 followed an instruction change in 0 of 24 runs and Gemini 4 Argon a withdrawn instruction in 0 of 23 (see the table above). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.
+`'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. With it turned off, Claude Sonnet 4.6 and Grok 4.7 followed none of 24 instruction changes (all 24 with it), and Claude Sonnet 5.5, Claude Haiku 5.5 and Gemini 4 Argon couldn't say who had asked for a change (0 of 24, against 24 of 24). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.
 
 ### Framework frames and content fidelity
 

@@ -2568,12 +2568,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         `'never'` where `_announces_lookalike_notes` isn't set and inside `second_model_prompt()`. Otherwise the
         `framing_announcement` setting: from the parameters, where the agent puts the run's settings, then from this
-        model's own `settings`, and `'when_needed'` by default.
+        model's own `settings`. Where neither sets it, the profile's `default_framing_announcement`, and
+        `'when_needed'` by default.
         """
         if not self._announces_lookalike_notes or in_second_model_prompt():
             return 'never'
         requested = model_request_parameters and model_request_parameters._framing_announcement  # pyright: ignore[reportPrivateUsage]
-        return requested or (self.settings or {}).get('framing_announcement', 'when_needed')
+        return (
+            requested
+            or (self.settings or {}).get('framing_announcement')
+            or self.profile.get('default_framing_announcement', 'when_needed')
+        )
 
     def _announce_in_standing_prompt(
         self,

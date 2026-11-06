@@ -14,7 +14,7 @@ from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
-from ..settings import CacheRetention
+from ..settings import CacheRetention, FramingAnnouncement
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -196,6 +196,22 @@ class ModelProfile(TypedDict, total=False):
     said what, and with this rendering it attributed them correctly and followed steering after a tool result more
     reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
     a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
+    """
+
+    default_framing_announcement: FramingAnnouncement
+    """When this model gets the announcement of what `<system>` blocks and lookalike notes mean, where the `framing_announcement` setting isn't set. Default: `'when_needed'`.
+
+    The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting wins when
+    it's set; this is the model's default for it. Only meaningful where `supports_inline_system_prompts` is `False`.
+
+    `'when_needed'` sends the same request as `'always'` once a conversation has something to explain, and the same
+    request as `'never'` before that. Set to `'always'` for Claude Sonnet 4.6 and gpt-oss, which measured worse
+    without the announcement even on requests with nothing for it to explain: Sonnet 4.6 kept to the system prompt's
+    task against a conflicting user request in 30 of 48 runs with it and 22 of 96 without, and followed an
+    application's own reminder tags in a user turn in 24 of 24 with it and 0 of 48 without; gpt-oss kept to the
+    system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
+    without it on those requests. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
     """
 
     supports_request_scoped_system_prompts: bool

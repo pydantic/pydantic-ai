@@ -345,13 +345,15 @@ class ModelSettings(TypedDict, total=False):
     means. Pydantic AI adds that one fixed sentence after the leading system prompts, ahead of the instructions, on a
     request that has a system prompt or instructions:
 
-    - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
+    - `'when_needed'` (the default on most models): from the first request whose history has a mid-conversation system prompt, and on
       every request after it. That includes an instruction change appended mid-conversation, by a dynamic
       instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
       An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
       prefix once, at that request, and keeps it stable from then on.
     - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
-      conversations that never need it.
+      conversations that never need it. The default on Claude Sonnet 4.6 and gpt-oss, which follow the system
+      prompt less reliably without it (see
+      [`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]).
     - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
       text added. Models then follow a `<system>`-tagged change less reliably.
 

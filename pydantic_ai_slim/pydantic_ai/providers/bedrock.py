@@ -673,6 +673,11 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_thinking_variant='openai',
         supports_thinking=True,
         thinking_always_enabled=True,
+        # The family's default, which this profile doesn't otherwise build on: Converse has no mid-conversation
+        # system role, so gpt-oss gets `<system>` blocks here.
+        default_framing_announcement=openai_model_profile(model_name).get(
+            'default_framing_announcement', 'when_needed'
+        ),
     )
 
 
