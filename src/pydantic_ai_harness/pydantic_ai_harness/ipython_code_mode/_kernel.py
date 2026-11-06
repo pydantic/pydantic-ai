@@ -469,7 +469,7 @@ class IPythonKernel:
                     case 'interrupt':
                         await manager.interrupt_kernel()
                         deadline.start_grace()
-                    case _:
+                    case None:
                         pass
                 events = dict(await poller.poll(deadline.poll_ms()))
                 if not events and not await manager.is_alive():
