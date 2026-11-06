@@ -255,7 +255,7 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
 
     assert 'Stage the workflow agent composition' in shared_text
     assert 'Install tools for the AWF sandbox' in shared_text
-    assert 'Forward spans from trusted default-branch code' in shared_text
+    assert 'Forward agent spans to the OTLP endpoint' in shared_text
     assert 'GH_TOKEN' not in shared_text.split('post-steps:')[0]
     assert 'run: bash .github/scripts/prefetch-github-context.sh' in context_text
     assert '      GH_TOKEN: ${{ github.token }}' in context_text

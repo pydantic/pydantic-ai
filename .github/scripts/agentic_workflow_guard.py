@@ -1537,42 +1537,40 @@ def changed_files(base_ref: str) -> list[str]:
 
 
 def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
-    """The credentialed span forwarder must run outside the agent job and its PATH."""
+    """The credentialed span forwarder must not resolve its interpreter through PATH."""
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
-    jobs = _as_mapping(workflow.get('jobs'))
-    forwarder = _as_mapping(jobs.get('forward_agent_spans'))
-    if not forwarder:
+    agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
+    steps_value = agent.get('steps')
+    steps = TypeAdapter(list[dict[str, object]]).validate_python(steps_value) if isinstance(steps_value, list) else []
+    forwarder_runs = [
+        str(step.get('run', '')) for step in steps if 'forward_agent_traces.py' in str(step.get('run', ''))
+    ]
+    if len(forwarder_runs) != 1:
         return [
             Violation(
                 str(lock),
                 'trace-forwarder-isolation',
-                'the lock has no `forward_agent_spans` job; the OTLP credential would stay in the agent job.',
+                'the agent job must run the span forwarder exactly once as a post-step.',
             )
         ]
-    agent = _as_mapping(jobs.get('agent'))
-    for raw_step in cast(list[Any], agent.get('steps')) if isinstance(agent.get('steps'), list) else []:
-        if 'forward_agent_traces.py' in str(_as_mapping(raw_step).get('run', '')):
-            return [
-                Violation(
-                    str(lock),
-                    'trace-forwarder-isolation',
-                    'the agent job runs the span forwarder with the OTLP credential in its PATH.',
-                )
-            ]
-    steps_value = forwarder.get('steps')
-    runs = ''
-    if isinstance(steps_value, list):
-        steps = TypeAdapter(list[dict[str, object]]).validate_python(steps_value)
-        runs = ' '.join(str(step.get('run', '')) for step in steps)
-    if 'raw.githubusercontent.com' not in runs:
-        return [
-            Violation(
-                str(lock),
-                'trace-forwarder-isolation',
-                'the forwarder job must fetch its script from the default branch, not the checkout.',
-            )
-        ]
-    return []
+    run = forwarder_runs[0]
+    missing: list[str] = []
+    if 'raw.githubusercontent.com' not in run:
+        missing.append('a default-branch fetch')
+    if '/usr/bin/curl' not in run:
+        missing.append('an absolute curl path')
+    if '/usr/bin/python3' not in run:
+        missing.append('an absolute interpreter path')
+    if not missing:
+        return []
+    return [
+        Violation(
+            str(lock),
+            'trace-forwarder-isolation',
+            f'the forwarder step is missing {", ".join(missing)}; a checkout-controlled GITHUB_PATH entry can '
+            'shadow a PATH-resolved interpreter or curl while the step holds the OTLP credential.',
+        )
+    ]
 
 
 def check_job_timeout_headroom(source: Path) -> list[Violation]:

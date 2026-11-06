@@ -689,51 +689,46 @@ def test_shell_exposure_matches_tools_bash(tmp_path: Path):
     assert [v.check for v in check_shell_exposure(allowed_shell)] == ['shell-exposure']
 
 
-def test_trace_forwarder_must_run_in_a_separate_job(tmp_path: Path):
-    isolated = _write(
+def test_trace_forwarder_uses_absolute_paths_and_trusted_source(tmp_path: Path):
+    good = _write(
         tmp_path / 'a.lock.yml',
         """
 jobs:
   agent:
     steps:
-      - run: echo agent
-  forward_agent_spans:
-    needs: [agent]
-    steps:
-      - run: curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py
+      - run: |
+          /usr/bin/curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$RUNNER_TEMP/f.py"
+          /usr/bin/python3 "$RUNNER_TEMP/f.py"
 """,
     )
-    assert check_trace_forwarder_isolation(isolated) == []
+    assert check_trace_forwarder_isolation(good) == []
 
     missing = _write(tmp_path / 'b.lock.yml', 'jobs:\n  agent:\n    steps: []\n')
     assert [v.check for v in check_trace_forwarder_isolation(missing)] == ['trace-forwarder-isolation']
 
-    in_agent = _write(
+    path_resolved = _write(
         tmp_path / 'c.lock.yml',
         """
 jobs:
   agent:
     steps:
-      - run: python3 .github/scripts/forward_agent_traces.py
-  forward_agent_spans:
-    steps:
-      - run: curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py
+      - run: |
+          curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$RUNNER_TEMP/f.py"
+          python3 "$RUNNER_TEMP/f.py"
 """,
     )
-    assert [v.check for v in check_trace_forwarder_isolation(in_agent)] == ['trace-forwarder-isolation']
+    assert [v.check for v in check_trace_forwarder_isolation(path_resolved)] == ['trace-forwarder-isolation']
 
-    checkout = _write(
+    checkout_source = _write(
         tmp_path / 'd.lock.yml',
         """
 jobs:
   agent:
-    steps: []
-  forward_agent_spans:
     steps:
-      - run: python3 .github/scripts/forward_agent_traces.py
+      - run: /usr/bin/python3 .github/scripts/forward_agent_traces.py
 """,
     )
-    assert [v.check for v in check_trace_forwarder_isolation(checkout)] == ['trace-forwarder-isolation']
+    assert [v.check for v in check_trace_forwarder_isolation(checkout_source)] == ['trace-forwarder-isolation']
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------

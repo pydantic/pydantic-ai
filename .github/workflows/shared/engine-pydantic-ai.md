@@ -49,31 +49,19 @@ pre-agent-steps:
   # so this reads the workspace copy of the scripts.
   - name: Install tools for the AWF sandbox (ripgrep, uv)
     run: bash .github/scripts/install-sandbox-tools.sh
-jobs:
-  # A separate job keeps the OTLP credential away from the agent job's PATH, which
-  # checkout-controlled steps can extend through GITHUB_PATH. The forwarder itself is
-  # fetched from the default branch, so neither the checkout nor a PR head supplies it.
-  forward_agent_spans:
-    needs: [agent]
+post-steps:
+  # gh-aw only allows a custom job before the agent or after detection, so this runs
+  # in the agent job. It fetches the forwarder from the default branch and calls the
+  # interpreter and curl by absolute path: a checkout-controlled step can prepend
+  # directories through GITHUB_PATH, which an absolute path cannot be shadowed by.
+  - name: Forward agent spans to the OTLP endpoint
     if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Download the agent artifact
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: agent
-          path: agent
-      - name: Forward spans from trusted default-branch code
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DEFAULT_BRANCH}/.github/scripts/forward_agent_traces.py" \
-            -o "$RUNNER_TEMP/forward_agent_traces.py"
-          python3 "$RUNNER_TEMP/forward_agent_traces.py" --path agent/otel-spans.jsonl
+    continue-on-error: true
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    run: |
+      set -euo pipefail
+      /usr/bin/curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DEFAULT_BRANCH}/.github/scripts/forward_agent_traces.py" \
+        -o "$RUNNER_TEMP/forward_agent_traces.py"
+      /usr/bin/python3 "$RUNNER_TEMP/forward_agent_traces.py"
 ---
