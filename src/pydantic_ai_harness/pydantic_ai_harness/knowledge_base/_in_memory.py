@@ -47,6 +47,17 @@ class _Chunk:
     length: int
 
 
+def _bm25(item: _Chunk, frequency: dict[str, int], total: int, average: float) -> float:
+    """The BM25 score of one chunk for the query terms in `frequency`, which counts the chunks holding each."""
+    score = 0.0
+    for term, holders in frequency.items():
+        count = item.terms[term]
+        if count:
+            idf = math.log(1 + (total - holders + 0.5) / (holders + 0.5))
+            score += idf * count * (_K1 + 1) / (count + _K1 * (1 - _B + _B * item.length / average))
+    return score
+
+
 class InMemoryKnowledgeBase:
     """A knowledge base held in process memory, searched with BM25 keyword ranking.
 
@@ -100,12 +111,7 @@ class InMemoryKnowledgeBase:
         frequency = {term: sum(1 for item in candidates if term in item.terms) for term in terms}
         scored: list[tuple[float, _Chunk]] = []
         for item in candidates:
-            score = 0.0
-            for term in terms:
-                count = item.terms[term]
-                if count:
-                    idf = math.log(1 + (len(candidates) - frequency[term] + 0.5) / (frequency[term] + 0.5))
-                    score += idf * count * (_K1 + 1) / (count + _K1 * (1 - _B + _B * item.length / average))
+            score = _bm25(item, frequency, len(candidates), average)
             if score > 0 and (score_threshold is None or score >= score_threshold):
                 scored.append((score, item))
         scored.sort(key=lambda pair: pair[0], reverse=True)

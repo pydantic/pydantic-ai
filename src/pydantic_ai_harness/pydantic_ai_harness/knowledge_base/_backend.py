@@ -93,20 +93,25 @@ def _is_node(filter: Mapping[str, object]) -> bool:
 
 def _checked(node: Mapping[str, object]) -> FilterNode:
     """Validate one node and its children, returning it typed as the tree it is."""
-    operator = node.get('operator')
-    if 'conditions' in node:
-        conditions = node['conditions']
-        if operator not in _LOGICAL:
-            raise ValueError(f'Unknown logical operator {operator!r}; use one of AND, OR, NOT')
-        if isinstance(conditions, str | bytes) or not isinstance(conditions, Sequence) or not conditions:
-            raise ValueError(f'{operator} needs a non-empty list of conditions')
-        children: list[FilterNode] = []
-        for child in conditions:  # pyright: ignore[reportUnknownVariableType]
-            if not isinstance(child, Mapping) or not _is_node(child):  # pyright: ignore[reportUnknownArgumentType]
-                raise ValueError(f'Not a filter condition: {child!r}')
-            children.append(_checked(child))  # pyright: ignore[reportUnknownArgumentType]
-        return {'operator': operator, 'conditions': children}  # pyright: ignore[reportReturnType]
-    field_name, value = node.get('field'), node.get('value')
+    return _checked_logical(node) if 'conditions' in node else _checked_condition(node)
+
+
+def _checked_logical(node: Mapping[str, object]) -> LogicalFilter:
+    operator, conditions = node.get('operator'), node['conditions']
+    if operator not in _LOGICAL:
+        raise ValueError(f'Unknown logical operator {operator!r}; use one of AND, OR, NOT')
+    if isinstance(conditions, str | bytes) or not isinstance(conditions, Sequence) or not conditions:
+        raise ValueError(f'{operator} needs a non-empty list of conditions')
+    children: list[FilterNode] = []
+    for child in conditions:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(child, Mapping) or not _is_node(child):  # pyright: ignore[reportUnknownArgumentType]
+            raise ValueError(f'Not a filter condition: {child!r}')
+        children.append(_checked(child))  # pyright: ignore[reportUnknownArgumentType]
+    return {'operator': operator, 'conditions': children}  # pyright: ignore[reportReturnType]
+
+
+def _checked_condition(node: Mapping[str, object]) -> FilterCondition:
+    field_name, operator, value = node.get('field'), node.get('operator'), node.get('value')
     if not isinstance(field_name, str):
         raise ValueError(f'A condition needs a field name, got {field_name!r}')
     if operator not in _COMPARISONS:

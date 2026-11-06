@@ -282,7 +282,8 @@ class BedrockKnowledgeBase:
             raise UserError("BedrockKnowledgeBase supports mode='semantic' or 'hybrid', not 'keyword'")
         if mode is not None and self.retrieval_configuration is not None:
             raise UserError('retrieval_configuration sets the search type itself; leave the search mode unset')
-        client, _ = self._client_and_region
+        # Building the default client reads the AWS configuration files, so it runs off the event loop.
+        client, _ = await anyio.to_thread.run_sync(lambda: self._client_and_region)
         call = functools.partial(
             client.retrieve,
             knowledgeBaseId=self.knowledge_base_id,
