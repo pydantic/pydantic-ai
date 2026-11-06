@@ -267,7 +267,8 @@ Use a released compiler containing that fix once available; the runtime minimum 
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.64.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
-settings store. Workflow `engine.args` is ignored by this compiler's public-engine path.
+settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
+passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
 The public engine also ignores `tools:` allowlists. `pydantic_ai_gh_aw_shim/agent.py` withholds the shell
 from each source that declares `bash: []`.
 

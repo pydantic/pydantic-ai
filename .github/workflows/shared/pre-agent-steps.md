@@ -12,6 +12,7 @@
 #     - shared/pre-agent-steps.md
 pre-agent-steps:
   - name: Install repository workflow policy
+    id: workflow-policy
     run: bash .github/scripts/stage-gh-aw-agent.sh
   # Install ripgrep and expose uv+rg inside the AWF chroot.
   # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH

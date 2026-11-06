@@ -56,6 +56,8 @@ engine:
     PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
     PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
     PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
+    # Digest of the staged policy sources, from the `Install repository workflow policy` step.
+    LOGFIRE_SERVICE_VERSION: ${{ steps.workflow-policy.outputs.service-version }}
     PYTHONPATH: /tmp/gh-aw/workflow-python
     XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
     GITHUB_WORKFLOW: ${{ github.workflow }}

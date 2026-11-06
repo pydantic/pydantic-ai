@@ -3041,6 +3041,22 @@ def test_observability_names_the_running_shim_sources(monkeypatch: pytest.Monkey
         monkeypatch.setattr(shim.logfire, name, _instrument)
     shim.configure_observability()
     assert re.fullmatch('[0-9a-f]{12}', str(configured['service_version']))
+    assert configured['service_version'] == shim.source_digest()
+
+
+def test_clai2_engine_names_the_staged_shim_sources():
+    """The CLAI 2 engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
+
+    It digests the staged copy: CI Review checks out the pull request head after staging.
+    """
+    for lock in sorted((Path(__file__).parent.parent / 'workflows').glob('pydantic-ai-*.lock.yml')):
+        steps = yaml.safe_load(lock.read_text(encoding='utf-8'))['jobs']['agent']['steps']
+        names = [step.get('name') for step in steps]
+        staging = names.index('Install repository workflow policy')
+        engine = names.index('Execute Pydantic AI CLI')
+        assert staging < engine, lock.name
+        assert steps[staging]['id'] == 'workflow-policy', lock.name
+        assert steps[engine]['env']['LOGFIRE_SERVICE_VERSION'] == '${{ steps.workflow-policy.outputs.service-version }}'
 
 
 @pytest.mark.parametrize('chunks_before_cutoff', [0, 1])

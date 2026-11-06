@@ -84,6 +84,7 @@ imports:
   - shared/provider-health.md
 pre-agent-steps:
   - name: Install repository workflow policy
+    id: workflow-policy
     run: bash .github/scripts/stage-gh-aw-agent.sh
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh

@@ -1122,20 +1122,28 @@ def configure_logging() -> None:
     )
 
 
+def source_digest() -> str:
+    """The telemetry `service.version`: a digest of the shim sources this process loaded.
+
+    The sources name the code that ran. A commit SHA from the run's environment does not: a
+    workflow can run the shim from a different checkout than the one that triggered it.
+    `stage-gh-aw-agent.sh` passes the staged copy's digest to the CLAI 2 engine.
+    """
+    digest = hashlib.sha256()
+    for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
+        digest.update(source.name.encode() + b'\0' + source.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def configure_observability() -> None:
     """Wire pydantic-ai + httpx + mcp instrumentation to Logfire/OTLP if configured."""
     write_token = os.environ.get('LOGFIRE_WRITE_TOKEN') or os.environ.get('LOGFIRE_TOKEN')
     if not (os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('GH_AW_OTLP_ENDPOINTS') or write_token):
         return
     try:
-        # The shim's sources name the code that ran. A commit SHA from the run's environment does not:
-        # under `workflow_run`, CI Review runs the shim from the pull request head it checked out.
-        digest = hashlib.sha256()
-        for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
-            digest.update(source.name.encode() + b'\0' + source.read_bytes())
         logfire.configure(
             service_name=os.environ.get('OTEL_SERVICE_NAME', 'gh-aw'),
-            service_version=digest.hexdigest()[:12],
+            service_version=source_digest(),
             send_to_logfire='if-token-present',
             console=False,
             token=write_token or None,
