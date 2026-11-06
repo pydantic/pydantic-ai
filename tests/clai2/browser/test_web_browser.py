@@ -1632,13 +1632,19 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await dialog.get_by_role('button', name='Show the worktrees of repo').click()
         await expect(feature).to_be_visible()
         await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
-
         await dialog.get_by_role('listbox').focus()
         await expect(project).to_have_attribute('aria-selected', 'true')
+        # On a worktree, ← goes up to its project; on the project, it folds them, and the cursor stays put.
+        await page.keyboard.press('ArrowDown')
+        await expect(project).to_have_attribute('aria-selected', 'false')
+        await page.keyboard.press('ArrowLeft')
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(feature).to_be_visible()
         await page.keyboard.press('ArrowLeft')
         await expect(feature).to_have_count(0)
         await page.keyboard.press('ArrowRight')
         await expect(feature).to_be_visible()
+        await expect(project).to_have_attribute('aria-selected', 'true')
         # It offers no worktree of a folder outside Git, and refuses the same branch inline.
         alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
         await alpha.hover()
@@ -1654,6 +1660,13 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await expect(dialog.get_by_role('alert')).to_have_text(
             'Cannot create worktree: branch feature-x already exists. Pick another name.'
         )
+        # A typed path lists its repository with the worktrees unfolded, starting in the main checkout.
+        await dialog.get_by_role('button', name='Back').click()
+        await dialog.get_by_label('Another directory').fill(str(repo))
+        await expect(project).to_have_attribute('title', str(repo))
+        await expect(feature).to_be_visible()
+        await dialog.get_by_role('button', name='Hide the worktrees of repo').click()
+        await expect(feature).to_have_count(0)
     finally:
         for name in ('repo', 'feature-x'):
             if name in runtimes:

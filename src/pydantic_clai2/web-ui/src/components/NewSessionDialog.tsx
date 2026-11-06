@@ -26,7 +26,7 @@ function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
-/** A row per project, the current one first, which starts in its current checkout or else its first one; an unfolded
+/** A row per project, the current one first, which starts in its current checkout, else its main one, else its first; an unfolded
  * project's checkouts, including Git worktrees without sessions, follow it, leaving out removed ones. The current
  * directory comes first on its own when no project holds it. */
 function places(projects: Project[], unfolded: (key: string) => boolean, current?: string): Place[] {
@@ -39,7 +39,10 @@ function places(projects: Project[], unfolded: (key: string) => boolean, current
   }
   for (const project of [...projects.filter(holds), ...projects.filter((project) => !holds(project))]) {
     const live = project.worktrees.filter((worktree) => !worktree.missing)
-    const start = live.find((worktree) => worktree.root === current) ?? live[0]
+    const start =
+      live.find((worktree) => worktree.root === current) ??
+      live.find((worktree) => worktree.root === project.folder) ??
+      live[0]
     if (!start) continue
     // Outside Git, a project's key is its folder; in Git, the repository's Git directory.
     const repo = project.key !== start.root
@@ -412,8 +415,8 @@ export function NewSessionDialog({
           </form>
         )}
         <p className="dialog-hint">
-          Click a project, its arrow (or →) for its worktrees, or its New worktree…, or type an absolute path to find
-          others. Esc goes back.
+          Click a project or its New worktree…, or its chevron (→ and ←) to show or hide its worktrees, or type an
+          absolute path to find others. Esc goes back.
         </p>
       </div>
     </div>

@@ -17,7 +17,7 @@ ends every session. There, each session you open is live in its own directory, w
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
 project from the sidebar, by default the current one (a project's row starts in its current
-checkout, or its first one), one of its worktrees, including any other worktree Git lists for its
+checkout, else its main one), one of its worktrees, including any other worktree Git lists for its
 repository (its chevron, or →, unfolds them; ← folds them again), a new worktree of a listed
 checkout's repository (**New worktree…** on its row, or
 **New worktree of …** for the row the arrow keys select: a branch name,
