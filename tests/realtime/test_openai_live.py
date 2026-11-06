@@ -99,6 +99,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
+from .simulation._loop import SimulatedLoop
 
 with try_import() as imports_successful:
     import httpx2
@@ -1205,6 +1206,9 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         BinaryContent(data=b'png', media_type='image/png'),
         TextContent(content='The invoice:'),
         BinaryContent(data=b'pdf', media_type='application/pdf'),
+        BinaryContent(
+            data=b'pptx', media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        ),
         CachePoint(),
         ImageUrl(url='https://example.com/kiwi.jpg'),
         DocumentUrl(url='https://example.com/terms.pdf'),
@@ -1232,6 +1236,11 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
                             'file_data': 'data:application/pdf;base64,cGRm',
                             'filename': 'filename.pdf',
                         },
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,cHB0eA==',
+                            'filename': 'filename.pptx',
+                        },
                         {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
                         {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
                         {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
@@ -1250,6 +1259,8 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
         (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
         (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        # No document either: `mimetypes` knows no extension for it
+        (BinaryContent(data=b'x', media_type='application/custom'), 'cannot send `application/custom` content'),
         (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
         (
             DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
@@ -4066,8 +4077,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
     assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
-    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+    """A link that fails while Live is asked to end the session leaves nothing to wait for.
+
+    On a virtual clock, which only moves when nothing can run, a stalled runner can't use up the deadline, and only
+    waiting out `_END_SESSION_TIMEOUT` can.
+    """
 
     class _DroppingSocket(_FakeWebSocket):
         async def send(self, data: str) -> None:
