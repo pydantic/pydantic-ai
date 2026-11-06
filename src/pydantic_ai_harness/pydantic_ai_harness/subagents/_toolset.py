@@ -327,6 +327,22 @@ def _new_task_id(ctx: RunContext[Any]) -> str:
     return uuid4().hex
 
 
+async def _emit_delegation(
+    ctx: RunContext[AgentDepsT],
+    owner: DelegationTasks | None,
+    record: DelegationTask | None,
+    emits: bool,
+    event: DelegationStartEvent | DelegationEndEvent,
+) -> None:
+    """Send a delegation's start or end to its owner, or emit it from the delegating run."""
+    if owner is not None and record is not None:
+        event.task_id, event.parent_id = record.id, record.parent_id
+        await _send_to_owner(owner, record, event)
+    # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
+    elif emits:  # pragma: no branch
+        await ctx.emit(event)
+
+
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether the running tool belongs to a capability, so `ctx.emit` accepts a capability event.
 
@@ -363,6 +379,18 @@ def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str
     if previous.parent_id != DelegationTasks.child_id():
         raise ModelRetry(f'Task {resume} was started by another task; only the agent that started it can resume it.')
     return previous
+
+
+def _resolve_resume(
+    owner: DelegationTasks, resume: str | None, model: str | None, *, conversation_id: str, agent_name: str
+) -> tuple[DelegationTask | None, str | None]:
+    """The task `resume` names, if any, and the model to run on: `model`, else the resumed task's."""
+    if resume is None:
+        return None, model
+    previous = _resumable_here(owner, resume, conversation_id=conversation_id, agent_name=agent_name)
+    if model is None:
+        model = previous.model
+    return previous, model
 
 
 def _conversation_id(ctx: RunContext[Any], owner: DelegationTasks) -> str:
@@ -713,7 +741,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> _Ended | None:
         """Run the delegation in a durable unit of its own if it gets one, else return `None`."""
         record = self._record_delegation
-        if record is None or not ctx.in_durable_context or (self._include_self and agent_name == SELF_AGENT_NAME):
+        if record is None or not ctx.in_durable_context or self._is_self(agent_name):
             return None
         created = self._created.get(ctx.run_id or '', {}).get(agent_name)
         recorded = await record(ctx, agent_name, task, key, created[0] if created else None, _depth.get(), managed)
@@ -768,13 +796,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
         return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
 
+    def _is_self(self, agent_name: str) -> bool:
+        """Whether `agent_name` names the running agent, which `include_self` makes a delegate."""
+        return self._include_self and agent_name == SELF_AGENT_NAME
+
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
         """The delegate `agent_name` names, with the running agent resolved at call time for `include_self`.
 
         Raises:
             ModelRetry: no delegate has that name.
         """
-        if self._include_self and agent_name == SELF_AGENT_NAME:
+        if self._is_self(agent_name):
             agent = ctx.agent
             if agent is None:  # pragma: no cover - the running agent is always set during a run
                 raise UserError('Delegating to the running agent requires `RunContext.agent`.')
@@ -806,11 +838,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Delegate with `SubAgents(task_control=...)`: announce the task, then hand it to the owner."""
         parent_id = DelegationTasks.child_id()
         conversation_id = _conversation_id(ctx, owner)
-        previous = None
-        if resume is not None:
-            previous = _resumable_here(owner, resume, conversation_id=conversation_id, agent_name=agent_name)
-            if model is None:
-                model = previous.model
+        previous, model = _resolve_resume(owner, resume, model, conversation_id=conversation_id, agent_name=agent_name)
         workspace, directory = await self._delegation_workspace(ctx, agent_name, working_directory, previous)
         backgroundable = _backgroundable(workspace)
         if background and not backgroundable:
@@ -855,22 +883,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
         if start.vetoed:
             return _vetoed_reply('The task was not sent', start)
-
-        async def run(record: DelegationTask) -> str:
-            await owner.notify(record, start)
-            if remote is not None:
-                assert self._transport is not None, '`SubAgents` requires a `transport` for `remote_agents`.'
-                return await run_remote(
-                    owner=owner,
-                    record=record,
-                    start=start,
-                    transport=self._transport,
-                    accept_timeout=self._accept_timeout,
-                    usage=ctx.usage if self._forward_usage else None,
-                    telemetry=self._telemetry(ctx),
-                )
-            assert sub_agent is not None
-            return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start, workspace=workspace)
+        run = partial(
+            self._run_announced,
+            ctx=ctx,
+            owner=owner,
+            start=start,
+            remote=remote,
+            sub_agent=sub_agent,
+            key=key,
+            workspace=workspace,
+        )
 
         after = self._auto_background_after
         async with task_group() as group:
@@ -903,6 +925,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     def _check_running_limit(
         self, ctx: RunContext[AgentDepsT], owner: DelegationTasks, agent_name: str, conversation_id: str
     ) -> None:
+        """Refuse a task while `max_running_tasks` tasks of the conversation are already running."""
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
             self._telemetry(ctx).decision(
@@ -912,6 +935,34 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
                 'task, before starting another.'
             )
+
+    async def _run_announced(
+        self,
+        record: DelegationTask,
+        *,
+        ctx: RunContext[AgentDepsT],
+        owner: DelegationTasks,
+        start: TaskRequestEvent,
+        remote: RemoteSubAgent | None,
+        sub_agent: SubAgent[AgentDepsT] | None,
+        key: str | None,
+        workspace: Workspace,
+    ) -> str:
+        """Run a task whose start was announced, on its worker or locally."""
+        await owner.notify(record, start)
+        if remote is not None:
+            assert self._transport is not None, '`SubAgents` requires a `transport` for `remote_agents`.'
+            return await run_remote(
+                owner=owner,
+                record=record,
+                start=start,
+                transport=self._transport,
+                accept_timeout=self._accept_timeout,
+                usage=ctx.usage if self._forward_usage else None,
+                telemetry=self._telemetry(ctx),
+            )
+        assert sub_agent is not None
+        return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start, workspace=workspace)
 
     async def _background_after(
         self, ctx: RunContext[AgentDepsT], owner: DelegationTasks, task_id: str, delay: float
@@ -1200,20 +1251,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         # A delegation to the running agent already carries the parent's tools, so inheriting them
         # again would register every tool twice.
-        is_self = self._include_self and agent_name == SELF_AGENT_NAME
+        is_self = self._is_self(agent_name)
         inherit_tools = self._inherit_tools and not is_self
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
         emits = owner is not None or _emits_events(ctx)
-
-        async def emit(event: DelegationStartEvent | DelegationEndEvent) -> None:
-            if owner is not None and record is not None:
-                event.task_id, event.parent_id = record.id, record.parent_id
-                await _send_to_owner(owner, record, event)
-            # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
-            elif emits:  # pragma: no branch
-                await ctx.emit(event)
+        emit = partial(_emit_delegation, ctx, owner, record, emits)
 
         if emits:
             text, truncated = bounded_text(task)
@@ -1225,14 +1269,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         started = time.perf_counter()
 
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
-        capabilities = list(self._shared_capabilities)
-        if owner is not None and record is not None:
-            capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
-            capabilities.extend(owner.persistence_capabilities())
         serving_model = ServingModelRecorder()
-        capabilities.append(serving_model)
-        capabilities.extend(extra_capabilities)
-        own_budget, child_usage, usage_limits = self._usage(ctx, sub_agent, managed=managed or owner is not None)
+        capabilities = self._child_capabilities(owner, record, serving_model, extra_capabilities)
+        own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
 
         run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
         run = sub_agent.agent.run(
@@ -1294,18 +1333,44 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
         return ended
 
-    def _usage(
+    def _child_capabilities(
+        self,
+        owner: DelegationTasks | None,
+        record: DelegationTask | None,
+        serving_model: ServingModelRecorder,
+        extra_capabilities: Sequence[AbstractCapability[Any]],
+    ) -> list[AgentCapability[AgentDepsT]]:
+        """The capabilities a child run gets: the shared ones, task control's, then `serving_model` and the extras."""
+        capabilities = list(self._shared_capabilities)
+        if owner is not None and record is not None:
+            capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
+            capabilities.extend(owner.persistence_capabilities())
+        capabilities.append(serving_model)
+        capabilities.extend(extra_capabilities)
+        return capabilities
+
+    def _child_budget(
         self, ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT], *, managed: bool
     ) -> tuple[bool, RunUsage | None, UsageLimits | None]:
-        """Whether a delegation has its own budget, its own usage (`None` to share the parent's), and its limits."""
+        """Whether the child has its own budget, the usage it counts into (`None`: the parent's), and its limits.
+
+        `managed` applies an owner's usage rules.
+        """
+        usage_limits: UsageLimits | None
         if sub_agent.usage_limits is not None:
-            if managed and self._forward_usage:
-                return True, None, _managed_limits(ctx.usage, parent=ctx.usage_limits, child=sub_agent.usage_limits)
             # Isolated accounting so the per-child budget counts only this child.
-            return True, RunUsage(), sub_agent.usage_limits
-        child_usage = None if self._forward_usage else RunUsage()
-        # Shared usage is checked against the parent's limits, so they bound the whole tree.
-        return False, child_usage, ctx.usage_limits if managed or self._forward_usage else None
+            own_budget = True
+            child_usage = RunUsage()
+            usage_limits = sub_agent.usage_limits
+            if managed and self._forward_usage:
+                child_usage = None
+                usage_limits = _managed_limits(ctx.usage, parent=ctx.usage_limits, child=sub_agent.usage_limits)
+        else:
+            own_budget = False
+            child_usage = None if self._forward_usage else RunUsage()
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits if managed or self._forward_usage else None
+        return own_budget, child_usage, usage_limits
 
     def _run_model(
         self, ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT], *, key: str | None, is_self: bool

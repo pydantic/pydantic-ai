@@ -35,8 +35,8 @@ try:
         AsyncFunctionSnapshot,
         AsyncFutureSnapshot,
         AsyncMonty,
+        AsyncMontyRemote,
         AsyncMontySession,
-        AsyncMontyWebsocket,
         AsyncNameLookupSnapshot,
         AsyncSnapshot,
         CollectString,
@@ -113,7 +113,7 @@ async def _release_monty(stack: AsyncExitStack) -> None:
         await stack.aclose()
 
 
-# Extra time the WebSocket transport allows on top of `max_feed_duration_secs`, so the sandbox's own
+# Extra time the remote transport allows on top of `max_feed_duration_secs`, so the sandbox's own
 # limit fires first and the model sees a time-limit error rather than a dropped connection.
 _REMOTE_TURN_SLACK_SECS = 10.0
 
@@ -128,15 +128,15 @@ class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyWebsocket` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
+    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
     every Monty call goes through `portal`, opened with the pool and closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
-    pool_factory: Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None
-    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
-    pool: AsyncMonty | AsyncMontyWebsocket | None = None
+    pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
+    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
+    pool: AsyncMonty | AsyncMontyRemote | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
     has_executed_feed: bool = False
@@ -167,7 +167,7 @@ class MontyRunState:
                     timeout = (
                         None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
                     )
-                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=timeout)
+                    pool = AsyncMontyRemote(self.monty_sandbox_url, request_timeout=timeout)
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
