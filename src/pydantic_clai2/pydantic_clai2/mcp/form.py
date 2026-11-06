@@ -466,7 +466,7 @@ async def edit_form(
     store: MCPStore, name: str, dialogs: Dialogs, editor: Editor | None = None
 ) -> tuple[str, str] | None:
     """`/mcp edit NAME`: the same form, prefilled. The saved name and message, or `None` when cancelled."""
-    form = ServerForm(store, name=name, server=store.load().servers[name])
+    form = ServerForm(store, name=name, server=await to_thread.run_sync(lambda: store.load().servers[name]))
     if not await run_form(form, dialogs, editor):
         return None
     return form.name, await to_thread.run_sync(lambda: saved_message(form, store.load().servers[form.name]))

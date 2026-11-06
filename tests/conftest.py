@@ -640,7 +640,8 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
 
 # pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
 # commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
-# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O.
+# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O. They are
+# exempt even where async code calls them on the event loop, as making the stores async is a separate redesign.
 BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
     'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
     'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
@@ -653,9 +654,9 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 
 # Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
 # database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
-# the event loop: offload that call instead. Listed here are functions whose callers are synchronous, such as menus that
-# run in a thread and tests that set up state, and the synchronous shell construction and plugin loading that startup
-# and `/plugins` run once.
+# the event loop: offload that call instead. Most listed here have synchronous callers, such as menus that run in a
+# thread and tests that set up state. The deliberate exception is shell construction and plugin loading, which startup
+# and `/plugins` run on the event loop: making them async is the same separate redesign as for the stores.
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
