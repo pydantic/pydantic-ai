@@ -220,6 +220,7 @@ orchestrator = Agent(
   Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
   `dynamic_agents`, or `max_calls`, a delegation raises `UserError`.
   The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
+  Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
 
 ## DelegationReports
 

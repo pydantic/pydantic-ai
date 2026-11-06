@@ -12,8 +12,9 @@ import pytest
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ChildWorkflowError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
@@ -283,6 +284,46 @@ async def test_durable_delegate_runs_as_a_child_workflow(client: Client) -> None
         workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
     ).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+budgeted_agent = Agent(
+    _delegator({'agent_name': 'durable_worker', 'task': 'Work on it'}),
+    name='budgeted_child_workflow_agent',
+    deps_type=type(None),
+    capabilities=[
+        SubAgents[None](agents=[SubAgent(durable_worker, max_calls=1)]),
+        SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}}),
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class BudgetedChildWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await budgeted_agent.run(prompt)).output
+
+
+async def test_child_workflow_rejects_options_that_need_the_parent_run(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BudgetedChildWorkflowWorkflow],
+        plugins=[AgentPlugin(budgeted_agent), AgentPlugin(durable_worker)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                BudgetedChildWorkflowWorkflow.run,
+                'Delegate it',
+                id='test_subagents_temporal_budgeted_child_workflow',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    child_error = exc_info.value.cause
+    assert isinstance(child_error, ChildWorkflowError)
+    assert 'does not support' in str(child_error.cause)
 
 
 @pytest.fixture(scope='module')
