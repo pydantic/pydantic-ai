@@ -18,7 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agentic_workflow_guard
-from agent_provider_health import AGENT_START_HEALTH_STEPS
+from agent_provider_health import AGENT_START_HEALTH_STEPS, HOST_RESULT_STEPS
 from agentic_workflow_guard import (
     Violation,
     changed_files,
@@ -36,6 +36,7 @@ from agentic_workflow_guard import (
     check_prompt_paths,
     check_provider_engine_config,
     check_provider_health_agent_start,
+    check_provider_health_host_result,
     check_provider_health_identity,
     check_provider_health_monitor,
     check_provider_health_recovery_wiring,
@@ -1670,6 +1671,90 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
 
     assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
         'provider-health-agent-start'
+    ]
+
+
+_RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
+_RECORD_RUN = (
+    'python3 -I "$RUNNER_TEMP/provider-health/agent_provider_health.py" record \\\n'
+    '  --agent-log /tmp/gh-aw/agent-stdio.log \\\n'
+    '  --output "$RUNNER_TEMP/provider-health/run-result.json"\n'
+)
+
+
+def _host_result_steps(
+    *, run: str = _RECORD_RUN, env: dict[str, str] = _RECORD_ENV, upload: str = 'run-result.json'
+) -> list[dict[str, object]]:
+    return [
+        {'name': HOST_RESULT_STEPS[0], 'continue-on-error': True, 'env': env, 'run': run},
+        {
+            'name': HOST_RESULT_STEPS[1],
+            'uses': 'actions/upload-artifact',
+            'with': {'name': 'provider-health', 'path': f'provider-health.json\n{upload}\n'},
+        },
+    ]
+
+
+def test_provider_health_host_result_accepts_the_shipped_record_steps(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_agent_start_workflow(workflows, [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps()])
+
+    assert check_provider_health_host_result(workflows) == []
+
+
+@pytest.mark.parametrize(
+    'agent_steps',
+    [
+        pytest.param([*_agent_start_steps(), *_SHIPPED_AGENT_STEPS], id='no-record'),
+        pytest.param([*_agent_start_steps(), *_host_result_steps(), *_SHIPPED_AGENT_STEPS], id='before-execution'),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(
+                    run=_RECORD_RUN.replace(
+                        '"$RUNNER_TEMP/provider-health/agent_provider_health.py"',
+                        '.github/scripts/agent_provider_health.py',
+                        1,
+                    )
+                ),
+            ],
+            id='workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(run=_RECORD_RUN.replace('python3 -I ', 'python3 ', 1)),
+            ],
+            id='not-isolated',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
+            ],
+            id='no-zai-key',
+        ),
+        pytest.param(
+            [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps(upload='agent-stdio.log')],
+            id='record-not-uploaded',
+        ),
+        pytest.param(
+            [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps()[::-1]],
+            id='upload-before-record',
+        ),
+    ],
+)
+def test_provider_health_host_result_rejects_a_record_the_monitor_cannot_trust(
+    tmp_path: Path, agent_steps: list[dict[str, object]]
+):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_agent_start_workflow(workflows, agent_steps)
+
+    assert [violation.check for violation in check_provider_health_host_result(workflows)] == [
+        'provider-health-host-result'
     ]
 
 

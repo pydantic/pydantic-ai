@@ -114,6 +114,7 @@ jobs:
           --run-attempt "$RUN_ATTEMPT"
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
+          --run-result provider-health/run-result.json
           --agent-artifact agent
   monitor:
     needs: triage
@@ -201,6 +202,7 @@ jobs:
           --run-attempt "$RUN_ATTEMPT"
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
+          --run-result provider-health/run-result.json
           --agent-artifact agent
       - name: Retire stale task incidents, check quota and recover elapsed provider incidents
         if: github.event_name == 'schedule'

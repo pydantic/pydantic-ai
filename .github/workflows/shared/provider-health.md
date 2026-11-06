@@ -85,6 +85,36 @@ pre-agent-steps:
     run: |
       echo "::error::Provider health blocked inference at agent start: ${REASON}"
       exit 1
+# The monitor trusts only a terminal result written outside the agent container. After inference, the
+# controller fetched above reads the agent's result on the host, confirms a provider-wide failure with its own
+# Z.ai check, and adds the record to the `provider-health` artifact. `-I` ignores user site-packages and
+# `PYTHON*` variables.
+post-steps:
+  - name: Record the terminal agent result on the host
+    if: always() && steps.agent_start_health.outputs.ready == 'true'
+    continue-on-error: true
+    timeout-minutes: 2
+    env:
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      GITHUB_WORKFLOW: ${{ github.workflow }}
+      PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+      PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
+    run: |
+      python3 -I "$RUNNER_TEMP/provider-health/agent_provider_health.py" record \
+        --agent-log /tmp/gh-aw/agent-stdio.log \
+        --output "$RUNNER_TEMP/provider-health/run-result.json"
+  - name: Add the host-recorded agent result to the health decision artifact
+    if: always() && steps.agent_start_health.outputs.ready == 'true'
+    continue-on-error: true
+    uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+    with:
+      name: provider-health
+      path: |
+        ${{ runner.temp }}/provider-health/provider-health.json
+        ${{ runner.temp }}/provider-health/run-result.json
+      retention-days: 7
+      overwrite: true
 ---
 
 <!-- `provider_health` must precede activation. The top-level gate reads its output. -->
