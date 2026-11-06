@@ -7,10 +7,10 @@ from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-Agency = Literal['low', 'medium', 'high', 'max']
+Autonomy = Literal['low', 'medium', 'high', 'max']
 """How far `Coder` works on its own before it checks in with the user."""
 
-_AGENCY: dict[Agency, str] = {
+_AUTONOMY: dict[Autonomy, str] = {
     'low': 'Propose a plan and wait for approval before editing.',
     'medium': 'Work until done; ask when a choice really matters.',
     'high': 'Work until done. Ask only for credentials, approvals, or real ambiguity.',
@@ -18,7 +18,7 @@ _AGENCY: dict[Agency, str] = {
 }
 
 _DELEGATED = 'You are running a delegated task. Choose sensible defaults and finish.'
-"""Replaces the agency sentence in a delegate. The parent already chose the task, so a plan-and-wait level would
+"""Replaces the autonomy sentence in a delegate. The parent already chose the task, so a plan-and-wait level would
 leave it idle. It does not say whether anyone can answer: `ask_parent`, when the run has it, says when to ask."""
 
 _INTRO = "You are a software engineering agent. Match the surrounding code's style, structure, and imports."
@@ -87,7 +87,7 @@ def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequ
 
 def coder_instructions(
     *,
-    agency: Agency,
+    autonomy: Autonomy,
     delegate_tool: str | None,
     extra: str | None = None,
     repo_files: Sequence[str] | None = None,
@@ -100,8 +100,8 @@ def coder_instructions(
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads there.
     """
-    cleanup = agency == 'max'
-    parent_checks = _checks(measure=agency in ('high', 'max'), cleanup=cleanup)
+    cleanup = autonomy == 'max'
+    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=cleanup)
     delegate_checks = _checks(measure=True, cleanup=cleanup)
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
@@ -110,7 +110,7 @@ def coder_instructions(
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AGENCY[agency], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
+        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
         _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
     )
 

@@ -233,9 +233,9 @@ they include; confirm each stated requirement and edge case explicitly; use ever
 data supplies; check behavior with heredocs rather than new files; and finish long-running work before
 replying.
 
-`agency` sets how far the agent works on its own:
+`autonomy` sets how far the agent works on its own:
 
-| `agency` | The agent |
+| `autonomy` | The agent |
 |---|---|
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |
