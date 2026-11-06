@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from pathlib import Path
 
 import pytest
@@ -24,24 +24,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='dbos not installed'),
 ]
 
-summarize_agent = Agent(
-    FunctionModel(summarize_model),
-    name='summarize',
-    description='Summarize a text.',
-    tools=[noop],
-    capabilities=[DBOSDurability()],
-)
-orchestrator_agent = Agent(
-    FunctionModel(orchestrator_model),
-    name='dynamic_workflow_dbos_agent',
-    capabilities=[DynamicWorkflow(agents=[summarize_agent]), DBOSDurability()],
-)
-
-
-@DBOS.workflow(name='dynamic_workflow_dbos')
-async def run_orchestrator(prompt: str) -> str:
-    return (await orchestrator_agent.run(prompt)).output
-
 
 @pytest.fixture
 def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
@@ -58,10 +40,35 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         detach_dbos_logging()
 
 
-async def test_concurrent_sub_agents_recover_their_own_results(dbos: DBOS) -> None:
+@pytest.fixture
+def workflow(dbos: DBOS) -> Callable[[], Awaitable[str]]:
+    # Built outside the event loop: registering a DBOS workflow reads its source.
+    summarize = Agent(
+        FunctionModel(summarize_model),
+        name='summarize',
+        description='Summarize a text.',
+        tools=[noop],
+        capabilities=[DBOSDurability()],
+    )
+    orchestrator = Agent(
+        FunctionModel(orchestrator_model),
+        name='dynamic_workflow_dbos',
+        capabilities=[DynamicWorkflow(agents=[summarize]), DBOSDurability()],
+    )
+
+    @DBOS.workflow(name='dynamic_workflow_dbos')
+    async def run() -> str:
+        return (await orchestrator.run('Summarize alpha and beta')).output
+
+    return run
+
+
+async def test_concurrent_sub_agents_recover_their_own_results(
+    dbos: DBOS, workflow: Callable[[], Awaitable[str]]
+) -> None:
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
-        assert await run_orchestrator('Summarize alpha and beta') == EXPECTED
+        assert await workflow() == EXPECTED
     steps = await dbos.list_workflow_steps_async(workflow_id)
 
     # Re-execute the workflow function from its last step, the way recovery does.

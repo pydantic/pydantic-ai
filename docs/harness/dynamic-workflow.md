@@ -230,10 +230,13 @@ and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
-On other durable engines, sub-agents run one at a time when they record steps in start order: under
+## Running under other durable engines
+
+Where sub-agents' steps are recorded in the order they start, the script runs sub-agents one at a
+time, so recovery replays each sub-agent's recorded steps into the same call. That applies under
 `DBOSDurability`, and when the run's tool calls are sequential, as they are by default with
-`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Recovery then replays each
-sub-agent's recorded steps into the same call.
+`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Under Temporal and Prefect,
+sub-agents still run concurrently.
 
 ## Observability
 
