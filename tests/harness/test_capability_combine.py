@@ -337,6 +337,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_WorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run it serves'),
     '_ForwardingWorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
+    'DenyUnanswered': Anonymous('a second instance would deny what the first already denied'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
     'FallbackCompaction': Anonymous('drives a fallback chain; several independent chains compose'),

@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
@@ -24,9 +24,9 @@ from pydantic_ai.tools import (
     DeferredToolResults,
     RunContext,
     ToolDefinition,
-    ToolDenied,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
+from pydantic_ai_harness.deny_unanswered import DenyUnanswered
 from pydantic_ai_harness.permissions import (
     Approver,
     PermissionDecision,
@@ -34,8 +34,6 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     Permissions,
     ask_permissions,
-    denial_message,
-    permission_requests,
 )
 from pydantic_ai_harness.subagents import SELF_AGENT_NAME, SubAgents
 from pydantic_clai2.cli.command_context import CommandContext
@@ -76,7 +74,11 @@ def session_permissions(
     The runtime keeps them for the session, so approvals remembered for its conversations end with it.
     """
     permissions = Permissions[AgentDepsT](lambda ctx: mode())
-    return permissions, DenyUnanswered[AgentDepsT](), KeepDelegatesChecked[AgentDepsT](permissions=permissions)
+    return (
+        permissions,
+        DenyUnanswered[AgentDepsT](message=UNANSWERED),
+        KeepDelegatesChecked[AgentDepsT](permissions=permissions),
+    )
 
 
 @dataclass
@@ -111,27 +113,6 @@ class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
         bound: list[AbstractCapability[Any]] = []
         ctx.agent.root_capability.apply(bound.append)
         return any(capability is self.permissions for capability in bound)
-
-
-@dataclass
-class DenyUnanswered(AbstractCapability[AgentDepsT]):
-    """Deny the calls `Permissions` holds that no handler before it answered, saying how to let them run."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        """After every handler that may ask the user."""
-        return CapabilityOrdering(position='innermost', wrapped_by=[HandleDeferredToolCalls])
-
-    async def handle_deferred_tool_calls(
-        self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
-    ) -> DeferredToolResults | None:
-        held = permission_requests(requests)
-        if not held:
-            return None
-        return DeferredToolResults(
-            approvals={
-                request.call.tool_call_id: ToolDenied(f'{denial_message(request)} {UNANSWERED}') for request in held
-            }
-        )
 
 
 def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:

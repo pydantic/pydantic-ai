@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
@@ -117,6 +118,7 @@ __all__ = [
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DenyUnanswered',
     'DetectLoops',
     'DockerSandbox',
     'DockerSandboxBackend',
@@ -219,6 +221,7 @@ _LAZY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DenyUnanswered': 'deny_unanswered',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
     'DockerSandbox': 'docker_sandbox',
