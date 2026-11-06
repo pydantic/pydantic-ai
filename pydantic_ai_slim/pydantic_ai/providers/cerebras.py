@@ -7,6 +7,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
@@ -84,6 +85,7 @@ class CerebrasProvider(_OpenAISDKProvider):
                 thinking_always_enabled=is_always_on_reasoning,
                 openai_chat_send_back_thinking_parts=send_back_thinking_parts,
             ),
+            special_token_route_profile('cerebras', model_name),
         )
 
     @overload
