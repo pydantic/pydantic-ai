@@ -86,8 +86,13 @@ async def install_git_plugin(
         if returncode:
             detail = stderr.decode(errors='replace').strip()
             raise ValueError(f'Could not clone the plugin repository: {detail}')
-        entry = await to_thread.run_sync(_entry_point, destination)
-        if entry is None:
+        entry = await to_thread.run_sync(
+            lambda: next(
+                (path for filename in ('__init__.py', 'plugin.py') if (path := destination / filename).is_file()),
+                None,
+            )
+        )
+        if entry is None or await to_thread.run_sync(entry.is_symlink):
             raise ValueError('A plugin repository must contain a regular __init__.py or plugin.py at its root.')
         yield PluginSettings(id=name, factory=name, path=str(entry))
     except BaseException:
@@ -95,12 +100,6 @@ async def install_git_plugin(
         with suppress(OSError), CancelScope(shield=True):
             await to_thread.run_sync(remove_checkout, destination)
         raise
-
-
-def _entry_point(checkout: Path) -> Path | None:
-    """The checkout's `__init__.py`, else its `plugin.py`, when that is a regular file and not a link."""
-    entry = next((path for filename in ('__init__.py', 'plugin.py') if (path := checkout / filename).is_file()), None)
-    return None if entry is None or entry.is_symlink() else entry
 
 
 def remove_checkout(destination: Path, *, windows: bool = os.name == 'nt') -> None:

@@ -622,7 +622,10 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
-    # A first import waits for the module's lock while another thread, such as CLAI's import warm-up, imports it.
+    # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
+    # for the module's lock while another thread, such as CLAI's import warm-up, imports it.
+    ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
     # A session, and a plugin host built outside the shell, work in the current directory unless given one.
     ('os.getcwd', 'pydantic_clai2/runtime/session.py', '__init__'),
@@ -684,9 +687,8 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
     ('tests/clai2/test_live_runtimes.py', 'folder'),
     ('tests/clai2/test_shell_passthrough.py', 'hold'),
-    ('tests/clai2/test_plugin_git.py', ('interrupted_clone', 'concurrent_clone')),
     ('tests/clai2/test_plugin_git_cleanup.py', 'readonly_pack'),
-    ('/lifecycle_probe.py', ('on_session_start', 'on_turn_end', 'on_session_end')),
+    ('/lifecycle_probe.py', 'record'),
     ('/cwd_probe.py', 'get_capabilities'),
 ]
 
