@@ -946,7 +946,10 @@ def test_cerebras_zai_glm_5_3_inline_defs():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'openai_unsupported_model_settings': ('logit_bias',),
             'supports_thinking': True,
+            'thinking_always_enabled': True,
             'openai_chat_send_back_thinking_parts': 'tags',
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max'}),
+            'openai_chat_supports_max_reasoning_effort': True,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -2408,6 +2411,38 @@ def test_cerebras_qwen_reasoning():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'openai_unsupported_model_settings': ('logit_bias',),
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_qwen_3_8_hybrid_reasoning():
+    """Qwen 3.8 reasons by default on Cerebras and accepts `reasoning_effort='none'` to stop."""
+    profile = CerebrasProvider.model_profile('qwen-3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_kimi_k3_always_on_reasoning():
+    """Kimi K3 always reasons on Cerebras and accepts only `low`, `high` and `max`."""
+    profile = CerebrasProvider.model_profile('kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max'}),
+            'openai_chat_supports_max_reasoning_effort': True,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
