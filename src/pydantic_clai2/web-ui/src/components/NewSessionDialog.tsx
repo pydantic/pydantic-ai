@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Project } from '../protocol'
-import { CheckIcon, FolderIcon } from './icons'
+import { BranchIcon, CheckIcon, ChevronIcon, FolderIcon } from './icons'
 
 interface Place {
+  /** Unique among the rows: a project's key, or a worktree's root under it. */
+  key: string
   path: string
   label: string
   detail: string
   /** In a Git checkout, so New worktree… can check out another of its repository. */
   repo: boolean
+  /** On a project's row, how many worktrees it unfolds to, if more than one. */
+  worktrees: number
+  /** On a worktree's row, its project's key, and the branch it shows beneath the project. */
+  parent?: string
+  branch?: string
 }
 
 function message(error: unknown): string {
@@ -19,34 +26,52 @@ function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
-/** The current directory if given, then each project's checkouts, including Git worktrees without sessions, leaving out removed ones. */
-function places(projects: Project[], current?: string): Place[] {
-  const found = new Map<string, Place>()
-  if (current !== undefined) {
-    found.set(current, {
-      path: current,
-      label: current.split('/').filter(Boolean).pop() ?? current,
-      detail: tilde(current),
-      repo: false,
-    })
+/** A row per project, the current one first, which starts in its current checkout or else its first one; an unfolded
+ * project's checkouts, including Git worktrees without sessions, follow it, leaving out removed ones. The current
+ * directory comes first on its own when no project holds it. */
+function places(projects: Project[], unfolded: (key: string) => boolean, current?: string): Place[] {
+  const found: Place[] = []
+  const holds = (project: Project) =>
+    project.worktrees.some((worktree) => !worktree.missing && worktree.root === current)
+  if (current !== undefined && !projects.some(holds)) {
+    const label = current.split('/').filter(Boolean).pop() ?? current
+    found.push({ key: current, path: current, label, detail: tilde(current), repo: false, worktrees: 0 })
   }
-  for (const project of projects) {
-    for (const worktree of project.worktrees) {
-      if (worktree.missing) continue
-      const label =
-        project.worktrees.length > 1 || worktree.label !== project.name
-          ? `${project.name} · ${worktree.label}`
-          : project.name
-      // Outside Git, a project's key is its folder; in Git, the repository's Git directory.
-      const repo = project.key !== worktree.root
-      found.set(worktree.root, { path: worktree.root, label, detail: tilde(worktree.root), repo })
+  for (const project of [...projects.filter(holds), ...projects.filter((project) => !holds(project))]) {
+    const live = project.worktrees.filter((worktree) => !worktree.missing)
+    const start = live.find((worktree) => worktree.root === current) ?? live[0]
+    if (!start) continue
+    // Outside Git, a project's key is its folder; in Git, the repository's Git directory.
+    const repo = project.key !== start.root
+    const many = live.length > 1
+    found.push({
+      key: project.key,
+      path: start.root,
+      label: project.name,
+      detail: tilde(start.root),
+      repo,
+      worktrees: many ? live.length : 0,
+    })
+    if (!many || !unfolded(project.key)) continue
+    for (const worktree of live) {
+      found.push({
+        key: `${project.key}\n${worktree.root}`,
+        path: worktree.root,
+        label: `${project.name} · ${worktree.label}`,
+        detail: tilde(worktree.root),
+        repo,
+        worktrees: 0,
+        parent: project.key,
+        branch: worktree.label,
+      })
     }
   }
-  return [...found.values()]
+  return found
 }
 
-/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one,
- * a new worktree of the highlighted place's repository, or any other directory by its path, completed as it is typed. */
+/** Where a new session runs: a project CLAI has sessions in, by default the current one, or one of its worktrees, which
+ * its chevron unfolds; a new worktree of the highlighted place's repository; or any other directory by its path,
+ * completed as it is typed, with each repository's worktrees unfolded. */
 export function NewSessionDialog({
   current,
   onOpened,
@@ -63,11 +88,18 @@ export function NewSessionDialog({
   const [sending, setSending] = useState(false)
   // While a path is typed, the directories it completes to, so a repository without sessions and its worktrees are reachable.
   const [completed, setCompleted] = useState<Project[] | null>(null)
-  const shown = useMemo(
-    () => (completed === null ? places(projects, current) : places(completed)),
-    [completed, projects, current],
+  // The projects folded the other way from how they start: folded, or unfolded while a path is typed.
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
+  const shown = useMemo(() => {
+    const unfolded = (key: string) => (completed !== null) !== toggled.has(key)
+    return completed === null ? places(projects, unfolded, current) : places(completed, unfolded)
+  }, [completed, projects, current, toggled])
+  // The highlighted row's key, kept as rows unfold and fold around it; the first row until the arrow keys move it.
+  const [cursorKey, setCursorKey] = useState<string | null>(null)
+  const cursor = Math.max(
+    0,
+    shown.findIndex((place) => place.key === cursorKey),
   )
-  const [cursor, setCursor] = useState(0)
   // The place New worktree… checks out another worktree of, while its form shows.
   const [worktreeOf, setWorktreeOf] = useState<Place | null>(null)
   const [branch, setBranch] = useState('')
@@ -103,7 +135,20 @@ export function NewSessionDialog({
     }
   }, [typed])
 
-  useEffect(() => setCursor(0), [shown])
+  useEffect(() => {
+    setCursorKey(null)
+    setToggled(new Set())
+  }, [completed, projects])
+
+  const fold = (place: Place, open: boolean) => {
+    const unfolded = (completed !== null) !== toggled.has(place.key)
+    if (unfolded === open) return
+    setToggled((was) => {
+      const next = new Set(was)
+      if (!next.delete(place.key)) next.add(place.key)
+      return next
+    })
+  }
 
   useEffect(() => {
     list.current?.focus()
@@ -151,7 +196,14 @@ export function NewSessionDialog({
       event.preventDefault()
       if (!shown.length) return
       const step = event.key === 'ArrowDown' ? 1 : -1
-      setCursor((index) => (index + step + shown.length) % shown.length)
+      setCursorKey(shown[(cursor + step + shown.length) % shown.length]!.key)
+    } else if (event.key === 'ArrowRight' && highlighted?.worktrees) {
+      event.preventDefault()
+      fold(highlighted, true)
+    } else if (event.key === 'ArrowLeft' && highlighted) {
+      event.preventDefault()
+      if (highlighted.parent !== undefined) setCursorKey(highlighted.parent)
+      else if (highlighted.worktrees) fold(highlighted, false)
     } else if (event.key === 'Enter') {
       event.preventDefault()
       const place = shown[cursor]
@@ -174,47 +226,75 @@ export function NewSessionDialog({
           aria-activedescendant={`place-${cursor}`}
           onKeyDown={keys}
         >
-          {shown.map((place, index) => (
-            // The pointer crosses other rows on its way to the buttons below, so hovering one does not move the
-            // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead:
-            // a button in the listbox beside the row's option, out of the Tab order but named for voice control.
-            <div key={place.path} className={`dialog-option-row ${index === cursor ? 'active' : ''}`} role="none">
-              <button
-                id={`place-${index}`}
-                role="option"
-                aria-selected={index === cursor}
-                className={`dialog-option ${index === cursor ? 'active' : ''}`}
-                disabled={sending}
-                onClick={() => void start(place.path)}
-                title={place.path}
+          {shown.map((place, index) => {
+            const unfolded = place.worktrees > 0 && shown[index + 1]?.parent === place.key
+            return (
+              // The pointer crosses other rows on its way to the buttons below, so hovering one does not move the
+              // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead:
+              // a button in the listbox beside the row's option, out of the Tab order but named for voice control.
+              // So has a project of several worktrees its chevron, which unfolds them as → does.
+              <div
+                key={place.key}
+                className={`dialog-option-row ${place.parent !== undefined ? 'nested' : ''} ${index === cursor ? 'active' : ''}`}
+                role="none"
               >
-                <span className="dialog-option-label">
-                  <FolderIcon size={13} />
-                  {place.label}
-                  {place.path === current && (
-                    <span className="dialog-current">
-                      <CheckIcon size={12} /> current
-                    </span>
-                  )}
-                </span>
-                <span className="dialog-option-description">{place.detail}</span>
-              </button>
-              {place.repo && !worktreeOf && (
+                {place.worktrees > 0 ? (
+                  <button
+                    className="icon-button dialog-option-fold"
+                    type="button"
+                    tabIndex={-1}
+                    aria-expanded={unfolded}
+                    aria-label={`${unfolded ? 'Hide' : 'Show'} the worktrees of ${place.label}`}
+                    title={`${unfolded ? 'Hide' : 'Show'} its worktrees`}
+                    onClick={() => {
+                      setCursorKey(place.key)
+                      fold(place, !unfolded)
+                    }}
+                  >
+                    <ChevronIcon size={12} className={`chevron ${unfolded ? 'down' : ''}`} />
+                  </button>
+                ) : (
+                  place.parent === undefined && <span className="dialog-option-fold" />
+                )}
                 <button
-                  className="ghost small dialog-option-worktree"
-                  type="button"
+                  id={`place-${index}`}
+                  role="option"
+                  aria-selected={index === cursor}
+                  aria-label={place.branch === undefined ? undefined : place.label}
+                  className={`dialog-option ${index === cursor ? 'active' : ''}`}
                   disabled={sending}
-                  aria-label={`New worktree of ${place.label}…`}
-                  title={`Check out a new branch of ${place.label} in a worktree, and start there`}
-                  // For the pointer: the keyboard reaches the one below, for the cursor's row.
-                  tabIndex={-1}
-                  onClick={() => chooseWorktree(place)}
+                  onClick={() => void start(place.path)}
+                  title={place.path}
                 >
-                  New worktree…
+                  <span className="dialog-option-label">
+                    {place.branch === undefined ? <FolderIcon size={13} /> : <BranchIcon size={13} />}
+                    {place.branch ?? place.label}
+                    {place.worktrees > 0 && <span className="dialog-option-count">{place.worktrees} worktrees</span>}
+                    {place.path === current && (
+                      <span className="dialog-current">
+                        <CheckIcon size={12} /> current
+                      </span>
+                    )}
+                  </span>
+                  <span className="dialog-option-description">{place.detail}</span>
                 </button>
-              )}
-            </div>
-          ))}
+                {place.repo && !worktreeOf && (
+                  <button
+                    className="ghost small dialog-option-worktree"
+                    type="button"
+                    disabled={sending}
+                    aria-label={`New worktree of ${place.label}…`}
+                    title={`Check out a new branch of ${place.label} in a worktree, and start there`}
+                    // For the pointer: the keyboard reaches the one below, for the cursor's row.
+                    tabIndex={-1}
+                    onClick={() => chooseWorktree(place)}
+                  >
+                    New worktree…
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
         {worktreeOf ? (
           <form
@@ -332,7 +412,8 @@ export function NewSessionDialog({
           </form>
         )}
         <p className="dialog-hint">
-          Click a directory or its New worktree…, or type an absolute path to find others. Esc goes back.
+          Click a project, its arrow (or →) for its worktrees, or its New worktree…, or type an absolute path to find
+          others. Esc goes back.
         </p>
       </div>
     </div>

@@ -16,8 +16,10 @@ the address, opens it, and logs the session it started with to the terminal unti
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
+project from the sidebar, by default the current one (a project's row starts in its current
+checkout, or its first one), one of its worktrees, including any other worktree Git lists for its
+repository (its chevron, or →, unfolds them; ← folds them again), a new worktree of a listed
+checkout's repository (**New worktree…** on its row, or
 **New worktree of …** for the row the arrow keys select: a branch name,
 generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
 or any directory by its absolute path, which it completes as you type, listing each repository's
