@@ -43,8 +43,8 @@ Reach for these when the provider supports them:
 ## Provider-Specific Settings
 
 Put settings shared by providers directly on the native tool. For provider-only options, pass the
-provider's typed settings dictionary under its model-system key in `provider_settings`. The key follows
-the model class, so Claude through `OpenRouterModel` reads `openrouter`. Like model settings, unknown keys are
+provider's typed settings dictionary in `provider_settings`, keyed by the model class that reads it: `OpenRouterModel`
+reads `openrouter`, even for Claude, and `OpenAIChatModel` with an OpenRouter provider doesn't read it. Like model settings, unknown keys are
 ignored, so use the typed dictionaries to catch typos:
 
 ```python
@@ -66,9 +66,9 @@ agent = Agent(
 )
 ```
 
-The outer `TypedDict` lists the known model-system keys. Each system maps to its own
+The outer `TypedDict` lists the known keys. Each key maps to its own
 tool-specific `TypedDict`, so autocomplete and type checking apply at both levels. A model adapter
-reads only the options it knows from its own system entry, so settings for several systems can coexist on one tool.
+reads only the options it knows from its own entry, so settings for several models can coexist on one tool.
 
 Anthropic has `response_inclusion` on `WebSearchTool` and `WebFetchTool` (`AnthropicWebSearchToolSettings`,
 `AnthropicWebFetchToolSettings`) and `use_cache` on `WebFetchTool`; setting any of them selects the `20260318`
