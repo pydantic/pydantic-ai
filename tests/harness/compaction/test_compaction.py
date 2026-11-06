@@ -3280,14 +3280,14 @@ class TestPublicPath:
         # The imitations were retried within the raised budget, not fatal.
         assert summarizer_calls == 4
 
-    async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
+    async def test_persistently_empty_summary_is_skipped_instead_of_replacing_history(self):
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content=' \n')])
 
         sent: list[list[ModelMessage]] = []
 
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-            sent.append(messages)  # the run must fail before this request
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
             return ModelResponse(parts=[TextPart(content='ok')])
 
         history: list[ModelMessage] = []
@@ -3302,9 +3302,9 @@ class TestPublicPath:
             ],
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
-            await agent.run('next', message_history=history)
-        assert sent == []
+        result = await agent.run('next', message_history=history)
+        assert result.output == 'ok'
+        assert sent[0][:-1] == history
 
     @pytest.mark.parametrize('summary_text', ['', ' \n'])
     @pytest.mark.parametrize('request_limit', [2, 3])
