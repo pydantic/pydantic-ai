@@ -164,13 +164,18 @@ def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> l
 
 
 def _add_interrupted_pass_usage(
-    usage: RunUsage, captured: Sequence[ModelMessage], history: Sequence[ModelMessage]
-) -> None:
-    """Add to `usage` the responses an interrupted pass received: those of a run `history` does not yet hold."""
+    usage: RunUsage,
+    captured: Sequence[ModelMessage],
+    history: Sequence[ModelMessage],
+    current_usage: RequestUsage | None,
+) -> RequestUsage | None:
+    """Add an interrupted pass's new responses to `usage` and return the latest usage seen."""
     earlier_runs = {message.run_id for message in history}
     for message in captured:
         if isinstance(message, ModelResponse) and message.run_id not in earlier_runs:
             usage.incr(message.usage)
+            current_usage = message.usage
+    return current_usage
 
 
 def _to_acp_usage(usage: RunUsage) -> schema.Usage:
@@ -735,7 +740,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # the responses it got before the limit: those of a run the history does not yet hold.
             await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
-                _add_interrupted_pass_usage(usage, captured, history)
+                final_usage = _add_interrupted_pass_usage(usage, captured, history, final_usage)
                 history = _committable_history(captured, turn.started)
             stop_reason = _usage_limit_stop_reason(exc)
         except Exception:

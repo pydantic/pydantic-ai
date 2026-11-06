@@ -711,7 +711,28 @@ class TestStreaming:
             (second.usage.total_tokens, 123_456),
         ]
 
-    async def test_usage_update_after_approval_uses_last_request_not_turn_total(self) -> None:
+    async def test_usage_limit_reports_interrupted_response_usage(self) -> None:
+        model = _CompletedFunctionModel(
+            lambda _messages, _info: ModelResponse(
+                parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=100, output_tokens=20)
+            )
+        )
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            Agent(model), usage_limits=UsageLimits(output_tokens_limit=15)
+        )
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
+
+        assert response.stop_reason == 'max_tokens'
+        [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert update.used == 120
+
+    @pytest.mark.parametrize('output_tokens_limit', [None, 15], ids=['completed', 'interrupted'])
+    async def test_usage_update_after_approval_uses_last_request_not_turn_total(
+        self, output_tokens_limit: int | None
+    ) -> None:
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if _has_tool_return(messages):
                 return ModelResponse(
@@ -729,12 +750,14 @@ class TestStreaming:
         def delete_file(path: str) -> str:
             return f'deleted {path}'
 
-        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent)
+        usage_limits = UsageLimits(output_tokens_limit=output_tokens_limit) if output_tokens_limit is not None else None
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=usage_limits)
         client = FakeClient()
         session_id = await _start(adapter, client)
 
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
 
+        assert response.stop_reason == ('max_tokens' if output_tokens_limit is not None else 'end_turn')
         assert response.usage is not None and response.usage.total_tokens == 180
         [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
         assert (update.used, update.size) == (120, 123_456)
