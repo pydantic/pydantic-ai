@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+from typing import Any
 
 import httpx
 import pytest
@@ -237,13 +238,16 @@ def test_groq_native_output_with_function_tools_raises_user_error(allow_model_re
     def get_city() -> str:
         return 'Mexico City'
 
+    # The tool itself is fine; only native output combined with function tools is rejected.
+    assert get_city() == 'Mexico City'
+
     with pytest.raises(UserError, match=re.escape('does not support `NativeOutput` and function tools')):
         agent.run_sync('What is the city?')
 
 
 async def test_groq_structured_output_streaming_and_prompted_request_bodies(allow_model_requests: None):
     """Streaming native output sends a `json_schema` response format; prompted output sends `json_object`."""
-    captured = []
+    captured: list[dict[str, Any]] = []
 
     def stream_handler(request: httpx.Request) -> httpx.Response:
         captured.append(json.loads(request.content))
@@ -263,7 +267,7 @@ async def test_groq_structured_output_streaming_and_prompted_request_bodies(allo
                 }
             ],
         }
-        stop_chunk = {
+        stop_chunk: dict[str, Any] = {
             'id': '0',
             'object': 'chat.completion.chunk',
             'created': 0,

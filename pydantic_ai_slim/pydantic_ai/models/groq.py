@@ -438,10 +438,7 @@ class GroqModel(Model[AsyncGroq]):
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools:
-                raise UserError(
-                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
-                )
+            self._validate_native_output_mode(model_request_parameters)
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = self._map_json_schema(output_object)
@@ -716,6 +713,13 @@ class GroqModel(Model[AsyncGroq]):
                 'parameters': f.parameters_json_schema,
             },
         }
+
+    def _validate_native_output_mode(self, model_request_parameters: ModelRequestParameters) -> None:
+        """Reject `NativeOutput` combined with function tools, which Groq cannot serve in one request."""
+        if model_request_parameters.function_tools:
+            raise UserError(
+                'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatResponseFormatJsonSchema = {
