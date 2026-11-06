@@ -1,14 +1,15 @@
 """Tests for CodeMode's remote transport and sandbox error routing.
 
-Native transport errors cannot be constructed from Python, so recovery tests inject their
-typed properties after real feeds. The remote-pool double runs real local Monty sessions.
+Refusal tests exercise native errors from a loopback gRPC server. Local-backed factory pool
+doubles cover factory plumbing and deterministic recovery branches, not remote execution.
+Real subprocess bridge tests remain skipped until #8824 is resolved.
 """
 
 from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -18,11 +19,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from logfire.exceptions import LogfireConfigError
 from pydantic_monty import (
+    AsyncFutureSnapshot,
     AsyncMonty,
     AsyncMontyRemote,
     AsyncMontySession,
     AsyncSnapshot,
-    MontyComplete,
+    ExternalSettledResult,
     MontyRefusedError,
     MountDir,
 )
@@ -33,7 +35,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
-from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeModeToolset
 from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 from tests.harness.code_mode.repl_store import MemoryReplStore
@@ -297,11 +298,6 @@ _SECRET = 'https://alice:secret@sandbox.example.com/?token=private Bearer factor
 
 
 @dataclass
-class _RefusedError(Exception):
-    cause: str | None
-
-
-@dataclass
 class _DisconnectError(Exception):
     cause: str | None
     message: str
@@ -314,8 +310,8 @@ class _CrashedError(Exception):
 
 
 @pytest.fixture
-async def remote_pool() -> AsyncIterator[MagicMock]:
-    """Run factory-pool feeds locally without depending on a hosted service or the gRPC relay."""
+async def local_backed_factory_pool() -> AsyncIterator[MagicMock]:
+    """A factory pool double backed by local native sessions, not remote transport."""
     async with AsyncMonty() as local_pool:
         pool = MagicMock(spec=AsyncMontyRemote)
         pool.__aenter__.return_value = pool
@@ -326,64 +322,124 @@ async def remote_pool() -> AsyncIterator[MagicMock]:
 
 class TestCodeMode:
     @pytest.mark.parametrize(
-        ('error', 'failures', 'expected_checkouts'),
+        ('causes', 'expected_cause', 'expected_status', 'expected_checkouts'),
         [
             *[
-                pytest.param(_RefusedError(cause), failures, 2, id=f'{cause}-{failures}')
-                for cause in ('caller_cap', 'capacity', 'worker_unavailable')
-                for failures in (1, 2)
+                pytest.param((cause,), cause, status, 2, id=cause)
+                for cause, status in (
+                    ('caller_cap', 'RESOURCE_EXHAUSTED'),
+                    ('capacity', 'RESOURCE_EXHAUSTED'),
+                    ('worker_unavailable', 'UNAVAILABLE'),
+                )
             ],
             *[
-                pytest.param(_RefusedError(cause), 1, 1, id=f'refused-{cause}')
-                for cause in ('unauthenticated', 'permission_denied', 'unknown', None)
+                pytest.param((cause, 'unauthenticated'), 'unauthenticated', 'UNAUTHENTICATED', 2, id=f'{cause}-auth')
+                for cause in ('caller_cap', 'capacity', 'worker_unavailable')
             ],
-            (RuntimeError(_SECRET), 1, 1),
-            (UserError(_SECRET), 1, 1),
-            (LogfireConfigError(_SECRET), 1, 1),
+            (('unauthenticated',), 'unauthenticated', 'UNAUTHENTICATED', 1),
+            (('permission_denied',), 'permission_denied', 'PERMISSION_DENIED', 1),
+            (('unknown',), None, 'RESOURCE_EXHAUSTED', 1),
+            (None, None, 'UNAUTHENTICATED', 1),
         ],
     )
-    async def test_checkout_errors(
+    async def test_native_remote_checkout_refusals(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        remote_pool: MagicMock,
-        error: Exception,
-        failures: int,
+        causes: tuple[str, ...] | None,
+        expected_cause: str | None,
+        expected_status: str,
         expected_checkouts: int,
     ) -> None:
-        """Only capacity refusals get one delayed checkout retry; exhausted or non-capacity errors reach callers."""
-        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyRefusedError', _RefusedError)
+        """Real transport refusals retry capacity once, propagate the final native error, and never reach the model."""
         sleep = AsyncMock()
-        monkeypatch.setattr('pydantic_ai_harness._monty_exec.anyio.sleep', sleep)
-        checkout = remote_pool.checkout.side_effect
+        monkeypatch.setattr('anyio.sleep', sleep)
+        async with serve_monty_relay(refuse=True, refusal_causes=causes) as relay:
+            agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=relay.url)])
+            with capture_run_messages() as messages, pytest.raises(MontyRefusedError) as exc_info:
+                await agent.run('checkout')
+
+        assert exc_info.value.cause == expected_cause
+        assert exc_info.value.status_code == expected_status
+        assert exc_info.value.status_message == ('unauthorized' if causes is None else 'refused')
+        assert _retries(messages) == []
+        assert str(exc_info.value) not in str(messages)
+        assert relay.url not in str(messages)
+        assert len(relay.metadata) == expected_checkouts
+        assert sleep.await_args_list == ([((0.1,), {})] if expected_checkouts == 2 else [])
+
+    @pytest.mark.parametrize('cause', ['caller_cap', 'capacity', 'worker_unavailable'])
+    async def test_local_backed_factory_recovers_after_native_capacity_refusal(
+        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, cause: str
+    ) -> None:
+        """A local-backed checkout proves successful retry without relying on the skipped remote bridge.
+
+        The first checkout raises an actual transport refusal; the second uses a real local session.
+        """
+        async with serve_monty_relay(refusal_causes=(cause,)) as relay:
+            async with AsyncMontyRemote(relay.url) as pool:
+                with pytest.raises(MontyRefusedError) as exc_info:
+                    async with pool.checkout():
+                        pytest.fail('refusal server admitted a session')
+
+        sleep = AsyncMock()
+        monkeypatch.setattr('anyio.sleep', sleep)
+        checkout = local_backed_factory_pool.checkout.side_effect
         attempts = 0
 
         @asynccontextmanager
-        async def failing_checkout(**kwargs: Any) -> AsyncGenerator[AsyncMontySession]:
+        async def checkout_after_refusal(**kwargs: Any) -> AsyncGenerator[AsyncMontySession]:
             nonlocal attempts
             attempts += 1
-            if attempts <= failures:
-                raise error
+            if attempts == 1:
+                raise exc_info.value
             async with checkout(**kwargs) as session:
                 yield session
 
-        remote_pool.checkout.side_effect = failing_checkout
-        factory = MagicMock(return_value=remote_pool)
+        local_backed_factory_pool.checkout.side_effect = checkout_after_refusal
+        factory = MagicMock(return_value=local_backed_factory_pool)
         agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=factory)])
+        result = await agent.run('recover after capacity refusal')
 
-        with capture_run_messages() as messages:
-            if failures < expected_checkouts:
-                result = await agent.run('checkout')
-                assert result.output == 'done'
-            else:
-                with pytest.raises(type(error)) as exc_info:
-                    await agent.run('checkout')
-                assert exc_info.value is error
+        assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
+        assert _retries(result.all_messages()) == []
+        assert attempts == 2
+        factory.assert_called_once_with()
+        sleep.assert_awaited_once_with(0.1)
 
+    async def test_refusal_sequence_repeats_final_cause(self) -> None:
+        """The relay repeats the last refusal, including across new checkouts on the same native pool."""
+        async with serve_monty_relay(refusal_causes=('capacity', 'unauthenticated')) as relay:
+            async with AsyncMontyRemote(relay.url) as pool:
+                for cause in ('capacity', 'unauthenticated', 'unauthenticated'):
+                    with pytest.raises(MontyRefusedError) as exc_info:
+                        async with pool.checkout():
+                            pytest.fail('refusal server admitted a session')
+                    assert exc_info.value.cause == cause
+        assert len(relay.metadata) == 3
+
+    async def test_empty_refusal_sequence_rejected(self) -> None:
+        """An empty explicit sequence must fail before the relay can accept connections."""
+        with pytest.raises(ValueError, match='at least one cause'):
+            async with serve_monty_relay(refusal_causes=()):
+                pytest.fail('empty refusal sequence accepted')
+
+    @pytest.mark.parametrize('error_type', [RuntimeError, UserError, LogfireConfigError])
+    async def test_local_backed_factory_checkout_error(
+        self, local_backed_factory_pool: MagicMock, error_type: type[Exception]
+    ) -> None:
+        """A deterministic checkout double pins non-native setup errors that gRPC cannot produce."""
+        error = error_type(_SECRET)
+        local_backed_factory_pool.checkout.side_effect = error
+        factory = MagicMock(return_value=local_backed_factory_pool)
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=factory)])
+        with capture_run_messages() as messages, pytest.raises(error_type) as exc_info:
+            await agent.run('checkout')
+
+        assert exc_info.value is error
         assert _retries(messages) == []
         assert _SECRET not in str(messages)
-        assert attempts == expected_checkouts
+        local_backed_factory_pool.checkout.assert_called_once()
         factory.assert_called_once_with()
-        assert sleep.await_args_list == ([((0.1,), {})] if expected_checkouts == 2 else [])
 
     @pytest.mark.parametrize(
         ('error', 'guidance'),
@@ -398,30 +454,34 @@ class TestCodeMode:
             (RuntimeError(_SECRET), 'Code execution failed and the session was reset'),
         ],
     )
-    async def test_execution_failure_resets_without_leaking_pool_details(
-        self, monkeypatch: pytest.MonkeyPatch, remote_pool: MagicMock, error: Exception, guidance: str
+    async def test_local_backed_factory_execution_failure_resets_without_leaking_pool_details(
+        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, error: Exception, guidance: str
     ) -> None:
-        """Execution guidance names the failure and lost state, preserves completed calls, and excludes transport secrets."""
+        """Local-backed doubles pin crash/disconnect guidance while real bridge execution is unavailable (#8824).
+
+        Native crash/disconnect errors cannot be constructed in Python, so inject typed properties
+        at the public native snapshot boundary after a real tool call, not into the harness executor.
+        """
         assert _SECRET in str(error)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', _CrashedError)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', _DisconnectError)
-        original_run = MontyExecutor.run
+        original_resume = AsyncFutureSnapshot.resume
         failed = False
 
-        async def fail_after_feed(
-            executor: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
-        ) -> MontyComplete:
+        async def fail_after_tool(
+            snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
+        ) -> AsyncSnapshot:
             nonlocal failed
-            result = await original_run(executor, feed_start)
+            result = await original_resume(snapshot, results)
             if not failed:
                 failed = True
                 raise error
             return result
 
-        monkeypatch.setattr(MontyExecutor, 'run', fail_after_feed)
+        monkeypatch.setattr(AsyncFutureSnapshot, 'resume', fail_after_tool)
         agent = Agent(
             _snippets_model('saved = 42\nawait ping()', 'saved', '1 + 1'),
-            capabilities=[CodeMode(monty_sandbox=MagicMock(return_value=remote_pool))],
+            capabilities=[CodeMode(monty_sandbox=MagicMock(return_value=local_backed_factory_pool))],
         )
         calls: list[None] = []
 
@@ -439,24 +499,26 @@ class TestCodeMode:
         assert 'secret' not in str(first.content)
         assert 'factory-key' not in str(first.content)
         assert calls == [None]
-        assert remote_pool.checkout.call_count == 3
+        assert local_backed_factory_pool.checkout.call_count == 3
 
     @pytest.mark.parametrize(
         ('error_name', 'code'),
         [
             ('MemoryError', 'raise MemoryError("allocation failed")'),
             ('MemoryError', 'await fail_memory()'),
-            ('MemoryError', 'data = [0] * 1_000_000'),
             ('ValueError', 'raise ValueError("runtime failure")'),
         ],
     )
-    async def test_remote_runtime_error(self, remote_pool: MagicMock, error_name: str, code: str) -> None:
-        """Recoverable memory limits and snippet or nested-tool exceptions must not discard live REPL state."""
+    async def test_local_backed_factory_runtime_error(
+        self, local_backed_factory_pool: MagicMock, error_name: str, code: str
+    ) -> None:
+        """Local-backed factory plumbing preserves state for snippet/tool exceptions with clear source frames."""
         agent = Agent(
             _snippets_model(f'saved = 42\nawait ping()\n{code}', 'saved'),
             capabilities=[
                 CodeMode(
-                    monty_sandbox=MagicMock(return_value=remote_pool), resource_limits={'max_memory': 8 * 1024 * 1024}
+                    monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
+                    resource_limits={'max_memory': 8 * 1024 * 1024},
                 )
             ],
         )
@@ -474,34 +536,86 @@ class TestCodeMode:
         assert len(retries) == 1, [retry.content for retry in retries]
         (retry,) = retries
         assert error_name in str(retry.content)
+        assert 'Traceback' in str(retry.content)
+        if 'fail_memory' in code:
+            assert 'host allocation failed' in str(retry.content)
+        elif error_name == 'MemoryError':
+            assert 'allocation failed' in str(retry.content)
         assert 'session was reset' not in str(retry.content)
         assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 42
 
-    async def test_memory_limit_before_execution_keeps_session(self, remote_pool: MagicMock) -> None:
-        """A pre-execution memory-limit error has no frames but does not mean the worker was terminated."""
+    @pytest.mark.parametrize('code', ['data = [0] * 1_000_000', 'raise MemoryError("memory limit exceeded")'])
+    async def test_local_backed_factory_memory_limit_resets(
+        self, local_backed_factory_pool: MagicMock, code: str
+    ) -> None:
+        """Heap limits invalidate state even on live workers; an indistinguishable spoof resets conservatively."""
         agent = Agent(
-            _snippets_model('value = 42'),
+            _snippets_model(f'saved = 42\nawait ping()\n{code}', 'saved', '1 + 1'),
             capabilities=[
-                CodeMode(monty_sandbox=MagicMock(return_value=remote_pool), resource_limits={'max_memory': 1})
+                CodeMode(
+                    monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
+                    resource_limits={'max_memory': 8 * 1024 * 1024},
+                )
+            ],
+        )
+
+        @agent.tool_plain
+        def ping() -> int:
+            return 7
+
+        result = await agent.run('exhaust the sandbox heap limit')
+        first, second = _retries(result.all_messages())
+        assert 'memory limit exceeded' in str(first.content)
+        assert 'The sandbox ran out of memory and the session was reset.' in str(first.content)
+        assert 'ping({}) returned 7' in str(first.content)
+        assert 'Name `saved` used when not defined' in str(second.content)
+        assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
+        assert local_backed_factory_pool.checkout.call_count == 3
+
+    async def test_local_backed_factory_memory_limit_before_execution_resets(
+        self, local_backed_factory_pool: MagicMock
+    ) -> None:
+        """A frameless pre-execution heap limit also invalidates the session rather than reusing its heap."""
+        agent = Agent(
+            _snippets_model('value = 42', 'value'),
+            capabilities=[
+                CodeMode(
+                    monty_sandbox=MagicMock(return_value=local_backed_factory_pool), resource_limits={'max_memory': 1}
+                )
             ],
         )
         result = await agent.run('exhaust the sandbox budget before execution')
-        (retry,) = _retries(result.all_messages())
-        assert 'memory limit exceeded' in str(retry.content)
-        assert 'session was reset' not in str(retry.content)
+        retries = _retries(result.all_messages())
+        assert len(retries) == 2
+        for retry in retries:
+            assert 'memory limit exceeded' in str(retry.content)
+            assert 'The sandbox ran out of memory and the session was reset.' in str(retry.content)
+        assert local_backed_factory_pool.checkout.call_count == 2
 
-    @pytest.mark.parametrize('remote', [False, True])
-    async def test_worker_out_of_memory_resets(self, remote_pool: MagicMock, remote: bool) -> None:
-        """A refused 1 EiB allocation kills the worker, so its frame-less MemoryError must reset both pool types.
+    @pytest.mark.parametrize(
+        'remote',
+        [
+            False,
+            pytest.param(
+                True,
+                marks=pytest.mark.skip(
+                    reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824'
+                ),
+            ),
+        ],
+        ids=['local', 'remote-bridge'],
+    )
+    async def test_native_worker_out_of_memory_resets(self, monty_relay: MontyRelay, remote: bool) -> None:
+        """A refused 1 EiB allocation kills a native worker; real remote coverage awaits the bridge fix (#8824).
 
         The allocation exceeds the address space, so the allocator refuses it without consuming host memory.
-        Unlike a recoverable sandbox limit, Monty marks the checkout finished after this error.
+        Monty marks the checkout finished after this error; soft heap limits must also reset state.
         """
         agent = Agent(
             _snippets_model("saved = 42\nawait ping()\ndata = ' ' * (1 << 60)", 'saved', '1 + 1'),
             capabilities=[
                 CodeMode(
-                    monty_sandbox=MagicMock(return_value=remote_pool) if remote else None,
+                    monty_sandbox=monty_relay.url if remote else None,
                     resource_limits='unlimited',
                 )
             ],
@@ -522,18 +636,22 @@ class TestCodeMode:
         assert 'Name `saved` used when not defined' in str(second.content)
         assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
 
-    async def test_restore_checkout_failure_reaches_caller(self, remote_pool: MagicMock) -> None:
-        """Restoring a saved REPL must not convert a setup error into model feedback or overwrite saved state."""
+    async def test_local_backed_factory_restore_checkout_failure_reaches_caller(
+        self, local_backed_factory_pool: MagicMock
+    ) -> None:
+        """Local-backed restore plumbing must not turn setup errors into model feedback or overwrite saved state."""
         store = MemoryReplStore()
         agent = Agent(
             _snippets_model('saved = 42'),
             deps_type=type(None),
-            capabilities=[CodeMode[None](monty_sandbox=MagicMock(return_value=remote_pool), repl_store=store)],
+            capabilities=[
+                CodeMode[None](monty_sandbox=MagicMock(return_value=local_backed_factory_pool), repl_store=store)
+            ],
         )
         await agent.run('save', conversation_id='conversation')
         saved = store.states.copy()
         error = RuntimeError(_SECRET)
-        remote_pool.checkout.side_effect = error
+        local_backed_factory_pool.checkout.side_effect = error
 
         with capture_run_messages() as messages, pytest.raises(RuntimeError) as exc_info:
             await agent.run('restore', conversation_id='conversation')

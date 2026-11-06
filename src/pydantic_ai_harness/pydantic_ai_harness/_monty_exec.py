@@ -196,7 +196,7 @@ class MontyRunState:
         except MontyRefusedError as error:
             if error.cause not in ('caller_cap', 'capacity', 'worker_unavailable'):
                 raise
-            await anyio.sleep(0.1)
+            await call_monty(self.portal, anyio.sleep, 0.1)
             return await _enter_monty(self._session_stack, checkout(), self.portal)
 
     async def reset(self) -> None:

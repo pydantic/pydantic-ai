@@ -771,7 +771,8 @@ class TestCodeMode:
         printed = await wrapper.call_tool('run_code', {'code': 'print("done")\nNone'}, ctx, tools['run_code'])
         assert printed.return_value == {'output': 'done\n'}
 
-    async def test_run_code_caps_printed_output(self) -> None:
+    async def test_run_code_caps_printed_output_and_resets(self) -> None:
+        """An output collector's memory-limit diagnostic is indistinguishable from an unsafe heap limit."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
@@ -784,7 +785,9 @@ class TestCodeMode:
                 ctx,
                 tools['run_code'],
             )
-        result = await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        with pytest.raises(ModelRetry, match='Name `x` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        result = await wrapper.call_tool('run_code', {'code': 'x = 7\nx + 1'}, ctx, tools['run_code'])
         assert result.return_value == 8
 
     async def test_run_code_caps_nested_tool_calls(self) -> None:
@@ -1067,12 +1070,8 @@ class TestCodeMode:
         assert '1 nested tool calls started' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
 
-    async def test_memory_exhaustion_reports_calls_without_resetting(self) -> None:
-        """Exceeding `max_memory` reports what already ran, but keeps the session.
-
-        The allocation failed at a known point and later calls work, so a reset would discard
-        usable state even though the summary is just as necessary.
-        """
+    async def test_memory_exhaustion_reports_calls_and_resets(self) -> None:
+        """A live worker's heap is not safe after `max_memory`; reset state but retain completed calls."""
         wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
             _build_function_toolset(add)
         )
@@ -1091,7 +1090,9 @@ class TestCodeMode:
         message = exc_info.value.message
         assert 'memory limit exceeded' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
-        assert 'session was reset' not in message
+        assert 'The sandbox ran out of memory and the session was reset.' in message
+        with pytest.raises(ModelRetry, match='Name `r` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'r'}, ctx, tools['run_code'])
 
     async def test_every_resource_limit_reports_started_calls_when_exhausted(self) -> None:
         """Exhausting any option a caller can set still reports the calls that already ran.

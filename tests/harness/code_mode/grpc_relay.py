@@ -1,8 +1,9 @@
-"""An in-process gRPC server that bridges each remote Monty session to a fresh `monty subprocess` child.
+"""A loopback gRPC server for Monty transport tests, with refusal and subprocess bridge modes.
 
 `pydantic_monty.AsyncMontyRemote` opens one `/monty.v1.MontySession/Session` stream per worker. The
 stdio worker reads and writes the same protobuf messages with a four-byte little-endian length prefix,
-so the relay only adds and removes that prefix. It never parses a message.
+so the relay only adds and removes that prefix. It never parses a message. Tests can use
+`serve_monty_relay(refusal_causes=...)` to exercise native refusal decoding without starting workers.
 """
 
 from __future__ import annotations
@@ -45,6 +46,8 @@ class MontyRelay:
 
     refuse: bool = False
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
+    refusal_causes: tuple[str, ...] | None = None
+    """Refuse streams with these causes in order, repeating the last cause after exhaustion."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
@@ -59,6 +62,19 @@ class MontyRelay:
     async def _session(self, stream: Stream[bytes, bytes]) -> None:
         assert stream.metadata is not None
         self.metadata.append({key: value for key, value in stream.metadata.items() if isinstance(value, str)})
+        if self.refusal_causes is not None:
+            cause = self.refusal_causes[min(len(self.metadata), len(self.refusal_causes)) - 1]
+            status = {
+                'caller_cap': Status.RESOURCE_EXHAUSTED,
+                'capacity': Status.RESOURCE_EXHAUSTED,
+                'worker_unavailable': Status.UNAVAILABLE,
+                'unauthenticated': Status.UNAUTHENTICATED,
+                'permission_denied': Status.PERMISSION_DENIED,
+            }.get(cause, Status.RESOURCE_EXHAUSTED)
+            await stream.send_trailing_metadata(
+                status=status, status_message='refused', metadata={'monty-cause': cause}
+            )
+            return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
         return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
@@ -94,9 +110,13 @@ class MontyRelay:
 
 
 @asynccontextmanager
-async def serve_monty_relay(port: int = 0, *, refuse: bool = False) -> AsyncGenerator[MontyRelay]:
-    """Serve a `MontyRelay` on a loopback port (ephemeral by default), with its `url` set."""
-    relay = MontyRelay(refuse=refuse)
+async def serve_monty_relay(
+    port: int = 0, *, refuse: bool = False, refusal_causes: tuple[str, ...] | None = None
+) -> AsyncGenerator[MontyRelay]:
+    """Serve a relay with its URL set; explicit causes override `refuse` and must not be empty."""
+    if refusal_causes == ():
+        raise ValueError('refusal_causes must contain at least one cause')
+    relay = MontyRelay(refuse=refuse, refusal_causes=refusal_causes)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('127.0.0.1', port))

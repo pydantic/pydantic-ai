@@ -212,8 +212,9 @@ def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
     This gates the started-call summary, so it deliberately errs toward inclusion and matches on
     Monty's wording alone. A nested tool that fails with one of these phrases in its own message is
     misread, and that costs nothing: the summary only states which calls really started, which is
-    true regardless of why the snippet ended. The session reset cannot afford the same looseness
-    and uses `_is_duration_exhausted` instead.
+    true regardless of why the snippet ended. Time-limit resets use `_is_duration_exhausted` instead.
+    Memory-limit resets are conservative because Monty cannot distinguish all heap-limit failures
+    from callback errors, and does not guarantee heap integrity after a memory limit fires.
     """
     message = error.display(format='msg')
     for limit, marker in _SANDBOX_LIMIT_MARKERS.items():
@@ -235,9 +236,7 @@ def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
     site, which keeps the tool's own message. Wording alone would therefore misread a tool that
     failed with `'time limit exceeded'` in its message.
 
-    Exceeding `max_memory` is excluded by either signal, since it reports different wording and
-    carries a frame from the allocation that tripped it. Keeping both means neither has to be
-    sound alone.
+    Memory-limit failures use different wording; pre-execution failures can also have no frames.
 
     Callers must read `False` as "not known to be a timeout". A miss keeps the session and the
     ordinary runtime-error message.
@@ -1377,13 +1376,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     async def _runtime_error_advice(error: MontyRuntimeError, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
             advice = _TIME_LIMIT_MESSAGE
-        elif (
-            isinstance(error.exception(), MemoryError)
-            and not error.traceback()
-            and error.display(format='msg') == 'the worker exceeded its memory limit and was terminated'
+        elif isinstance(error.exception(), MemoryError) and (
+            not error.traceback() or _exhausted_sandbox_limit(error) == 'max_memory'
         ):
             advice = (
-                'The sandbox worker ran out of memory and the session was reset. '
+                'The sandbox ran out of memory and the session was reset. '
                 'Re-run any imports, recreate any state you need, and use less memory: '
                 'process smaller batches and avoid large intermediate values.'
             )

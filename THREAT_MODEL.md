@@ -176,6 +176,7 @@ Code Mode pool creation, connection, and checkout errors go to the application c
 Remote host-side execution failures omit error details from model retries because pool URLs and
 credentials may appear in them. Sandbox diagnostics and nested tool results still reach the model;
 applications must keep secrets out of those outputs.
+Memory-limit failures discard the session because Monty does not guarantee heap integrity after a limit fires.
 
 Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [BoxLiteSandbox](docs/harness/boxlite-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [boxd](docs/harness/boxd-sandbox.md#security-model), [OpenSandbox](docs/harness/opensandbox-sandbox.md#security-model), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
 

@@ -30,6 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from pydantic_monty import MontyRefusedError
 
 try:
     from temporalio import workflow
@@ -199,10 +200,7 @@ def _workflow_os(
     return _request_id.get()
 
 
-# Only the skipped relay test uses this model (#8824).
-def _remote_code_mode_model(
-    messages: list[ModelRequest | ModelResponse], info: AgentInfo
-) -> ModelResponse:  # pragma: lax no cover
+def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
     returns = [
         part
@@ -212,7 +210,7 @@ def _remote_code_mode_model(
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
     if returns:
-        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
+        return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])  # pragma: lax no cover
     # The 31 s sleep is one second past the default allowance, so it is refused without waiting.
     code = (
         'import asyncio, datetime, os\ntotal = await add(a=3, b=4)\nawait asyncio.sleep(0.1)\n'
@@ -265,6 +263,19 @@ class RemoteCodeModeWorkflow:
     async def run(self, prompt: str) -> str:
         _request_id.set('req-42')  # pragma: no cover
         result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
+        return str(result.output)  # pragma: no cover
+
+
+@workflow.defn
+class RemoteCodeModeRefusalWorkflow:
+    """Return the original sandbox refusal without admitting a remote session."""
+
+    @workflow.run
+    async def run(self) -> str | None:
+        try:
+            result = await remote_code_mode_agent.run('Calculate 3 + 4')
+        except MontyRefusedError as error:
+            return error.cause
         return str(result.output)  # pragma: no cover
 
 
@@ -414,6 +425,44 @@ async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, l
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
     assert replay_result.replay_failure is None
+
+
+async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Client) -> None:
+    """Network-dependent checkout backoff must not create a durable workflow timer.
+
+    The original run retries a capacity refusal before returning an authentication refusal.
+    Replay immediately encounters the authentication refusal, so recording the original backoff
+    as a workflow timer would make its command history nondeterministic. No session is admitted,
+    avoiding the remote execution bridge while exercising real gRPC refusals through CodeMode.
+    """
+    workflow_id = 'test_code_mode_temporal_remote_checkout_backoff'
+    async with serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('capacity', 'unauthenticated')) as relay:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[RemoteCodeModeRefusalWorkflow],
+            plugins=[AgentPlugin(remote_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            output = await client.execute_workflow(
+                RemoteCodeModeRefusalWorkflow.run,
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+        assert output == 'unauthenticated'
+        assert len(relay.metadata) == 2
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    async with serve_monty_relay(MONTY_RELAY_PORT, refusal_causes=('unauthenticated',)) as relay:
+        replay_result = await Replayer(
+            workflows=[RemoteCodeModeRefusalWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=_workflow_runner(),
+        ).replay_workflow(history)
+        assert replay_result.replay_failure is None
+        assert len(relay.metadata) == 1
+    assert not any(event.HasField('timer_started_event_attributes') for event in history.events)
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')

@@ -650,9 +650,11 @@ Errors the model can act on are returned as model retries:
 - Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
   session and ask the model to do less work per call.
 - Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
-- A `MemoryError` from a terminated worker resets the session and asks the model to use less memory,
-  for example by processing smaller batches. A sandbox memory-limit error or a `MemoryError` raised
-  by the snippet or a nested tool keeps the live session and its state.
+- A sandbox memory-limit error or a `MemoryError` without a traceback resets the session and asks
+  the model to use less memory, for example by processing smaller batches. Other `MemoryError`s
+  raised by the snippet or a nested tool keep the session. Errors that cannot be distinguished
+  from a sandbox memory-limit failure also reset it: Monty does not guarantee heap integrity after
+  a memory limit fires, even if the worker stays alive.
 - A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
   Remote host-side error details are omitted from model retries because they can contain pool URLs
   or credentials. The original exception remains the retry's cause for application-side diagnostics.

@@ -135,9 +135,11 @@ reset state. A timeout, worker crash, or interrupted eager statement also resets
 retry message says so -- the next snippet must recreate its state.
 
 A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
-Remote session and idle timeouts explain that state is lost. A worker-terminating `MemoryError`
-resets the session and asks the model to use smaller batches; memory-limit errors and snippet or
-nested-tool `MemoryError`s keep the live session's state. Remote host-side error details are omitted
+Remote session and idle timeouts explain that state is lost. Sandbox memory-limit errors and
+`MemoryError`s without a traceback reset the session and ask the model to use smaller batches.
+Other snippet or nested-tool `MemoryError`s keep state unless their diagnostic is indistinguishable
+from a sandbox memory limit: Monty does not guarantee heap integrity after a limit fires.
+Remote host-side error details are omitted
 from retries because they may contain pool URLs or credentials; the original exception remains
 the cause for application-side diagnostics. Retries list nested calls that already started so
 the model can avoid repeating their side effects.
