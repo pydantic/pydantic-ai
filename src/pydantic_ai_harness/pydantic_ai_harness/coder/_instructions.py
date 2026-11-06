@@ -51,16 +51,13 @@ _DELIVER = (
     'Make them self-contained, with no reliance on other workspace files, caches, or data you did not include, '
     'and check that they still work when run from a clean directory.'
 )
-"""The same at every agency level: a deliverable is checked with only the files it includes."""
 
 _CONFIRM = (
     'Before finishing, go through each requirement and edge case the task states and confirm each one explicitly.'
 )
-"""The same at every agency level: confirming the task's requirements is not about whether anyone can answer."""
 
 _EXACT = "Write checks from the task's stated behavior, not your code."
 _EVERY_FIELD = 'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
-"""The same at every agency level, with the write-checks sentence: the fields come from the task."""
 
 _FINISHING = (
     'Finish long-running work before replying; poll until done or blocked. '

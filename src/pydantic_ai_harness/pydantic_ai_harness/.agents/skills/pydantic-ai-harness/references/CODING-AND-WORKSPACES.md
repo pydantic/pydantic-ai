@@ -332,7 +332,9 @@ hooks = Hooks()  # a failed run returns no result, so record its ref here
 
 
 @hooks.on.run_error
-async def keep_ref(ctx: RunContext[Conversation], *, error: BaseException) -> AgentRunResult[Any]:
+async def keep_ref(
+    ctx: RunContext[Conversation], *, error: BaseException
+) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
         ctx.deps.sandbox_ref = REF.dump_json(ctx.workspace.ref)
     raise error
