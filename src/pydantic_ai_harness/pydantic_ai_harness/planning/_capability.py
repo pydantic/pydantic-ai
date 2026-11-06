@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     TextContent,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     post_compaction_window,
 )
@@ -346,22 +347,34 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
             continue
         for part in reversed(message.parts):
             if isinstance(part, ToolReturnPart):
-                metadata = part.metadata
-                # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
-                if (
-                    is_str_dict(metadata)
-                    and metadata.get('origin') == PLAN_ORIGIN
-                    and isinstance(plan := metadata.get('plan'), str)
-                    and isinstance(part.content, str)
-                    and plan in part.content
-                ):
-                    return plan
+                plan = _returned_plan(part)
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                for item in reversed(part.content):
-                    if (
-                        isinstance(item, TextContent)
-                        and is_str_dict(item.metadata)
-                        and item.metadata.get('origin') == PLAN_ORIGIN
-                    ):
-                        return item.content
+                plan = _recorded_plan(part.content)
+            else:
+                continue
+            if plan is not None:
+                return plan
+    return None
+
+
+def _returned_plan(part: ToolReturnPart) -> str | None:
+    """The plan a plan tool's return holds, by its metadata."""
+    metadata = part.metadata
+    # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
+    if (
+        is_str_dict(metadata)
+        and metadata.get('origin') == PLAN_ORIGIN
+        and isinstance(plan := metadata.get('plan'), str)
+        and isinstance(part.content, str)
+        and plan in part.content
+    ):
+        return plan
+    return None
+
+
+def _recorded_plan(content: Sequence[UserContent]) -> str | None:
+    """The latest plan `Planning` recorded in a user prompt's content, by its metadata."""
+    for item in reversed(content):
+        if isinstance(item, TextContent) and is_str_dict(item.metadata) and item.metadata.get('origin') == PLAN_ORIGIN:
+            return item.content
     return None

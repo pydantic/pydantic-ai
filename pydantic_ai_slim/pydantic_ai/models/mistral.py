@@ -15,7 +15,6 @@ from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     generate_tool_call_id as _generate_tool_call_id,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
@@ -782,7 +781,7 @@ class MistralModel(Model[Mistral]):
                     if _is_text_like_media_type(item.media_type):
                         content.append(
                             MistralTextChunk(
-                                text=_format_inlined_text_file(
+                                text=self._format_inlined_text_file(
                                     item.data.decode('utf-8'),
                                     media_type=item.media_type,
                                     identifier=item.identifier,
@@ -805,7 +804,7 @@ class MistralModel(Model[Mistral]):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             MistralTextChunk(
-                                text=_format_inlined_text_file(
+                                text=self._format_inlined_text_file(
                                     downloaded_text['data'],
                                     media_type=item.media_type,
                                     identifier=item.identifier,

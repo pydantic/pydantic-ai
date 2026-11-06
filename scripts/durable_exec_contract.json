@@ -1040,6 +1040,7 @@
     },
     "RunContext.root_capability": {
       "engines": [
+        "dbos",
         "durable_exec"
       ],
       "kinds": [
@@ -1053,7 +1054,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools"
       ]
     },
     "RunContext.run_id": {
@@ -1298,6 +1300,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::_restore_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._run_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceEnsurer.wrap_run",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._call_tool_in_child_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.wrap_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_run_context"
       ]
@@ -2492,6 +2496,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TerminalEventPublisher.after_run"
       ]
     },
+    "AbstractCapability.apply": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools"
+      ]
+    },
     "AbstractCapability.before_model_request": {
       "engines": [
         "durable_exec",
@@ -2690,6 +2705,28 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.prepare_model_request"
+      ]
+    },
+    "AbstractCapability.prepare_output_tools": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_output_tools"
+      ]
+    },
+    "AbstractCapability.prepare_tools": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools"
       ]
     },
     "AbstractCapability.resolve_model_id": {
@@ -3031,13 +3068,15 @@
   "pydantic_ai_slim/pydantic_ai/capabilities/set_tool_metadata.py": {
     "SetToolMetadata": {
       "engines": [
+        "dbos",
         "durable_exec"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>"
       ]
     },
     "SetToolMetadata.metadata": {
@@ -6239,6 +6278,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_mcp_toolset_after_discovery.resolve_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::resolve_tool_durable_config",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._runs_in_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::_child_workflow_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::resolve_tool_task_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._resolve_temporal_tool_config",
@@ -6258,6 +6298,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::run_args_validator"
       ]
     },
+    "ToolDefinition.sequential": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools"
+      ]
+    },
     "ToolDefinition.timeout": {
       "engines": [
         "durable_exec"
@@ -6271,12 +6322,14 @@
     },
     "ToolDefinition.toolset_id": {
       "engines": [
+        "dbos",
         "temporal"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._runs_in_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
       ]
     },
@@ -6293,6 +6346,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "matches_tool_selector": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>"
       ]
     }
   },
@@ -7508,6 +7572,8 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._prepare_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._unit_workspace",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._call_tool_in_child_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.wrap_run"
       ]
     },

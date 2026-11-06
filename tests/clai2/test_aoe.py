@@ -194,11 +194,12 @@ async def load(
     terminal: bool = True,
     output: io.StringIO | None = None,
     chosen: bool = False,
+    titles: bool = False,
 ) -> LoadedPlugin[None]:
     host = PluginHost[None](
         name='aoe',
         console=Console(file=output or io.StringIO(), force_terminal=terminal),
-        settings={},
+        settings={'titles': True} if titles else {},
         conversation=conversation,
     )
     loaded = load_plugin(aoe.AoePlugin, host)
@@ -327,7 +328,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
         capabilities=[AskUser(answerer=answer)],
     )
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await env.status('idle')
     await env.write('session_id')
     base = env.hooks
@@ -357,6 +358,23 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert not (env.directory / 'status').exists()
     assert (env.directory / 'session_id').exists()
+
+
+async def test_titles_are_opt_in(env: Fixture, tmp_path: Path) -> None:
+    """Without `titles`, AoE keeps the session's own title, so a tied worktree is never moved."""
+    session = make_session(tmp_path)
+    loaded = await load(session)
+    await env.status('idle')
+    await session.prompt('Fix the parser')
+    await env.status('running')
+    await env.status('idle')
+    await session.renamed(conversation_id=session.conversation_id, title='Parser fix')
+    # The worker publishes status before title, so the next status write follows the title step for the rename.
+    await session.prompt('And the lexer')
+    await env.status('running')
+    await env.status('idle')
+    await loaded.dispatch(SessionEnd(reason='exit'))
+    assert [call for call in env.system.calls if call[0] == 'aoe'] == []
 
 
 async def test_a_failed_turn_is_an_error_until_the_next(env: Fixture, tmp_path: Path) -> None:
@@ -541,7 +559,7 @@ async def test_title_push_failures_are_benign(
     else:
         monkeypatch.setattr('shutil.which', missing)
     session = make_session(tmp_path)
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await session.prompt('first title')
     calls = {'tied worktree': 1, 'linked worktree': 1, 'timeout': 1}.get(failure, 0)
     if calls or failure in ('other profile', 'unreadable', 'not current'):
@@ -630,7 +648,7 @@ async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Pat
         # Already titled, so the title push after the session step shows that step has finished.
         summary=ConversationSummary(id='-dash-first', workspace=str(tmp_path), revision=1, title='Saved'),
     )
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await env.aoe('rename')
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert (env.state / INSTANCE).read_text() == '-dash-first\n'
