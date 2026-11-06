@@ -89,12 +89,14 @@ class GroqProvider(Provider[AsyncGroq]):
 
         # The generic family profiles above don't know Groq's serving specifics for reasoning
         # (e.g. `qwen/qwen3-*` reasons, and Groq's `openai/gpt-oss-*` reasons, but the generic Qwen/OpenAI
-        # profiles flag them differently or not at all). Groq is authoritative here, so the Groq profile's
-        # reasoning flags override the family profile — it's layered *after* it. The family profile still
-        # provides all its other (non-`groq_`, non-reasoning) traits, which the Groq profile doesn't touch.
-        # Maintenance contract: because this makes `groq_model_profile`'s reasoning detection authoritative,
-        # its `is_reasoning_model` list must stay complete for every Groq-served reasoning model — a model the
-        # list misses would have any family-profile `supports_thinking=True` overridden to `False` here.
+        # profiles flag them differently or not at all) or for JSON output. Groq is authoritative here,
+        # so the Groq profile's reasoning and JSON-output flags override the family profile — it's layered
+        # *after* it. The family profile still provides all its other (non-`groq_`, non-reasoning,
+        # non-JSON-output) traits, which the Groq profile doesn't touch.
+        # Maintenance contract: because this makes `groq_model_profile` authoritative, its `is_reasoning_model`
+        # and `supports_json_schema_output` lists must stay complete for every Groq-served model they cover —
+        # a model the reasoning list misses would have any family-profile `supports_thinking=True` overridden
+        # to `False` here.
         return merge_profile(
             profile,
             groq_model_profile(model_name),

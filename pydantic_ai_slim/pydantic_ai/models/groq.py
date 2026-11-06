@@ -438,6 +438,10 @@ class GroqModel(Model[AsyncGroq]):
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
+            if model_request_parameters.function_tools:
+                raise UserError(
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = self._map_json_schema(output_object)

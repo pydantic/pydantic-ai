@@ -2152,13 +2152,16 @@ def test_groq_meta_llama4_maverick():
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
         }
     )
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama3_no_overlay():
-    """Older Llama models don't get the structured-output overlay."""
+    """Older Llama models don't get the structured-output overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
     assert _normalize(profile) == snapshot(
         {
@@ -2166,6 +2169,7 @@ def test_groq_meta_llama3_no_overlay():
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2181,6 +2185,7 @@ def test_groq_deepseek():
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2792,6 +2797,7 @@ def test_vercel_groq_gpt_oss():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_object_output': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
