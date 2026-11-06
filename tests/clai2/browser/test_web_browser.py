@@ -1660,10 +1660,9 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await expect(dialog.get_by_role('alert')).to_have_text(
             'Cannot create worktree: branch feature-x already exists. Pick another name.'
         )
-        # A typed path lists its repository with the worktrees unfolded, starting in the main checkout.
+        # A typed path lists its repository with the worktrees unfolded.
         await dialog.get_by_role('button', name='Back').click()
         await dialog.get_by_label('Another directory').fill(str(repo))
-        await expect(project).to_have_attribute('title', str(repo))
         await expect(feature).to_be_visible()
         await dialog.get_by_role('button', name='Hide the worktrees of repo').click()
         await expect(feature).to_have_count(0)
@@ -1705,6 +1704,14 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
             data={'title': f'Browser {name.title()}'},
         )
         assert renamed.ok, await renamed.text()
+    # A worktree of `north` with the newest session of that repository, which the sidebar lists before `north` itself.
+    side = (tmp_path / 'north' / '.worktrees' / 'side').resolve()
+    git('-C', str(tmp_path / 'north'), 'worktree', 'add', '-b', 'side', str(side))
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(side)}
+    )
+    assert opened.ok, await opened.text()
+    web_ui.fleet.portal.call(web_ui.fleet.runtimes['side'].session.commit_messages, list[ModelMessage]())
     # The page starts on the last session opened: one in a folder outside Git, so the list's cursor starts on a row
     # without New worktree….
     (tmp_path / 'plain').mkdir()
@@ -1726,6 +1733,8 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
             box = await row.bounding_box()
             assert box is not None
             tops[name] = box['y']
+        # A project other than the current one starts in its main checkout.
+        await expect(rows['north']).to_have_attribute('title', str((tmp_path / 'north').resolve()))
         # The pointer goes straight down from the upper row, across the lower one, to the dialog's buttons.
         chosen, crossed = sorted(names, key=tops.__getitem__)
         await rows[chosen].hover()
