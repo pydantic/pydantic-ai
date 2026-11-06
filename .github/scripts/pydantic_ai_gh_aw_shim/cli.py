@@ -495,6 +495,7 @@ def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
 def _stop_rate_limit_retries(state: RetryCallState) -> bool:
     """Stop before the next wait ends past `RATE_LIMIT_RETRY_SECS`, or inside the run's time reserve.
 
+    Inside the reserve, a request still retries for its first `RATE_LIMIT_MIN_RETRY_SECS`.
     The reserve is the run's time to emit its safe output. A run cancelled at its deadline
     fails as `time_limit`, which opens a task incident, while a rate limit that outlasts
     these retries fails as `rate_limit`, which stays local to the run.
