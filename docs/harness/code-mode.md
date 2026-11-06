@@ -601,36 +601,8 @@ That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport 
 The configured `max_duration_secs` still applies outside Temporal. Inside a Temporal workflow,
 Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
 
-For Logfire Agent Sandboxes, install Logfire 5.4.0 or later with its sandbox extra:
-
-```bash
-pip/uv-add "logfire[agent-sandboxes]>=5.4.0"
-```
-
-Logfire 5.4.0 and earlier still build a WebSocket URL with a `/monty-ws/` path. With Monty 1.5,
-pass the server root explicitly, using the region that matches your API key:
-
-```python {test="skip"}
-from functools import partial
-
-import logfire
-
-from pydantic_ai import Agent
-from pydantic_ai_harness import CodeMode
-
-agent = Agent(
-    '{{ anthropic:medium }}',
-    capabilities=[
-        CodeMode(monty_sandbox=partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev'))
-    ],
-)
-```
-
-When your Logfire release includes the gRPC default from
-[Logfire #2737](https://github.com/pydantic/logfire/pull/2737), pass the factory directly:
-`CodeMode(monty_sandbox=logfire.agent_sandboxes)`.
-
-Configure the sandbox credentials in Logfire, not in the model's instructions or tool arguments.
+Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
+instructions or tool arguments.
 
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
