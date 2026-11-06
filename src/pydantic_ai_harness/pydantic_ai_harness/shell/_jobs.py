@@ -80,7 +80,7 @@ watch_logs() {{
 }}
 stop_watcher() {{
   [ -z "$watcher" ] || {{
-    {{ true 2> /dev/null > "$dir/watch.stop" && [ ! -e "$dir/watch.trapped" ]; }} || kill "$watcher" 2> /dev/null
+    true 2> /dev/null > "$dir/watch.stop" && [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
     wait "$watcher" 2> /dev/null
   }}
 }}
