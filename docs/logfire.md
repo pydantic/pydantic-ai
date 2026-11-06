@@ -340,6 +340,29 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
+### Capabilities and toolsets
+
+Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) registered for the run, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
+
+```json
+{
+  "pydantic_ai.capabilities.Thinking": [{"id": "thinking", "defer_loading": false, "active": true}],
+  "pydantic_ai.capabilities.Capability": [
+    {"id": "billing", "defer_loading": true, "active": true},
+    {"id": "support", "defer_loading": true, "active": false}
+  ],
+  "pydantic_ai.capabilities.AbstractCapability": [
+    {"id": "<billing_guard:3f9a12>", "user_class": "my_app.capabilities.BillingGuard", "defer_loading": false, "active": true}
+  ]
+}
+```
+
+Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Each toolset is listed once however many steps used it. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
+
+`active` says whether the capability was in force on any of the run's model requests, which tells a [deferred capability](capabilities/on-demand.md) the model loaded from one it was offered and never loaded. Each model request span also lists the ids of the capabilities active on that step in `pydantic_ai.active_capabilities`.
+
+The key is the Pydantic AI or [Pydantic AI Harness](harness/index.md) class the capability or toolset is, or extends, under the path it's imported from. A class of your own is listed under the class it extends, with its own module-qualified name in `user_class`. That name, and an id the run assigned to a capability without one (which is built from the class name), are only recorded when [`include_content`](#excluding-prompts-and-completions) is enabled; an `id` you chose is always recorded. An id derived from an MCP server's URL is never recorded, since a URL can carry credentials.
+
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
@@ -454,7 +477,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It also leaves out the class names and run-assigned ids of [capabilities and toolsets of your own](#capabilities-and-toolsets). It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent

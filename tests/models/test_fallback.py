@@ -403,6 +403,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
                     'gen_ai.provider.name': 'function',
                     # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
                     'logfire.msg': IsOneOf(
@@ -450,10 +451,21 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]},
                     ],
                     'final_result': 'success',
+                    'pydantic_ai.capabilities': {
+                        'pydantic_ai.capabilities.Instrumentation': [
+                            {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.ToolSearch': [
+                            {'id': 'tool_search', 'defer_loading': False, 'active': True}
+                        ],
+                    },
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     },
@@ -668,6 +680,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
                     'gen_ai.provider.name': 'function',
                     # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
                     'logfire.msg': IsOneOf(
@@ -716,10 +729,21 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]},
                     ],
+                    'pydantic_ai.capabilities': {
+                        'pydantic_ai.capabilities.Instrumentation': [
+                            {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.ToolSearch': [
+                            {'id': 'tool_search', 'defer_loading': False, 'active': True}
+                        ],
+                    },
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     },
@@ -868,6 +892,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
                     'logfire.level_num': 17,
                     'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
@@ -900,11 +925,22 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
+                    'pydantic_ai.capabilities': {
+                        'pydantic_ai.capabilities.Instrumentation': [
+                            {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.ToolSearch': [
+                            {'id': 'tool_search', 'defer_loading': False, 'active': True}
+                        ],
+                    },
+                    'pydantic_ai.toolsets': {},
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     },
@@ -1840,6 +1876,7 @@ Don't include any text or Markdown fencing before or after.
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
                     'gen_ai.provider.name': 'function',
                     # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
                     'logfire.msg': IsOneOf(
@@ -1890,11 +1927,22 @@ Don't include any text or Markdown fencing before or after.
                     ],
                     'final_result': {'bar': 'baz'},
                     'gen_ai.system_instructions': [{'type': 'text', 'content': 'Be kind'}],
+                    'pydantic_ai.capabilities': {
+                        'pydantic_ai.capabilities.Instrumentation': [
+                            {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.ToolSearch': [
+                            {'id': 'tool_search', 'defer_loading': False, 'active': True}
+                        ],
+                    },
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     },
