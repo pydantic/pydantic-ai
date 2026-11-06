@@ -235,8 +235,8 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 Where sub-agents' steps are recorded in the order they start, the script runs sub-agents one at a
 time, so recovery replays each sub-agent's recorded steps into the same call. That applies under
 `DBOSDurability`, and when the run's tool calls are sequential, as they are by default with
-`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Under Temporal and Prefect,
-sub-agents still run concurrently.
+`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Otherwise, as under Temporal and
+Prefect by default, sub-agents run concurrently.
 
 ## Observability
 
