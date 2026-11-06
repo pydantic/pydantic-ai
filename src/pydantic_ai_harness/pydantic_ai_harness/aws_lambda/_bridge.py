@@ -320,15 +320,9 @@ class StepBridge:
         operations in: that way `Callback.result()` raises the SDK's `CallbackError` itself for a
         timed-out or failed callback on every supported SDK version, rather than a version-specific
         wrapper around it. An unanswered callback raises `SuspendExecution`, which ends the invocation
-        like a step retry does.
+        like a step retry does. `wait_for_external_event` has already rejected a wait from inside a step,
+        which could never start while the handler thread services that step.
         """
-        if _in_step_body.get():
-            raise UserError(
-                f'An external event was awaited from inside an {ENGINE_NAME} durable step, such as the step '
-                'that announces another wait. The handler thread is blocked servicing that step, so the wait '
-                'could never start; wait from the run itself instead.'
-            )
-
         loop = asyncio.get_running_loop()
         return await self._submit(
             lambda reply: _CallbackRequest(

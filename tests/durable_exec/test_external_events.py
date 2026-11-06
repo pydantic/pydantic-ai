@@ -8,6 +8,7 @@ through `Agent.run`. The AWS Lambda implementation, with suspension and replay, 
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -248,15 +249,20 @@ async def test_without_a_durable_engine_the_run_fails() -> None:
         await agent.run('clean up')
 
 
-async def test_wait_accepts_a_sync_announce() -> None:
-    tokens: list[str] = []
+async def test_a_sync_announce_runs_in_a_worker_thread() -> None:
+    """Announcing is typically blocking I/O (Slack, email, a database row), so a sync `announce` runs off the event loop."""
+    announced: list[tuple[str, int]] = []
     waiter = RecordingWaiter({'answer': 'yes'})
 
     with external_event_scope(waiter):
-        payload = await wait_for_external_event('review', announce=tokens.append)
+        payload = await wait_for_external_event(
+            'review', announce=lambda token: announced.append((token, threading.get_ident()))
+        )
 
     assert payload == {'answer': 'yes'}
-    assert tokens == ['token-1']
+    [(token, thread_id)] = announced
+    assert token == 'token-1'
+    assert thread_id != threading.get_ident()
     assert waiter.waits == [('review', None)]
 
 

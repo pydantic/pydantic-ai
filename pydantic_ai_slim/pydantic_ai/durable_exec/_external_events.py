@@ -27,7 +27,7 @@ from pydantic import JsonValue
 from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor
 from pydantic_ai.exceptions import UserError
 
-from ._operation_backend import in_durable_unit
+from ._operation_backend import durable_unit_scope, in_durable_unit
 
 __all__ = (
     'ExternalEventError',
@@ -128,12 +128,13 @@ async def wait_for_external_event(
     Raises:
         ExternalEventError: The timeout elapsed, or the token was resolved with a failure.
         UserError: The run is not a durable run on an engine that supports external events, or the
-            wait was requested from inside a durable unit, such as a tool call.
+            wait was requested from inside a durable unit, such as a tool call or an `announce` callback.
     """
     check_timeout(timeout)
     if in_durable_unit():
         raise UserError(
-            '`wait_for_external_event()` was called from inside a durable unit, such as a tool call. The wait '
+            '`wait_for_external_event()` was called from inside a durable unit, such as a tool call or an '
+            '`announce` callback. The wait '
             'has to be recorded by the durable run itself, so call it from code that runs in the run, such as '
             'a `handle_deferred_tool_calls` capability hook, or resolve the call with `DurableApprovals`.'
         )
@@ -148,10 +149,13 @@ async def wait_for_external_event(
         )
 
     async def announce_token(token: str) -> None:
-        if is_async_callable(announce):
-            await await_maybe(announce(token))
-        else:
-            await await_maybe(await run_in_executor(announce, token))
+        # `announce` runs inside the engine's durable unit, so mark it as one: a durable operation it
+        # calls runs directly, and a wait it starts is rejected above.
+        with durable_unit_scope():
+            if is_async_callable(announce):
+                await await_maybe(announce(token))
+            else:
+                await await_maybe(await run_in_executor(announce, token))
 
     return await waiter.wait(name, announce=announce_token, timeout=timeout)
 

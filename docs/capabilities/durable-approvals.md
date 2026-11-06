@@ -66,7 +66,7 @@ Resolve the token with the JSON form of [`DeferredToolResults`][pydantic_ai.tool
 - An external call's result is any JSON value the model is shown, or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] (`"kind": "tool-failed"`) or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (`"kind": "model-retry"`).
 - `metadata` reaches the tool as [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata].
 
-Whoever can resolve the token decides the calls, including their arguments through `override_args`, and Pydantic AI checks only the decision's shape and that it names pending calls. Treat the token as a bearer credential, and authorize the approver in the service that resolves it.
+Whoever can resolve the token decides the calls, including their arguments through `override_args` and the `metadata` tools read, so a tool must not treat that metadata as proof of who approved. Pydantic AI checks only the decision's shape and that it names pending calls. Treat the token as a bearer credential, and authorize the approver in the service that resolves it.
 
 From Python, build the decision as a `DeferredToolResults` and serialize it:
 

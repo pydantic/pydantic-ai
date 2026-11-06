@@ -218,7 +218,7 @@ def test_waiting_inside_the_announce_step_is_rejected() -> None:
     def delete(path: str) -> str:
         raise AssertionError('unreachable')  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'An external event was awaited from inside an AWS Lambda durable step'):
+    with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call or an `announce`'):
         run_durable(lambda: agent.run('clean up'), context=FakeDurableContext())
 
 
@@ -233,8 +233,15 @@ def test_event_stream_handler_steps_and_the_wait_replay_in_order() -> None:
     approvals = Approvals(event_stream_handler=handle_events)
     first = approvals.suspend()
     names = first.step_names
-    wait_index = names.index('a__external_event.deferred_tool_calls')
-    assert names[wait_index + 1] == 'a__external_event.deferred_tool_calls.announce'
+    assert names == snapshot(
+        [
+            'a__model.request_stream',
+            'a__event_stream_handler',
+            'a__event_stream_handler',
+            'a__external_event.deferred_tool_calls',
+            'a__external_event.deferred_tool_calls.announce',
+        ]
+    )
     assert 'DeferredToolRequestsEvent' in events
 
     [(callback_id, _)] = approvals.announced
