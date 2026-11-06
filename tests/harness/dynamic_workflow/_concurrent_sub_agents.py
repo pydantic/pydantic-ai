@@ -33,7 +33,7 @@ def _orchestrator_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     return ModelResponse(parts=[TextPart(f'done: {returns[0].content}')])
 
 
-def _noop() -> str:
+def noop() -> str:
     return 'ok'
 
 
@@ -45,7 +45,7 @@ def build_orchestrator(
         FunctionModel(_summarize_model),
         name='summarize',
         description='Summarize a text.',
-        tools=[_noop],
+        tools=[noop],
         capabilities=[durability()],
     )
     return Agent(
