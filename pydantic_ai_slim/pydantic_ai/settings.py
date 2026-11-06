@@ -346,7 +346,8 @@ class ModelSettings(TypedDict, total=False):
     request that has a system prompt or instructions:
 
     - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
-      every request after it. That includes an instruction change appended mid-conversation, by a dynamic
+      every request after it, even once a request-scoped one (`scope='request'`) that brought it in is no longer
+      sent. That includes an instruction change appended mid-conversation, by a dynamic
       instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
       An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
       prefix once, at that request, and keeps it stable from then on.

@@ -1759,7 +1759,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
         when the request has a standing system prompt or instructions, adds one fixed sentence saying what
         the tag means after the first request's leading system prompts: from the first request whose history
-        has a `<system>` block, unless the
+        has a mid-conversation system prompt and on every request after it, unless the
         [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says
         otherwise. It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -1828,6 +1828,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Looked for before answered request-scoped prompts are dropped, so the announcement stays once it's in.
+        had_system_prompt = _has_mid_conversation_system_prompt(messages, standing_prompt_count)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
@@ -1910,7 +1912,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
             if first_request is not None and self._should_announce_system_voice(
                 messages,
-                wrapped=messages is not unwrapped,
+                # A rendered tool-availability delta is a `<system>` block too, so a wrap counts.
+                needed=had_system_prompt or messages is not unwrapped,
                 standing_prompt_count=standing_prompt_count,
                 model_request_parameters=model_request_parameters,
             ):
@@ -1927,16 +1930,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self,
         messages: list[ModelMessage],
         *,
-        wrapped: bool,
+        needed: bool,
         standing_prompt_count: int,
         model_request_parameters: ModelRequestParameters | None,
     ) -> bool:
         """Whether `prepare_messages` adds `SYSTEM_VOICE_ANNOUNCEMENT` to a history whose mid-conversation system prompts it has `<system>`-wrapped.
 
-        By default (`framing_announcement='when_needed'`) the tag is announced only once the history has a `<system>`
-        block for it to explain, so an agent that never sends a mid-conversation system prompt keeps its standing
-        prompt as written. `wrapped` is decided by the messages alone, so a replay or a later run of the same history
-        renders the same. The sentence joins an existing standing prompt or instructions, never creates one.
+        By default (`framing_announcement='when_needed'`) the tag is announced only once the history has, or had, a
+        `<system>` block for it to explain (`needed`), so an agent that never sends a mid-conversation system prompt
+        keeps its standing prompt as written. `needed` counts a request-scoped prompt that's no longer sent because its
+        request was answered, so the announcement stays on every later request once it's in. It's decided by the
+        messages alone, so a replay or a later run of the same history renders the same. The sentence joins an
+        existing standing prompt or instructions, never creates one.
 
         The agent passes the setting in on the request parameters, from the run's merged settings; without it, the
         model's own `settings` apply.
@@ -1948,7 +1953,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             or (self.settings or {}).get('framing_announcement')
             or 'when_needed'
         )
-        if mode == 'never' or (mode == 'when_needed' and not wrapped):
+        if mode == 'never' or (mode == 'when_needed' and not needed):
             return False
         return bool(
             standing_prompt_count
@@ -3847,6 +3852,16 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     )
 
 
+def _has_mid_conversation_system_prompt(messages: list[ModelMessage], standing_prompt_count: int) -> bool:
+    """Whether any request has a `SystemPromptPart` other than the first request's standing prompt."""
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    return any(
+        isinstance(part, SystemPromptPart)
+        for index, request in enumerate(requests)
+        for part in request.parts[standing_prompt_count if index == 0 else 0 :]
+    )
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
@@ -3894,8 +3909,9 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     Models without mid-conversation system messages follow a `<system>`-tagged change, withdrawal or new rule
     far more reliably when the standing prompt has said what the tag is. The sentence is fixed, and by default
     (`framing_announcement='when_needed'`) is added from the first request whose history has a mid-conversation
-    system prompt, and to every request after it, since the history keeps that prompt. An agent that never sends one pays nothing for it, and one that does
-    changes its cache prefix once, at that request, and keeps it stable from then on. It goes after the first
+    system prompt, and to every request after it, even once a request-scoped prompt that triggered it is no longer
+    sent. An agent that never sends one pays nothing for it, and one that does changes its cache prefix once, at that
+    request, and keeps it stable from then on. It goes after the first
     request's opening system prompts, which every adapter lifts into the provider's system field, ahead of the
     instructions.
     """

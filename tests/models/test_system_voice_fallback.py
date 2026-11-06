@@ -465,6 +465,25 @@ def test_the_announcement_starts_with_the_first_mid_conversation_system_prompt(
     assert renders == expected
 
 
+@pytest.mark.skipif(not google_available(), reason='google-genai not installed')
+def test_the_announcement_stays_after_an_answered_request_scoped_prompt():
+    """A request-scoped prompt stops being sent once answered, but the announcement it brought in stays."""
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key='mock-api-key'))
+    conversation: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Be brief.'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello!')]),
+        ModelRequest(parts=[SystemPromptPart('Reminder', scope='request'), UserPromptPart('q2')]),
+        ModelResponse(parts=[TextPart('a2')]),
+        ModelRequest(parts=[UserPromptPart('q3')]),
+    ]
+
+    renders = [rendered(model.prepare_messages(conversation[:end]))[0] for end in (1, 3, 5)]
+
+    unannounced = [('system-prompt', 'Be brief.'), ('user-prompt', 'Hi')]
+    announced = [('system-prompt', 'Be brief.'), ('system-prompt', SYSTEM_VOICE_ANNOUNCEMENT), ('user-prompt', 'Hi')]
+    assert renders == [unannounced, announced, announced]
+
+
 @pytest.mark.parametrize('framing_announcement', ['always', 'never'])
 async def test_the_agent_model_settings_choose_the_announcement(framing_announcement: FramingAnnouncement):
     """The setting reaches message preparation from the agent's `model_settings`."""
