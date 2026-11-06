@@ -2965,7 +2965,9 @@ CLAI2's separate `notifications` plugin is unchanged; use
 Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
 (AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error` and reopen a
 restarted session's conversation. Titling the AoE session after the conversation is
-opt-in, with the plugin's `titles` setting.
+opt-in: turn off AoE's `session.tie_workdir_to_name` first, so a rename does not move the
+worktree CLAI2 is working in, then run
+`/plugins add aoe pydantic_clai2.builtin_plugins.aoe '{"titles": true}'`.
 Register CLAI2 with AoE as a custom agent:
 
 ```toml
