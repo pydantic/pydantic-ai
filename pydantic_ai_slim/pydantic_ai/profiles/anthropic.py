@@ -278,15 +278,6 @@ class AnthropicModelProfile(ModelProfile, total=False):
     your client's `base_url` points at a proxy whose count endpoint rejects server tools.
     """
 
-    anthropic_supports_web_tools_20260318: bool
-    """Whether the client accepts the `web_search_20260318` and `web_fetch_20260318` web tools, which Anthropic web
-    tool `provider_settings` select. Default: `True`.
-
-    `AnthropicModel` turns it off for `AsyncAnthropicVertex`, which only accepts `web_search_20250305`, so a web tool
-    setting raises a `UserError` there before the request. Set it in the model's `profile` if your Vertex deployment
-    starts accepting the newer versions.
-    """
-
     anthropic_calls_cited_web_tools_directly: bool
     """Whether a request that asks for citations sends the `20260209` or `20260318` web tools it cites with
     `allowed_callers=['direct']`, so their results are cited. Default: `False`.

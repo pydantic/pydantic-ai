@@ -235,9 +235,10 @@ left out on models that don't support them.
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
     Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
-    `WebSearchTool` on Vertex AI uses `web_search_20250305`, the only web search version Vertex accepts,
-    so dynamic filtering is unavailable even on otherwise-supported models, and the Anthropic-specific
-    settings raise a `UserError` there unless the model profile sets `anthropic_supports_web_tools_20260318`.
+    On Vertex AI, `WebSearchTool` uses `web_search_20250305`, as Anthropic does not offer the
+    dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
+    The Anthropic-specific settings select `web_search_20260318` on every client, and Vertex decides whether
+    to accept it.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
