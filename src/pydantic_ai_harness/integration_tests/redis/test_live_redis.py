@@ -78,7 +78,7 @@ from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
-from pydantic_ai_harness.planning import OwnedPlanItem, PlanItem, RedisClaimablePlanStore, TaskStatus
+from pydantic_ai_harness.planning import BoardChange, PlanItem, RedisClaimablePlanStore, TaskStatus
 from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
 
 _NANOS = Decimal(10) ** 9
@@ -396,8 +396,8 @@ class TestLiveClaimableBoard:
         client, prefix = board_client
         setup = RedisClaimablePlanStore(client, key_prefix=prefix, expire_seconds=300)
         await setup.set_items([PlanItem(id=f'step-{index}', content=f'Step {index}') for index in range(4)])
-        contested: list[OwnedPlanItem | None] = []
-        following: list[OwnedPlanItem | None] = []
+        contested: list[BoardChange | None] = []
+        following: list[BoardChange | None] = []
 
         async def claim(name: str) -> None:
             store = RedisClaimablePlanStore(client, key_prefix=prefix, expire_seconds=300)
@@ -409,7 +409,7 @@ class TestLiveClaimableBoard:
                 group.start_soon(claim, f'member-{index}')
 
         assert len([item for item in contested if item is not None]) == 1
-        assert sorted(item.id for item in following if item is not None) == ['step-1', 'step-2', 'step-3']
+        assert sorted(change.item.id for change in following if change is not None) == ['step-1', 'step-2', 'step-3']
         assert 0 < await client.ttl(f'{prefix}:{{default}}') <= 300
 
     async def test_concurrent_completions_unblock_a_dependent_once(self, board_client: tuple[Redis, str]):
@@ -424,7 +424,7 @@ class TestLiveClaimableBoard:
         )
         for item_id in prerequisites:
             await store.claim(item_id, owner=item_id)
-        changes: list[OwnedPlanItem] = []
+        changes: list[BoardChange] = []
 
         async def complete(item_id: str) -> None:
             changes.extend(
@@ -437,6 +437,6 @@ class TestLiveClaimableBoard:
             for item_id in prerequisites * 2:
                 group.start_soon(complete, item_id)
 
-        assert [item.id for item in changes if item.id == 'join'] == ['join']
+        assert [change.item.id for change in changes if change.item.id == 'join'] == ['join']
         joined = await store.get_owned_item('join')
         assert joined is not None and joined.status is TaskStatus.pending

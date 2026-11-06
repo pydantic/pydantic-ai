@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from uuid import uuid4
 
@@ -82,3 +83,14 @@ class PlanStatusUpdate(BaseModel):
         description='New status: pending, in_progress, completed, or cancelled -- '
         'or blocked, when subtasks are enabled.'
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoardChange:
+    """One step a `ClaimablePlanStore.claim` or `release` changed, before and after, read in the same atomic operation."""
+
+    item: OwnedPlanItem
+    """The step as the operation left it."""
+
+    previous: OwnedPlanItem
+    """The step as it was just before, so a caller can report the change without reading the board again."""

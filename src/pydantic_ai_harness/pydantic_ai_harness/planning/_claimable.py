@@ -28,7 +28,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai_harness.planning._store import PlanStore, apply_updates, validate_table_name
 from pydantic_ai_harness.planning._toolset import dependency_block_transitions, is_blocked
-from pydantic_ai_harness.planning._types import OwnedPlanItem, PlanItem, TaskStatus
+from pydantic_ai_harness.planning._types import BoardChange, OwnedPlanItem, PlanItem, TaskStatus
 
 if sys.platform == 'win32':  # pragma: no cover
     import msvcrt
@@ -68,7 +68,7 @@ class ClaimablePlanStore(PlanStore, Protocol):
         """Return the step with `item_id`, with its owner, or `None`."""
         ...  # pragma: no cover
 
-    async def claim(self, item_id: str | None, *, owner: str) -> OwnedPlanItem | None:
+    async def claim(self, item_id: str | None, *, owner: str) -> BoardChange | None:
         """Atomically take a step for `owner` and move it to `in_progress`.
 
         A step can be claimed when it is `pending`, unowned or already owned by
@@ -76,12 +76,12 @@ class ClaimablePlanStore(PlanStore, Protocol):
         take the first such step in board order.
 
         Returns:
-            The claimed step, or `None` when `item_id` is missing or not claimable,
-            or no step is available.
+            The claimed step and the step just before the claim, or `None` when
+            `item_id` is missing or not claimable, or no step is available.
         """
         ...  # pragma: no cover
 
-    async def release(self, item_id: str, *, owner: str, status: TaskStatus) -> list[OwnedPlanItem]:
+    async def release(self, item_id: str, *, owner: str, status: TaskStatus) -> list[BoardChange]:
         """Atomically move `owner`'s step to `status` and apply its dependents' block transitions.
 
         `completed` and `cancelled` keep `owner` as a record of who finished the
@@ -90,9 +90,9 @@ class ClaimablePlanStore(PlanStore, Protocol):
         `blocked` dependent whose dependencies are all resolved returns to `pending`.
 
         Returns:
-            Every step the release changed, in board order, so callers can emit one
-            event each. Empty when the step is missing, not owned by `owner`, or
-            already in that state.
+            Every step the release changed, in board order, each with the step just
+            before the release, so callers can emit one event each. Empty when the
+            step is missing, not owned by `owner`, or already in that state.
 
         Raises:
             ValueError: `status` is `in_progress`; use `claim` to start a step.
@@ -122,17 +122,18 @@ def _claimable(board: Board, item: OwnedPlanItem, owner: str) -> bool:
     )
 
 
-def _claim(board: Board, item_id: str | None, owner: str) -> OwnedPlanItem | None:
+def _claim(board: Board, item_id: str | None, owner: str) -> BoardChange | None:
     candidates = board if item_id is None else [item for item in board if item.id == item_id]
     item = next((item for item in candidates if _claimable(board, item, owner)), None)
     if item is None:
         return None
+    previous = item.model_copy(deep=True)
     item.status = TaskStatus.in_progress
     item.owner = owner
-    return item.model_copy(deep=True)
+    return BoardChange(item=item.model_copy(deep=True), previous=previous)
 
 
-def _release(board: Board, item_id: str, owner: str, status: TaskStatus) -> list[OwnedPlanItem]:
+def _release(board: Board, item_id: str, owner: str, status: TaskStatus) -> list[BoardChange]:
     item = _find(board, item_id)
     if item is None or item.owner != owner:
         return []
@@ -143,7 +144,9 @@ def _release(board: Board, item_id: str, owner: str, status: TaskStatus) -> list
     for dependent, new_status in list(dependency_block_transitions(list[PlanItem](board))):
         if item_id in dependent.depends_on:
             dependent.status = new_status
-    return [entry.model_copy(deep=True) for entry, old in zip(board, before) if entry != old]
+    return [
+        BoardChange(item=entry.model_copy(deep=True), previous=old) for entry, old in zip(board, before) if entry != old
+    ]
 
 
 def _replace(board: Board, items: list[PlanItem]) -> None:
@@ -253,14 +256,14 @@ class BoardStore(ABC):
         """Delete `item_id`; return whether it existed."""
         return await self._transact(lambda board: _remove(board, item_id))
 
-    async def claim(self, item_id: str | None, *, owner: str) -> OwnedPlanItem | None:
+    async def claim(self, item_id: str | None, *, owner: str) -> BoardChange | None:
         """Atomically take `item_id`, or the first available step, for `owner`, and start it.
 
         See `ClaimablePlanStore.claim`.
         """
         return await self._transact(lambda board: _claim(board, item_id, owner))
 
-    async def release(self, item_id: str, *, owner: str, status: TaskStatus) -> list[OwnedPlanItem]:
+    async def release(self, item_id: str, *, owner: str, status: TaskStatus) -> list[BoardChange]:
         """Atomically move `owner`'s step to `status` and update its dependents.
 
         See `ClaimablePlanStore.release`.

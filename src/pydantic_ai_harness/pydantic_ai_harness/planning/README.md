@@ -124,8 +124,8 @@ The planner's read-only discipline is a property of how you configure that agent
 
 When several agents work one plan at once, each needs to take a step without another agent taking the same one. A `ClaimablePlanStore` is a `PlanStore` whose steps (`OwnedPlanItem`) carry an `owner`, with two atomic operations:
 
-- `claim(item_id, owner=...)` takes `item_id`, or with `None` the first available step, and moves it to `in_progress`. A step is available when it is `pending`, unowned or already owned by the claimer, and every step in its `depends_on` is resolved (completed or cancelled). It returns the claimed step, or `None` when nothing could be claimed.
-- `release(item_id, owner=..., status=...)` moves the owner's step to `status` and, in the same operation, moves its dependents into or out of `blocked`, as `enable_subtasks=True` does. `completed` and `cancelled` keep the owner as a record of who finished the step; `pending` and `blocked` clear it. It returns every step that changed.
+- `claim(item_id, owner=...)` takes `item_id`, or with `None` the first available step, and moves it to `in_progress`. A step is available when it is `pending`, unowned or already owned by the claimer, and every step in its `depends_on` is resolved (completed or cancelled). It returns a `BoardChange` holding the claimed step as `item` and the step just before the claim as `previous`, or `None` when nothing could be claimed.
+- `release(item_id, owner=..., status=...)` moves the owner's step to `status` and, in the same operation, moves its dependents into or out of `blocked`, as `enable_subtasks=True` does. `completed` and `cancelled` keep the owner as a record of who finished the step; `pending` and `blocked` clear it. It returns a `BoardChange` for every step that changed, in board order.
 
 Racing claimers get exactly one winner, and a dependent is unblocked by exactly one release, because each operation reads, decides and writes the whole board as one atomic step. The inherited `PlanStore` methods keep the owner of every step id they leave in place, so a `set_items` racing a claim can't undo it; read owners with `get_owned_items()` or `get_owned_item()`.
 
@@ -142,11 +142,11 @@ async def main() -> None:
         ]
     )
 
-    step = await board.claim(None, owner='alice')  # takes 'schema'; 'api' is blocked
-    assert step is not None
-    changed = await board.release(step.id, owner='alice', status=TaskStatus.completed)
-    print([(item.id, item.status.value) for item in changed])
-    #> [('schema', 'completed'), ('api', 'pending')]
+    claimed = await board.claim(None, owner='alice')  # takes 'schema'; 'api' is blocked
+    assert claimed is not None
+    changes = await board.release(claimed.item.id, owner='alice', status=TaskStatus.completed)
+    print([(change.item.id, change.previous.status.value, change.item.status.value) for change in changes])
+    #> [('schema', 'in_progress', 'completed'), ('api', 'blocked', 'pending')]
 ```
 
 | Store | Atomicity |
@@ -159,7 +159,7 @@ async def main() -> None:
 
 Each store uses its own table or key, so an existing `SqlitePlanStore`, `PostgresPlanStore` or `RedisPlanStore` database is left as it is. `RedisClaimablePlanStore` takes a client with `get` and `eval`, which `redis.asyncio.Redis` provides.
 
-`claim` and `release` are store operations, not tools. The `Planning` tools write through `set_items` and `update_item` and then reconcile dependencies in separate calls, so they are not the way agents should claim steps on a shared board. Store calls emit no run events; a caller that wants to report board changes emits one `BoardItemChangedEvent` (from `pydantic_ai_harness.teams`) per step that `claim` or `release` returns. It carries `OwnedPlanItem`, which the `Plan*Event`s, declared with `PlanItem`, would drop `owner` from when serialized.
+`claim` and `release` are store operations, not tools. The `Planning` tools write through `set_items` and `update_item` and then reconcile dependencies in separate calls, so they are not the way agents should claim steps on a shared board. Store calls emit no run events; a caller that wants to report board changes emits one `BoardItemChangedEvent` (from `pydantic_ai_harness.teams`) per `BoardChange` that `claim` or `release` returns. Each change carries the step before and after from the same atomic operation, so the caller never has to read the board again (which would race another writer) to know what changed. `Team` does this for its board tools. It carries `OwnedPlanItem`, which the `Plan*Event`s, declared with `PlanItem`, would drop `owner` from when serialized.
 
 ## Events
 

@@ -107,14 +107,14 @@ Shared boards: several agents on one plan use a `ClaimablePlanStore` (`InMemoryC
 `FileClaimablePlanStore(path)`). Steps are `OwnedPlanItem`s with an `owner`.
 
 - `await store.claim(item_id_or_None, owner=name)` atomically takes a `pending`, unowned (or already
-  the caller's), unblocked step and moves it to `in_progress`; returns it or `None`.
+  the caller's), unblocked step and moves it to `in_progress`; returns a `BoardChange(item, previous)` or `None`.
 - `await store.release(item_id, owner=name, status=...)` atomically sets the status and moves direct
-  dependents into or out of `blocked`; returns every changed step. `completed`/`cancelled` keep the
+  dependents into or out of `blocked`; returns a `BoardChange` per changed step. `completed`/`cancelled` keep the
   owner, `pending`/`blocked` clear it, `in_progress` raises `ValueError`.
 - `set_items`/`update_item` keep owners on surviving ids. Don't route claims through the `Planning`
   tools: their dependency reconciliation is not atomic.
-- Store calls emit nothing; emit `pydantic_ai_harness.teams.BoardItemChangedEvent(item=..., previous=...)`
-  per returned step yourself.
+- Store calls emit nothing; emit `pydantic_ai_harness.teams.BoardItemChangedEvent(item=change.item,
+  previous=change.previous)` per returned change yourself, or use `Team`, whose board tools do.
 
 ## SubAgents
 

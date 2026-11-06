@@ -83,7 +83,7 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
-from pydantic_ai_harness.planning import OwnedPlanItem, PlanItem, PostgresClaimablePlanStore, TaskStatus
+from pydantic_ai_harness.planning import BoardChange, PlanItem, PostgresClaimablePlanStore, TaskStatus
 from pydantic_ai_harness.spend import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -1735,8 +1735,8 @@ async def test_claimable_board_has_one_winner_per_contested_step() -> None:
         await PostgresClaimablePlanStore(pool, table=prefix).set_items(
             [PlanItem(id=f'step-{index}', content=f'Step {index}') for index in range(4)]
         )
-        contested: list[OwnedPlanItem | None] = []
-        following: list[OwnedPlanItem | None] = []
+        contested: list[BoardChange | None] = []
+        following: list[BoardChange | None] = []
 
         async def claim(name: str) -> None:
             store = PostgresClaimablePlanStore(pool, table=prefix)
@@ -1748,7 +1748,7 @@ async def test_claimable_board_has_one_winner_per_contested_step() -> None:
                 group.start_soon(claim, f'member-{index}')
 
         assert len([item for item in contested if item is not None]) == 1
-        assert sorted(item.id for item in following if item is not None) == ['step-1', 'step-2', 'step-3']
+        assert sorted(change.item.id for change in following if change is not None) == ['step-1', 'step-2', 'step-3']
         board = await PostgresClaimablePlanStore(pool, table=prefix).get_owned_items()
         assert all(item.status is TaskStatus.in_progress and item.owner is not None for item in board)
 
@@ -1766,7 +1766,7 @@ async def test_claimable_board_unblocks_a_dependent_exactly_once() -> None:
         )
         for item_id in prerequisites:
             await store.claim(item_id, owner=item_id)
-        changes: list[OwnedPlanItem] = []
+        changes: list[BoardChange] = []
 
         async def complete(item_id: str) -> None:
             changes.extend(
@@ -1779,8 +1779,10 @@ async def test_claimable_board_unblocks_a_dependent_exactly_once() -> None:
             for item_id in prerequisites * 2:
                 group.start_soon(complete, item_id)
 
-        assert [item.id for item in changes if item.id == 'join'] == ['join']
-        assert sorted(item.id for item in changes if item.status is TaskStatus.completed) == sorted(prerequisites)
+        assert [change.item.id for change in changes if change.item.id == 'join'] == ['join']
+        assert sorted(change.item.id for change in changes if change.item.status is TaskStatus.completed) == sorted(
+            prerequisites
+        )
 
 
 async def test_claimable_board_set_items_keeps_concurrent_claims() -> None:

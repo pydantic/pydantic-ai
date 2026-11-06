@@ -33,9 +33,10 @@ from pydantic_ai_harness.planning._redis import (
 )
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore, SqlitePlanStore
 from pydantic_ai_harness.planning._toolset import PlanningToolset, render_plan
-from pydantic_ai_harness.planning._types import OwnedPlanItem, PlanItem, PlanStatusUpdate, TaskStatus
+from pydantic_ai_harness.planning._types import BoardChange, OwnedPlanItem, PlanItem, PlanStatusUpdate, TaskStatus
 
 __all__ = [
+    'BoardChange',
     'ClaimablePlanStore',
     'ClaimableRedisClient',
     'EventCallback',

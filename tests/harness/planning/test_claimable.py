@@ -16,6 +16,7 @@ import anyio
 import pytest
 
 from pydantic_ai_harness.planning import (
+    BoardChange,
     ClaimablePlanStore,
     ClaimableRedisClient,
     FileClaimablePlanStore,
@@ -174,10 +175,13 @@ class TestClaimablePlanStore:
         assert await store.claim('done', owner='alice') is None
         assert await store.claim('waits', owner='alice') is None, 'an unresolved dependency blocks a claim'
         first = await store.claim(None, owner='alice')
-        assert first == OwnedPlanItem(id='first', content='First', status=TaskStatus.in_progress, owner='alice')
+        assert first == BoardChange(
+            item=OwnedPlanItem(id='first', content='First', status=TaskStatus.in_progress, owner='alice'),
+            previous=OwnedPlanItem(id='first', content='First'),
+        )
         assert await store.claim('first', owner='bob') is None
         second = await store.claim(None, owner='bob')
-        assert second is not None and second.id == 'second'
+        assert second is not None and second.item.id == 'second'
         assert await store.claim(None, owner='carol') is None
 
     async def test_release_moves_the_owner_and_the_dependents(self, boards: BoardFactory) -> None:
@@ -198,18 +202,25 @@ class TestClaimablePlanStore:
 
         changed = await store.release('base', owner='alice', status=TaskStatus.completed)
         assert changed == [
-            OwnedPlanItem(id='base', content='Base', status=TaskStatus.completed, owner='alice'),
-            OwnedPlanItem(id='dep', content='Dependent', depends_on=['base']),
+            BoardChange(
+                item=OwnedPlanItem(id='base', content='Base', status=TaskStatus.completed, owner='alice'),
+                previous=OwnedPlanItem(id='base', content='Base', status=TaskStatus.in_progress, owner='alice'),
+            ),
+            BoardChange(
+                item=OwnedPlanItem(id='dep', content='Dependent', depends_on=['base']),
+                previous=OwnedPlanItem(id='dep', content='Dependent', status=TaskStatus.blocked, depends_on=['base']),
+            ),
         ]
         assert await store.release('base', owner='alice', status=TaskStatus.completed) == []
 
         dependent = await store.claim('dep', owner='bob')
         assert dependent is not None
         reopened = await store.release('base', owner='alice', status=TaskStatus.pending)
-        assert reopened == [
+        assert [change.item for change in reopened] == [
             OwnedPlanItem(id='base', content='Base'),
             OwnedPlanItem(id='dep', content='Dependent', status=TaskStatus.blocked, depends_on=['base'], owner='bob'),
         ]
+        assert [change.previous.status for change in reopened] == [TaskStatus.completed, TaskStatus.in_progress]
         assert (await store.get_owned_item('other')) == OwnedPlanItem(
             id='other', content='Unrelated', status=TaskStatus.blocked, depends_on=['missing-but-blocked']
         )
@@ -228,13 +239,13 @@ class TestClaimablePlanStore:
         await store.release('base', owner='alice', status=TaskStatus.completed)
         assert await store.claim('dep', owner='carol') is None
         reclaimed = await store.claim(None, owner='bob')
-        assert reclaimed is not None and reclaimed.id == 'dep' and reclaimed.owner == 'bob'
+        assert reclaimed is not None and reclaimed.item.id == 'dep' and reclaimed.item.owner == 'bob'
 
 
 class TestClaimableConcurrency:
     async def test_concurrent_claimers_of_one_step_have_exactly_one_winner(self, boards: BoardFactory) -> None:
         await boards().set_items([_item('Contested', id='contested')])
-        results: dict[str, OwnedPlanItem | None] = {}
+        results: dict[str, BoardChange | None] = {}
 
         def claimer(name: str) -> Callable[[], Coroutine[object, object, None]]:
             async def claim() -> None:
@@ -251,7 +262,7 @@ class TestClaimableConcurrency:
 
     async def test_concurrent_next_claims_take_each_step_once(self, boards: BoardFactory) -> None:
         await boards().set_items([_item(f'Step {index}', id=f'step-{index}') for index in range(CLAIMERS // 2)])
-        claimed: list[OwnedPlanItem | None] = []
+        claimed: list[BoardChange | None] = []
 
         def claimer(name: str) -> Callable[[], Coroutine[object, object, None]]:
             async def claim() -> None:
@@ -261,7 +272,7 @@ class TestClaimableConcurrency:
 
         await _race(*(claimer(f'member-{index}') for index in range(CLAIMERS)))
 
-        taken = [item for item in claimed if item is not None]
+        taken = [change.item for change in claimed if change is not None]
         assert sorted(item.id for item in taken) == sorted(f'step-{index}' for index in range(CLAIMERS // 2))
         assert len({item.owner for item in taken}) == CLAIMERS // 2
         assert {item.owner for item in await boards().get_owned_items()} == {item.owner for item in taken}
@@ -280,7 +291,7 @@ class TestClaimableConcurrency:
         )
         for item_id in prerequisites:
             await boards().claim(item_id, owner=f'owner-{item_id}')
-        changes: list[OwnedPlanItem] = []
+        changes: list[BoardChange] = []
 
         def completer(item_id: str) -> Callable[[], Coroutine[object, object, None]]:
             async def complete() -> None:
@@ -291,9 +302,12 @@ class TestClaimableConcurrency:
         # Each prerequisite is completed twice at once: the duplicate must change nothing.
         await _race(*(completer(item_id) for item_id in prerequisites * 2))
 
-        unblocked = sorted(item.id for item in changes if item.status is TaskStatus.pending)
+        unblocked = sorted(change.item.id for change in changes if change.item.status is TaskStatus.pending)
         assert unblocked == sorted(['join', *(f'after-{item_id}' for item_id in prerequisites)])
-        completed = sorted(item.id for item in changes if item.status is TaskStatus.completed)
+        completed = sorted(change.item.id for change in changes if change.item.status is TaskStatus.completed)
+        assert all(
+            change.previous.status is TaskStatus.blocked for change in changes if change.item.id not in completed
+        )
         assert completed == sorted(prerequisites)
         statuses = {item.id: item.status for item in await boards().get_owned_items()}
         assert statuses['join'] is TaskStatus.pending
