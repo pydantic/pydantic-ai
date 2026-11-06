@@ -320,7 +320,7 @@ async def local_backed_factory_pool() -> AsyncIterator[MagicMock]:
         yield pool
 
 
-class TestCodeMode:
+class TestCodeModeErrorRouting:
     async def test_local_backed_factory_keeps_execution_time_limit(self, local_backed_factory_pool: MagicMock) -> None:
         """A factory pool must receive the sandbox execution limit in addition to its own transport deadline."""
         agent = Agent(
