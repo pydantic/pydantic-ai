@@ -82,6 +82,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
 _JSON = TypeAdapter(dict[str, JsonValue])
+_STEPS = TypeAdapter(list[dict[str, JsonValue]])
 
 
 @dataclass
@@ -329,6 +330,31 @@ reasoning
             {'type': 'model_output', 'content': [{'type': 'text', 'text': 'answer'}]},
             {'type': 'user_input', 'content': [{'type': 'text', 'text': 'continue'}]},
         ]
+    )
+
+
+async def test_thought_summary_replays_from_thinking_part(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
+):
+    """Pin that persisted thoughts keep only the signature and replay rebuilds one summary; cassettes skip bodies."""
+    mock_google.body['steps'] = [
+        {
+            'type': 'thought',
+            'signature': 'sig',
+            'summary': [{'type': 'text', 'text': 'first '}, {'type': 'text', 'text': 'second'}],
+        },
+        {'type': 'model_output', 'content': [{'type': 'text', 'text': 'done'}]},
+    ]
+    response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_details is not None
+    assert response.provider_details['google_interactions_steps'][0] == snapshot(
+        {'type': 'thought', 'signature': 'sig'}
+    )
+    thinking = response.parts[0]
+    assert isinstance(thinking, ThinkingPart) and thinking.content == 'first second'
+    await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
+    assert _STEPS.validate_python(mock_google.requests[-1]['input'])[0] == snapshot(
+        {'type': 'thought', 'signature': 'sig', 'summary': [{'type': 'text', 'text': 'first second'}]}
     )
 
 
