@@ -2704,13 +2704,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 def _with_framing_announcement(
     params: ModelRequestParameters, model_settings: ModelSettings | None
 ) -> ModelRequestParameters:
-    """`params` carrying the `framing_announcement` setting, where `model_settings` sets it.
+    """`params` carrying the request's `framing_announcement` setting, or none where `model_settings` doesn't set it.
 
-    For `Model._get_instruction_parts`, on a request whose parameters didn't come from an agent run, which sets it.
+    `prepare_messages` and `_get_instruction_parts` read the setting from the parameters, since `prepare_messages`
+    isn't given the settings. So every caller that prepares a request's messages passes its parameters through this
+    first: the agent graph, the direct API, `FallbackModel` for its candidates, `prepare_request`, and a durable
+    activity that re-prepares, where the private field isn't serialized. A caller that skips it gets the model's own
+    `settings` or its profile's default instead of the request's setting.
     """
-    if model_settings and (framing_announcement := model_settings.get('framing_announcement')):
-        return replace(params, _framing_announcement=framing_announcement)
-    return params
+    framing_announcement = (model_settings or {}).get('framing_announcement')
+    if framing_announcement == params._framing_announcement:  # pyright: ignore[reportPrivateUsage]
+        return params
+    return replace(params, _framing_announcement=framing_announcement)
 
 
 def _has_mid_conversation_system_prompt(messages: list[ModelMessage], standing_prompt_count: int) -> bool:

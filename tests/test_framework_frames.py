@@ -681,6 +681,70 @@ async def test_the_profile_sets_the_default_framing_announcement(
     assert seen == [[announcement, 'Be brief.'] if announced else ['Be brief.']]
 
 
+@pytest.mark.parametrize(
+    'setting, expected',
+    [
+        pytest.param('never', {'system_prompt': ['Be brief.'], 'instructions': []}, id='never'),
+        pytest.param('always', {'system_prompt': ['Be brief.'], 'instructions': ['<announcement>']}, id='always'),
+    ],
+)
+@pytest.mark.parametrize('caller', ['agent', 'direct', 'fallback-agent', 'fallback-direct', 'fallback-direct-stream'])
+async def test_every_caller_of_prepare_messages_applies_the_framing_announcement_setting(
+    caller: str, setting: FramingAnnouncement, expected: dict[str, list[str]]
+):
+    """Every path that prepares messages applies the request's `framing_announcement`, not the profile default.
+
+    `prepare_messages` takes no settings, so each caller passes them through `models._with_framing_announcement`.
+    Without that, `'never'` would still get the default `'when_needed'` announcement in the system prompt, and
+    `'always'` would get it twice. The Temporal activity's re-prepare is tested in the Temporal tests.
+    """
+    from pydantic_ai.direct import model_request, model_request_stream
+    from pydantic_ai.models.fallback import FallbackModel
+
+    seen: list[dict[str, list[str]]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        first = messages[0]
+        assert isinstance(first, ModelRequest)
+        instructions = model._get_instruction_parts(messages, info.model_request_parameters) or []  # pyright: ignore[reportPrivateUsage]
+        seen.append(
+            {
+                'system_prompt': [
+                    _framing_summary(part.content) for part in first.parts if isinstance(part, SystemPromptPart)
+                ],
+                'instructions': [_framing_summary(part.content) for part in instructions],
+            }
+        )
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def stream_respond(messages: list[ModelMessage], info: AgentInfo):
+        respond(messages, info)
+        yield 'ok'
+
+    model = AnnouncingFunctionModel(
+        respond, stream_function=stream_respond, profile=ModelProfile(supports_inline_system_prompts=False)
+    )
+    target = FallbackModel(model) if caller.startswith('fallback') else model
+    settings: ModelSettings = {'framing_announcement': setting}
+    # The retry feedback is a frame on the user channel, so the default `'when_needed'` would announce here too.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Be brief.'), UserPromptPart('Hi.')]),
+        ModelResponse(parts=[TextPart('Bonjour.')]),
+        ModelRequest(parts=[RetryFeedbackPart('Answer in English.', retry=RetryInfo(cause='model_retry'))]),
+    ]
+
+    if caller.endswith('direct-stream'):
+        async with model_request_stream(target, history, model_settings=settings) as stream:
+            async for _ in stream:
+                pass
+    elif caller.endswith('direct'):
+        await model_request(target, history, model_settings=settings)
+    else:
+        await Agent(target, model_settings=settings).run(message_history=history)
+
+    assert seen == [expected]
+
+
 def test_the_when_needed_announcement_joins_only_an_existing_system_prompt():
     """Like `'always'`, `'when_needed'` doesn't give a request with no system prompt or instructions a system field."""
     model = AnnouncingFunctionModel(

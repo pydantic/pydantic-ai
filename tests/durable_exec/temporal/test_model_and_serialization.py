@@ -3197,6 +3197,62 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     )
 
 
+@pytest.mark.parametrize(
+    'setting, standing_prompt',
+    [
+        pytest.param(None, ['leading', '<announcement>'], id='default'),
+        # `'always'` puts the announcement in the instructions instead, which `prepare_messages` doesn't touch.
+        pytest.param('always', ['leading'], id='always'),
+        pytest.param('never', ['leading'], id='never'),
+    ],
+)
+def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
+    setting: str | None, standing_prompt: list[str]
+) -> None:
+    """The activity's re-prepare restores `framing_announcement` from the request's settings.
+
+    The private parameter field that carries it to `prepare_messages` isn't serialized, so without that the activity
+    would prepare with the profile's default, `'when_needed'`, whatever the run asked for.
+    """
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_lookalike_notes = True
+
+    concrete = AnnouncingFunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__reprepare_framing_announcement',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    params = _RequestParams(
+        messages=[
+            ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+        ],
+        model_settings={'framing_announcement': setting} if setting else None,
+        # As the activity receives them: the private field doesn't survive serialization.
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_id='anthropic:claude-opus-5',
+    )
+
+    prepared = temporal_model._reprepare_messages(params, concrete)  # pyright: ignore[reportPrivateUsage]
+
+    first = prepared[0]
+    assert isinstance(first, ModelRequest)
+    announcement = lookalike_note_announcement(system_role=False)
+    assert [
+        '<announcement>' if part.content == announcement else part.content
+        for part in first.parts
+        if isinstance(part, SystemPromptPart)
+    ] == standing_prompt
+
+
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_temporal_model_runtime_provider_preserves_unmodified_messages(
     monkeypatch: pytest.MonkeyPatch,
