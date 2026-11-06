@@ -78,7 +78,12 @@ if TYPE_CHECKING:
 
 
 def _make_ctx(
-    *, run_id: str | None = 'run-1', retry: int = 0, model: Any = None, usage_limits: UsageLimits | None = None
+    *,
+    run_id: str | None = 'run-1',
+    retry: int = 0,
+    model: Any = None,
+    usage_limits: UsageLimits | None = None,
+    messages: list[Any] | None = None,
 ) -> Any:
     """Build a minimal RunContext-like object for testing the hook directly."""
 
@@ -96,11 +101,18 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+        messages: list[Any] = dataclasses.field(default_factory=list[Any])
 
         def tool_name_for_kind(self, kind: object) -> str | None:
             return None
 
-    ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
+    ctx = _FakeCtx(
+        usage=RunUsage(),
+        run_id=run_id,
+        retry=retry,
+        usage_limits=usage_limits,
+        messages=[] if messages is None else messages,
+    )
     if model is not None:
         ctx.model = model
     return ctx
@@ -1124,6 +1136,19 @@ class TestInternals:
         key = _handle_key(_make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
         assert key.endswith('.content')
 
+    def test_handle_key_keeps_a_reused_call_id_apart(self):
+        """A `tool_call_id` is only unique within a response, so a later call reusing one gets its own key."""
+        first = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        second = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        last = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_1')
+        messages = [ModelResponse(parts=[first]), ModelResponse(parts=[second, last])]
+        ctx = _make_ctx(messages=messages)
+        assert _handle_key(ctx, first) == 'run-1/call_0.0'
+        assert _handle_key(ctx, second) == 'run-1/1/call_0.0'
+        assert _handle_key(ctx, last) == 'run-1/call_1.0'
+        # A part the history doesn't hold is still told apart from the calls it counted.
+        assert _handle_key(ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')) == 'run-1/2/call_0.0'
+
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
         assert meta == {'original_metadata': 'not-a-mapping', 'overflow_handle': 'h/1.0', 'overflow_bytes': 42}
@@ -1350,3 +1375,30 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
+
+    async def test_a_reused_tool_call_id_spills_each_call_separately(self, tmp_path: Path, anyio_backend: str):
+        """A provider that numbers calls per response (`call_0`, `call_0`) must not overwrite the first spill."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'first'}, tool_call_id='call_0')])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'second'}, tool_call_id='call_0')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
+        )
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def dump(tag: str) -> str:
+            return f'{tag} payload\n' * 100
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        handles = [(p.metadata or {})['overflow_handle'] for p in returns]
+        assert len(set(handles)) == 2
+        assert await store.read(handles[0]) == b'first payload\n' * 100
+        assert await store.read(handles[1]) == b'second payload\n' * 100

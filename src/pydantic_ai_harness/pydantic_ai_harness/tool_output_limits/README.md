@@ -377,7 +377,9 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider
+  that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the run:
+  each call gets its own `<occurrence>/` segment instead of overwriting the earlier spill.
 
 ## Relationship to other capabilities
 

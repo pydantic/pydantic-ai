@@ -37,6 +37,11 @@ That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
 
+Each call spills to its own handle. A `tool_call_id` is only unique within one response, and a
+provider that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the
+run, so a repeated id gets its own `<occurrence>/` segment instead of overwriting the earlier
+spill.
+
 ## Usage
 
 Construct an `Agent` with `ToolOutputLimits()` in its `capabilities`. With no arguments it
