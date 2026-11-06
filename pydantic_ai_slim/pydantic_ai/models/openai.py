@@ -61,7 +61,6 @@ from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
@@ -2942,7 +2941,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
             text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
-            text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
+            text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
         )
 

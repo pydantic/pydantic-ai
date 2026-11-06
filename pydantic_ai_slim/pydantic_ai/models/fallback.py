@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import anyio
 from opentelemetry.trace import Span, get_current_span
@@ -80,6 +80,8 @@ class FallbackModel(Model):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    _answers_requests_itself: ClassVar[bool] = False
 
     models: list[Model]
 

@@ -8,6 +8,7 @@ from typing import overload
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -60,7 +61,11 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
     profile = vendor_family_model_profile(model_name, overrides=_OPENAI_COMPATIBLE_VENDOR_PROFILES)
     if profile is None:
         profile = openai_model_profile(model_name)
-    return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+    return merge_profile(
+        OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+        profile,
+        special_token_route_profile('openai-compatible', model_name),
+    )
 
 
 class OpenAICompatibleProvider(_OpenAISDKProvider):
