@@ -246,8 +246,8 @@ def test_anthropic_20260318_web_tools_implicit_code_execution(
     assert ('code_execution' in enabled_names) is enables_code_execution
 
 
-def test_anthropic_20260318_web_search_settings_rejected_on_vertex(allow_model_requests: None):
-    """Vertex AI only accepts `web_search_20250305`, so the option is rejected before the request."""
+def test_anthropic_20260318_web_search_settings_forwarded_on_vertex():
+    """The settings select `web_search_20260318` on Vertex too, and Vertex's API decides whether to accept it."""
     model = AnthropicModel(
         'claude-sonnet-4-6',
         provider=AnthropicProvider(
@@ -255,24 +255,6 @@ def test_anthropic_20260318_web_search_settings_rejected_on_vertex(allow_model_r
                 AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
             )
         ),
-    )
-    tool = WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
-    agent = Agent(model, capabilities=[NativeTool(tool)])
-
-    with pytest.raises(UserError, match=r'needs `web_search_20260318`, which this client does not offer'):
-        agent.run_sync('hi')
-
-
-def test_anthropic_20260318_web_search_settings_profile_override_on_vertex():
-    """A Vertex deployment that accepts `web_search_20260318` can opt in through the model profile."""
-    model = AnthropicModel(
-        'claude-sonnet-4-6',
-        provider=AnthropicProvider(
-            anthropic_client=mock_anthropic_client(
-                AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
-            )
-        ),
-        profile=AnthropicModelProfile(anthropic_supports_web_tools_20260318=True),
     )
     params = ModelRequestParameters(
         native_tools=[
