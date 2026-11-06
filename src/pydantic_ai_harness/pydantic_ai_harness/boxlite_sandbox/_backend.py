@@ -526,10 +526,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     )
                 except _StaleHandle as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'Could not create working_dir {self._working_dir!r} in BoxLite box {name}: {result.stderr}'
-                    )
+                _check_working_dir_created(result, self._working_dir, name)
             self._box = box
             return box
 
@@ -684,6 +681,11 @@ async def _boot(box: _Box) -> None:
     except boxlite.ConfigError as error:
         # Raised for a host that can't run boxes at all, such as one where BoxLite can't jail its engine.
         raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
+
+
+def _check_working_dir_created(result: CommandResult, working_dir: str, name: str) -> None:
+    if result.exit_code != 0:
+        raise WorkspaceError(f'Could not create working_dir {working_dir!r} in BoxLite box {name}: {result.stderr}')
 
 
 def _gone_message(name: str) -> str:

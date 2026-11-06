@@ -1326,16 +1326,31 @@ def _recover_issue(
 
 
 def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None:
-    """Why a task incident's PR head can never run again, or `None` while it can or the key names no PR head.
+    """Why a task incident can never block a run again, or `None` while it can or its key names no PR head or dispatch.
 
-    The key ends in `<event>:<PR number, or head branch under workflow_run>:<head SHA>:<id>`. The incident
+    The key ends in `<event>:<PR number, head branch under workflow_run, or ref>:<head SHA>:<id>`. The incident
     blocks only runs with that exact key, so once its PR closes or moves to another head it blocks nothing.
+    A dispatch's id is its run ID, so its incident blocks only re-runs of that run, and nothing once it concludes.
+    GitHub deletes only a run that completed or is more than two weeks old, and a deleted run cannot be re-run.
     """
     parts = marker.key.rsplit(':', 3)
     if len(parts) != 4:
         return None
-    prefix, target, head_sha, _ = parts
+    prefix, target, head_sha, task_id = parts
     event = prefix.rpartition(':')[2]
+    if event == 'workflow_dispatch' and task_id.isdecimal():
+        try:
+            response = client.request('GET', f'actions/runs/{task_id}')
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return f'Dispatch run {task_id} no longer exists.'
+            raise
+        run = _mapping(response)
+        if run is None:
+            raise ValueError('GitHub returned an invalid workflow run')
+        if run.get('status') != 'completed':
+            return None
+        return f'Dispatch run {task_id} concluded `{run.get("conclusion")}`.'
     if event.startswith('pull_request') and target.isdecimal():
         payloads: list[object] = [client.request('GET', f'pulls/{target}')]
     elif event == 'workflow_run' and target:
@@ -1362,12 +1377,12 @@ def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None
 
 
 def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run: bool) -> None:
-    """Close task incidents whose PR closed or moved on, with the evidence as a comment."""
+    """Close task incidents whose PR closed or moved on, or whose dispatch run concluded, with the evidence as a comment."""
     for issue in issues:
         marker = _marker_from_body(issue.body)
         if marker is None or marker.scope != 'task':
             continue
-        # One unreadable PR or failed write must not stop the provider recovery that follows.
+        # One unreadable PR or run, or one failed write, must not stop the provider recovery that follows.
         try:
             reason = _task_retirement(client, marker)
             if reason is None:
@@ -1385,7 +1400,7 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
                 for entry in listed  # pyright: ignore[reportUnknownVariableType]
             ):
                 comment = (
-                    f'Retired: {reason} This incident blocked only runs on that PR head, so it no longer blocks '
+                    f'Retired: {reason} This incident blocked only runs with its task key, so it no longer blocks '
                     'anything. It did not record a recovery of the failed run.'
                 )
                 client.request('POST', f'issues/{issue.number}/comments', {'body': comment})

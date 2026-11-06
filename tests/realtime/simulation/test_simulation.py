@@ -586,30 +586,6 @@ def test_live_continuation_call_is_a_response_of_its_own() -> None:
     )
 
 
-def test_live_delegation_settling_while_another_is_owed_ends_the_reply() -> None:
-    """A delegation that settles while another one's tool results are still owed ends the reply that called the tools.
-
-    What Live says next is the settled delegation's outcome, a reply of its own, ahead of the other one's answer.
-    """
-
-    def scenario(sim: LiveSimulation) -> None:
-        sim.speak()
-        sim.delegate()
-        sim.backend_call()
-        sim.backend_finish()
-        sim.delegate()
-        sim.backend_finish()
-        sim.speak()
-        sim.advance_time(0.1)
-        sim.finish_tool()
-        sim.settle()
-        history.extend(_live_history(sim))
-
-    history: list[list[str]] = []
-    run_clean(LiveSimulation(), scenario)
-    assert history == snapshot([['r1w1', 'tool-call call_1'], ['tool-return call_1'], ['r2w1'], ['r3w1']])
-
-
 def test_live_speech_before_a_continuation_call_stays_in_the_reply() -> None:
     """SIM-18: what Live says after the round, before the backend calls again, is the reply that called the tools."""
 
@@ -1696,20 +1672,6 @@ def test_live_parallel_calls_are_answered_once() -> None:
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.backend_call(count=2)
-        sim.settle()
-
-    run_clean(LiveSimulation(), scenario)
-
-
-def test_live_results_of_delegations_in_a_row_answered_together() -> None:
-    """Two delegations each call a tool, and the model answers both results with one reply (SIM-6, fixed by the session core)."""
-
-    def scenario(sim: LiveSimulation) -> None:
-        sim.delegate()
-        sim.backend_call()
-        sim.backend_finish()
-        sim.delegate()
-        sim.backend_call()
         sim.settle()
 
     run_clean(LiveSimulation(), scenario)
@@ -2847,11 +2809,11 @@ def test_live_delegation_during_a_tool_round_joins_the_reply() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
-@known('8763c #3')
-def test_known_live_tool_results_sent_while_an_unread_delegation_speaks() -> None:
-    """A delegation the model started, still unread when a tool round's results go out, settles first.
+def test_live_delegation_decided_during_a_tool_round_opens_once_the_round_settles() -> None:
+    """A delegation the model decides on while a tool round is owed its results opens only once the round settles.
 
-    Its settling ends the reply under way, so the wait for the round's answer returns before that answer.
+    Live works on one delegation at a time (seen live), so the new one can't settle first and end the wait for the
+    round's answer: its tool call and failure come in the reply that answers the round.
     """
 
     def scenario(sim: LiveSimulation) -> None:
@@ -2859,12 +2821,14 @@ def test_known_live_tool_results_sent_while_an_unread_delegation_speaks() -> Non
         sim.backend_call(deliver=False)
         sim.backend_finish(deliver=False)
         sim.delegate()
+        sim.wait_for_reply()
+        sim.finish_tool()
+        sim.backend_finish(deliver=False)
         sim.backend_call(deliver=False)
         sim.backend_finish(status='failed', deliver=False)
-        sim.wait_for_reply()
         sim.settle()
 
-    reproduce('8763c #3', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_scenario_a_provider_reply_before_our_item_is_added_is_not_ours() -> None:
