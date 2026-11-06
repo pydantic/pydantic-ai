@@ -230,7 +230,7 @@ def _approval_agent(executed: list[str]) -> Agent[None, str]:
 class _PerRunApprovalCapability(AbstractCapability[None]):
     """A session capability whose `for_run()` supplies an approval-gated tool the pre-run scan cannot see.
 
-    `get_toolset()` contributes nothing until the run, so `_approval_tool_names` cannot know its
+    `get_toolset()` contributes nothing until the run, so `_scan_approval_names` cannot know its
     `delete_file` pauses for approval and the call is announced as running. The run still pauses it
     (the per-run instance carries the same tool with `requires_approval=True`), which is exactly the
     per-run gap from #820.
@@ -1583,8 +1583,7 @@ class TestPermission:
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_approval_agent([]))
         config: AcpSessionConfig[None] = AcpSessionConfig(deps=None, toolsets=[CombinedToolset([])])
 
-        names = adapter._approval_tool_names(config)  # pyright: ignore[reportPrivateUsage]
-        plain = adapter._known_non_approval_names(config)  # pyright: ignore[reportPrivateUsage]
+        names, plain = adapter._scan_approval_names(config)  # pyright: ignore[reportPrivateUsage]
 
         assert names == frozenset({'delete_file'})
         assert plain == frozenset()

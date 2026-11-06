@@ -9,6 +9,8 @@ changes. The key you connect with decides what those tools can reach.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.](https://pydantic.dev/docs/ai/img/harness/posthog.svg)
+
 ## Before you start
 
 Create a personal API key with the MCP Server preset
@@ -184,7 +186,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one
 pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or
 MCP handlers. The client then owns the URL and authentication, so passing
@@ -204,8 +206,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `PostHog` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each PostHog tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each PostHog tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -238,5 +239,3 @@ from pydantic_ai_harness import PostHog
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PostHog])
 ```
-
-Pass `custom_capability_types` so the loader can create `PostHog` from the file.

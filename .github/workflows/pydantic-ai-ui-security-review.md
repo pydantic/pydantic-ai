@@ -35,7 +35,13 @@ on:
 # only here resolves to empty there, `activation` skips, and `detect` — which the
 # compiler makes depend on `activation` — skips with it, taking the agent down
 # too. That is why this workflow had never once run its agent (#6766 item 7).
-if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') }}
+#
+# PRs whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES`
+# repository variable skip this review. List branch names separated by commas,
+# with no spaces; the match ignores case. A dispatch has an empty `head_ref`,
+# which the first clause exempts. Without that clause, an unset variable formats
+# to `,,`, matches the empty `head_ref`, and skips every dispatch.
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') && (github.head_ref == '' || !contains(format(',{0},', vars.UI_SECURITY_REVIEW_SKIP_BRANCHES), format(',{0},', github.head_ref))) }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -55,6 +61,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:

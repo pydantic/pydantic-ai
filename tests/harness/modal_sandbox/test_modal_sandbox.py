@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,8 @@ import pytest
 
 import pydantic_ai_harness.modal_sandbox as modal_sandbox_package
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import PrefixTools
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -22,6 +24,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     Workspace,
+    WorkspaceBackend,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -35,6 +38,47 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
 from .fake_modal import FakeModal
+
+
+async def test_client_reaches_create_attach_and_destroy(fake_modal: FakeModal) -> None:
+    client: Any = object()
+    capability = ModalSandbox(client=client)
+    assert capability.client is client
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    new = capability.get_workspace(ctx, ref=None)
+    assert isinstance(new, ModalSandboxBackend)
+    made = await new.get_sandbox()
+    assert fake_modal.clients == [client, client]  # the app's lookup, then the create
+
+    ref = WorkspaceRef(provider='modal', id=made.object_id)
+    for backend in (capability.get_workspace(ctx, ref=ref), capability.backend(ref)):
+        assert isinstance(backend, ModalSandboxBackend)
+        await backend.get_sandbox()
+    await capability.destroy(ref)
+    assert fake_modal.clients == [client] * 5
+
+
+async def test_no_client_leaves_it_to_modal(fake_modal: FakeModal) -> None:
+    await ModalSandboxBackend().get_sandbox()
+    assert fake_modal.clients == [None, None]
+
+
+async def test_a_capability_can_use_each_users_client_from_deps(fake_modal: FakeModal) -> None:
+    @dataclass
+    class EachUsersClient(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return ModalSandboxBackend(ref=ref, client=ctx.deps)
+
+    agent = Agent(TestModel(call_tools=['run_command']), deps_type=object, capabilities=[EachUsersClient()])
+
+    @agent.tool
+    async def run_command(ctx: RunContext[Any]) -> str:
+        return (await ctx.workspace.run(['echo', 'ok'])).stdout
+
+    first, second = object(), object()
+    await agent.run('run', deps=first)
+    await agent.run('run', deps=second)
+    assert fake_modal.clients == [first, first, second, second]
 
 
 async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: FakeModal) -> None:
@@ -154,20 +198,32 @@ async def test_an_sdk_timeout_during_create_propagates_unchanged(fake_modal: Fak
 
 
 async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_modal: FakeModal) -> None:
+    # Read the deadline the command runs under instead of racing a real one: a command that must
+    # finish in what a slow acquisition leaves of a short timeout fails whenever the runner stalls.
     fake_modal.create_gate = anyio.Event()
+    command_deadlines: list[float] = []
+
+    def responder(argv: list[str], timeout: int | None) -> tuple[str, str, int]:
+        command_deadlines.append(anyio.current_effective_deadline())
+        return ' '.join(argv) + '\n', '', 0
+
+    fake_modal.responder = responder
     backend = ModalSandboxBackend()
+    acquired_at: list[float] = []
     async with anyio.create_task_group() as tg:
 
         async def release() -> None:
-            # Creating the sandbox outlasts the timeout; the command itself fits in it comfortably.
-            await anyio.sleep(1.1)
-            assert fake_modal.create_gate is not None
+            await anyio.wait_all_tasks_blocked()
+            assert fake_modal.create_started and fake_modal.create_gate is not None
+            acquired_at.append(anyio.current_time())
             fake_modal.create_gate.set()
 
         tg.start_soon(release)
-        result = await backend.run(['echo', 'hello'], timeout=1)
+        result = await backend.run(['echo', 'hello'], timeout=60)
         assert result.stdout == 'echo hello\n'
-    assert fake_modal.sandboxes[0].exec_calls[0].timeout == 1
+    (command_deadline,) = command_deadlines
+    assert command_deadline >= acquired_at[0] + 60
+    assert fake_modal.sandboxes[0].exec_calls[0].timeout == 60
 
 
 async def test_command_timeout_keeps_captured_output(fake_modal: FakeModal) -> None:
@@ -607,3 +663,42 @@ def test_a_non_string_sandbox_id_is_rejected() -> None:
         pytest.raises(UserError, match='must be a string naming a Modal sandbox, got 123'),
     ):
         ModalSandbox(sandbox_id=123)  # pyright: ignore[reportArgumentType]
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """A `modal.Image` annotation must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
+    assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
+        'app_name',
+        'create_app_if_missing',
+        'description',
+        'env',
+        'id',
+        'idle_timeout',
+        'image',
+        'sandbox_timeout',
+        'warn_if_no_tools',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'modal',
+        'description': 'a sandbox',
+        'image': 'python:3.13-slim',
+        'app_name': 'app',
+        'create_app_if_missing': False,
+        'sandbox_timeout': 600,
+        'idle_timeout': 60,
+        'working_dir': '/work',
+        'env': {'A': '1'},
+        'warn_if_no_tools': False,
+    }
+    assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)
+
+
+def test_from_spec_keeps_the_deprecated_arguments_working() -> None:
+    with pytest.warns(HarnessDeprecationWarning):
+        capability = ModalSandbox[None].from_spec(workdir='/work')
+    assert capability.working_dir == '/work'

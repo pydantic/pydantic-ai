@@ -1685,6 +1685,7 @@ imports:
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 safe-outputs:
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
 ---
@@ -1703,6 +1704,13 @@ Readiness: ${{ needs.provider_health.outputs.ready }}
     )
 
     assert check_provider_health_wiring(workflows) == []
+
+    # CI Review's sources disabled the other two reporters but left this one, which duplicated every task incident
+    # with an `[aw] Failed jobs` issue.
+    configured = source.read_text(encoding='utf-8')
+    source.write_text(configured.replace('  report-failed-jobs: false\n', '', 1), encoding='utf-8')
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == ['provider-health-reporting']
+    source.write_text(configured, encoding='utf-8')
 
     source.write_text(
         source.read_text(encoding='utf-8').replace(
@@ -1912,6 +1920,7 @@ jobs:
       actions: read
       contents: read
       issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@sha
         with:

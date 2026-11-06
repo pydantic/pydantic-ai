@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from itertools import count, pairwise
 
 import pytest
@@ -13,7 +14,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
@@ -540,3 +541,162 @@ class TestDetectLoops:
 
         # The skipped response was never recorded, so its result is not mistaken for the first call's.
         assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_follow_their_own_response_when_a_request_is_short_circuited(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class ShortCircuitSecondRequest(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                if self.requests == 2:
+                    return ModelResponse(parts=[_call('describe', {'path': 'a'})])
+                return await handler(request_context)
+
+        # Listed first, the short-circuit wraps `DetectLoops`, whose hooks then don't run for the second request.
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[ShortCircuitSecondRequest(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return 'Error: file not found'
+
+        @agent.tool_plain
+        def describe(path: str) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_are_read_when_a_wrapper_replaces_the_response(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class AnnotateResponses(AbstractCapability[object]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                # A new timestamp means no response in history is the one `DetectLoops` recorded.
+                return replace(await handler(request_context), timestamp=datetime.now(UTC))
+
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[AnnotateResponses(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_are_read_when_a_wrapper_rewrites_the_calls(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class TagArguments(AbstractCapability[object]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                parts = [
+                    replace(part, args={**part.args_as_dict(), 'tagged': True})
+                    if isinstance(part, ToolCallPart)
+                    else part
+                    for part in response.parts
+                ]
+                return replace(response, parts=parts)
+
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[TagArguments(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str, tagged: bool = False) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        # The rewritten response keeps its timestamp and tool call ids, so it is still found.
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_an_earlier_call_with_a_reused_id_is_not_mistaken_for_the_latest(self):
+        loops, detector = _collect()
+        statuses = iter(['busy', 'busy', 'idle'])
+
+        @dataclass
+        class TagThirdResponse(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                response = await handler(request_context)
+                if self.requests != 3:
+                    return response
+                parts = [
+                    replace(part, args={**part.args_as_dict(), 'tagged': True})
+                    if isinstance(part, ToolCallPart)
+                    else part
+                    for part in response.parts
+                ]
+                return replace(response, parts=parts)
+
+        call = ToolCallPart('status', {'job': 'build'}, tool_call_id='call_0')
+        agent = Agent(_scripted(*[[call]] * 3), capabilities=[TagThirdResponse(), detector])
+
+        @agent.tool_plain
+        def status(job: str, tagged: bool = False) -> str:
+            return next(statuses)
+
+        await agent.run('Wait for the build')
+
+        # The second response matches the third's recorded calls exactly, but its `busy` is not the third's result.
+        assert loops == []
+
+    async def test_a_short_circuited_response_that_reuses_tool_call_ids_is_not_mistaken_for_the_recorded_one(self):
+        loops, detector = _collect()
+        outputs = iter(['first', 'second', 'second', 'second'])
+
+        @dataclass
+        class ShortCircuitSecondRequest(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                if self.requests == 2:
+                    return ModelResponse(
+                        parts=[ToolCallPart('read_file', {'path': 'missing.txt'}, tool_call_id='call_0')]
+                    )
+                return await handler(request_context)
+
+        call = ToolCallPart('read_file', {'path': 'missing.txt'}, tool_call_id='call_0')
+        agent = Agent(_scripted(*[[call]] * 3), capabilities=[ShortCircuitSecondRequest(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return next(outputs)
+
+        await agent.run('Read it')
+
+        # The recorded calls returned `first`, `second`, `second`; the canned response's `second` is not the first's.
+        assert loops == []
