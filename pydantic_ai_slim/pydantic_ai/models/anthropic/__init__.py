@@ -420,6 +420,8 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+# Vertex AI only accepts `web_search_20250305` and no web fetch version. The Bedrock clients offer neither web tool.
+_WEB_TOOLS_20260318_UNSUPPORTED_CLIENTS = (AsyncAnthropicVertex,)
 # Anthropic Files API file IDs and code execution container IDs aren't sent through the Bedrock, Vertex AI and Foundry
 # clients. See `AnthropicModelProfile.anthropic_accepts_file_and_container_ids`.
 _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
@@ -1180,6 +1182,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
+
+        `anthropic_supports_web_tools_20260318` is off for `AsyncAnthropicVertex`, whose API only accepts
+        `web_search_20250305` (checked against Vertex AI), so a user whose deployment accepts the newer versions can
+        turn it on.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1204,6 +1210,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
+        if isinstance(client, _WEB_TOOLS_20260318_UNSUPPORTED_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(anthropic_supports_web_tools_20260318=False))
         if 'anthropic_calls_cited_web_tools_directly' not in profile:
             profile = merge_profile(
                 profile,
@@ -2565,14 +2573,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                if 'response_inclusion' in (tool.provider_settings or {}).get('anthropic', {}) and isinstance(
-                    self.client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
+                # `response_inclusion` is the setting that selects `web_search_20260318` in `_map_web_search_tool`.
+                if 'response_inclusion' in (tool.provider_settings or {}).get('anthropic', {}) and not self.profile.get(
+                    'anthropic_supports_web_tools_20260318', True
                 ):
-                    # Vertex AI only accepts `web_search_20250305` (checked against its API), so it would reject the
-                    # request.
                     raise UserError(
                         "Anthropic's `response_inclusion` web search setting needs `web_search_20260318`, which this "
-                        'client does not offer: it only supports `web_search_20250305`.'
+                        'client does not offer. Set `anthropic_supports_web_tools_20260318=True` in the model '
+                        'profile if it does.'
                     )
                 tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch

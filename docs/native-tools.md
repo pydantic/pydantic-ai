@@ -43,6 +43,10 @@ The key follows the model class you use, not who makes the underlying model: Cla
 API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
 tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
 must not run the tool without them.
+
+To keep the local fallback of a provider-adaptive capability, pass the configured tool to its `native=` argument,
+for example `WebSearch(native=WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}))`.
+
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
 [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
@@ -233,13 +237,13 @@ left out on models that don't support them.
     use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     `WebSearchTool` on Vertex AI uses `web_search_20250305`, the only web search version Vertex accepts,
     so dynamic filtering is unavailable even on otherwise-supported models, and the Anthropic-specific
-    settings raise a `UserError` there.
+    settings raise a `UserError` there unless the model profile sets `anthropic_supports_web_tools_20260318`.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209` or `web_search_20260318`.
 
 ## X Search Tool
 
@@ -753,7 +757,7 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
-    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209` or `web_fetch_20260318`.
 
 ## Memory Tool
 
