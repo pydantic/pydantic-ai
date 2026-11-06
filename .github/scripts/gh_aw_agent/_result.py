@@ -51,7 +51,7 @@ class ProviderHealthRecord(TypedDict, total=False):
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
-def _zai_error_code(body: object) -> str | None:
+def zai_error_code(body: object) -> str | None:
     try:
         error = _ERROR_BODY_ADAPTER.validate_python(_ERROR_BODY_ADAPTER.validate_python(body).get('error'))
     except ValidationError:
@@ -74,7 +74,7 @@ def _failure_details(error: BaseException) -> FailureRecord:
         if error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            code = _zai_error_code(error.body)
+            code = zai_error_code(error.body)
             kind = 'plan_limit' if code in ZAI_PLAN_LIMIT_CODES else 'rate_limit'
     elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, (asyncio.TimeoutError, TimeoutError)):
         kind = 'timeout'

@@ -24,6 +24,7 @@ from ._budgets import (
 from ._compaction import compact_history, require_safe_output
 from ._config import is_review_run
 from ._policies import RecoverMCPToolErrors, ToolPolicy
+from ._rate_limit import RateLimitRetry
 from ._result import RecordResult
 from ._telemetry import configure_observability
 
@@ -93,6 +94,7 @@ def build_agent() -> Agent[object, str]:
             RecoverMCPToolErrors(),
             ToolPolicy(),
             WallClockBudget(run_timeout_secs()),
+            RateLimitRetry(),
             RecordRunTotals(),
             RequestBudget(),
             LimitAfterOutputIsSuccess(),

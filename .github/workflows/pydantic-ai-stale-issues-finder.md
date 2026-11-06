@@ -118,16 +118,6 @@ imports:
   - shared/rigor.md
   - shared/provider-health.md
 pre-agent-steps:
-  # Stage the committed launcher script at gh-aw's exec-able
-  # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
-  # gh-aw's repository checkout happens between pre-steps and
-  # pre-agent-steps, and this step reads from .github/scripts/ in the
-  # workspace.
-  # Install ripgrep and expose uv+rg inside the AWF chroot.
-  # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH
-  # and also reads $GITHUB_PATH entries added before the engine step.
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
   # Fetch all open issues before the AWF firewall blocks gh CLI access.
   # The script writes one JSON file per issue and pre-groups issues into
   # batch folders for subagent fan-out.

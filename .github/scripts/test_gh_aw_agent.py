@@ -7,7 +7,9 @@ import json
 import pathlib
 import sys
 
+import httpx2
 import pytest
+from tenacity import RetryCallState, Retrying, wait_none
 
 from pydantic_ai import AgentRunResult, ModelRequestContext, RunContext, UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
@@ -18,7 +20,7 @@ from pydantic_ai.usage import RunUsage
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
-from gh_aw_agent import _budgets, _compaction, _policies, _result, _safe_outputs
+from gh_aw_agent import _budgets, _compaction, _policies, _rate_limit, _result, _safe_outputs
 
 
 def _tool(name: str) -> ToolDefinition:
@@ -247,3 +249,93 @@ def test_agent_builds_for_the_engine() -> None:
 
     agent = build_agent()
     assert agent.name == 'gh-aw-agent'
+
+
+def _no_wait(**_: float) -> wait_none:
+    return wait_none()
+
+
+def _retry_state(elapsed: float, sleep: float) -> RetryCallState:
+    state = RetryCallState(Retrying(), None, (), {})
+    state.start_time = 0.0
+    state.outcome_timestamp = elapsed
+    state.upcoming_sleep = sleep
+    return state
+
+
+def test_rate_limit_transport_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx2.Response(429, json={'error': {'code': 1302}})
+        return httpx2.Response(200, json={'ok': True})
+
+    async def request() -> httpx2.Response:
+        client = httpx2.AsyncClient(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
+        async with client:
+            return await client.post('https://api.z.ai/api/anthropic/v1/messages')
+
+    response = asyncio.run(request())
+    assert response.status_code == 200
+    assert calls == 2
+
+
+def test_rate_limit_transport_returns_a_plan_limit_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return httpx2.Response(429, json={'error': {'code': 1308}})
+
+    async def request() -> httpx2.Response:
+        client = httpx2.AsyncClient(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
+        async with client:
+            return await client.post('https://api.z.ai/api/anthropic/v1/messages')
+
+    response = asyncio.run(request())
+    assert response.status_code == 429
+    assert response.headers['x-should-retry'] == 'false'
+    assert calls == 1
+
+
+def test_rate_limit_stop_honours_the_window_and_the_run_reserve(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = _rate_limit._stop_rate_limit_retries  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(_rate_limit, 'run_seconds_left', lambda: None)
+    assert not stop(_retry_state(500.0, 16.0))
+    assert stop(_retry_state(590.0, 16.0))
+
+    monkeypatch.setattr(_rate_limit, 'run_seconds_left', lambda: 280.0)
+    # Inside the reserve a request still retries for its first minute.
+    assert not stop(_retry_state(30.0, 5.0))
+    assert stop(_retry_state(61.0, 5.0))
+
+    monkeypatch.setattr(_rate_limit, 'run_seconds_left', lambda: 400.0)
+    assert not stop(_retry_state(61.0, 5.0))
+
+
+def test_install_rate_limit_retry_wraps_the_anthropic_client_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from anthropic import AsyncAnthropic
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport
+
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    model = AnthropicModel('glm-5.3-flash')
+    assert isinstance(model.client, AsyncAnthropic)
+
+    _rate_limit.install_rate_limit_retry(model)
+    transport = model.client._client._transport  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(transport, AsyncHTTPX2TenacityTransport)
+
+    _rate_limit.install_rate_limit_retry(model)
+    assert model.client._client._transport is transport  # pyright: ignore[reportPrivateUsage]
+
+
+def test_install_rate_limit_retry_leaves_other_models_alone() -> None:
+    _rate_limit.install_rate_limit_retry(TestModel())

@@ -40,11 +40,20 @@ safe-outputs:
         OPENAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: '3'
 pre-agent-steps:
+  # gh-aw restores `.github` from the base branch on a PR run, so the workspace copy
+  # can pair the lock's engine version with an older composition. The workflow's own
+  # commit is the one its lock was compiled from: check that out and stage it, so the
+  # composition and the library the engine installs come from one commit.
   - name: Stage the workflow agent composition
     run: |
       set -euo pipefail
+      composition_src=/tmp/gh-aw/composition-src
+      git -C "$GITHUB_WORKSPACE" worktree remove --force "$composition_src" 2>/dev/null || true
+      rm -rf "$composition_src"
+      git -C "$GITHUB_WORKSPACE" worktree add --detach "$composition_src" "$GITHUB_SHA"
       install -d /tmp/gh-aw/agent-module
-      cp -R .github/scripts/gh_aw_agent /tmp/gh-aw/agent-module/
+      rm -rf /tmp/gh-aw/agent-module/gh_aw_agent
+      cp -R "$composition_src/.github/scripts/gh_aw_agent" /tmp/gh-aw/agent-module/
   # gh-aw's repository checkout happens between pre-steps and pre-agent-steps,
   # so this reads the workspace copy of the scripts.
   - name: Install tools for the AWF sandbox (ripgrep, uv)

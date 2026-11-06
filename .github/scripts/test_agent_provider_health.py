@@ -214,6 +214,7 @@ class FakeGitHub(health.GitHubClient):
         self.pull_requests: dict[int, dict[str, object]] = {}
         self.branch_pulls: dict[str, list[dict[str, object]]] = {}
         self.commit_pulls: dict[str, list[dict[str, object]]] = {}
+        self.workflow_runs: dict[str, dict[str, object]] = {}
         self.reviews: dict[int, list[dict[str, object]]] = {}
         self.default_branch_calls = 0
 
@@ -226,6 +227,11 @@ class FakeGitHub(health.GitHubClient):
         if method == 'GET' and path.startswith('pulls?'):
             head = health.urllib.parse.parse_qs(path.partition('?')[2])['head'][0]
             return self.branch_pulls.get(head, [])
+        if method == 'GET' and path.removeprefix('actions/runs/').isdecimal():
+            run_id = path.removeprefix('actions/runs/')
+            if run_id not in self.workflow_runs:
+                raise health.urllib.error.HTTPError(path, 404, 'Not Found', Message(), None)
+            return self.workflow_runs[run_id]
         if method == 'POST' and path.endswith('/comments'):
             self.comments.append((int(path.split('/')[1]), str((_mapping(payload) or {}).get('body'))))
             return {}
@@ -2803,7 +2809,6 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
             task(2, 'pull_request_review:8:bbb:'),
             task(3, 'workflow_run:feature:ddd:'),
             task(4, 'pull_request:10:eee:'),
-            task(5, 'workflow_dispatch:main:fff:123'),
             task(6, 'workflow_run:gone:ggg:'),
             task(7, 'pull_request:404:hhh:'),
             _issue(8, health.IncidentMarker('workflow', 'CI Review', 'other', '8', None)),
@@ -2842,6 +2847,52 @@ def test_scheduled_recovery_retires_task_incidents_whose_pr_closed_or_moved(
         assert [(number, body.split(' This incident')[0]) for number, body in client.comments] == [
             (number, f'Retired: {reason}') for number, reason in reasons.items()
         ]
+
+
+def test_scheduled_recovery_retires_dispatch_task_incidents_once_their_run_concluded(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dispatch's task key names its run, so its incident blocks nothing once that run concludes or is deleted."""
+
+    class _UnreadableRun(FakeGitHub):
+        def request(self, method: str, path: str, payload: object | None = None) -> object:
+            if path == 'actions/runs/999':
+                raise health.urllib.error.HTTPError(path, 502, 'Bad Gateway', Message(), None)
+            return super().request(method, path, payload)
+
+    def task(number: int, key: str) -> health.Issue:
+        return _issue(number, health.IncidentMarker('task', f'Bug Hunter:Bug Hunter:{key}', 'other', str(number), None))
+
+    client = _UnreadableRun(
+        [
+            task(1, 'workflow_dispatch:main:aaa:123'),
+            task(2, 'workflow_dispatch:main:bbb:456'),
+            task(3, 'workflow_dispatch:main:ccc:789'),
+            task(4, 'schedule:main:ddd:'),
+            task(5, 'workflow_dispatch:main:eee:999'),
+        ]
+    )
+    client.workflow_runs = {
+        '123': {'status': 'completed', 'conclusion': 'failure'},
+        '456': {'status': 'in_progress', 'conclusion': None},
+    }
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+
+    # Only a run GitHub no longer has retires on a failed read; any other failure leaves the incident open.
+    assert 'Could not retire task incident #5' in capsys.readouterr().out
+    assert client.closed == [1, 3]
+    suffix = (
+        ' This incident blocked only runs with its task key, so it no longer blocks anything. '
+        'It did not record a recovery of the failed run.'
+    )
+    assert client.comments == [
+        (1, f'Retired: Dispatch run 123 concluded `failure`.{suffix}'),
+        (3, f'Retired: Dispatch run 789 no longer exists.{suffix}'),
+    ]
 
 
 def test_a_failed_retirement_write_is_retried_without_stopping_recovery(
