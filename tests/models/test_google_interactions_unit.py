@@ -639,18 +639,28 @@ async def test_uri_media_response_and_replay(
     media: str,
     allow_model_requests: None,
 ):
-    """Download URI output once, retain its URI on replay, and send edited bytes inline."""
+    """Retain persisted URI output while honoring MIME-only and byte edits on replay."""
     downloader = AsyncMock(return_value={'data': b'original', 'data_type': 'application/octet-stream'})
     monkeypatch.setattr('pydantic_ai.models.google_interactions._response.download_item', downloader)
     raw: dict[str, JsonValue] = {'type': media, 'uri': 'https://example.com/output'}
     mock_google.body['steps'] = [{'type': 'model_output', 'content': [raw]}]
     response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+    response = restored[0]
+    assert isinstance(response, ModelResponse)
     part = response.parts[0]
     assert isinstance(part, FilePart) and part.content.data == b'original'
     mock_google.body['steps'] = []
     await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
     steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
     assert steps[0] == {'type': 'model_output', 'content': [raw]}
+    part.content = BinaryContent(b'original', media_type='image/png')
+    await model_request(mock_model, [response, ModelRequest.user_text_prompt('correct MIME only')])
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+    assert steps[0] == {
+        'type': 'model_output',
+        'content': [{'type': 'image', 'uri': 'https://example.com/output', 'mime_type': 'image/png'}],
+    }
     part.content = BinaryContent(b'edited', media_type='image/png')
     await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
     steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])

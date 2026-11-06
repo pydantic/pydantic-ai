@@ -108,8 +108,13 @@ def replay_text_content(value: dict[str, JsonValue], part: TextPart) -> None:
 
 def replay_file_content(value: dict[str, JsonValue], part: FilePart) -> None:
     fingerprint = (part.provider_details or {}).get('google_interactions_content_sha256')
-    if 'data' in value or 'uri' not in value or fingerprint != hashlib.sha256(part.content.data).hexdigest():
+    original_media_type = (part.provider_details or {}).get(
+        'google_interactions_content_media_type', value.get('mime_type', part.content.media_type)
+    )
+    send_data = 'data' in value or 'uri' not in value or fingerprint != hashlib.sha256(part.content.data).hexdigest()
+    if send_data:
         value.pop('uri', None)
         value['data'] = base64.b64encode(part.content.data).decode()
+    if send_data or original_media_type != part.content.media_type:
         value['mime_type'] = part.content.media_type
         value['type'] = media_kind(part.content.media_type)

@@ -75,6 +75,7 @@ def mark_step(parts: list[ModelResponsePart], index: int) -> list[ModelResponseP
         }
         if isinstance(part, FilePart):
             part.provider_details['google_interactions_content_sha256'] = hashlib.sha256(part.content.data).hexdigest()
+            part.provider_details['google_interactions_content_media_type'] = part.content.media_type
         elif isinstance(part, TextPart):
             part.provider_details['google_interactions_text_sha256'] = hashlib.sha256(part.content.encode()).hexdigest()
     return parts
