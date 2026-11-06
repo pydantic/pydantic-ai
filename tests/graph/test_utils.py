@@ -13,6 +13,8 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from .._inline_snapshot import snapshot
 from ..conftest import undrivable_event_loop
 
+READINESS_WAIT_TIMEOUT = 300
+
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
@@ -67,7 +69,8 @@ def test_get_event_loop_closes_the_open_loops_it_installed_when_the_worker_threa
 
     thread = Thread(target=install_loops)
     thread.start()
-    thread.join()
+    thread.join(READINESS_WAIT_TIMEOUT)
+    assert not thread.is_alive()
 
     assert [loop.is_closed() for loop in loops] == [True, True, True]
 
@@ -80,20 +83,22 @@ def test_get_event_loop_leaves_a_loop_another_thread_runs_open_when_its_thread_e
     def install_loop_and_exit_once_it_runs() -> None:
         loops.append(get_event_loop())
         installed.set()
-        running.wait()
+        assert running.wait(READINESS_WAIT_TIMEOUT)
 
     installer = Thread(target=install_loop_and_exit_once_it_runs)
     installer.start()
-    installed.wait()
+    assert installed.wait(READINESS_WAIT_TIMEOUT)
     (loop,) = loops
     loop.call_soon_threadsafe(running.set)
     runner = Thread(target=loop.run_forever)
     runner.start()
-    installer.join()
+    installer.join(READINESS_WAIT_TIMEOUT)
+    assert not installer.is_alive()
 
     assert not loop.is_closed()
     loop.call_soon_threadsafe(loop.stop)
-    runner.join()
+    runner.join(READINESS_WAIT_TIMEOUT)
+    assert not runner.is_alive()
     loop.close()
 
 

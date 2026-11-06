@@ -49,7 +49,7 @@ from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
 
-READINESS_WAIT_TIMEOUT = 5
+READINESS_WAIT_TIMEOUT = 300
 
 
 @pytest.mark.parametrize(
@@ -1607,7 +1607,8 @@ def test_sync_entry_point_closes_its_event_loop_when_its_worker_thread_exits(ent
 
     thread = threading.Thread(target=run_twice)
     thread.start()
-    thread.join()
+    thread.join(READINESS_WAIT_TIMEOUT)
+    assert not thread.is_alive()
 
     first, second = loops
     assert first is second

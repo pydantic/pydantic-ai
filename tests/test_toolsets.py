@@ -751,12 +751,18 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall
+# (calls up to 187 s were seen on CI) and never decides a test's outcome.
+READINESS_WAIT_TIMEOUT = 300
+
+
 def in_process_mcp_toolset() -> MCPToolset:
-    """An `MCPToolset` connected in-process to `tests.mcp_server`, with no handshake deadline.
+    """An `MCPToolset` connected in-process to `tests.mcp_server`, with no handshake deadline of its own.
 
     A pre-built `Client` keeps fastmcp's default of no `initialize` deadline; letting `MCPToolset` build the
     client would apply its 5-second `init_timeout`, which a stalled CI worker can exceed. These tests are about
-    how `CombinedToolset` enters and exits its members, not about the transport or the handshake timing.
+    how `CombinedToolset` enters and exits its members, not about the transport or the handshake timing, so
+    each bounds its waits with `READINESS_WAIT_TIMEOUT` instead.
     """
     return MCPToolset(Client(mcp_test_server))
 
@@ -767,13 +773,14 @@ async def test_context_manager():
     server2 = in_process_mcp_toolset()
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
-    async with toolset:
-        assert server1.is_running
-        assert server2.is_running
-
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with toolset:
             assert server1.is_running
             assert server2.is_running
+
+            async with toolset:
+                assert server1.is_running
+                assert server2.is_running
 
 
 class InitializationError(Exception):
@@ -793,7 +800,7 @@ async def test_context_manager_failed_initialization():
 
     toolset = CombinedToolset([server1, server2])
 
-    with pytest.raises(InitializationError):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(InitializationError):
         async with toolset:
             pass
 
