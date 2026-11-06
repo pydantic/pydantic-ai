@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -80,9 +81,9 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     invoked: list[dict[str, object]] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        env = kwargs['env']
-        assert isinstance(env, dict)
-        config = json.loads((Path(env['XDG_CONFIG_HOME']) / 'opencode' / 'opencode.json').read_text())
+        env = TypeAdapter(dict[str, str]).validate_python(kwargs['env'])
+        config_home = env['XDG_CONFIG_HOME']
+        config = json.loads((Path(config_home) / 'opencode' / 'opencode.json').read_text())
         assert config['agents']['title']['model'] == 'opencode-go/deepseek-v4.1-flash'
         assert config['agents']['compaction']['model'] == 'opencode-go/deepseek-v4.1-flash'
         invoked.append({'args': args, **kwargs})

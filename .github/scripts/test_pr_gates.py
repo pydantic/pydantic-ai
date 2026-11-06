@@ -297,11 +297,13 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
         step for step in steps if step.name == 'Publish structured review from trusted default-branch code'
     )
     assert report == (
-        "always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && "
+        "always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || "
+        "steps.publish.outcome == 'failure') && "
         "github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
     )
     assert config_report == (
-        "always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && "
+        "always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || "
+        "steps.publish.outcome == 'failure') && "
         "github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'"
     )
     assert cleanup == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"

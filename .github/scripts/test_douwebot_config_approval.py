@@ -225,7 +225,7 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     steps = review['steps']
     publish_review = jobs['publish-review']
     assert review['permissions']['pull-requests'] == 'read'
-    assert publish_review['needs'] == ['prior-findings', 'review']
+    assert publish_review['needs'] == ['prior-findings', 'review', 'douwebot-opencode']
     assert publish_review['if'] == (
         "always() && (needs.review.result != 'skipped' || needs.prior-findings.outputs.review_url != '')"
     )

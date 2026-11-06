@@ -41,9 +41,10 @@ def test_missing_and_malformed_events_fail_closed() -> None:
     assert not is_usage_limit([{'type': 'result', 'is_error': True, 'total_cost_usd': 0}])
     assert not is_usage_limit([{'type': 'rate_limit_event', 'rate_limit_info': {'status': 'rejected'}}])
     assert not is_usage_limit([{'type': 'rate_limit_event', 'rate_limit_info': None}])
-    assert not is_usage_limit(
-        [{'type': 'rate_limit_event', 'rate_limit_info': {'status': 'rejected', 'rateLimitType': []}}]
-    )
+    malformed: list[object] = [
+        {'type': 'rate_limit_event', 'rate_limit_info': {'status': 'rejected', 'rateLimitType': []}}
+    ]
+    assert not is_usage_limit(malformed)
     assert not is_usage_limit(None)
     assert not is_usage_limit(_limit_event())
     assert not is_usage_limit([_limit_event(), _limit_event(status='allowed')])
@@ -128,7 +129,13 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     assert _OBJECT.validate_python(detector['env'])['TRUSTED_REF'] == '${{ github.sha }}'
     assert fallback['needs'] == 'review'
     assert fallback['if'] == "needs.review.result == 'success' && needs.review.outputs.fallback == 'true'"
-    assert 'douwebot-opencode' in publish['needs']
+    needs = publish['needs']
+    assert isinstance(needs, list)
+    assert 'douwebot-opencode' in needs
     publish_step = _step(publish, 'publish')
-    assert "needs.douwebot-opencode.result == 'success'" in publish_step['if']
-    assert 'needs.douwebot-opencode.outputs.result' in _OBJECT.validate_python(publish_step['env'])['REVIEW_RESULT']
+    condition = publish_step['if']
+    assert isinstance(condition, str)
+    assert "needs.douwebot-opencode.result == 'success'" in condition
+    result = _OBJECT.validate_python(publish_step['env'])['REVIEW_RESULT']
+    assert isinstance(result, str)
+    assert 'needs.douwebot-opencode.outputs.result' in result

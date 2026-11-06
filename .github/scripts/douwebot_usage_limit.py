@@ -11,21 +11,33 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TypeGuard
 
 _SUBSCRIPTION_WINDOWS = {'five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'}
 
 
+def _is_container(value: object) -> TypeGuard[list[object] | dict[object, object]]:
+    return isinstance(value, (list, dict))
+
+
 def is_usage_limit(payload: object) -> bool:
     """Return whether the last rate-limit event rejects a subscription window."""
-    if not isinstance(payload, list) or not all(
-        isinstance(message, dict) and all(isinstance(key, str) for key in message) for message in payload
-    ):
+    if not _is_container(payload) or not isinstance(payload, list):
         return False
-    events = [message for message in payload if message.get('type') == 'rate_limit_event']
+    events: list[dict[object, object]] = []
+    for message in payload:
+        if not _is_container(message) or not isinstance(message, dict):
+            return False
+        if not all(isinstance(key, str) for key in message):
+            return False
+        if message.get('type') == 'rate_limit_event':
+            events.append(message)
     if not events:
         return False
     info = events[-1].get('rate_limit_info')
-    if not isinstance(info, dict) or not all(isinstance(key, str) for key in info):
+    if not _is_container(info) or not isinstance(info, dict):
+        return False
+    if not all(isinstance(key, str) for key in info):
         return False
     if info.get('status') != 'rejected':
         return False
