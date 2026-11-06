@@ -3133,7 +3133,7 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
             return SnowflakeProvider
         case 'together':
             return TogetherProvider
-        case 'vercel':
+        case 'vercel':  # pragma: no branch
             return VercelProvider
 
 
