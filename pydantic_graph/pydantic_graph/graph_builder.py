@@ -1764,7 +1764,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             if return_type_origin is End:
                 destinations.append(self.end_node)
             elif return_type_origin is BaseNode:
-                raise exceptions.GraphSetupError(  # pragma: no cover
+                raise exceptions.GraphSetupError(
                     f'Node {node} return type hint includes a plain `BaseNode`. '
                     'Edge inference requires each possible returned `BaseNode` subclass to be listed explicitly.'
                 )
