@@ -49,6 +49,7 @@ from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT, neutralize_voice_tag
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import InstructionPart, RetryPromptPart  # pyright: ignore[reportDeprecated]
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -486,6 +487,46 @@ async def test_the_agent_model_settings_choose_the_announcement(framing_announce
     assert any(
         isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT for part in first_request.parts
     ) is (framing_announcement == 'always')
+
+
+@pytest.mark.parametrize(
+    'run_setting, announced',
+    [
+        pytest.param(None, True, id='child-setting'),
+        pytest.param('never', False, id='run-setting-wins'),
+    ],
+)
+async def test_a_fallback_childs_own_setting_resolves_like_any_other(
+    run_setting: FramingAnnouncement | None, announced: bool
+):
+    """A `FallbackModel` child's own `settings` apply unless the run sets the key, as with every other setting."""
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_system_voice = True
+
+    child = AnnouncingFunctionModel(
+        respond,
+        profile=ModelProfile(supports_inline_system_prompts=False),
+        settings={'framing_announcement': 'always'},
+    )
+    agent = Agent(FallbackModel(child), system_prompt='Be brief.')
+
+    await agent.run('Hi', model_settings={'framing_announcement': run_setting} if run_setting else None)
+
+    [[first_request]] = received
+    assert isinstance(first_request, ModelRequest)
+    assert (
+        any(
+            isinstance(part, SystemPromptPart) and part.content == SYSTEM_VOICE_ANNOUNCEMENT
+            for part in first_request.parts
+        )
+        is announced
+    )
 
 
 @pytest.mark.parametrize(
