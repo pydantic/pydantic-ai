@@ -624,11 +624,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
-    # `subprocess.run` polls with `time.sleep` while `gh auth token` runs, which the GitHub settings menu asks when it
-    # opens.
-    ('time.sleep', 'pydantic_clai2/gh_cli.py', 'gh_token'),
     # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
-    # for the module's lock while another thread, such as CLAI's import warm-up, imports it.
+    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
+    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/clai2`.
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
@@ -687,8 +685,6 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     ('pydantic_clai2/builtin_plugins/logfire.py', ('__init__', '_instrument_httpx')),
     ('pydantic_clai2/ui/telemetry.py', 'log_error'),
     ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
-    # The GitHub CLI holds the token, and the GitHub settings menu asks it whether there is one when it opens.
-    ('pydantic_clai2/gh_cli.py', 'gh_token'),
     # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
     ('tests/clai2/test_live_runtimes.py', 'folder'),
     ('tests/clai2/test_shell_passthrough.py', 'hold'),
