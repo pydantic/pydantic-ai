@@ -1235,7 +1235,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if usage is not None:
             raise UserError(
                 'Pass either `usage` or a `conversation_store`, not both: the run adds to the usage of the stored '
-                'conversation. To limit a run, pass `usage_limits`.'
+                'conversation, which `usage_limits` then limit as a whole.'
             )
         if conversation_id is None or conversation_id == 'new':
             raise UserError(

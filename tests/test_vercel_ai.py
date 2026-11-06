@@ -14741,6 +14741,32 @@ async def test_conversation_store_misuse():
         adapter.run_stream_native(conversation_id='new')
 
 
+async def test_conversation_store_usage_limits_cover_the_whole_conversation():
+    """A run counts on from the stored usage, so a limit reached by earlier turns rejects every later one."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    limits = UsageLimits(request_limit=2)
+    messages = [_HI]
+    errors: list[list[str]] = []
+    for turn in range(3):
+        adapter = VercelAIAdapter(
+            agent, SubmitMessage(id='chat', messages=messages), sdk_version=6, conversation_store=store
+        )
+        chunks = [chunk async for chunk in adapter.run_stream(usage_limits=limits)]
+        errors.append([chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)])
+        messages = [
+            *messages,
+            UIMessage(id=f'a{turn}', role='assistant', parts=[TextUIPart(text='ok')]),
+            UIMessage(id=f'u{turn}', role='user', parts=[TextUIPart(text='and then?')]),
+        ]
+
+    assert [bool(turn_errors) for turn_errors in errors] == [False, False, True]
+    assert 'request_limit of 2' in errors[-1][0]
+    assert len(requests) == 2
+    conversation = await store.load('chat')
+    assert conversation is not None and conversation.usage.requests == 2
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_dispatch_request_forwards_manage_message_history():
     agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
