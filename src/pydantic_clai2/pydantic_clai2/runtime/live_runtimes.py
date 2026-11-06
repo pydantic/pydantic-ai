@@ -52,6 +52,18 @@ class Served(Protocol):
         """Restore `resume`, load plugins, call `ready`, and take input until it ends or is cancelled."""
         ...
 
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at its prompt does."""
+        ...
+
+    def restarts_clai(self) -> bool:
+        """Whether `/reload` and `/update` restart CLAI from it."""
+        ...
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from it now; `None` when they can."""
+        ...
+
 
 Builder = Callable[[Path | None], Served]
 """Builds a session in a directory, by default the one CLAI started in, ready to `serve`."""
@@ -104,6 +116,10 @@ class LiveRuntimes(JoinedSessions):
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
+
+    def restarter(self) -> Served | None:
+        """The live session CLAI restarts from; `None` while none does, as while the terminal shows one not listed."""
+        return next((live.runtime for live in self._live.values() if live.ready and live.runtime.restarts_clai()), None)
 
     def add(self, runtime: Served) -> None:
         """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
