@@ -913,7 +913,7 @@ agent = Agent(
 )
 ```
 
-## Web tool settings
+## Web Tool Settings
 
 Anthropic's newer web tool versions have a few settings that are not shared by other providers. Pass
 the matching typed settings to each native tool:
@@ -958,7 +958,7 @@ Setting any option, even to its default value, selects Anthropic's `web_search_2
 
 On a model without dynamic filtering, these versions are sent with `allowed_callers=['direct']`, so they don't bring code execution with them; set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls, including when [citations](#web-tool-callers) route the tools to them. Results from a code execution call that paused before completing are also returned in full.
 
-Pydantic AI sends these versions to every client that offers the web tool, and leaves it to the provider's API to accept them. When we checked in November 2026, Vertex AI rejected `web_search_20260318`, so `response_inclusion` on `WebSearchTool` fails there with Vertex's own error. The Bedrock clients and web fetch on Vertex raise a `UserError` as described above. Anthropic documents only the older web tool versions on Microsoft Foundry deployments hosted on Azure, so Foundry's API may reject these settings there.
+Pydantic AI sends these versions to every client that offers the web tool, and the provider's API decides whether to accept them: on Vertex AI, `response_inclusion` on `WebSearchTool` sends `web_search_20260318`, and if Vertex doesn't accept it, the request fails with Vertex's own error. The Bedrock clients and web fetch on Vertex raise a `UserError` as described above. Anthropic documents only the older web tool versions on Microsoft Foundry deployments hosted on Azure, so Foundry's API may reject these settings there.
 
 ## Code Execution Tool Version
 

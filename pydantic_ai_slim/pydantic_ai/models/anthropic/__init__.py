@@ -414,7 +414,9 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # * `AsyncAnthropicBedrockMantle` is the Bedrock Messages API. Verified live, it rejects `web_search_20250305`,
 #   `web_search_20260209`, `web_fetch_20250910` and `web_fetch_20260209` with a 400 ("tool type ... is not
 #   supported for this model") on every Claude model it serves. https://github.com/pydantic/pydantic-ai/issues/11481
-# * Vertex AI supports basic web search only.
+# * Vertex AI supports basic web search only. Checked live in November 2026: it rejected `web_search_20260209`,
+#   `web_search_20260318` and every web fetch version. The `20260318` versions that web tool `provider_settings`
+#   select are still sent there, so Vertex's API decides as soon as it accepts them.
 # * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), and
 #   Microsoft Foundry support dynamic-filtering web tools on supported model profiles.
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
