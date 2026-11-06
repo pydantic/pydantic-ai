@@ -14,6 +14,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import TypeAdapter
 from rich.console import Console
+from termflow.ansi.utils import ANSI_ESCAPE_RE
 from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
@@ -1298,7 +1299,14 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
 def test_browser_marks_sessions_to_import() -> None:
     imported = str(uuid5(UUID(int=0), 'claude:session'))
     entries = [
-        ConversationSummary(id=imported, workspace='/w', title='From Claude Code', tags=('claude',)),
+        ConversationSummary(
+            id=imported,
+            workspace='/w',
+            title='From Claude Code',
+            tags=('claude',),
+            message_count=123,
+            total_tokens=1_234_567,
+        ),
         # CLAI's own, with a topic tag that names a source.
         ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
     ]
@@ -1325,8 +1333,13 @@ def test_browser_marks_sessions_to_import() -> None:
     assert imported_from(ConversationSummary(id='not-a-uuid', workspace='/w', tags=('claude',))) is None
     importing[0] = False
     frame = '\n'.join(browser.frame(width=100, height=20))
-    assert frame.count('Claude Code · 0 msgs') == 1 and frame.count('#claude') == 1
-    importing[0] = True
+    assert frame.count('Claude Code · 123 msgs / 1,234,567 tok') == 1 and frame.count('#claude') == 1
+    # A narrower pane drops the tokens before the source, and the source before it squeezes out the title.
+    for width, counts in ((80, 'Claude Code · 123 msgs'), (22, '123 msgs'), (22, 'to import')):
+        importing[0] = counts == 'to import'
+        frame = ANSI_ESCAPE_RE.sub('', '\n'.join(browser.frame(width=width, height=20)))
+        card = next((line for line in frame.splitlines() if '> ' in line and ' Fr' in line), frame)
+        assert card.endswith(f' {counts}') and card.count('·') == counts.count('·'), frame
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''

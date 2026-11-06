@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     TextContent,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     post_compaction_window,
 )
@@ -74,9 +75,8 @@ class Planning(AbstractCapability[AgentDepsT]):
     user channel. The history only grows, so the prompt cache and the model's earlier reasoning
     stay valid. Configure prompt caching on the model (such as `anthropic_cache`).
 
-    By default the plan lives in memory for the duration of a single run (a
-    fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
-    persist it -- e.g. `SqlitePlanStore` or `PostgresPlanStore`.
+    By default each run gets a fresh in-memory plan. Pass a `store` (or `store_resolver`)
+    to persist it, e.g. `SqlitePlanStore` or `PostgresPlanStore`.
 
     ```python
     from pydantic_ai import Agent
@@ -89,30 +89,19 @@ class Planning(AbstractCapability[AgentDepsT]):
     guidance: str | None = None
     """Static planning guidance for the system prompt. Cache-stable.
 
-    Three states, so opting out is something you do on purpose rather than by
-    accident:
-
     - `None` (the default): use the built-in guidance.
     - `''`: no guidance at all.
     - any other string: use it instead of the built-in guidance.
-
-    A single `str | None` where `None` meant "no guidance" would leave no way to
-    ask for the default explicitly, and would turn a config that resolves to
-    `None` into a silent opt-out. This matches `memory`, `exa` and
-    `runtime_authoring`, which read the same way.
     """
 
     cache_ttl: Literal['5m', '1h'] | None = None
     """Deprecated, and has no effect; configure caching on the model instead.
 
-    `Planning` used to place a cache breakpoint of its own before the plan reminder, with a `'5m'` TTL by
-    default. It no longer places one: configure caching on the model instead (such as
-    `anthropic_cache_messages`). Set to `'5m'` or `'1h'`, it warns that it's ignored.
+    Use a model setting such as `anthropic_cache_messages`. Set to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
     store: PlanStore | None = None
-    """Storage backend. `None` keeps a fresh in-memory plan per run (the original
-    ephemeral behaviour). Pass a store to persist the plan across runs."""
+    """Storage backend. `None` keeps a fresh in-memory plan per run; pass a store to persist it across runs."""
 
     store_resolver: Callable[[RunContext[AgentDepsT]], PlanStore] | None = None
     """Optional per-run store resolver, e.g. `lambda ctx: ctx.deps.plan_store`."""
@@ -357,22 +346,34 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
             continue
         for part in reversed(message.parts):
             if isinstance(part, ToolReturnPart):
-                metadata = part.metadata
-                # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
-                if (
-                    is_str_dict(metadata)
-                    and metadata.get('origin') == PLAN_ORIGIN
-                    and isinstance(plan := metadata.get('plan'), str)
-                    and isinstance(part.content, str)
-                    and plan in part.content
-                ):
-                    return plan
+                plan = _returned_plan(part)
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                for item in reversed(part.content):
-                    if (
-                        isinstance(item, TextContent)
-                        and is_str_dict(item.metadata)
-                        and item.metadata.get('origin') == PLAN_ORIGIN
-                    ):
-                        return item.content
+                plan = _recorded_plan(part.content)
+            else:
+                continue
+            if plan is not None:
+                return plan
+    return None
+
+
+def _returned_plan(part: ToolReturnPart) -> str | None:
+    """The plan a plan tool's return holds, by its metadata."""
+    metadata = part.metadata
+    # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
+    if (
+        is_str_dict(metadata)
+        and metadata.get('origin') == PLAN_ORIGIN
+        and isinstance(plan := metadata.get('plan'), str)
+        and isinstance(part.content, str)
+        and plan in part.content
+    ):
+        return plan
+    return None
+
+
+def _recorded_plan(content: Sequence[UserContent]) -> str | None:
+    """The latest plan `Planning` recorded in a user prompt's content, by its metadata."""
+    for item in reversed(content):
+        if isinstance(item, TextContent) and is_str_dict(item.metadata) and item.metadata.get('origin') == PLAN_ORIGIN:
+            return item.content
     return None

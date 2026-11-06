@@ -17,11 +17,12 @@ from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    capability_selects_child_workflow,
     conversation_id_from_run_id,
+    toolset_selects_child_workflow,
 )
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
@@ -366,7 +367,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
-        if isinstance(capability, SetToolMetadata) and is_child_workflow_metadata(capability.metadata.get('temporal')):
+        if capability_selects_child_workflow(capability, 'temporal'):
             self._child_workflow_metadata_capability = True
 
     def _selects_child_workflow(self, toolset_id: str) -> bool:
@@ -378,7 +379,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return True
         toolset = self._toolsets_by_id[toolset_id].wrapped
         assert isinstance(toolset, FunctionToolset)
-        return any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values())
+        return toolset_selects_child_workflow(toolset, 'temporal')
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""

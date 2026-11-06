@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
-from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
@@ -33,10 +32,11 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.models import AbstractModel, KnownModelName, Model, infer_model
+from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai_harness._models import is_request_response_model
 
 try:
     from browser_use.llm.base import BaseChatModel
@@ -180,10 +180,17 @@ def host_budget_exhausted() -> bool:
 
 
 def _call_usage(result: AgentRunResult[Any]) -> RequestUsage:
-    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared."""
+    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared.
+
+    Includes attempts a `FallbackModel` rejected before a response: they were billed, but are not part
+    of the response's own `usage`.
+    """
     usage = RequestUsage()
     for message in result.new_messages():
         if isinstance(message, ModelResponse):
+            for attempt in message.failed_attempts or ():
+                if attempt.usage is not None:
+                    usage += attempt.usage
             usage += message.usage
     return usage
 
@@ -263,17 +270,12 @@ class PydanticAIChatModel(BaseChatModel):
             return ChatInvokeCompletion(completion=result.output, usage=_map_usage(_call_usage(result)))
 
 
-def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
-    """Narrow a run's model without losing its provider client type."""
-    return isinstance(model, Model)
-
-
 class RunChatModel(PydanticAIChatModel):
     """Adapt the host run's model and instrumentation for a capability without an `llm`."""
 
     def __init__(self, ctx: RunContext[AgentDepsT]) -> None:
         model = ctx.model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 "BrowserUse without an `llm` runs the browser agent on the host run's model, but "
                 f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'

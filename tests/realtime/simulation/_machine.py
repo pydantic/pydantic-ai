@@ -84,13 +84,15 @@ class SessionMachine(RuleBasedStateMachine):  # pragma: lax no cover (driven onl
         handle_barge_in=st.booleans(),
         latency=st.booleans(),
         request_limit=st.one_of(st.none(), st.integers(min_value=1, max_value=6)),
-        data=st.data(),
+        # Drawn as an argument, not through `st.data()`: Hypothesis fails a `data.draw` during which the global
+        # `random` state changes, and any other thread in the test process can change it (DBOS's queue poller
+        # jitters with `random.uniform`), so the example fails once and passes on replay.
+        provider_options=st.runner().flatmap(lambda machine: machine.provider_options),
     )
     def start(
-        self, seed: int, handle_barge_in: bool, latency: bool, request_limit: int | None, data: st.DataObject
+        self, seed: int, handle_barge_in: bool, latency: bool, request_limit: int | None, provider_options: Any
     ) -> None:
         options = SessionOptions(handle_barge_in=handle_barge_in, latency=latency, request_limit=request_limit)
-        provider_options = data.draw(type(self).provider_options, label='provider_options')
         self.sim = type(self).make_simulation(seed, options, provider_options)
         note(f'{type(self.sim).__name__}(seed={seed}, options={options!r}, provider={provider_options!r})')
         self.run(self.s.start)

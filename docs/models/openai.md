@@ -198,6 +198,8 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
+`openai_service_tier` also accepts OpenAI's [`'fast'`](https://developers.openai.com/api/docs/guides/fast-mode), the newer name for `'priority'`, and [`'ultrafast'`](https://developers.openai.com/api/docs/guides/ultrafast-mode), which OpenAI only accepts on the Responses API, over both HTTP and WebSocket, and only on supported models.
+
 OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices.
 
 ### Prompt caching
@@ -380,12 +382,15 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
-A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without either setting has no recorded history, and is continued from as before.
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response without a digest, created without either setting or before digests were recorded, is treated the same way: the next request sends the full history, which costs no extra tokens, and records a digest that later requests can continue from.
+
+!!! note "Clear the ID when you edit a response's text"
+    The Responses API uses its stored copy of an item sent with its ID and ignores the text sent alongside, so a [history processor](../message-history.md#processing-message-history) that changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content` needs to set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too. This applies whether or not you use `openai_previous_response_id`.
 
 !!! warning "Redacting stored history"
     The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] to make it an HMAC.
 
-    Don't just clear `history_digest`: a response without one is trusted and continued from, while OpenAI still holds the unredacted copy. If you do strip it, also clear `provider_response_id` on the same responses, so nothing continues from them.
+    Clearing `history_digest` also works: a response without one isn't continued from, and the full history is sent instead. Either way, clear the [`id`][pydantic_ai.messages.TextPart.id] of each part you redact, or OpenAI uses its stored copy of it.
 
 Every model continuing the same conversations needs the same `history_digest_key`, including workers under [durable execution](../durable_execution/overview.md); a response recorded with a different key, or none, is resent rather than continued from. Computing the digest serializes the history on each request, which costs local work proportional to the conversation's length.
 
@@ -396,11 +401,12 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
-result1 = agent.run_sync('Tell me a joke.')
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+
+result1 = agent.run_sync('Tell me a joke.', model_settings=model_settings)
 print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
-model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
 result2 = agent.run_sync(
     'Explain?',
     message_history=result1.new_messages(),
