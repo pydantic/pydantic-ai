@@ -45,6 +45,7 @@ except ImportError as _import_error:  # pragma: no cover
         'Install it with: uv add "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
+from pydantic_ai_harness._durable import runs_function_tools_in_workflow_code
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
@@ -202,6 +203,20 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'properties': {'task': {'type': 'string'}},
     'required': ['task'],
 }
+
+
+def _runs_sub_agents_sequentially(ctx: RunContext[Any]) -> bool:
+    """Whether a durable run must dispatch sub-agents one at a time to replay their steps in order.
+
+    Sub-agents make their durable steps from workflow code, so concurrent ones would record them in
+    timing order. That is the case for engines that run function tools in workflow code, like DBOS,
+    and for a run whose tool calls are sequential, as with Absurd, pgtask and AWS Lambda.
+    """
+    if not ctx.in_durable_context:
+        return False
+    tool_manager = ctx.tool_manager
+    sequential = tool_manager is not None and tool_manager.get_parallel_execution_mode() == 'sequential'
+    return sequential or runs_function_tools_in_workflow_code(ctx)
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -808,11 +823,11 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
-            # the whole script. Sub-agents always run concurrently (the executor's defaults);
-            # durable ordering (global_sequential) lands with durability.
+            # the whole script.
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
+                global_sequential=_runs_sub_agents_sequentially(ctx),
                 portal=monty.portal,
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))

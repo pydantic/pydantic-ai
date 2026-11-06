@@ -230,6 +230,11 @@ and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
+On other durable engines, sub-agents run one at a time when they record steps in start order: under
+`DBOSDurability`, and when the run's tool calls are sequential, as they are by default with
+`AbsurdDurability`, `PGTaskDurability` and `AWSLambdaDurability`. Recovery then replays each
+sub-agent's recorded steps into the same call.
+
 ## Observability
 
 The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.

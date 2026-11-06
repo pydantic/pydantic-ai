@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, Generic
 from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolFuncContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai_harness._durable import runs_function_tools_in_workflow_code
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
     PlanCreatedEvent,
@@ -449,21 +449,6 @@ class _RecordedPlanStore(Generic[AgentDepsT]):
         return await self.operations.remove_item(self.ctx, item_id)
 
 
-def _runs_function_tools_in_workflow_code(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether this run is in durable workflow code under an engine that doesn't wrap function tools in units."""
-    if not ctx.in_durable_context or ctx.root_capability is None:
-        return False
-    in_workflow_code = False
-
-    def check(capability: AbstractCapability[AgentDepsT]) -> None:
-        nonlocal in_workflow_code
-        if isinstance(capability, BaseDurabilityCapability):
-            in_workflow_code = 'function' not in capability.engine_spec.wrapped_toolset_kinds
-
-    ctx.root_capability.apply(check)
-    return in_workflow_code
-
-
 class PlanningToolset(FunctionToolset[AgentDepsT]):
     """Plan tools registered against a `Planning` capability's resolved store.
 
@@ -516,7 +501,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         unit, like Temporal and Prefect, record no such steps, so tools keep running alongside each other.
         """
         tools = await super().get_tools(ctx)
-        if self._operations is None or not _runs_function_tools_in_workflow_code(ctx):
+        if self._operations is None or not runs_function_tools_in_workflow_code(ctx):
             return tools
         return {name: replace(tool, tool_def=replace(tool.tool_def, sequential=True)) for name, tool in tools.items()}
 

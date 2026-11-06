@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import RunContext
@@ -64,3 +66,18 @@ def in_durable_context(ctx: RunContext[Any]) -> bool:
         and capability.in_durable_context
         for capability in ctx.capabilities.values()
     )
+
+
+def runs_function_tools_in_workflow_code(ctx: RunContext[Any]) -> bool:
+    """Whether this run is in durable workflow code under an engine that doesn't wrap function tools in units."""
+    if not ctx.in_durable_context or ctx.root_capability is None:
+        return False
+    in_workflow_code = False
+
+    def check(capability: AbstractCapability[Any]) -> None:
+        nonlocal in_workflow_code
+        if isinstance(capability, BaseDurabilityCapability):
+            in_workflow_code = 'function' not in capability.engine_spec.wrapped_toolset_kinds
+
+    ctx.root_capability.apply(check)
+    return in_workflow_code
