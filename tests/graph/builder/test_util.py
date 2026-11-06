@@ -1,5 +1,7 @@
 """Tests for pydantic_graph.util module."""
 
+import pytest
+
 from pydantic_graph.util import (
     Some,
     TypeExpression,
@@ -66,6 +68,15 @@ def test_get_callable_name_does_not_stringify_when_name_is_available():
         def __repr__(self):
             calls.append('repr')
             raise RuntimeError('__repr__ should not be called')
+
+    # Exercise the guards once so a no-op ``get_callable_name`` could not make
+    # the assertion below pass vacuously.
+    guard = NamedCallable()
+    with pytest.raises(RuntimeError, match='__str__ should not be called'):
+        str(guard)
+    with pytest.raises(RuntimeError, match='__repr__ should not be called'):
+        repr(guard)
+    calls.clear()
 
     assert get_callable_name(NamedCallable()) == 'named_callable'
     assert calls == []
