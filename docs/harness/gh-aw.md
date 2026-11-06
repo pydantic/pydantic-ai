@@ -605,60 +605,24 @@ followed by an HTML comment recording the engine, its version and the model.
 
 ## Observability
 
-gh-aw keeps OTLP endpoints and authorization headers on the host. The agent sandbox
-does not receive those credentials. Configure `observability.otlp` for the host and
-set `PAI_OTEL_EXPORT_PATH` in `engine.env` to a writable shared path when Python
-agent spans are required:
+gh-aw keeps OTLP endpoints and authorization headers on the host, so the agent sandbox
+receives no telemetry credentials. Host and proxy telemetry use gh-aw's own exporters,
+configured with `observability.otlp`.
 
-```yaml
-engine:
-  id: pydantic-ai
-  env:
-    PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-observability:
-  otlp:
-    endpoint:
-      - url: https://logfire-us.pydantic.dev
-        headers:
-          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
-```
-
-When host OTLP observability is configured, the installer adds Logfire and the official
-OTLP file exporter. For standalone local-file export without host OTLP configuration,
-preinstall `logfire>=4.39.0` and `opentelemetry-exporter-otlp-json-file>=0.64b0` in a host
-workflow step. The agent-only export-path setting does not reach the host installer.
-The launcher instruments Pydantic AI and writes OTLP JSON trace payloads to the file without network export.
-Ended spans are flushed as they finish, including delegate and failed-request spans.
-The launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so
-the exported spans retain their workflow parentage and identity. A hard process kill
-can still lose spans that have not ended.
-
-Add an always-run host `post-steps` entry that sends each line unchanged to the
-configured collectors' `/v1/traces` endpoint using their host-held headers. Preserve
-long JSON-valued attributes and avoid artifact mirroring. Remove the file afterwards. The repository's
-[shared workflow configuration](https://github.com/pydantic/pydantic-ai/blob/main/.github/workflows/shared/engine-zai.md)
-contains that forwarding step. It reads the released helper's endpoint configuration
-and per-endpoint headers, then sends the private payload without the infrastructure
-exporter's attribute truncation. Keep the private span file out of artifact uploads: HTTP and
-model instrumentation can contain content intended only for the telemetry backend.
-Do not mirror these payloads into gh-aw's uploaded `otel.jsonl`.
-
-The local span file is diagnostic input from the sandbox. It does not supply
-canonical session usage, provider-health authority, or safe-output decisions.
-Host and proxy telemetry continue to use gh-aw's own exporters independently.
+When `OTEL_EXPORTER_OTLP_ENDPOINT` reaches the launcher, it instruments Pydantic AI and
+exports spans directly. gh-aw excludes that variable from the agent container, so a gh-aw
+workflow does not export Python agent spans. The launcher attaches `TRACEPARENT` and
+preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported spans keep their workflow parentage
+and identity.
 
 The launcher uses private mode-0700 Logfire configuration and data directories under
 `/tmp`, ignoring checkout settings and credentials. `console=False` prevents span
-content entering captured engine stdio. In local-file mode, `send_to_logfire=False`
-and metrics export is disabled. When an OTLP endpoint is directly available without
-local-file mode, the launcher retains direct OTLP export and
-`send_to_logfire='if-token-present'`. With neither setting, it does not configure
-Logfire.
+content entering captured engine stdio, and `send_to_logfire='if-token-present'` applies.
+Without an endpoint, it does not configure Logfire.
 
 A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
-Logfire. Calling `logfire.configure()` again replaces that configuration, including
-the local exporter. Preserve the private directories, disabled console output,
-distributed tracing and chosen export path if the agent replaces it.
+Logfire. Calling `logfire.configure()` again replaces that configuration. Preserve the
+private directories, disabled console output and distributed tracing if the agent replaces it.
 
 ### Authenticated terminal metadata
 

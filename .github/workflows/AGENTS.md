@@ -75,7 +75,7 @@ UI Security uses a formal `COMMENT` even with no new findings; incomplete covera
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, so
 `shared/engine-zai.md` sets `engine.concurrency` for every importer: one agent run at a
-time per workflow. A workflow cannot override it. gh-aw allows one `engine` across a
+time per workflow, and one per PR for `Pydantic AI UI Security Review`. A workflow cannot override it. gh-aw allows one `engine` across a
 workflow and its imports, and strict mode rejects secrets in a workflow's own
 `engine.env`.
 
@@ -269,6 +269,8 @@ root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
 passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
+`shared/engine-zai.md` also sets the agent job to GitHub's 360-minute maximum and detection to 20 minutes;
+gh-aw 1.0.1 would otherwise cap them at 60 and 10.
 The public engine also ignores `tools:` allowlists. `pydantic_ai_gh_aw_shim/agent.py` withholds the shell
 from each source that declares `bash: []`.
 

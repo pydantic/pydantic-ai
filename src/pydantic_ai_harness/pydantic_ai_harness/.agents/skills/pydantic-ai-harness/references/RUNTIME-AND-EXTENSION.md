@@ -578,10 +578,8 @@ caller-supplied `PYTHONPATH` as trusted engine configuration. Point both setting
 For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
 Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
 Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
-For Python tracing, set `engine.env.PAI_OTEL_EXPORT_PATH` to a writable shared file.
-Forward its OTLP JSON lines in host `post-steps` without truncating attributes or mirroring content, then delete it.
-Keep that private file out of artifact uploads. OTLP credentials remain on the host; diagnostic spans do not authorize outputs.
-See the engine README's observability section for the complete contract and forwarding configuration.
+OTLP credentials stay on the host, so a gh-aw workflow does not export Python agent spans.
+See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to

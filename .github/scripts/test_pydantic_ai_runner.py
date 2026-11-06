@@ -3059,6 +3059,23 @@ def test_clai2_engine_names_the_staged_shim_sources():
         assert steps[engine]['env']['LOGFIRE_SERVICE_VERSION'] == '${{ steps.workflow-policy.outputs.service-version }}'
 
 
+def test_compiled_job_limits_and_ui_security_group_match_the_previous_compiler():
+    """gh-aw 1.0.1 caps the agent job at 60 and detection at 10 minutes, which the previous compiler did not.
+
+    Stale Issues Finder's 60-minute engine step did not fit the agent cap. UI Security reviewed PRs in parallel.
+    """
+    workflows = Path(__file__).parent.parent / 'workflows'
+    ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']
+    for lock in sorted(workflows.glob('pydantic-ai-*.lock.yml')):
+        jobs = yaml.safe_load(lock.read_text(encoding='utf-8'))['jobs']
+        assert jobs['agent']['timeout-minutes'] == 360, lock.name
+        [detector] = [step for step in jobs['detection']['steps'] if str(step.get('name', '')).startswith('Execute')]
+        assert jobs['detection']['timeout-minutes'] == detector['timeout-minutes'] == 20, lock.name
+        group = jobs['agent']['concurrency']['group']
+        assert group.startswith('gh-aw-pydantic-ai-${{ github.workflow }}'), lock.name
+        assert f"github.workflow == '{ui_security}' && format('-{{0}}', github.event.pull_request.number" in group
+
+
 @pytest.mark.parametrize('chunks_before_cutoff', [0, 1])
 def test_subagent_timeout_marks_the_spans_it_cuts_off(
     chunks_before_cutoff: int, agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch

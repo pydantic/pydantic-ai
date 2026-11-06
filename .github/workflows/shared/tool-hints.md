@@ -12,10 +12,10 @@ CLAI may expose these through `run_code`; follow that tool's instructions.
 References to `Read`, `Grep`, `Glob`, `LS`, and `Bash` in task prompts refer to
 those corresponding Coder tools. `Task` remains a read-only delegate tool.
 
-**Safe outputs** -- invoke the `safeoutputs` executable through `shell`.
-For a prompt referring to `mcp__safeoutputs__TOOL`, run `safeoutputs TOOL` with
-one JSON object argument. For example, `safeoutputs noop '{"message":"No findings"}'`.
-Use `safeoutputs --help` and the tool's help to inspect the allowed schema.
+**Safe outputs** -- call the `safeoutputs_TOOL` tools the engine offers.
+A prompt's `mcp__safeoutputs__TOOL` is the `safeoutputs_TOOL` tool. Each tool's
+schema lists its allowed arguments. These tools stay available when the shell is
+not, including inside the run's final time reserve.
 Keep the workflow's output limits and required review verdict unchanged.
 
 **Parallel tool calls** — issue independent reads, searches, or lookups in the
