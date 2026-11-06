@@ -415,11 +415,14 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-haiku-5-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
+
+`claude-haiku-5-5` is bridged because `ModelParam` doesn't list it at the floor the `anthropic`
+extra declares; it arrived in a later SDK release. Drop the bridge once the floor is bumped past it.
 """
 
 DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset(
