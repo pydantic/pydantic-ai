@@ -3106,7 +3106,7 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
     """
-    match provider_name:
+    match provider_name:  # pragma: no branch
         case 'anthropic':
             return AnthropicProvider
         case 'bedrock':
