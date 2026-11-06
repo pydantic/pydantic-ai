@@ -75,11 +75,13 @@ from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import (
+    AgentMessage,
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,
     SubAgent,
     SubAgents,
+    TeamMessages,
     is_task_report,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
@@ -714,8 +716,61 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
+_TEAM_MESSAGE = 'Alice found one error in the logs.'
+
+
+def _team_messages(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A teammate's message to the idle lead, saved between the runs and delivered in the second.
+
+    Like a background task's report, it reaches the lead's next run when it would otherwise end, and adds one
+    more request.
+    """
+    owner = DelegationTasks(directory=tmp_path / 'tasks')
+
+    @asynccontextmanager
+    async def owning() -> AsyncGenerator[None]:
+        async with owner.opened():
+            with owner.bind():
+                yield
+
+    async def message() -> None:
+        await owner.send(AgentMessage(sender='alice', text=_TEAM_MESSAGE), to=None, conversation_id='parent')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _TEAM_MESSAGE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the message in history once, found {len(parts)}'
+        (part,) = parts
+        assert is_task_report(part), f'expected a framed team message, found {part!r}'
+        assert not isinstance(part.content, str)
+        (text,) = part.content
+        assert isinstance(text, TextContent) and text.content.startswith('<peer_message sender="alice"')
+
+    scenario = Scenario(
+        turns=(
+            Turn(text='I asked the team to check the logs.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Alice found one error.'),
+        ),
+        serialize_history=True,
+        run_kwargs={'conversation_id': 'parent'},
+        around=owning,
+        between_runs=message,
+    )
+    capabilities: list[AbstractCapability[Any]] = [
+        TeamMessages(owner),
+        DelegationReports(owner, conversation_id='parent'),
+    ]
+    return capabilities, scenario, delivered_once
+
+
 CONVERSATIONS = {
     'DelegationReports': _delegation_reports,
+    'TeamMessages': _team_messages,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
     ),

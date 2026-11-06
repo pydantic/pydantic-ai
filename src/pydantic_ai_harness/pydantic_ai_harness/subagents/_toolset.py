@@ -87,15 +87,13 @@ from pydantic_ai_harness.subagents._models import ModelOption, validate_restrict
 from pydantic_ai_harness.subagents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
+    SELF_AGENT_NAME,
     DelegationReports,
     DelegationTask,
     DelegationTasks,
 )
 
 logger = logging.getLogger(__name__)
-
-SELF_AGENT_NAME = 'self'
-"""The name a delegate to the running agent itself is listed and called by (`SubAgents.include_self`)."""
 
 DEFAULT_MAX_DEPTH = 3
 """Default `SubAgents.max_depth`: the top-level run, its delegates, and theirs."""

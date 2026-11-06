@@ -507,6 +507,88 @@ readers and expose no shell, code execution, or parent plugin tools.
 Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
 and child run IDs provide correlation. This owner adds no logging exporter.
 
+### Team members
+
+A `DelegationTasks` owner can also run a team: a lead (the application's own conversation) and
+named, long-lived members that the host starts, messages and wakes. Register a `member_runner` on
+the owner. It runs each turn of a member with `member_run`, which bundles what `delegate_task` sets
+up for a child: the agent to run, the capabilities that deliver the member's inbox and save its
+steps, an event stream handler that keeps its history saved and feeds the observer, and its history,
+conversation ID and run ID. A member never borrows the run that started it, which may have ended,
+so one reloaded from `directory` after a restart can still be woken.
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.subagents import (
+    AgentMessage,
+    DelegationReports,
+    DelegationTask,
+    DelegationTasks,
+    SubAgents,
+    TeamMessages,
+)
+
+tasks = DelegationTasks(directory=Path('.task-history'))
+lead_model = 'test'  # The lead's model ID.
+lead = Agent(lead_model, capabilities=[SubAgents(include_self=True), TeamMessages(tasks)])
+
+
+async def run_member(record: DelegationTask) -> str:
+    member = tasks.member_run(record, self_agent=lead)
+    # A member's own model ID, or the lead's model.
+    result = await member.run(model=member.model or lead_model)
+    return str(result.output)
+
+
+tasks.member_runner = run_member
+
+
+async def converse():
+    async with tasks.opened():
+        alice = await tasks.start(name='alice', agent_name='self', prompt='Audit the auth module.', conversation_id='c')
+        # Later, from the host or a UI: the user's words, or another agent's message.
+        await tasks.send('Also check token refresh.', to=alice.id, conversation_id='c')
+        await tasks.send(AgentMessage(sender='bob', text='See src/auth.py.'), to=alice.id, conversation_id='c')
+        with tasks.bind():
+            await lead.run('Status?', conversation_id='c', capabilities=[DelegationReports(tasks, conversation_id='c')])
+```
+
+- **Members.** `start(name=..., agent_name=..., prompt=..., conversation_id=..., model=None)` returns
+  the member's `DelegationTask` without waiting. `agent_name` is `self`, which runs the
+  `self_agent` the runner passes, or one of the owner's `agents`. One-shot agents are refused, since
+  a member must be wakeable. `model` is a model ID for the runner to resolve. A member is a
+  top-level task with no parent, so no member's tool call ever becomes another's parent, and its
+  own `delegate_task` children are owned by the owner wherever the wake came from. Names are unique
+  in their conversation, which has one team. `max_active` caps how many members run at once.
+- **Idle and wake.** A member is idle once its run settles. Its report goes to the lead's inbox
+  (`lead_inbox(conversation_id)`), not to `reports`, so a later wake can't overwrite it.
+  `send(content, to=task_id, conversation_id=...)` saves a message on the member's record first.
+  A running member reads it at its next model request, including one sent as its final response
+  settles, which wakes it again. An idle member is woken with it, as a run with no new prompt and
+  its saved history.
+- **Who wrote it.** A `str` is what the user typed, and arrives as their words. An `AgentMessage`
+  arrives framed as `<peer_message sender="..." id="...">` data, like a task's report: it never
+  enters system voice and can't pass for the user or grant their approval. The lead takes agent
+  messages only (`to=None`). Messages leave an inbox only when core confirms they entered history,
+  through `EnqueuedMessagesEvent`, kept apart from report delivery.
+- **The user's stop wins.** An agent message to a member the user stopped (`cancel`) is saved and
+  doesn't wake it; neither does one left unread by the stop. A `str` from the user clears the stop
+  and wakes it. After a failure, messages stay saved until a new message wakes the member, so a
+  failing member doesn't loop.
+- **The lead.** The lead's active run reads its inbox through `DelegationReports` once its current
+  work is done. With `lead_waker`, an idle lead gets one automated turn per `lead_wake_delay`, or as
+  soon as every member is idle, rather than one per message. Without it, the inbox waits for the
+  lead's next run.
+- **Tools.** `TeamMessages(owner)` gives the lead and every member a `send_message(to, text)` tool,
+  addressing a teammate by name or the lead as `lead`. A member's sub-agents, and any other
+  delegation, get no team tools. `delegate_task(resume=...)` refuses a member with a retry that
+  points at `send_message`, and `steer` returns `False` for one.
+- **Restarts.** A member a process exit interrupted is loaded as cancelled, its report moves to the
+  lead's inbox, and with `claims=`, the board items it held in progress go back to `pending`
+  through `MemberClaims.release`. A failed or stopped member hands its claims back the same way.
+
 ## Discovery
 
 The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.

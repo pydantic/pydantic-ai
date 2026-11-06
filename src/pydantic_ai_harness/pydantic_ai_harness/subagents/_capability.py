@@ -35,12 +35,17 @@ from pydantic_ai_harness.subagents._control import (
 )
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
-from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
+from pydantic_ai_harness.subagents._tasks import (
+    SELF_AGENT_NAME,
+    DelegationTask,
+    DelegationTasks,
+    enqueue_while_open,
+    isolated,
+)
 from pydantic_ai_harness.subagents._toolset import (
     CONTROL_TOOL_NAMES,
     CREATE_AGENT_TOOL_NAME,
     DEFAULT_MAX_DEPTH,
-    SELF_AGENT_NAME,
     RecordedDelegation,
     SubAgent,
     SubAgentToolset,
