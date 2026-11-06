@@ -26,14 +26,17 @@ from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.cli.self_update import Updates
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
 from .test_live_runtimes import until
+from .test_self_update import _updates  # pyright: ignore[reportPrivateUsage]
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -629,6 +632,39 @@ def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
     fleet.portal.call(done.wait)
     assert installed == [['now']]
     assert fleet.runtimes['b'].restarter() is fleet.launch
+
+
+def test_about_shows_how_an_install_in_the_launch_session_ended(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page that asked hears uv's output and the result, though `/update now` ran in the launch session."""
+
+    def failing(*, channel: object) -> Updates:
+        return _updates(['stable'], codes=[1], lines=['Resolving'])[0]
+
+    monkeypatch.setattr(session_runtime, 'Updates', failing)
+    fleet = make_fleet()
+    fleet.launch.updates.capture = lambda: True
+    b = fleet.new('b')
+    # As if the launch session's page had asked first: B's cancelled Update leaves it the page that hears.
+    earlier = fleet.service._update_asked = fleet.service.session(fleet.launch.session.conversation_id)  # pyright: ignore[reportPrivateUsage]
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, b)
+        for answer in ('no', 'yes'):
+            action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
+            [*_, opened] = messages(socket, until=kind('dialog'))
+            dialog_id = at(opened, 'dialog', 'id')
+            assert fleet.post(f'/api/sessions/{b}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
+            assert action.result(timeout=10).status_code == 200
+            if answer == 'no':
+                assert fleet.service._update_asked is earlier  # pyright: ignore[reportPrivateUsage]
+        uv = messages(socket, until=kind('notice', session=b, command='uv'))[-1]
+        assert (uv['text'], uv['level']) == ('Resolving', 'error')
+        result = messages(socket, until=kind('notice', session=b, command='/update now'))[-1]
+        assert result['text'] == 'uv exited with status 1; see its output above.'
+    # Told once: the launch session's next `/update now` is its own.
+    assert fleet.service._update_asked is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:
