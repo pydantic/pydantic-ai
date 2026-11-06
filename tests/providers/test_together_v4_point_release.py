@@ -106,7 +106,7 @@ async def test_together_deepseek_v4_1_forced_tool_choice_falls_back_to_auto(allo
 
         @agent.tool_plain
         def get_answer() -> str:
-            return 'ok'
+            raise AssertionError('the provider must reject the forced request before tools run')  # pragma: no cover
 
         with pytest.raises(UserError):
             await agent.run('hi')
