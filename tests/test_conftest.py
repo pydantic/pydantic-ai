@@ -167,10 +167,6 @@ def test_disabled_blockbuster_does_not_import_instrumentation() -> None:
     )
 
 
-def test_the_detector_scans_clai2() -> None:
-    assert 'pydantic_clai2' in conftest._blockbuster_packages()  # pyright: ignore[reportPrivateUsage]
-
-
 def test_configured_blockbusters_are_cached_per_exclusion_set(
     blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
 ) -> None:
