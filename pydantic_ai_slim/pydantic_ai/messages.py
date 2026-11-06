@@ -777,6 +777,24 @@ class StructuredContent(TextContent):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+def _data_uri_media_type(media_type: str) -> str:
+    """Resolve the media type of a base64 data URI (RFC 2397 section 2).
+
+    The type may be left out entirely (`data:;base64,...`), and its parameters
+    may be given without it (`data:;charset=utf-8;base64,...`). RFC 2397 reads
+    both as `text/plain`, with `charset=US-ASCII` as the default charset, so a
+    leading `;` has to be attached to that default type instead of being passed
+    on as though it were a type of its own, which is what reached the request
+    mapping and raised `Unsupported binary content type`.
+    """
+    media_type = media_type.strip()
+    if media_type.startswith(';'):
+        media_type = f'text/plain{media_type}'
+    if not media_type:
+        media_type = 'text/plain;charset=US-ASCII'
+    return media_type
+
+
 @pydantic_dataclass(
     repr=False,
     config=pydantic.ConfigDict(
@@ -853,7 +871,12 @@ class BinaryContent:
         if ';base64,' not in body:
             raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
         media_type, data = body.split(';base64,', 1)
-        return cls.narrow_type(cls(data=base64.b64decode(unquote_to_bytes(data)), media_type=media_type))
+        return cls.narrow_type(
+            cls(
+                data=base64.b64decode(unquote_to_bytes(data)),
+                media_type=_data_uri_media_type(media_type),
+            )
+        )
 
     @classmethod
     def from_path(cls, path: PathLike[str]) -> BinaryContent:

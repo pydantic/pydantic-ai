@@ -642,6 +642,30 @@ def test_from_data_uri_parameterized_media_type_round_trip():
     assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
 
 
+def test_from_data_uri_defaults_an_omitted_media_type():
+    bc = BinaryContent.from_data_uri('data:;base64,SGVsbG8=')
+    # RFC 2397: an omitted media type means text/plain with US-ASCII, not "".
+    assert bc.media_type == 'text/plain;charset=US-ASCII'
+    assert bc.data == b'Hello'
+    assert bc.data_uri == 'data:text/plain;charset=US-ASCII;base64,SGVsbG8='
+
+
+def test_from_data_uri_defaults_the_type_when_only_parameters_are_given():
+    bc = BinaryContent.from_data_uri('data:;charset=utf-8;base64,SGVsbG8=')
+    # The parameter list belongs to the default type, not to a type of its own,
+    # so the leading ";" must not survive into media_type.
+    assert bc.media_type == 'text/plain;charset=utf-8'
+    assert bc.data == b'Hello'
+    assert bc.data_uri == 'data:text/plain;charset=utf-8;base64,SGVsbG8='
+
+
+def test_from_data_uri_keeps_an_explicit_media_type():
+    assert BinaryContent.from_data_uri('data:text/plain;base64,SGVsbG8=').media_type == 'text/plain'
+    bc = BinaryContent.from_data_uri('data:text/plain;charset=utf-8;base64,SGVsbG8=')
+    assert bc.media_type == 'text/plain;charset=utf-8'
+    assert not bc.media_type.startswith(';')
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
