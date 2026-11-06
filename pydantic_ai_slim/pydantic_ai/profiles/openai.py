@@ -1,15 +1,16 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from .._json_schema import (
     InlineDefsJsonSchemaTransformer,
     JsonSchema,
     JsonSchemaTransformer,
     inline_objects,
+    resolve_json_pointer,
     split_definitions,
 )
 from ..exceptions import UserError
@@ -1052,10 +1053,27 @@ class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
 
     def walk(self) -> JsonSchema:
         inlined = InlineDefsJsonSchemaTransformer(self.schema).walk()
+        # A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, is left
+        # pointing at a definition it dropped, so such a schema keeps its `$defs`.
+        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
+            inlined = self.schema
         transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
         result = transformer.walk()
         self.is_strict_compatible = transformer.is_strict_compatible
         return result
+
+
+def _refs(node: object) -> Iterator[str]:
+    """Every `$ref` in `node`, at any depth."""
+    if isinstance(node, dict):
+        for key, value in cast(dict[str, object], node).items():
+            if key == '$ref' and isinstance(value, str):
+                yield value
+            else:
+                yield from _refs(value)
+    elif isinstance(node, list):
+        for value in cast(list[object], node):
+            yield from _refs(value)
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):

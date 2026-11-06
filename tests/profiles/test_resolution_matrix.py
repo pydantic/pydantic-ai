@@ -924,7 +924,7 @@ def test_gateway_gpt_oss_inline_defs():
         {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
     )
     assert _normalize(HuggingFaceProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
-        {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
     )
 
     # Other OpenAI ids keep each gateway's defaults.

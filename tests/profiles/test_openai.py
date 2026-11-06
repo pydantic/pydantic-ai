@@ -469,3 +469,12 @@ def test_gpt_oss_schema_transformer_inlines_defs():
     # A recursive definition can't be inlined, so it stays under `$defs`, as without inlining.
     recursive = _OrgUnit.model_json_schema()
     assert transformer(recursive).walk() == OpenAIJsonSchemaTransformer(recursive).walk()
+
+    # The inliner doesn't walk under a `type` list, so a schema with a `$ref` there keeps its `$defs` rather than
+    # sending a `$ref` to a definition that was dropped.
+    nullable_object: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
+        '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    assert transformer(nullable_object).walk() == OpenAIJsonSchemaTransformer(nullable_object).walk()
