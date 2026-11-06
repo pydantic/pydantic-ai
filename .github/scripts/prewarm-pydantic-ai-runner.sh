@@ -10,7 +10,9 @@
 # never from the workspace. A run that checks out a PR head gets `.github`
 # restored from the base branch, so the workspace pairs the base's shim with
 # the head's `pydantic_ai_slim`, and the shim dies at import on a head that
-# predates a symbol it uses. Staging that checkout is fatal: without it the
+# predates a symbol it uses. On `pull_request` and `pull_request_review` runs
+# the workflow's commit is the PR's merge commit, so those runs use the PR's
+# own shim, not the base's. Staging that checkout is fatal: without it the
 # launcher has nothing to run.
 #
 # The pre-warm itself is non-fatal: on failure the sandboxed `uv run --script`
