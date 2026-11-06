@@ -5,8 +5,6 @@ Kept free of any sandbox or kernel dependency, so each capability's optional ext
 
 from __future__ import annotations
 
-import keyword
-import re
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -14,7 +12,7 @@ from typing import Any
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ToolCallPart,
     ToolPartKind,
@@ -53,9 +51,6 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     )
 
 
-_INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
-
-
 def is_code_execution_tool(tool_def: ToolDefinition) -> bool:
     """Whether a tool executes its string argument as a program when called.
 
@@ -78,12 +73,7 @@ def sanitize_tool_name(name: str) -> str:
     Replaces hyphens, dots, and other non-identifier characters with underscores,
     prepends `_` if the result starts with a digit, appends `_` if it is a Python keyword.
     """
-    sanitized = _INVALID_IDENT_CHARS.sub('_', name)
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f'_{sanitized}'
-    if keyword.iskeyword(sanitized):
-        sanitized = f'{sanitized}_'
-    return sanitized or '_'
+    return _to_python_identifier(name)
 
 
 def partition_callable_tools(
@@ -257,6 +247,18 @@ def record_nested_call(
     if outcome.user_content:
         content = outcome.user_content
         user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
+
+
+def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Key the arguments of a sandbox call by the tool's schema property names.
+
+    A schema property whose name is a Python keyword or not an identifier (e.g. `from`, `user-id`) is
+    rendered as a sanitized parameter (`from_`, `user_id`), which the code passes as a keyword argument.
+    """
+    renamed = {param.name: name for name, param in tool_def.function_signature.params.items() if param.name != name}
+    if not renamed:
+        return kwargs
+    return {renamed.get(key, key): value for key, value in kwargs.items()}
 
 
 def signatures_and_conflicts(
