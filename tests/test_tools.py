@@ -2107,6 +2107,66 @@ def test_prepare_preserves_approval_requirement(
     assert not executed
 
 
+@pytest.mark.parametrize('added_with', ['constructor', 'add_tool'])
+def test_toolset_requires_approval_applies_to_tool_instances(added_with: Literal['constructor', 'add_tool']):
+    """`FunctionToolset(requires_approval=True)` applies to a `Tool` it is given, as it does to a plain function."""
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    if added_with == 'constructor':
+        toolset = FunctionToolset([Tool(my_tool)], requires_approval=True)
+    else:
+        toolset = FunctionToolset(requires_approval=True)
+        toolset.add_tool(Tool(my_tool))
+
+    result = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests], toolsets=[toolset]).run_sync(
+        'Run the tool'
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+    )
+    assert not executed
+
+
+def test_function_requires_approval_false_overrides_the_toolset_default():
+    """A function added with `requires_approval=False` keeps that value in a `requires_approval=True` toolset.
+
+    The function still goes through `add_tool`, so a subclass that overrides it sees every tool.
+    """
+    seen: list[str] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        def add_tool(self, tool: Tool[None]) -> None:
+            seen.append(tool.name)
+            super().add_tool(tool)
+
+    toolset = RecordingToolset(requires_approval=True)
+
+    @toolset.tool_plain(requires_approval=False)
+    def decorated() -> str:  # pragma: no cover
+        return 'decorated'
+
+    def added() -> str:  # pragma: no cover
+        return 'added'
+
+    toolset.add_function(added, requires_approval=False)
+
+    assert seen == ['decorated', 'added']
+    assert {name: tool.requires_approval for name, tool in toolset.tools.items()} == {
+        'decorated': False,
+        'added': False,
+    }
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,

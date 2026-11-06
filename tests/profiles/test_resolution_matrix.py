@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from textwrap import dedent
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -46,6 +46,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.providers import Provider
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -105,6 +106,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -211,14 +213,12 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _normalize(profile: Any) -> dict[str, Any] | None:
+def _normalize(profile: Any) -> dict[str, Any]:
     """Reduce a `ModelProfile` `TypedDict` to a dict of non-default fields.
 
     Strips keys whose value matches `_CANONICAL_DEFAULTS`, so each snapshot
     shows only what the provider/gateway actually contributes.
     """
-    if profile is None:
-        return None
     return {k: v for k, v in profile.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
 
 
@@ -396,6 +396,7 @@ def test_openai_gpt_5_4():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -453,6 +454,7 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -500,6 +502,7 @@ def test_openai_gpt_6_astra():
             'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
+            'may_tokenize_special_tokens_in_content': False,
             'openai_chat_function_tools_require_reasoning_off': True,
         }
     )
@@ -656,6 +659,7 @@ def test_openai_gpt_4o():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -688,6 +692,7 @@ def test_openai_o3_mini():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -726,6 +731,7 @@ def test_openai_codex_gpt_5_6():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': False,
+            'may_tokenize_special_tokens_in_content': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -877,6 +883,123 @@ def test_mistral_small_latest():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_5_3_inline_defs():
+    """GLM-5.3 gateway routes add only the inline-defs schema transformer, not Z.AI's native thinking settings."""
+    expected = snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(TogetherProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(NebiusProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(VercelProvider.model_profile('zai/glm-5.3')) == expected
+    assert _normalize(LiteLLMProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(OpenAICompatibleProvider.model_profile('zai-org/GLM-5.3')) == expected
+
+    fireworks_expected = snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-5p3')) == fireworks_expected
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/routers/glm-5p3-fast')) == fireworks_expected
+
+    assert _normalize(OllamaProvider.model_profile('glm-5.3')) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_other_versions_unchanged():
+    """GLM ids other than GLM-5.3 keep each gateway's default profile."""
+    assert _normalize(TogetherProvider.model_profile('zai-org/GLM-4.6')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(NebiusProvider.model_profile('zai-org/GLM-4.7')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(VercelProvider.model_profile('zai/glm-5')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    # Like any other name without a vendor profile.
+    assert OpenAICompatibleProvider.model_profile('zai-org/GLM-4.6') == OpenAICompatibleProvider.model_profile(
+        'GLM-4.6'
+    )
+    assert _normalize(OllamaProvider.model_profile('glm-4.7')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-4p6')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_zai_glm_5_3_inline_defs():
+    """Cerebras's `zai-glm-5.3` gets only the inline-defs schema transformer on top of its own reasoning settings."""
+    assert _normalize(CerebrasProvider.model_profile('zai-glm-5.3')) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'openai_chat_send_back_thinking_parts': 'tags',
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(CerebrasProvider.model_profile('zai-glm-4.7')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'openai_chat_send_back_thinking_parts': 'tags',
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_zai_glm_5_3_inline_defs():
+    """`zai-org/GLM-5.3` on Hugging Face gets the inline-defs schema transformer; other GLM ids only the route flag."""
+    assert _normalize(HuggingFaceProvider.model_profile('zai-org/GLM-5.3')) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert HuggingFaceProvider.model_profile('zai-org/GLM-4.6') == {'may_tokenize_special_tokens_in_content': True}
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_zai_glm_5_3_flash_inline_defs():
+    """The `zai-glm-5-3` family match covers Flash with inline-defs transformation; unrelated ids are untouched."""
+    expected = snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supports_inline_system_prompts': True,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+        }
+    )
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-3')) == expected
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-3-flash')) == expected
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-30')) == snapshot(
+        {'tool_call_id_length': 9, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_5_3_model_level_profile():
+    """A model-level `.profile` picks up the GLM-5.3 schema transformer through its gateway provider."""
+    model = OpenAIChatModel('zai-org/GLM-5.3', provider=TogetherProvider(api_key='test'))
+    assert model.profile.get('json_schema_transformer') is InlineDefsJsonSchemaTransformer
+
+
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     profile = CohereProvider.model_profile('command-r-plus')
@@ -898,6 +1021,7 @@ def test_deepseek_provider_deepseek_chat():
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_responses_supports_json_schema_output': True,
             'openai_chat_supports_max_reasoning_effort': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -922,6 +1046,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'thinking_enabled_by_default': True,
             'openai_responses_supports_json_schema_output': True,
             'openai_chat_supports_max_reasoning_effort': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -1395,12 +1520,14 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_control': True,
             'openrouter_supports_cache_ttl': True,
             'openrouter_supports_tool_cache': True,
             'openrouter_supports_dynamic_instruction_cache': True,
             'openrouter_max_cache_points': 4,
             'supports_forced_tool_choice_with_thinking': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1430,10 +1557,12 @@ def test_openrouter_openai_gpt_5_4():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1472,11 +1601,13 @@ def test_openrouter_google_gemini_3_pro():
             'supports_cache': True,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': True,
+            'openrouter_supports_trailing_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
             'default_cache_retention': timedelta(seconds=300),
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1519,11 +1650,13 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openrouter_supports_tool_cache': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
+            'openrouter_supports_trailing_cache_control': False,
             'supports_thinking': True,
             'supports_tool_return_schema': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_cache': True,
             'supported_cache_retentions': (),
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1545,10 +1678,12 @@ def test_openrouter_mistral_large():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1571,10 +1706,12 @@ def test_openrouter_zai_glm_5_3():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1598,10 +1735,12 @@ def test_openrouter_xai_grok_4():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1772,10 +1911,12 @@ def test_openrouter_qwen():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1796,10 +1937,12 @@ def test_openrouter_deepseek():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1820,10 +1963,12 @@ def test_openrouter_meta_llama():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1845,10 +1990,12 @@ def test_openrouter_moonshotai():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1871,10 +2018,12 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -1906,6 +2055,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1919,6 +2069,7 @@ def test_azure_mistral_prefix():
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': True,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1934,6 +2085,7 @@ def test_azure_mistral_small_latest():
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': True,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1949,6 +2101,7 @@ def test_azure_ministral_3b():
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': True,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1966,6 +2119,7 @@ def test_azure_magistral_small_latest():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': True,
             'thinking_always_enabled': True,
         }
     )
@@ -1979,6 +2133,7 @@ def test_azure_cohere_prefix():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -1994,6 +2149,7 @@ def test_azure_grok_prefix():
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2016,6 +2172,7 @@ def test_groq_moonshotai_kimi():
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2032,6 +2189,7 @@ def test_groq_meta_llama4_maverick():
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2046,6 +2204,7 @@ def test_groq_meta_llama3_no_overlay():
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2061,6 +2220,7 @@ def test_groq_deepseek():
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2083,6 +2243,7 @@ def test_groq_gpt_oss():
             'supports_inline_system_prompts': True,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2140,6 +2301,7 @@ def test_ollama_gpt_oss():
             'openai_chat_thinking_field': 'reasoning',
             'openai_supports_strict_tool_definition': False,
             'supports_forced_tool_choice': False,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2154,6 +2316,7 @@ def test_ollama_unknown_falls_back_to_overlay_only():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning',
             'openai_supports_strict_tool_definition': False,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2180,6 +2343,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'native_output_requires_schema_in_instructions': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2197,6 +2361,7 @@ def test_vllm_qwen_hf_namespace():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2231,6 +2396,7 @@ def test_vllm_unknown_falls_back_to_overlay_only():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2248,6 +2414,7 @@ def test_cerebras_qwen_reasoning():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'openai_unsupported_model_settings': ('logit_bias',),
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2259,6 +2426,7 @@ def test_cerebras_llama_non_reasoning():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'openai_unsupported_model_settings': ('logit_bias',),
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2287,6 +2455,7 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2303,6 +2472,7 @@ def test_litellm_magistral():
             'tool_call_id_length': 9,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2323,6 +2493,7 @@ def test_litellm_mistral_small_latest():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'tool_call_id_length': 9,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2366,20 +2537,28 @@ def test_fireworks_gemma():
 def test_together_qwen():
     profile = TogetherProvider.model_profile('Qwen/Qwen2.5-72B-Instruct-Turbo')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_sambanova_llama():
     profile = SambaNovaProvider.model_profile('Meta-Llama-3.3-70B-Instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_ovhcloud_llama():
     profile = OVHcloudProvider.model_profile('llama-3.3-70b-instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -2561,7 +2740,9 @@ def test_vercel_unknown_bare_name():
     """Bare names get OpenAI transformer overlay only."""
 
     profile = VercelProvider.model_profile('gpt-5.4')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -2591,6 +2772,7 @@ def test_vercel_anthropic_claude_sonnet():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2614,6 +2796,7 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2643,6 +2826,7 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2656,6 +2840,7 @@ def test_vercel_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2676,6 +2861,7 @@ def test_vercel_groq_gpt_oss():
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2715,6 +2901,7 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -2727,13 +2914,17 @@ def test_heroku_returns_openai_transformer():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_nebius_bare_name():
     profile = NebiusProvider.model_profile('some-model')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_nebius_meta_llama():
     profile = NebiusProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -2745,6 +2936,7 @@ def test_nebius_deepseek():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2753,7 +2945,11 @@ def test_nebius_deepseek():
 def test_nebius_qwen():
     profile = NebiusProvider.model_profile('Qwen/Qwen3-235B-A22B')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
@@ -2761,7 +2957,11 @@ def test_nebius_qwen():
 def test_nebius_moonshotai():
     profile = NebiusProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
@@ -2778,6 +2978,7 @@ def test_crusoe_bare_name():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2790,6 +2991,7 @@ def test_crusoe_meta_llama():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2802,6 +3004,7 @@ def test_crusoe_deepseek():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2818,6 +3021,7 @@ def test_crusoe_zai():
             'zai_supports_reasoning_effort': True,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2836,6 +3040,7 @@ def test_crusoe_harmony():
             ),
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2846,17 +3051,23 @@ def test_crusoe_harmony():
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
-def test_huggingface_bare_name_returns_none():
-    """HF requires `provider/model` form; bare name → `None`."""
+def test_huggingface_bare_name_only_gets_the_route_flag():
+    """HF requires `provider/model` form; a bare name has no family profile."""
 
-    assert _normalize(HuggingFaceProvider.model_profile('some-model')) is None
+    assert _normalize(HuggingFaceProvider.model_profile('some-model')) == {
+        'may_tokenize_special_tokens_in_content': True
+    }
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_meta_llama():
     profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
@@ -2869,6 +3080,7 @@ def test_huggingface_deepseek():
             'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2881,6 +3093,7 @@ def test_huggingface_qwen():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -2889,15 +3102,21 @@ def test_huggingface_qwen():
 def test_huggingface_moonshotai():
     profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot(
-        {'ignore_streamed_leading_whitespace': True, 'supports_inline_system_prompts': True}
+        {
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
-def test_huggingface_unknown_provider_returns_none():
-    """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
+def test_huggingface_unknown_provider_only_gets_the_route_flag():
+    """Unknown provider prefix: no fallback overlay like other gateways."""
 
-    assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
+    assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) == {
+        'may_tokenize_special_tokens_in_content': True
+    }
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -2963,6 +3182,61 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
+_RouteProvider = Literal[
+    'anthropic',
+    'bedrock',
+    'cerebras',
+    'deepseek',
+    'github-copilot',
+    'groq',
+    'heroku',
+    'litellm',
+    'nebius',
+    'ollama',
+    'openrouter',
+    'snowflake',
+    'together',
+    'vercel',
+]
+"""The provider names the forced-tool-choice route tests use."""
+
+
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
+    """The provider class behind a route name in the forced-tool-choice route tests below.
+
+    Only the requested class is looked up, so a test needs only the extras of the routes it uses.
+    """
+    match provider_name:
+        case 'anthropic':
+            return AnthropicProvider
+        case 'bedrock':
+            return BedrockProvider
+        case 'cerebras':
+            return CerebrasProvider
+        case 'deepseek':
+            return DeepSeekProvider
+        case 'github-copilot':
+            return GitHubCopilotProvider
+        case 'groq':
+            return GroqProvider
+        case 'heroku':
+            return HerokuProvider
+        case 'litellm':
+            return LiteLLMProvider
+        case 'nebius':
+            return NebiusProvider
+        case 'ollama':
+            return OllamaProvider
+        case 'openrouter':
+            return OpenRouterProvider
+        case 'snowflake':
+            return SnowflakeProvider
+        case 'together':
+            return TogetherProvider
+        case 'vercel':  # pragma: no branch
+            return VercelProvider
+
+
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
 @pytest.mark.parametrize(
     ('provider_name', 'model_name'),
@@ -2977,19 +3251,129 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
         ('snowflake', 'claude-opus-5-5'),
     ],
 )
-def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
+def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: _RouteProvider, model_name: str):
     """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
     Anthropic profile carries `supports_forced_tool_choice=False` over."""
-    provider_classes = {
-        'anthropic': AnthropicProvider,
-        'bedrock': BedrockProvider,
-        'openrouter': OpenRouterProvider,
-        'vercel': VercelProvider,
-        'github-copilot': GitHubCopilotProvider,
-        'heroku': HerokuProvider,
-        'litellm': LiteLLMProvider,
-        'snowflake': SnowflakeProvider,
-    }
-    profile = provider_classes[provider_name].model_profile(model_name)
+    profile = _route_provider(provider_name).model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice') is False
+
+
+def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
+    """Whether a route lets a forced tool choice through while the model thinks.
+
+    This is the AND of `supports_forced_tool_choice` and `supports_forced_tool_choice_with_thinking`, with an absent
+    flag counting as allowed. Routes are compared on this derived value rather than the raw flags, because a route may
+    restrict forcing unconditionally (Together on DeepSeek V4) where another restricts it only while thinking
+    (`DeepSeekProvider`).
+    """
+    profile = _route_provider(provider_name).model_profile(model_name)
+    assert profile is not None
+    return (
+        profile.get('supports_forced_tool_choice', True) is not False
+        and profile.get('supports_forced_tool_choice_with_thinking', True) is not False
+    )
+
+
+def _diverges(owner: str, why: str) -> pytest.MarkDecorator:
+    """Mark a route that disagrees with its family today; the PR that fixes it has to remove the marker."""
+    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f'{owner}: {why}')
+
+
+_CLAUDE_OPUS_5_5: tuple[_RouteProvider, str] = ('anthropic', 'claude-opus-5-5')
+_DEEPSEEK_V4: tuple[_RouteProvider, str] = ('deepseek', 'deepseek-v4-pro')
+_DEEPSEEK_V4_1: tuple[_RouteProvider, str] = ('deepseek', 'deepseek-flash')
+"""DeepSeek's API serves V4.1 Flash as `deepseek-flash`."""
+_GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
+"""gpt-oss follows the Harmony format, whose profile restricts forced tool choice."""
+
+
+@pytest.mark.skipif(
+    not (anthropic_imports() and bedrock_imports() and groq_imports() and openai_imports()),
+    reason='extras not installed',
+)
+@pytest.mark.parametrize(
+    ('reference', 'route'),
+    [
+        pytest.param(_CLAUDE_OPUS_5_5, ('bedrock', 'us.anthropic.claude-opus-5-5'), id='claude-opus-5.5-bedrock'),
+        # OpenRouter also restricts forcing while thinking, which the derived value absorbs.
+        pytest.param(_CLAUDE_OPUS_5_5, ('openrouter', 'anthropic/claude-opus-5.5'), id='claude-opus-5.5-openrouter'),
+        pytest.param(_CLAUDE_OPUS_5_5, ('vercel', 'anthropic/claude-opus-5-5'), id='claude-opus-5.5-vercel'),
+        pytest.param(_DEEPSEEK_V4, ('deepseek', 'deepseek-v4-flash'), id='deepseek-v4-deepseek-flash'),
+        # Together restricts forcing outright, as whether it honors DeepSeek's thinking toggle is unverified.
+        pytest.param(_DEEPSEEK_V4, ('together', 'deepseek-ai/DeepSeek-V4-Pro'), id='deepseek-v4-together'),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('openrouter', 'deepseek/deepseek-v4-pro'),
+            id='deepseek-v4-openrouter',
+            marks=_diverges('#12104', 'OpenRouter allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('nebius', 'deepseek-ai/DeepSeek-V4-Pro'),
+            id='deepseek-v4-nebius',
+            marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('vercel', 'deepseek/deepseek-v4-pro'),
+            id='deepseek-v4-vercel',
+            marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
+            id='deepseek-v4.1-together',
+            marks=_diverges('#12069', "Together's DeepSeek V4 guard keys on `deepseek-v4-`, which V4.1 ids miss"),
+        ),
+        # OpenRouter's `/models` lists both `deepseek/deepseek-v4.1-flash` and this dated id (checked 2026-11-04).
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('openrouter', 'deepseek/deepseek-v4.1-flash-1017'),
+            id='deepseek-v4.1-openrouter',
+            marks=_diverges('#12104', 'OpenRouter allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('nebius', 'deepseek-ai/DeepSeek-V4.1-Flash'),
+            id='deepseek-v4.1-nebius',
+            marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4_1,
+            ('vercel', 'deepseek/deepseek-v4.1-flash-1017'),
+            id='deepseek-v4.1-vercel',
+            marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4.1 thinks'),
+        ),
+        pytest.param(_GPT_OSS, ('ollama', 'gpt-oss:20b'), id='gpt-oss-ollama'),
+        pytest.param(_GPT_OSS, ('nebius', 'openai/gpt-oss-120b'), id='gpt-oss-nebius'),
+        pytest.param(
+            _GPT_OSS,
+            ('groq', 'openai/gpt-oss-120b'),
+            id='gpt-oss-groq',
+            marks=_diverges('#12101', 'Groq resolves `openai/gpt-oss-*` to the OpenAI profile, not Harmony'),
+        ),
+        pytest.param(
+            _GPT_OSS,
+            ('openrouter', 'openai/gpt-oss-120b'),
+            id='gpt-oss-openrouter',
+            marks=_diverges('#12101', 'OpenRouter resolves `openai/gpt-oss-*` to the OpenAI profile, not Harmony'),
+        ),
+        pytest.param(
+            _GPT_OSS,
+            ('together', 'openai/gpt-oss-120b'),
+            id='gpt-oss-together',
+            marks=_diverges('#12101', 'Together has no family profile for `openai/gpt-oss-*`'),
+        ),
+    ],
+)
+def test_forced_tool_choice_guard_agrees_across_routes(
+    reference: tuple[_RouteProvider, str], route: tuple[_RouteProvider, str]
+):
+    """Whether a model can be forced to call a tool is a property of the model, so every route serving it agrees.
+
+    Each route is compared with its family's first route. A route that disagrees today is a strict expected failure
+    naming the issue that owns it, so the PR fixing it has to remove its marker, and a route that agrees today fails
+    as soon as it regresses.
+    """
+    assert _forcing_allowed_while_thinking(*route) == _forcing_allowed_while_thinking(*reference)

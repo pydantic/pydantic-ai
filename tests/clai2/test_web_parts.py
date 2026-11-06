@@ -729,15 +729,19 @@ async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path)
 
 
 async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    output = io.StringIO()
     with pytest.raises(BaseExceptionGroup) as raised:
         await run_web(
             settings_for=lambda project: Settings(model='test'),
             store=SettingsStore(tmp_path / 'c.db'),
-            project=ProjectSettings(),
-            console=Console(file=io.StringIO()),
+            project=ProjectSettings(path=tmp_path / '.clai' / 'settings.json', pending={'run.permissions': 'full'}),
+            console=Console(file=output, width=200),
             resume='00000000-0000-0000-0000-000000000000',
         )
     assert raised.group_contains(LookupError, match='No saved session')
+    assert 'not applied until you approve them with /project approve in a CLAI session: permissions' in (
+        output.getvalue()
+    ), 'the launch names the project settings it leaves out'
 
 
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:

@@ -73,7 +73,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..batch_utils import FAST_BATCH_SETTINGS
-from ..conftest import try_import
+from ..conftest import try_import, without_admin_server
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
 with try_import() as logfire_installed:
@@ -1617,6 +1617,20 @@ def test_decorated_capability_requires_explicit_stable_id() -> None:
         Agent(TestModel(), name='missing_id', capabilities=[MissingId(), RecordingDurability()])
 
 
+def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
+    class OptionalId(AbstractCapability[Any]):
+        _durable_operations_need_id = False
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None:
+            pass  # pragma: no cover
+
+    agent = Agent(TestModel(), name='optional_id', capabilities=[OptionalId(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'
@@ -2367,9 +2381,8 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance

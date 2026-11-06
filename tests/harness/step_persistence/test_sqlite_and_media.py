@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -371,6 +372,36 @@ class TestSqliteWritersShareTheDatabase:
         await SqliteStepStore(database=tmp_path / 'runs.db', media_store=None).register_run(RunRecord(run_id='r1'))
         await SqliteMediaStore(database=tmp_path / 'runs.db').put(b'blob')
         assert timeouts == [30, 30]
+
+    async def test_a_connection_whose_wal_switch_fails_is_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A new database another writer holds locked can't switch to WAL, and the connection opened for it is closed.
+
+        Left open, it would be garbage-collected later, as an unclosed-database `ResourceWarning` in whatever test is
+        running then.
+        """
+        database = tmp_path / 'runs.db'
+        opened: list[sqlite3.Connection] = []
+        connect = sqlite3.connect
+
+        def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            connection = connect(*args, **{**kwargs, 'timeout': 0, 'check_same_thread': False})
+            opened.append(connection)
+            return connection
+
+        with closing(connect(database, isolation_level=None)) as writer:
+            writer.execute('CREATE TABLE unrelated (x)')
+            writer.execute('BEGIN IMMEDIATE')
+            monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await SqliteStepStore(database=database, media_store=None).register_run(RunRecord(run_id='r1'))
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                await SqliteMediaStore(database=database).put(b'blob')
+        assert len(opened) == 2
+        for connection in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match='closed database'):
+                connection.execute('SELECT 1')
 
 
 # ---------------------------------------------------------------------------

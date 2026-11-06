@@ -8,7 +8,9 @@ set -uo pipefail
 
 agent_dir="${GH_AW_AGENT_DIR:-/tmp/gh-aw/agent}"
 context_dir="${agent_dir}/github-context"
-corpus_limit=1000
+# A list that reaches the cap is rejected as incomplete, so keep the cap far above the
+# open issue and pull request counts.
+corpus_limit=10000
 issues_file="${context_dir}/open-issues.json"
 prs_file="${context_dir}/open-pull-requests.json"
 issues_tmp="${issues_file}.tmp.$$"

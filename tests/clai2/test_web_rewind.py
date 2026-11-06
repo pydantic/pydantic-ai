@@ -59,20 +59,24 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         ]:
             refused = web_.post(route, {'text': text})
             assert (refused.status_code, refused.json()) == (status, {'detail': detail})
+        assert web_.post(route, {}).status_code == 422, 'Retry is asked for with `null`, never by leaving `text` out'
         missing = web_.post('/api/rewind/nope', {'text': 'x'})
         assert (missing.status_code, missing.json()) == (
             404,
             {'detail': 'That prompt can no longer be edited: it left the conversation or predates a compaction.'},
         )
+        # Images a terminal draft holds leave no room for the prompt's: the edit is refused, and the history restored.
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(image_codec, 'MAX_PENDING_BYTES', 1)
+            patch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * len(red.data) - 1)
+            web_.shell.images.attach([red])
             refused = web_.post(route, {'text': "A'"})
             assert (refused.status_code, refused.json()) == (
                 400,
-                {'detail': 'These images exceed the 32 MiB limit; send fewer at a time.'},
+                {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
             )
-            restored = receive_until(socket, Snapshot)[1].items
-            assert [item.kind for item in restored] == ['user', 'assistant', 'turn'] * 2, 'the browser gets it back'
+            web_.shell.images.pending.clear()
+        restored = receive_until(socket, Snapshot)[1].items
+        assert [item.kind for item in restored] == ['user', 'assistant', 'turn'] * 2, 'the browser gets it back'
         assert prompts() == [('A', [image_id(red)]), ('B', [])], 'a refusal keeps the history'
 
         assert web_.post(route, {'text': " A' "}).status_code == 204
@@ -81,7 +85,8 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
         assert prompts() == [("A'", [image_id(red)])]
 
         retried = next(item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user')
-        assert web_.post(f'/api/rewind/{retried["run_id"]}', {'text': "A'"}).status_code == 204
+        # Retry sends the prompt as saved, with its image.
+        assert web_.post(f'/api/rewind/{retried["run_id"]}', {'text': None}).status_code == 204
         settle(socket)
         items = web_.get('/api/state').json()['items']
         assert [(item['kind'], item.get('text')) for item in items] == [
@@ -89,7 +94,7 @@ def test_edit_and_retry_replace_a_prompt_and_every_later_turn(make_web: MakeWeb)
             ('assistant', 'done'),
             ('turn', None),
         ]
-        assert items[0]['run_id'] != retried['run_id']
+        assert items[0]['run_id'] != retried['run_id'] and items[0]['images'] == [image_id(red)]
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
 

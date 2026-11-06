@@ -165,6 +165,12 @@ class _Collector:
         elif msg_type == 'status' and content['execution_state'] == 'idle':
             self.idle = True
 
+    def add_message(self, message: Mapping[str, Any], msg_id: str) -> None:
+        # Skips other requests' messages, such as startup `kernel_info` replies; whether any arrive
+        # during a given cell depends on timing.
+        if message['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
+            self.add(message['msg_type'], message['content'])
+
     def _write(self, text: str) -> None:
         kept = text[: max(MAX_OUTPUT_CHARS - self.size, 0)]
         if kept:
@@ -178,6 +184,41 @@ class _Collector:
             output += f'\n[output truncated: {self.dropped} more characters were dropped]'
         self.cell.output = output
         return self.cell
+
+
+@dataclass
+class _CellDeadline:
+    """When a running cell is due to be interrupted, and once it is, when its kernel is shut down."""
+
+    at: float | None
+    """A `time.monotonic()` reading, or `None` for a cell without a timeout."""
+    interrupted: bool = False
+
+    @classmethod
+    def after(cls, timeout: float | None) -> _CellDeadline:
+        return cls(None if timeout is None else time.monotonic() + timeout)
+
+    def due(self) -> Literal['interrupt', 'restart'] | None:
+        """`'interrupt'` once the timeout has passed, `'restart'` once the grace period after the interrupt has too."""
+        if self.at is not None and time.monotonic() >= self.at:
+            return 'restart' if self.interrupted else 'interrupt'
+        return None
+
+    def start_grace(self) -> None:
+        self.interrupted = True
+        self.at = time.monotonic() + _INTERRUPT_GRACE_SECS
+
+    def poll_ms(self) -> int:
+        """How long to wait for a message: the liveness poll interval, cut short by the deadline."""
+        wait = _LIVENESS_POLL_SECS
+        if self.at is not None:
+            wait = max(min(wait, self.at - time.monotonic()), 0)
+        return int(wait * 1000)
+
+    def exclude_since(self, started: float) -> None:
+        """Move the deadline back by the time since `started`, unless the cell has been interrupted."""
+        if self.at is not None and not self.interrupted:
+            self.at += time.monotonic() - started
 
 
 def _decode_image(data: Mapping[str, Any]) -> BinaryImage | None:
@@ -303,18 +344,30 @@ class IPythonKernel:
             await self._kill()
 
     async def _interrupt(self) -> None:
-        # Unset only while the run holding the lock is still starting the kernel.
+        # Unset only while the run holding the lock is starting or stopping the kernel.
         if self._manager is not None:  # pragma: no branch
             await self._manager.interrupt_kernel()
 
     async def _kill(self) -> None:
-        # Unset only while the run holding the lock is still starting the kernel.
+        # Unset only while the run holding the lock is starting or stopping the kernel.
         if self._manager is not None:  # pragma: no branch
-            await self._manager.shutdown_kernel(now=True)
+            await self._shutdown_kernel(self._manager)
+
+    async def _shutdown_kernel(self, manager: _KernelManager) -> None:
+        # `_kill()` runs without `_lock`, so the run holding it can find the process gone and stop the kernel
+        # too. jupyter-client fails the later of two overlapping `shutdown_kernel()` calls with
+        # `InvalidStateError`; one after the other, both succeed.
+        async with self._shutdown_lock:
+            await manager.shutdown_kernel(now=True)
 
     @cached_property
     def _lock(self) -> anyio.Lock:
         """Serializes cells, created on first use so it binds to the event loop that uses the kernel."""
+        return anyio.Lock()
+
+    @cached_property
+    def _shutdown_lock(self) -> anyio.Lock:
+        """Serializes stopping the kernel process, which `_kill()` does without holding `_lock`."""
         return anyio.Lock()
 
     async def _ensure_started(self) -> None:
@@ -349,12 +402,16 @@ class IPythonKernel:
     async def _stop(self) -> None:
         manager, client, context = self._manager, self._client, self._context
         self._manager = self._client = self._context = None
-        if client is not None:
-            client.stop_channels()
-        if manager is not None:
-            await manager.shutdown_kernel(now=True)
-        if context is not None:
-            context.destroy(linger=0)
+        try:
+            if client is not None:
+                client.stop_channels()
+            if manager is not None:
+                await self._shutdown_kernel(manager)
+        finally:
+            # Also when stopping is cancelled or fails: nothing else holds the context now, and the garbage
+            # collector would find it unclosed later, in unrelated code.
+            if context is not None:
+                context.destroy(linger=0)
 
     async def _execute(
         self,
@@ -381,7 +438,7 @@ class IPythonKernel:
                     return defined
             return await self._run_cell(code, call_function=call_function, timeout=timeout)
 
-    async def _run_cell(  # noqa: C901
+    async def _run_cell(
         self,
         code: str,
         *,
@@ -390,7 +447,8 @@ class IPythonKernel:
         timeout: float | None = None,
     ) -> CellResult:
         manager, client = self._manager, self._client
-        assert manager is not None and client is not None, 'the kernel is started before a cell runs'
+        assert manager is not None, 'the kernel is started before a cell runs'
+        assert client is not None, 'the kernel is started before a cell runs'
         # `stop_on_error=False`: by default ipykernel aborts the requests queued behind a cell that fails,
         # which would drop the next call's cell after a timeout or a cancelled run interrupted this one.
         msg_id = client.execute(code, silent=silent, store_history=not silent, allow_stdin=True, stop_on_error=False)
@@ -399,63 +457,70 @@ class IPythonKernel:
         poller.register(iopub, zmq.POLLIN)
         poller.register(stdin, zmq.POLLIN)
         collector = _Collector()
-        deadline = None if timeout is None else time.monotonic() + timeout
-        interrupted = False
+        deadline = _CellDeadline.after(timeout)
         try:
             while not collector.idle:
                 # Checked every iteration, not only when the kernel is quiet: a cell that keeps printing
                 # never leaves the poll empty.
-                if deadline is not None and time.monotonic() >= deadline:
-                    if interrupted:
+                match deadline.due():
+                    case 'restart':
                         await self._stop()
                         return CellResult(outcome='restarted')
-                    await manager.interrupt_kernel()
-                    interrupted = True
-                    deadline = time.monotonic() + _INTERRUPT_GRACE_SECS
-                wait = _LIVENESS_POLL_SECS
-                if deadline is not None:
-                    wait = max(min(wait, deadline - time.monotonic()), 0)
-                events = dict(await poller.poll(int(wait * 1000)))
-                if not events:
-                    if not await manager.is_alive():
-                        await self._stop()
-                        return CellResult(outcome='died')
-                    continue
-
+                    case 'interrupt':
+                        await manager.interrupt_kernel()
+                        deadline.start_grace()
+                    case None:
+                        pass
+                events = dict(await poller.poll(deadline.poll_ms()))
+                if not events and not await manager.is_alive():
+                    await self._stop()
+                    return CellResult(outcome='died')
                 if stdin in events:
-                    request = await client.get_stdin_msg(timeout=0)
-                    # A request from an earlier, interrupted cell can't arrive: interrupting it ends its wait.
-                    if request['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
-                        prompt: str = request['content']['prompt']
-                        reply = ''
-                        if call_function is not None and prompt.startswith(self._token):
-                            started = time.monotonic()
-                            reply = await call_function(prompt[len(self._token) :])
-                            if deadline is not None and not interrupted:
-                                deadline += time.monotonic() - started
-                        client.input(reply)
+                    await self._answer_input_request(client, msg_id, call_function, deadline)
                 if iopub in events:
-                    message = await client.get_iopub_msg(timeout=0)
-                    # Skips other requests' messages, such as startup `kernel_info` replies; whether any arrive
-                    # during a given cell depends on timing.
-                    if message['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
-                        collector.add(message['msg_type'], message['content'])
+                    collector.add_message(await client.get_iopub_msg(timeout=0), msg_id)
         except BaseException:
             # The run was cancelled mid-cell: stop the cell so a kernel that outlives the run is free.
             with anyio.CancelScope(shield=True):
-                # Unset only when stopping the kernel itself failed.
-                if self._manager is not None:  # pragma: no branch
-                    if await manager.is_alive():
-                        await self._interrupt_abandoned_cell(msg_id)
-                    else:
-                        # `shutdown()` killed it while this cell waited on a tool call; close the channels.
-                        await self._stop()
+                await self._abandon_cell(manager, msg_id)
             raise
         cell = collector.finish()
-        if interrupted:
+        if deadline.interrupted:
             # Also when the code caught the `KeyboardInterrupt` and finished: it ran past the timeout.
             cell.outcome = 'interrupted'
         return cell
+
+    async def _answer_input_request(
+        self,
+        client: AsyncKernelClient,
+        msg_id: str,
+        call_function: Callable[[str], Awaitable[str]] | None,
+        deadline: _CellDeadline,
+    ) -> None:
+        """Answer the cell's next `input_request`, with `call_function`'s reply when the cell called a function.
+
+        The time `call_function` takes moves `deadline` back.
+        """
+        request = await client.get_stdin_msg(timeout=0)
+        # A request from an earlier, interrupted cell can't arrive: interrupting it ends its wait.
+        if request['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
+            prompt: str = request['content']['prompt']
+            reply = ''
+            if call_function is not None and prompt.startswith(self._token):
+                started = time.monotonic()
+                reply = await call_function(prompt[len(self._token) :])
+                deadline.exclude_since(started)
+            client.input(reply)
+
+    async def _abandon_cell(self, manager: _KernelManager, msg_id: str) -> None:
+        """Free the kernel from a cell whose run was cancelled, interrupting the cell or closing a dead kernel's channels."""
+        # Unset only when stopping the kernel itself failed.
+        if self._manager is not None:  # pragma: no branch
+            if await manager.is_alive():
+                await self._interrupt_abandoned_cell(msg_id)
+            else:
+                # `shutdown()` killed it while this cell waited on a tool call; close the channels.
+                await self._stop()
 
     async def _interrupt_abandoned_cell(self, msg_id: str) -> None:
         """Interrupt a cell whose run was cancelled, and stop the kernel if the cell keeps running.

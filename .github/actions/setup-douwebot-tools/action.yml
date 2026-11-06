@@ -1,0 +1,49 @@
+name: Set up douwebot fallback tools
+description: Restore or install the pinned OpenCode CLI, ripgrep, and Python dependencies.
+inputs:
+  save-cache:
+    description: Save a cache on a push event after installing tools.
+    default: 'false'
+outputs:
+  cache-hit:
+    description: Whether the exact tool cache was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Select tool cache key
+      id: key
+      shell: bash
+      run: |
+        echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+        echo "python=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" >> "$GITHUB_OUTPUT"
+
+    - name: Restore fallback tools
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/douwebot-tools
+        key: douwebot-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.image }}-${{ steps.key.outputs.python }}-${{ hashFiles('.github/actions/setup-douwebot-tools/action.yml') }}
+
+    - name: Install fallback tools on cache miss
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        tools="$RUNNER_TEMP/douwebot-tools"
+        mkdir -p "$tools/bin"
+        if ! command -v rg >/dev/null; then
+          sudo apt-get update && sudo apt-get install -y ripgrep
+        fi
+        cp "$(command -v rg)" "$tools/bin/rg"
+        npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
+        python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
+
+    # A pull_request_target run can restore the default-branch cache but cannot populate it.
+    # Save only on push, before a reviewer processes any PR content.
+    - name: Save fallback tools
+      if: inputs.save-cache == 'true' && github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/douwebot-tools
+        key: ${{ steps.restore.outputs.cache-primary-key }}

@@ -7,6 +7,7 @@ from typing import overload
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -19,6 +20,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -71,6 +73,7 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
         'moonshotai': moonshotai_model_profile,
         'x-ai': grok_model_profile,
         'qwen': qwen_model_profile,
+        'zai-org': _glm_5_3_schema_profile,
     }
     profile = None
     if '/' in model_name:
@@ -79,7 +82,11 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
             profile = vendor_profile(model_suffix)
     if profile is None:
         profile = openai_model_profile(model_name)
-    return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+    return merge_profile(
+        OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+        profile,
+        special_token_route_profile('openai-compatible', model_name),
+    )
 
 
 class OpenAICompatibleProvider(_OpenAISDKProvider):
