@@ -15,9 +15,6 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
-  # Runs the `activation` job in the `ui-security-review` Environment. The
-  # Environment has no required reviewers, so a run starts without approval.
-  manual-approval: ui-security-review
 # Only run the review when the PR touches the UI
 # security surface. Non-UI PRs skip the activation chain, so the agent reports
 # "skipped" (= success for required checks) and never blocks merge.
