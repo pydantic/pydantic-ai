@@ -90,6 +90,7 @@ from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 from pydantic_clai2.runtime.worktrees import new_worktree
+from pydantic_clai2.ui.menus.update_menu import VERSION
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -134,6 +135,8 @@ class WebService:
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
+        self._update_asked: SessionChannel | None = None
+        """The page whose About entered `/update now`, maybe in another session, which hears how it ends too."""
         self._channels: dict[str, SessionChannel] = {}
         """By `LiveSession.id`."""
         self._chosen: str | None = None
@@ -382,6 +385,10 @@ class WebService:
     def command_ended(self, event: CommandEnd) -> None:
         channel = self.current()
         channel.command_ended(event)
+        if event.text.split() == ['/update', 'now'] and (asked := self._update_asked) is not None:
+            self._update_asked = None
+            if asked is not channel:
+                asked.command_ended(event)
         self.settings_changed(channel)
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
@@ -403,7 +410,11 @@ class WebService:
         else:
             if self._uv_output:
                 level = 'error' if event.stage == 'failed' else 'info'
-                self.current().publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
+                notice = Notice(text='\n'.join(self._uv_output), level=level, command='uv')
+                channel = self.current()
+                channel.publish(notice)
+                if (asked := self._update_asked) is not None and asked is not channel:
+                    asked.publish(notice)
             self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
         self.hub.publish(UpdateChanged(update=self.update))
 
@@ -561,7 +572,18 @@ class WebService:
     ) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
         action = partial(run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
-        return await self._edit_command(session, name, action, path)
+        if (name, key) != ('update', VERSION):
+            return await self._edit_command(session, name, action, path)
+        # About's Update enters `/update now` in the session CLAI restarts from, which may finish before this returns.
+        self._update_asked = session
+        try:
+            edited = await self._edit_command(session, name, action, path)
+        except BaseException:
+            self._update_asked = None
+            raise
+        if not edited.messages:  # Cancelled: nothing was entered.
+            self._update_asked = None
+        return edited
 
     async def _edit_command(
         self,
