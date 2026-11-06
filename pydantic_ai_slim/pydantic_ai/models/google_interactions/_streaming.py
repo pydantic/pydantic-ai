@@ -54,6 +54,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     )
     _media_steps: set[int] = field(init=False, default_factory=set[int])
     _deferred_events: list[gi.InteractionSSEEvent] = field(init=False, default_factory=list[gi.InteractionSSEEvent])
+    _pending_mcp_calls: set[str] = field(init=False, default_factory=set[str])
 
     def __post_init__(self) -> None:
         self._stream = _utils.PeekableAsyncStream(self._response)
@@ -75,17 +76,24 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             raise UnexpectedModelBehavior('Google Interactions stream ended before `interaction.completed`.')
 
     def _ready_events(self, event: gi.InteractionSSEEvent) -> Iterable[gi.InteractionSSEEvent]:
-        if isinstance(event, gi.ErrorEvent) or not (self._deferred_events or self._is_mcp_candidate(event)):
+        candidate = self._is_mcp_candidate(event)
+        if isinstance(event, gi.ErrorEvent) or not (self._deferred_events or candidate):
             return (event,)
         # A namespace alone does not prove execution. Retain event order until results establish it.
+        if candidate:
+            assert isinstance(event, gi.StepStart) and isinstance(event.step, gi.FunctionCallStep)
+            self._pending_mcp_calls.add(event.step.id)
+        elif isinstance(event, gi.StepStart) and isinstance(event.step, gi.FunctionResultStep):
+            self._pending_mcp_calls.discard(event.step.call_id)
         self._deferred_events.append(event)
-        if not isinstance(event, gi.InteractionCompletedEvent):
+        if self._pending_mcp_calls and not isinstance(event, gi.InteractionCompletedEvent):
             return ()
         self._server_calls.update(
             mcp_server_names(value.step for value in self._deferred_events if isinstance(value, gi.StepStart))
         )
         events = self._deferred_events
         self._deferred_events = []
+        self._pending_mcp_calls.clear()
         return events
 
     def _is_mcp_candidate(self, event: gi.InteractionSSEEvent) -> bool:

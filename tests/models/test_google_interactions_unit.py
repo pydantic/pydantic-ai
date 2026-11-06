@@ -32,8 +32,10 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
@@ -43,11 +45,13 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -729,7 +733,7 @@ async def test_uri_media_response_and_replay(
     media: str,
     allow_model_requests: None,
 ):
-    """Pin serialized URI, MIME and byte edits that cassette request matching does not inspect."""
+    """Pin inline replay of URI media, with MIME and byte edits, that cassette request matching does not inspect."""
     raw: dict[str, JsonValue] = {
         'type': media,
         'uri': 'https://example.com/output',
@@ -747,13 +751,16 @@ async def test_uri_media_response_and_replay(
     mock_google.body['steps'] = []
     await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
     steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
-    assert steps[0] == {'type': 'model_output', 'content': [raw]}
+    assert steps[0] == {
+        'type': 'model_output',
+        'content': [{'type': media, 'mime_type': 'application/octet-stream', 'data': 'b3JpZ2luYWw='}],
+    }
     part.content = BinaryContent(b'original', media_type='image/png')
     await model_request(mock_model, [response, ModelRequest.user_text_prompt('correct MIME only')])
     steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
     assert steps[0] == {
         'type': 'model_output',
-        'content': [{'type': 'image', 'uri': 'https://example.com/output', 'mime_type': 'image/png'}],
+        'content': [{'type': 'image', 'data': 'b3JpZ2luYWw=', 'mime_type': 'image/png'}],
     }
     part.content = BinaryContent(b'edited', media_type='image/png')
     await model_request(mock_model, [response, ModelRequest.user_text_prompt('continue')])
@@ -773,6 +780,81 @@ async def test_uri_only_output_requires_inline_delivery(
     mock_google.body['steps'] = [{'type': 'model_output', 'content': [{'type': media, 'uri': uri}]}]
     with pytest.raises(UnexpectedModelBehavior, match='requires inline delivery with store=False'):
         await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+
+
+@pytest.mark.parametrize(
+    'case,error',
+    [
+        ('user_input_step', 'does not match its message part'),
+        ('document_as_text', 'Invalid content part'),
+        ('thought_summary_uri', 'cannot replay a file URI'),
+        ('mcp_result_uri', 'cannot replay a file URI'),
+    ],
+)
+async def test_client_history_cannot_replay_file_uris(
+    mock_model: GoogleInteractionsModel, case: str, error: str, allow_model_requests: None
+):
+    """Forge client history no provider response produces, so sanitized history cannot make Google read a file."""
+    system = mock_model.system
+    document: dict[str, JsonValue] = {
+        'type': 'document',
+        'uri': 'gs://private/secret.pdf',
+        'mime_type': 'application/pdf',
+    }
+    index: dict[str, JsonValue] = {'google_interactions_step_index': 0, 'google_interactions_content_index': 0}
+    cases: dict[str, tuple[list[ModelResponsePart], list[JsonValue]]] = {
+        'user_input_step': (
+            [ThinkingPart('', provider_name=system, provider_details=index)],
+            [{'type': 'user_input', 'content': [document]}],
+        ),
+        'document_as_text': (
+            [TextPart('', provider_name=system, provider_details=index)],
+            [{'type': 'model_output', 'content': [document]}],
+        ),
+        'thought_summary_uri': (
+            [ThinkingPart('', signature='sig', provider_name=system, provider_details=index)],
+            [{'type': 'thought', 'signature': 'sig', 'summary': [{**document, 'type': 'image'}]}],
+        ),
+        'mcp_result_uri': (
+            [
+                NativeToolCallPart(
+                    'mcp_server:files',
+                    {},
+                    'call',
+                    provider_name=system,
+                    provider_details={
+                        'type': 'mcp_server_tool_call',
+                        'id': 'call',
+                        'name': 'read',
+                        'server_name': 'files',
+                    },
+                ),
+                NativeToolReturnPart(
+                    'mcp_server:files',
+                    [{**document, 'type': 'image'}],
+                    'call',
+                    provider_name=system,
+                    provider_details={
+                        'type': 'mcp_server_tool_result',
+                        'call_id': 'call',
+                        'name': 'read',
+                        'server_name': 'files',
+                    },
+                ),
+            ],
+            [],
+        ),
+    }
+    parts, steps = cases[case]
+    response = ModelResponse(
+        parts,
+        provider_name=system,
+        canonical_system=mock_model.canonical_system,
+        provider_details={'google_interactions_steps': steps},
+    )
+    history = sanitize_messages([ModelRequest.user_text_prompt('hello'), response])
+    with pytest.raises(UnexpectedModelBehavior, match=error):
+        await model_request(mock_model, [*history, ModelRequest.user_text_prompt('continue')])
 
 
 async def test_citations_and_error_metadata(
@@ -902,32 +984,106 @@ async def test_compaction_history_uses_the_portable_summary(mock_model: GoogleIn
     'resolution',
     ['MEDIA_RESOLUTION_UNSPECIFIED', 'MEDIA_RESOLUTION_LOW', 'MEDIA_RESOLUTION_MEDIUM', 'MEDIA_RESOLUTION_HIGH'],
 )
-async def test_video_resolution_and_per_file_overrides(mock_model: GoogleInteractionsModel, resolution: str):
+async def test_video_resolution_and_per_file_overrides(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, resolution: str, allow_model_requests: None
+):
     """Inspect video wire controls and precedence without relying on model descriptions of sampled frames."""
-    resolution = MediaResolution(resolution)
-    video = BinaryContent(
-        b'video', media_type='video/mp4', vendor_metadata={'start_offset': '0s', 'end_offset': '1s', 'fps': 1}
+    settings: GoogleInteractionsModelSettings = {'google_video_resolution': MediaResolution(resolution)}
+    expected = resolution.removeprefix('MEDIA_RESOLUTION_').lower()
+    default_resolution = None if expected == 'unspecified' else expected
+    cases: list[tuple[dict[str, object], dict[str, JsonValue] | None, str | None]] = [
+        (
+            {'start_offset': '0s', 'end_offset': '1s', 'fps': 1},
+            {'type': 'static', 'start_offset': '0s', 'end_offset': '1s', 'fps': 1},
+            default_resolution,
+        ),
+        (
+            {
+                'start_offset': '0s',
+                'end_offset': '1s',
+                'fps': 1,
+                'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+                'media_processing': {'type': 'static', 'fps': 0.5},
+            },
+            {'type': 'static', 'fps': 0.5},
+            'ultra_high',
+        ),
+        ({'media_resolution': {}}, None, default_resolution),
+        ({'media_resolution': 'MEDIA_RESOLUTION_HIGH'}, None, 'high'),
+    ]
+    video = BinaryContent(b'video', media_type='video/mp4')
+    for metadata, processing, per_file_resolution in cases:
+        video.vendor_metadata = metadata
+        await model_request(mock_model, [ModelRequest(parts=[UserPromptPart([video])])], model_settings=settings)
+        steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[0]['content'])[0]
+        assert content.get('processing') == processing
+        assert content.get('resolution') == per_file_resolution
+
+
+@pytest.mark.parametrize('parallel_calls', [False, True])
+async def test_namespaced_mcp_text_streams_before_completion(parallel_calls: bool):
+    """Inject the ambiguous MCP wire format; the recorded server uses explicit MCP step types."""
+    calls: list[str] = ['call', 'parallel-call'] if parallel_calls else ['call']
+    steps: list[dict[str, JsonValue]] = [
+        {'type': 'function_call', 'id': call_id, 'name': 'docs:lookup', 'arguments': {}} for call_id in calls
+    ]
+    steps.extend(
+        {
+            'type': 'function_result',
+            'call_id': call_id,
+            'name': 'docs:lookup',
+            'result': [{'type': 'text', 'text': 'found'}],
+        }
+        for call_id in calls
     )
-    mapped = await mock_model._map_file(video, video_resolution=resolution)  # pyright: ignore[reportPrivateUsage]
-    assert mapped.get('processing') == {'type': 'static', 'start_offset': '0s', 'end_offset': '1s', 'fps': 1}
-    expected = resolution.value.removeprefix('MEDIA_RESOLUTION_').lower()
-    if expected == 'unspecified':
-        assert 'resolution' not in mapped
-    else:
-        assert mapped.get('resolution') == expected
-    video.vendor_metadata = {
-        'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
-        'media_processing': {'type': 'static', 'fps': 0.5},
-    }
-    mapped = await mock_model._map_file(video, video_resolution=resolution)  # pyright: ignore[reportPrivateUsage]
-    assert mapped.get('resolution') == 'ultra_high'
-    assert mapped.get('processing') == {'type': 'static', 'fps': 0.5}
-    video.vendor_metadata = {'media_resolution': {}}
-    mapped = await mock_model._map_file(video, video_resolution=resolution)  # pyright: ignore[reportPrivateUsage]
-    assert mapped.get('resolution') == (None if expected == 'unspecified' else expected)
-    video.vendor_metadata = {'media_resolution': 'MEDIA_RESOLUTION_HIGH'}
-    mapped = await mock_model._map_file(video, video_resolution=resolution)  # pyright: ignore[reportPrivateUsage]
-    assert mapped.get('resolution') == 'high'
+    values: list[dict[str, JsonValue]] = []
+    for index, step in enumerate(steps):
+        values.extend(
+            [
+                {'event_type': 'step.start', 'index': index, 'step': step},
+                {'event_type': 'step.stop', 'index': index},
+            ]
+        )
+    values.extend(
+        [
+            {'event_type': 'step.start', 'index': len(steps), 'step': {'type': 'model_output'}},
+            {'event_type': 'step.delta', 'index': len(steps), 'delta': {'type': 'text', 'text': 'first'}},
+            {'event_type': 'step.delta', 'index': len(steps), 'delta': {'type': 'text', 'text': ' second'}},
+            {'event_type': 'step.stop', 'index': len(steps)},
+            {'event_type': 'interaction.completed', 'interaction': {'id': 'interaction', 'status': 'completed'}},
+        ]
+    )
+    completed = False
+
+    async def source() -> AsyncIterator[gi.InteractionSSEEvent]:
+        nonlocal completed
+        async for event in iter_events(values):
+            completed = isinstance(event, gi.InteractionCompletedEvent)
+            yield event
+
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')]),
+        source(),
+        'gemini-test',
+        'google',
+        'https://example.com',
+    )
+    text: list[str] = []
+    async for event in response:
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            assert not completed
+            text.append(event.part.content)
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
+            assert not completed
+            text.append(event.delta.content_delta)
+    assert text == ['first', ' second']
+    parts = response.get().parts
+    assert len(parts) == len(steps) + 1
+    assert all(
+        isinstance(part, NativeToolCallPart) and part.tool_name == 'mcp_server:docs' for part in parts[: len(calls)]
+    )
+    assert all(isinstance(part, NativeToolReturnPart) for part in parts[len(calls) : -1])
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1259,7 +1415,6 @@ async def test_mcp_images_redact_and_replay(
         {'type': 'text', 'text': 'found'},
         {'type': 'image', 'mime_type': 'image/png', 'data': encoded, 'resolution': 'low'},
         {'type': 'image', 'data': encoded},
-        {'type': 'image', 'uri': 'https://example.com/image.png'},
     ]
     result: dict[str, JsonValue] = {
         'type': 'mcp_server_tool_result' if explicit else 'function_result',

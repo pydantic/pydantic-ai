@@ -37,13 +37,14 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
     """Keep opaque fields and boundaries, updating only the represented parts the caller changed."""
     raw = _JSON_OBJECT.validate_python(original)
     part = parts[0]
-    if isinstance(part, ThinkingPart):
+    step_type = raw.get('type')
+    if isinstance(part, ThinkingPart) and step_type == 'thought':
         replay_thought(raw, part)
-    elif isinstance(part, ToolCallPart):
+    elif isinstance(part, ToolCallPart) and step_type == 'function_call':
         raw.update(
             id=part.tool_call_id, name=part.tool_name, arguments=_JSON_OBJECT.validate_python(part.args_as_dict())
         )
-    elif isinstance(part, (TextPart, FilePart)):
+    elif isinstance(part, (TextPart, FilePart)) and step_type == 'model_output':
         raw['content'] = replay_content(raw, parts)
     elif isinstance(part, NativeToolCallPart):
         validate_native_step(raw, part)
@@ -54,6 +55,12 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
         raw['result'] = replay_native_result(part)
     else:
         raise UnexpectedModelBehavior('Persisted Google Interactions step does not match its message part.')
+    # Persisted steps come from history a client may control. A file URI would make Google read that
+    # object with the application's credentials, bypassing `sanitize_messages`, so media replays inline.
+    for key in ('content', 'summary', 'result'):
+        items = raw.get(key)
+        if isinstance(items, list) and any(isinstance(item, dict) and 'uri' in item for item in items):
+            raise UnexpectedModelBehavior('Persisted Google Interactions history cannot replay a file URI.')
     _STEP.validate_python(raw)
     return raw
 
@@ -107,9 +114,9 @@ def replay_content(raw: dict[str, JsonValue], parts: list[ModelResponsePart]) ->
         if not isinstance(index, int) or not 0 <= index < len(original):
             raise UnexpectedModelBehavior('Invalid content index in persisted Google Interactions history.')
         value = dict(original[index])
-        if isinstance(part, TextPart):
+        if isinstance(part, TextPart) and value.get('type') == 'text':
             replay_text_content(value, part)
-        elif isinstance(part, FilePart):
+        elif isinstance(part, FilePart) and value.get('type') in ('image', 'audio', 'video', 'document'):
             replay_file_content(value, part)
         else:
             raise UnexpectedModelBehavior('Invalid content part in persisted Google Interactions history.')
@@ -129,14 +136,8 @@ def replay_text_content(value: dict[str, JsonValue], part: TextPart) -> None:
 
 
 def replay_file_content(value: dict[str, JsonValue], part: FilePart) -> None:
-    fingerprint = (part.provider_details or {}).get('google_interactions_content_sha256')
-    original_media_type = (part.provider_details or {}).get(
-        'google_interactions_content_media_type', value.get('mime_type', part.content.media_type)
-    )
-    send_data = 'data' in value or 'uri' not in value or fingerprint != hashlib.sha256(part.content.data).hexdigest()
-    if send_data:
-        value.pop('uri', None)
-        value['data'] = base64.b64encode(part.content.data).decode()
-    if send_data or original_media_type != part.content.media_type:
+    value.pop('uri', None)
+    value['data'] = base64.b64encode(part.content.data).decode()
+    if value.get('mime_type', 'application/octet-stream') != part.content.media_type:
         value['mime_type'] = part.content.media_type
         value['type'] = media_kind(part.content.media_type)

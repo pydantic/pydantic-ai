@@ -194,10 +194,12 @@ Video inputs support YouTube URLs, `vendor_metadata` keys `start_offset`, `end_o
 the shared `google_video_resolution` setting. Per-file `vendor_metadata['media_resolution']` takes
 precedence over that default. It uses the same `{'level': 'MEDIA_RESOLUTION_HIGH'}` shape as
 `GoogleModel`, including `MEDIA_RESOLUTION_ULTRA_HIGH` where supported by the chosen model.
+Explicit `vendor_metadata['media_processing']` replaces the static processing inferred from
+`start_offset`, `end_offset` and `fps`.
 
-Native tool results can contain files on supported models. Recordings made in November 2026 show
-PDF, MP3 audio and MP4 video results succeeding on Gemini 3.8 Flash and Gemini 4 Argon, although
-the October 31 probe on [#6192](https://github.com/pydantic/pydantic-ai/issues/6192) rejected PDF and audio.
+Native tool results accept PDF, MP3 audio and MP4 video for the Gemini 3.8 Flash and Gemini 4 Argon
+families, as defined by [`google_interactions_model_profile`][pydantic_ai.profiles.google.google_interactions_model_profile].
+This support has expanded since the [initial PDF/audio probes](https://github.com/pydantic/pydantic-ai/issues/6192).
 Other models retain the conservative GenerateContent MIME profile; unsupported result files are
 sent in a framed user turn that identifies their originating tool call.
 

@@ -552,7 +552,7 @@ class GoogleInteractionsModel(Model[Client]):
                     context.steps.append({'type': 'user_input', 'content': context.tool_files})
                     context.tool_files = []
             elif isinstance(message, ModelResponse):
-                context.steps.extend(await self._map_model_response(message, video_resolution=video_resolution))
+                context.steps.extend(await self._map_model_response(message, context))
             else:
                 assert_never(message)
         if parts := self._get_instruction_parts(messages, params):
@@ -568,7 +568,7 @@ class GoogleInteractionsModel(Model[Client]):
             case UserPromptPart():
                 await self._map_user_prompt_part(part, context)
             case ToolReturnPart():
-                result, files = await self._map_tool_return(part, video_resolution=context.video_resolution)
+                result, files = await self._map_tool_return(part, context)
                 context.steps.append(result)
                 context.tool_files.extend(files)
             case InstructionBaselinePart() | InstructionDeltaPart():
@@ -582,12 +582,10 @@ class GoogleInteractionsModel(Model[Client]):
         context.instructions.append(part.content)
 
     async def _map_user_prompt_part(self, part: UserPromptPart, context: _MapMessagesContext) -> None:
-        if content := await self._map_user_prompt(part, video_resolution=context.video_resolution):
+        if content := await self._map_user_prompt(part, context):
             context.steps.append({'type': 'user_input', 'content': content})
 
-    async def _map_user_prompt(
-        self, part: UserPromptPart, *, video_resolution: MediaResolution | None = None
-    ) -> list[gi.ContentParam]:
+    async def _map_user_prompt(self, part: UserPromptPart, context: _MapMessagesContext) -> list[gi.ContentParam]:
         if isinstance(part.content, str):
             return [{'type': 'text', 'text': part.content}] if part.content else []
         content: list[gi.ContentParam] = []
@@ -600,13 +598,13 @@ class GoogleInteractionsModel(Model[Client]):
             elif isinstance(item, CachePoint):
                 continue
             elif isinstance(item, (FileUrl, BinaryContent, UploadedFile)):
-                content.append(await self._map_file(item, video_resolution=video_resolution))
+                content.append(await self._map_file(item, context))
             else:
                 assert_never(item)
         return content
 
     async def _map_file(
-        self, item: FileUrl | BinaryContent | UploadedFile, *, video_resolution: MediaResolution | None = None
+        self, item: FileUrl | BinaryContent | UploadedFile, context: _MapMessagesContext
     ) -> gi.ContentParam:
         if isinstance(item, UploadedFile):
             _utils.validate_uploaded_file_provider(
@@ -629,7 +627,7 @@ class GoogleInteractionsModel(Model[Client]):
             else:
                 value = {'uri': item.url, 'mime_type': item.media_type}
         value['type'] = media_kind(str(value['mime_type']))
-        self._apply_file_metadata(value, item.vendor_metadata or {}, video_resolution)
+        self._apply_file_metadata(value, item.vendor_metadata or {}, context.video_resolution)
         return _CONTENT_PARAM.validate_python(value)
 
     def _apply_file_metadata(
@@ -661,7 +659,7 @@ class GoogleInteractionsModel(Model[Client]):
             )
 
     async def _map_tool_return(
-        self, part: ToolReturnPart, *, video_resolution: MediaResolution | None = None
+        self, part: ToolReturnPart, context: _MapMessagesContext
     ) -> tuple[dict[str, JsonValue], list[gi.ContentParam]]:
         content: list[gi.ContentParam] = []
         fallback_files: list[MultiModalContent] = []
@@ -670,7 +668,7 @@ class GoogleInteractionsModel(Model[Client]):
             if isinstance(item, str):
                 content.append({'type': 'text', 'text': item})
             elif item.media_type in supported_mime_types:
-                content.append(await self._map_file(item, video_resolution=video_resolution))
+                content.append(await self._map_file(item, context))
             else:
                 fallback_files.append(item)
         files: list[gi.ContentParam] = []
@@ -679,7 +677,7 @@ class GoogleInteractionsModel(Model[Client]):
                 wrap_if_error=False
             )
             content.append({'type': 'text', 'text': text})
-            files = await self._map_user_prompt(UserPromptPart(user_content), video_resolution=video_resolution)
+            files = await self._map_user_prompt(UserPromptPart(user_content), context)
         result: _FunctionResultStep = {
             'type': 'function_result',
             'name': part.tool_name,
@@ -690,7 +688,7 @@ class GoogleInteractionsModel(Model[Client]):
         return JSON_OBJECT.validate_python(result), files
 
     async def _map_model_response(
-        self, message: ModelResponse, *, video_resolution: MediaResolution | None = None
+        self, message: ModelResponse, context: _MapMessagesContext
     ) -> list[gi.StepParam | dict[str, JsonValue]]:
         original = replay_steps(message) if self.accepts_stateless_artifacts(message) else None
         groups: dict[int, list[ModelResponsePart]] = {}
@@ -709,11 +707,11 @@ class GoogleInteractionsModel(Model[Client]):
                     steps.append(replay_step(original[index], groups[index]))
                     sent.add(index)
                 continue
-            steps.extend(await self._map_response_part(message, part, video_resolution=video_resolution))
+            steps.extend(await self._map_response_part(message, part, context))
         return steps
 
     async def _map_response_part(
-        self, message: ModelResponse, part: ModelResponsePart, *, video_resolution: MediaResolution | None = None
+        self, message: ModelResponse, part: ModelResponsePart, context: _MapMessagesContext
     ) -> list[gi.StepParam | dict[str, JsonValue]]:
         if isinstance(part, CompactionPart):
             return []
@@ -730,7 +728,7 @@ class GoogleInteractionsModel(Model[Client]):
             case ToolCallPart():
                 steps.extend(self._map_tool_call_part(part))
             case FilePart():
-                steps.extend(await self._map_file_part(part, video_resolution=video_resolution))
+                steps.extend(await self._map_file_part(part, context))
             case NativeToolCallPart() | NativeToolReturnPart():
                 steps.extend(self._map_native_part(message, part))
             case SpeechPart():
@@ -747,12 +745,8 @@ class GoogleInteractionsModel(Model[Client]):
             {'type': 'function_call', 'id': part.tool_call_id, 'name': part.tool_name, 'arguments': part.args_as_dict()}
         ]
 
-    async def _map_file_part(
-        self, part: FilePart, *, video_resolution: MediaResolution | None = None
-    ) -> list[gi.StepParam]:
-        return [
-            {'type': 'model_output', 'content': [await self._map_file(part.content, video_resolution=video_resolution)]}
-        ]
+    async def _map_file_part(self, part: FilePart, context: _MapMessagesContext) -> list[gi.StepParam]:
+        return [{'type': 'model_output', 'content': [await self._map_file(part.content, context)]}]
 
     def _map_native_part(
         self, message: ModelResponse, part: NativeToolCallPart | NativeToolReturnPart
