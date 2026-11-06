@@ -430,7 +430,8 @@ async def test_add_reachable_configured_bridges():
     assert await g.build().run(inputs=2) == [4, 6]
 
 
-async def test_add_reachable_shared_step():
+@pytest.mark.parametrize('use_second', [False, True])
+async def test_add_reachable_shared_step(use_second: bool):
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
 
     @dataclass
@@ -463,9 +464,10 @@ async def test_add_reachable_shared_step():
         ) -> Annotated[StepNode[IntegrationState, None], shared]:
             return shared.as_node(self.value)
 
+    g.add_reachable(First, Second, First)
     g.add_reachable(First, Second)
-    g.add_reachable(First, Second)
-    g.add(g.edge_from(g.start_node).transform(lambda ctx: First(ctx.inputs)).to(First))
+    root_type = Second if use_second else First
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: root_type(ctx.inputs)).to(root_type))
     graph = g.build(validate_graph_structure=False)
     state = IntegrationState()
     assert await graph.run(state=state, inputs=7) == 7
