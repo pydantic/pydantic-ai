@@ -199,10 +199,10 @@ class ModelProfile(TypedDict, total=False):
     """
 
     default_framing_announcement: FramingAnnouncement
-    """When this model gets the announcement of what `<system>` blocks and lookalike notes mean, where the `framing_announcement` setting isn't set. Default: `'when_needed'`.
+    """The model's default for the `framing_announcement` setting. Default: `'when_needed'`.
 
     The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting wins when
-    it's set; this is the model's default for it. Only meaningful where `supports_inline_system_prompts` is `False`.
+    it's set. Only meaningful where `supports_inline_system_prompts` is `False`.
 
     `'when_needed'` sends the same request as `'always'` once a conversation has something to explain, and the same
     request as `'never'` before that. Set to `'always'` for Claude Sonnet 4.6 and gpt-oss, which measured worse
