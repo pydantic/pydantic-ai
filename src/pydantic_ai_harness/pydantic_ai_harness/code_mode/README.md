@@ -631,8 +631,8 @@ calls and their results.
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
-The `run_code` description lists the standard library modules Monty 1.5 can import, and earlier
-releases serve workers over WebSockets, so run the worker on `pydantic-monty>=1.5.0`.
+Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
+client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
 
 ## Temporal durability
 

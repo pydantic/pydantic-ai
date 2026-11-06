@@ -789,7 +789,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: an `http://` or `https://` server root URL with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
