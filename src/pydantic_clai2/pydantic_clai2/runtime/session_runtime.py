@@ -1300,33 +1300,49 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.waiting(self.session.summary.id):
-                    continue
-                with self._handling_input():
-                    async with self.forks.busy():
-                        if await self._turn(None):
-                            return 'exit'
-                continue
+                reason = await self._automated_turn()
             except KeyboardInterrupt:
-                if self.interrupts.press():
-                    return 'exit'
-                self.console.print(
-                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
-                )
-                continue
+                reason = self._input_interrupted()
             except EOFError:
                 return 'eof'
-            self.images.notice = ''
-            if not text:
-                continue
-            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
-            if self.prompt is None:
-                print_prompt(self.console, text)
             else:
-                self.console.print()
-            with self._handling_input():
-                if await self._dispatch_input(text):
+                reason = await self._handle_submission(text)
+            if reason is not None:
+                return reason
+
+    async def _automated_turn(self) -> SessionEndReason | None:
+        """Run the turn a waiting task's report starts, if this session still waits on a task; `'exit'` ends it."""
+        if not self.tasks.waiting(self.session.summary.id):
+            return None
+        with self._handling_input():
+            async with self.forks.busy():
+                if await self._turn(None):
                     return 'exit'
+        return None
+
+    def _input_interrupted(self) -> SessionEndReason | None:
+        """Ctrl-C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
+        if self.interrupts.press():
+            return 'exit'
+        self.console.print(
+            'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+        )
+        return None
+
+    async def _handle_submission(self, text: str) -> SessionEndReason | None:
+        """Echo and run a line submitted at the prompt, skipping an empty one; `'exit'` ends the session."""
+        self.images.notice = ''
+        if not text:
+            return None
+        # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+        if self.prompt is None:
+            print_prompt(self.console, text)
+        else:
+            self.console.print()
+        with self._handling_input():
+            if await self._dispatch_input(text):
+                return 'exit'
+        return None
 
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
