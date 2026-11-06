@@ -598,8 +598,8 @@ agent = Agent(
 
 Each worker is a gRPC stream to the server. The client always calls the same method at the server
 root, so a URL with a path, query, or fragment raises a `UserError` when the run starts.
-`ws://` and `wss://` URLs from earlier releases still work: Monty reads them as `http://` and
-`https://`.
+`ws://` and `wss://` URLs from earlier releases still work at the server root, because Monty reads
+them as `http://` and `https://`. Remove any path they carry, such as `/monty`.
 
 A URL connects without a key. To send metadata such as an `authorization` header, or to set other
 pool options, pass a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`

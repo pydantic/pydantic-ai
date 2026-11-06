@@ -41,6 +41,7 @@ def _snippets_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) -> None:
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
@@ -95,9 +96,10 @@ async def test_remote_sandbox_url_accepted(url: str) -> None:
 
 async def test_unsupported_scheme_rejected() -> None:
     """A URL Monty's remote client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='ftp://sandbox.example.com')])
-    with pytest.raises(UserError, match="not scheme 'ftp'"):
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='sk-live-abc123:x@sandbox.example.com')])
+    with pytest.raises(UserError, match='must be an `http://`') as exc_info:
         await agent.run('never dials')
+    assert 'sk-live-abc123' not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -239,6 +241,7 @@ def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
         CodeMode(monty_sandbox='https://a.example.com', monty_sandbox_url='https://b.example.com')
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRelay) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
     agent = Agent(

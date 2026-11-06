@@ -32,10 +32,10 @@ class _RawCodec(CodecBase):
     def __content_subtype__(self) -> str:
         return 'proto'
 
-    def encode(self, message: Any, message_type: Any) -> bytes:
+    def encode(self, message: Any, message_type: Any) -> bytes:  # pragma: no cover -- only bridged sessions (#8824)
         return message
 
-    def decode(self, data: bytes, message_type: Any) -> Any:
+    def decode(self, data: bytes, message_type: Any) -> Any:  # pragma: no cover -- only bridged sessions (#8824)
         return data
 
 
@@ -52,7 +52,7 @@ class MontyRelay:
     def __mapping__(self) -> dict[str, Handler]:
         return {SESSION_METHOD: Handler(self._session, Cardinality.STREAM_STREAM, bytes, bytes)}
 
-    async def drop_streams(self) -> None:
+    async def drop_streams(self) -> None:  # pragma: no cover -- only the skipped #8824 tests bridge a session
         """Reset every open stream, as a lost worker connection does."""
         await asyncio.gather(*(stream.cancel() for stream in self._streams))
 
@@ -61,6 +61,9 @@ class MontyRelay:
         self.metadata.append({key: value for key, value in stream.metadata.items() if isinstance(value, str)})
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
+        return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
+
+    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:  # pragma: no cover -- only the skipped #8824 tests
         self._streams.append(stream)
         child = await asyncio.create_subprocess_exec(
             find_monty_binary(), 'subprocess', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE

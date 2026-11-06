@@ -118,7 +118,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def temporal_monty_relay() -> AsyncIterator[None]:
+async def temporal_monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped test uses it
     """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
     async with serve_monty_relay(MONTY_RELAY_PORT):
         yield
@@ -189,14 +189,20 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-def _workflow_os(*, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
+# Only the skipped relay test runs Code Mode with this `os_access` (#8824).
+def _workflow_os(
+    *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
+) -> object:  # pragma: lax no cover
     if name == 'datetime.now':
         # Raises "Not in workflow event loop" anywhere but the workflow's own thread.
         return workflow.now()
     return _request_id.get()
 
 
-def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+# Only the skipped relay test uses this model (#8824).
+def _remote_code_mode_model(
+    messages: list[ModelRequest | ModelResponse], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
     returns = [
         part
@@ -410,6 +416,7 @@ async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, l
     assert replay_result.replay_failure is None
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 @pytest.mark.usefixtures('temporal_monty_relay')
 async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.

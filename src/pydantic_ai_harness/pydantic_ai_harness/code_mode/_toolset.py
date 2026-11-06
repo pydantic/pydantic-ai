@@ -117,7 +117,7 @@ def _check_monty_sandbox_url(url: str) -> None:
     parts = urlsplit(url)
     # Monty reads `ws://` and `wss://`, its schemes before 1.5, as `http://` and `https://`.
     if parts.scheme not in ('http', 'https', 'ws', 'wss'):
-        raise UserError(f'`monty_sandbox` must be an `http://` or `https://` URL, not scheme {parts.scheme!r}.')
+        raise UserError('`monty_sandbox` must be an `http://`, `https://`, `ws://`, or `wss://` URL.')
     # The client calls one fixed gRPC method at the server root, so it rejects anything after the host.
     if parts.path not in ('', '/') or '?' in url or '#' in url:
         raise UserError(
@@ -789,7 +789,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: an `http://` or `https://` server root URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
+    """Where sandboxed code runs: an `http://` or `https://` server root URL with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
