@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
@@ -53,6 +53,7 @@ from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles.groq import GroqModelProfile
+from pydantic_ai.settings import ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -60,7 +61,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_im
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import APIConnectionError, APIError, APIStatusError, AsyncGroq
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, NotGiven
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -118,6 +119,7 @@ class MockGroq:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     base_url: str = 'https://api.groq.com'
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     @cached_property
     def chat(self) -> Any:
@@ -136,8 +138,9 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -659,7 +662,11 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -686,7 +693,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1180,6 +1187,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -5489,7 +5497,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5531,7 +5543,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5779,7 +5791,11 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id='chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37',
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5975,6 +5991,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6026,6 +6043,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6269,3 +6287,67 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+def get_mock_chat_completion_kwargs(mock_client: AsyncGroq) -> list[dict[str, Any]]:
+    return cast(MockGroq, mock_client).chat_completion_kwargs
+
+
+@pytest.mark.parametrize(
+    ('service_tier', 'expected'),
+    [
+        ('auto', 'auto'),
+        ('default', 'on_demand'),
+        ('flex', 'flex'),
+        ('priority', NOT_GIVEN),
+    ],
+)
+async def test_groq_unified_service_tier_mapped_values(
+    allow_model_requests: None,
+    service_tier: ServiceTier,
+    expected: str | NotGiven,
+) -> None:
+    """The unified `service_tier` is mapped onto Groq's tiers; `priority` has no Groq equivalent."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(model)
+
+    await agent.run('hello', model_settings=GroqModelSettings(service_tier=service_tier))
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expected is NOT_GIVEN:
+        assert request['service_tier'] is NOT_GIVEN
+    else:
+        assert request['service_tier'] == expected
+
+
+async def test_groq_service_tier_override_takes_precedence(allow_model_requests: None) -> None:
+    """`groq_service_tier` takes precedence over the unified `service_tier` mapping."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(model)
+
+    await agent.run(
+        'hello',
+        model_settings=GroqModelSettings(service_tier='flex', groq_service_tier='performance'),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'performance'
+
+
+async def test_groq_service_tier_comes_from_response(allow_model_requests: None) -> None:
+    """The non-streamed response's `service_tier` is surfaced in `provider_details`."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c.model_copy(update={'service_tier': 'on_demand'}))
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('hello')
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'}
+    )
