@@ -631,6 +631,25 @@ def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
     assert fleet.runtimes['b'].restarter() is fleet.launch
 
 
+def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:
+    """The launch session refuses while another runs a turn: the asking page's own turn counts, as the restart ends it."""
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['b'] = Gate(portal, 'b')
+        return {'b': gates['b'].agent()}
+
+    fleet = make_fleet(agents)
+    b = fleet.new('b')
+    assert fleet.post(f'/api/sessions/{b}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['b'].started.wait)
+    response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == '1 other session is running a turn; try again when it finishes.'
+    fleet.portal.call(gates['b'].release.set)
+    fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
+
+
 def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: MakeFleet) -> None:
     """While the terminal shows a session not live here, no session restarts CLAI, so About's Update says where."""
     fleet = make_fleet()
