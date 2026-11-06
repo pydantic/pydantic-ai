@@ -19,7 +19,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import Band, Spill, ToolOutputLimits, Truncate
-from tests.conftest import detach_dbos_logging
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
@@ -29,9 +29,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_tool_output_limits',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance

@@ -146,6 +146,17 @@ class Budget(Generic[AgentDepsT]):
                 raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
         if self.tokens is not None and self.tokens <= 0:
             raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
+        self._check_retain()
+        if self.warn_at is not None:
+            if not 0 < self.warn_at <= 1:
+                raise UserError(f'Budget.warn_at must be a fraction in (0, 1]; got {self.warn_at!r}.')
+            if not self.enforces:
+                raise UserError(
+                    f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
+                    'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
+                )
+
+    def _check_retain(self) -> None:
         if isinstance(self.retain, timedelta):
             if self.retain <= timedelta(0):
                 raise UserError(
@@ -159,14 +170,6 @@ class Budget(Generic[AgentDepsT]):
             raise UserError(
                 f'Budget.retain must be a timedelta or one of {sorted(_RETAIN_POLICIES)}; got {self.retain!r}.'
             )
-        if self.warn_at is not None:
-            if not 0 < self.warn_at <= 1:
-                raise UserError(f'Budget.warn_at must be a fraction in (0, 1]; got {self.warn_at!r}.')
-            if not self.enforces:
-                raise UserError(
-                    f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
-                    'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
-                )
 
     @property
     def enforces(self) -> bool:

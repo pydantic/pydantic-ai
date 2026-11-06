@@ -95,9 +95,9 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
+    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'update'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    args = _parse_args(parser)
     _resume_source(args)
     _validate_args(args, parser)
     if args.database is not None:
@@ -142,6 +142,7 @@ def run(*, splash: Splash | None = None) -> None:
             store,
             model=model,
             request_limit=args.request_limit,
+            agent=agent is not None,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
             agent_model=agent is not None and agent.model is not None and not model,
         )
@@ -208,7 +209,7 @@ def run(*, splash: Splash | None = None) -> None:
                     settings_for=settings_for,
                 )
             )
-            offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands)
+            offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(
@@ -230,6 +231,16 @@ def run(*, splash: Splash | None = None) -> None:
     except KeyboardInterrupt:
         if args.prompt is not None or args.web or args.update:
             raise SystemExit(130) from None
+
+
+def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """Normalize the update command before validating modes and session options."""
+    args = parser.parse_args()
+    while args.command == 'update':
+        # `clai2 update` is `clai2 --update`; options after it parse as they would before it.
+        parser.parse_args(args.arguments, namespace=args)
+        args.update = True
+    return args
 
 
 async def _update(channel: 'UpdateChannel') -> int:
@@ -261,11 +272,16 @@ async def _update(channel: 'UpdateChannel') -> int:
 
 
 def _settings_for(
-    store: 'SettingsStore', *, model: str | None, request_limit: int | None, agent_model: bool = False
+    store: 'SettingsStore',
+    *,
+    model: str | None,
+    request_limit: int | None,
+    agent: bool = False,
+    agent_model: bool = False,
 ) -> 'Callable[[ProjectSettings], Settings]':
     """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
 
-    With `agent_model`, no model: the `--agent` agent's own one is used.
+    With `agent`, launched with `--agent`: code mode off. With `agent_model`, no model: the agent's own one is used.
     """
     from pydantic_clai2.config import resolve_settings
 
@@ -275,6 +291,8 @@ def _settings_for(
             overrides['model'] = model
         if request_limit is not None:
             overrides['run.request_limit'] = request_limit
+        if agent:
+            overrides |= {'run.code_mode': False, 'run.speculative_code_mode': False}
         settings = resolve_settings(overrides)
         return settings.model_copy(update={'model': None}) if agent_model else settings
 

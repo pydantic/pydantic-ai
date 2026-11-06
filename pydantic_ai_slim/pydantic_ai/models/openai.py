@@ -966,7 +966,7 @@ class _ResponsesCreateParams(TypedDict):
     max_output_tokens: int | Omit
     temperature: float | Omit
     top_p: float | Omit
-    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    service_tier: responses.ServiceTier | Omit
     conversation: str | Omit
     top_logprobs: int | Omit
     store: bool | Omit | None
@@ -1192,11 +1192,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     (as `text.verbosity`). Parameter support can differ depending on the model.
     """
 
-    openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
+    openai_service_tier: responses.ServiceTier
     """The service tier to use for the model request.
 
-    Currently supported values are `auto`, `default`, `flex`, and `priority`.
-    For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    `fast` is OpenAI's newer name for `priority`. OpenAI only accepts `ultrafast` on the Responses API.
+    For more information, see [OpenAI's service tiers documentation](https://developers.openai.com/api/reference/resources/responses/methods/create).
     """
 
     openai_prediction: ChatCompletionPredictionContentParam
@@ -1391,7 +1391,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     chosen while it and those messages are unchanged: each response created with this setting, or with
     `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
-    history processor or compaction has changed either since, the full history is sent instead.
+    history processor or compaction has changed either since, the full history is sent instead. The same goes
+    for a response without a digest, as there's no telling whether it has changed.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -1498,7 +1499,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
-) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+) -> responses.ServiceTier | Omit:
     """Resolve the value to send as `service_tier` on the OpenAI request.
 
     Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
@@ -1965,7 +1966,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=_resolve_openai_service_tier(model_settings),
+                    # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
+                    service_tier=cast(Any, _resolve_openai_service_tier(model_settings)),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -3981,24 +3983,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
         The server created it from the history the suspended response recorded, so if that, or the suspended response,
-        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
-        matches, so it isn't continued from.
+        has changed since, or it recorded none, none is returned: the merged response keeps the suspended one's digest,
+        if any, which no longer matches, so it isn't continued from.
         """
-        if self._history_changed(suspended, history):
+        if not self._history_known_unchanged(suspended, history):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
-    def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response`, or `history`, the messages before it, changed since the response was created.
+    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `response`, and `history`, the messages before it, are as they were when the response was created.
 
-        A response with no recorded digest, from before it was recorded or from a request that didn't
-        continue server-side state, is trusted as before.
+        Without a recorded digest there's no telling, so a response that has none doesn't count.
         """
         if response.history_digest is None:
             return False
-        return all(
+        return any(
             response.history_digest
-            != _continuation_digest(
+            == _continuation_digest(
                 _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
             )
             for with_instructions in (False, True)
@@ -5364,7 +5365,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
-                if self._history_changed(m, messages[:index]):
+                if not self._history_known_unchanged(m, messages[:index]):
                     return None, messages, True
                 # A response cached only on another socket, or one that's gone, means replaying the history.
                 if not self._is_response_id_reachable(m, store, websocket_mode=websocket_mode):
