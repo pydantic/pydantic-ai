@@ -1,6 +1,7 @@
 """`/permissions` in the shipped page: the mode chip, and the approval card a held command waits on."""
 
 import json
+import re
 import subprocess
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -132,6 +133,21 @@ async def test_auto_mode_holds_rm_rf_for_approval(page: Page, approvals: Approva
     await expect(card).to_be_visible()
     await expect(card.locator('.approval-subject')).to_have_text(COMMAND)
     await expect(card).to_contain_text('run_command')
+    # While the turn waits, a composer narrowed by the Monty panel keeps the Interrupt button round and the turn meter
+    # on one line inside it.
+    await page.set_viewport_size({'width': 1000, 'height': 800})
+    monty = page.get_by_role('button', name=re.compile('^Show Monty'))
+    await monty.click()
+    await expect(page.get_by_role('complementary', name='Monty, the run_code sandbox')).to_be_visible()
+    interrupt = await page.get_by_role('button', name='Interrupt').bounding_box()
+    meter = await page.locator('.turn-meter').bounding_box()
+    composer = await page.locator('.composer').bounding_box()
+    assert interrupt is not None and meter is not None and composer is not None
+    assert interrupt['width'] == interrupt['height'], interrupt
+    assert meter['height'] < 20, meter
+    assert meter['x'] + meter['width'] <= composer['x'] + composer['width'], (meter, composer)
+    await page.get_by_role('button', name=re.compile('^Hide Monty')).click()
+    await page.set_viewport_size({'width': 1280, 'height': 720})
     await card.get_by_label('Reason for denying').fill('keep it for now')
     await card.get_by_role('button', name='Deny', exact=True).click()
     await expect(card).to_have_count(0)

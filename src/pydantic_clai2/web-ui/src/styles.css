@@ -1587,8 +1587,11 @@ pre {
   color: var(--faint);
 }
 
+/* Wraps when the composer is narrow, as beside a side panel, so the turn meter and send button move to a second line
+   instead of overflowing the composer. */
 .composer-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 6px 8px 8px 10px;
@@ -1636,6 +1639,7 @@ pre {
 
 .send {
   display: grid;
+  flex: none;
   place-items: center;
   width: 32px;
   height: 32px;
@@ -2122,6 +2126,7 @@ pre {
   color: var(--muted);
   font: 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .meter-time {
