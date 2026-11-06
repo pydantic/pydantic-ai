@@ -8256,10 +8256,11 @@ class _MinimaxToolArgs(BaseModel):
 async def test_minimax_thinking_wire_shape(allow_model_requests: None):
     from pydantic_ai.profiles.minimax import minimax_model_profile
 
-    request_bodies = []
+    request_bodies: list[dict[str, JsonValue]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        request_bodies.append(json.loads(request.content))
+        body = TypeAdapter(dict[str, JsonValue]).validate_json(request.content)
+        request_bodies.append(body)
         return httpx2.Response(
             200,
             json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
@@ -8285,14 +8286,21 @@ async def test_minimax_thinking_wire_shape(allow_model_requests: None):
 async def test_minimax_inlines_ref_tool_schema(allow_model_requests: None):
     from pydantic_ai.profiles.minimax import minimax_model_profile
 
-    request_bodies = []
+    request_bodies: list[dict[str, JsonValue]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        request_bodies.append(json.loads(request.content))
-        return httpx2.Response(
-            200,
-            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
-        )
+        body = TypeAdapter(dict[str, JsonValue]).validate_json(request.content)
+        request_bodies.append(body)
+        if len(request_bodies) == 1:
+            tool_call = ChatCompletionMessageFunctionToolCall(
+                id='call_nested',
+                function=Function(name='nested_tool', arguments='{"args": {"item": {"qty": 7}}}'),
+                type='function',
+            )
+            message = ChatCompletionMessage(content=None, role='assistant', tool_calls=[tool_call])
+        else:
+            message = ChatCompletionMessage(content='hello', role='assistant')
+        return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         profile = minimax_model_profile('minimax-m2.7')
@@ -8308,8 +8316,18 @@ async def test_minimax_inlines_ref_tool_schema(allow_model_requests: None):
         async def nested_tool(args: _MinimaxToolArgs) -> str:
             return str(args.item.qty)
 
-        await agent.run('hello')
+        result = await agent.run('hello')
 
-    parameters = request_bodies[0]['tools'][0]['function']['parameters']
+    # The nested `_MinimaxNested` model is inlined into the tool schema, and nested tool
+    # arguments shaped like the ones the #12077 probes sent validate and execute.
+    tools = json_objects(request_bodies[0]['tools'])
+    function = tools[0]['function']
+    assert isinstance(function, dict)
+    parameters = function['parameters']
+    assert isinstance(parameters, dict)
     assert '$defs' not in parameters
     assert '$ref' not in json.dumps(parameters)
+    tool_returns = [
+        part for message in result.new_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns[0].content == '7'

@@ -3175,6 +3175,6 @@ def test_bedrock_minimax_profile_composes_family_profile():
     assert bedrock_profile.get('thinking_always_enabled') is True
     assert bedrock_profile.get('supports_json_schema_output') is True
     assert bedrock_profile.get('supported_native_tools') == frozenset()
-    assert bedrock_profile.get('json_schema_transformer') is not minimax_model_profile('minimax-m2.5').get(
-        'json_schema_transformer'
-    )
+    minimax_profile = minimax_model_profile('minimax-m2.5')
+    assert minimax_profile is not None
+    assert bedrock_profile.get('json_schema_transformer') is not minimax_profile.get('json_schema_transformer')
