@@ -144,12 +144,12 @@ def test_headings_and_header_use_the_terminal_foreground(monkeypatch: pytest.Mon
     lines = '\n'.join(frame)
     assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
     assert '\x1b[1mSELECT PROJECT\x1b[0m' in lines
-    assert '\x1b[1mSESSIONS' not in lines
+    assert '\x1b[0m SESSIONS: /a/project | Sort: recent' in lines
     widget.handle_key(Key.ENTER)
     frame = widget.frame(width=120, height=24)
     lines = '\n'.join(frame)
     assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
-    assert 'PROJECTS' in lines and '\x1b[1mPROJECTS' not in lines
+    assert any(line.startswith('PROJECTS ') for line in frame)
     assert '\x1b[1mSELECT SESSION: /a/project | Sort: recent\x1b[0m' in lines
     assert not any(module.theme.sgr(module.theme.INFO) in line for line in frame)
 
