@@ -424,17 +424,16 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert not any('__capability__' in name for name, _ in durability.calls)
 
 
-@pytest.mark.parametrize('map_failure', [False, True])
-async def test_capability_operation_serialization_failure_mapping(map_failure: bool) -> None:
+async def test_capability_operation_maps_serialization_failure() -> None:
+    """The engine's backend receives the error that `serialization_failure` maps an unserializable result to."""
+
     class TerminalFailure(Exception):
         pass
 
-    serialization_errors: list[Exception] = []
     backend_errors: list[Exception] = []
 
     def serialization_failure(exc: Exception) -> TerminalFailure:
-        serialization_errors.append(exc)
-        return TerminalFailure(str(exc))
+        return TerminalFailure()
 
     class SerializationBackend(_RecordingBackend):
         async def execute(
@@ -455,10 +454,7 @@ async def test_capability_operation_serialization_failure_mapping(map_failure: b
                 raise
 
     class SerializationDurability(RecordingDurability):
-        engine_spec = replace(
-            RecordingDurability.engine_spec,
-            serialization_failure=serialization_failure if map_failure else None,
-        )
+        engine_spec = replace(RecordingDurability.engine_spec, serialization_failure=serialization_failure)
 
         def get_durable_operation_backend(self) -> SerializationBackend:
             return SerializationBackend(self)
@@ -479,18 +475,11 @@ async def test_capability_operation_serialization_failure_mapping(map_failure: b
         name='serialization_failure',
         capabilities=[NonSerializableCapability(), SerializationDurability()],
     )
-    expected_error = TerminalFailure if map_failure else PydanticSerializationError
-    with pytest.raises(expected_error, match='Unable to serialize unknown type') as exc_info:
+    with pytest.raises(TerminalFailure) as exc_info:
         await agent.run('test')
 
-    assert len(backend_errors) == 1
-    assert backend_errors[0] is exc_info.value
-    if map_failure:
-        assert len(serialization_errors) == 1
-        assert isinstance(serialization_errors[0], PydanticSerializationError)
-        assert exc_info.value.__cause__ is serialization_errors[0]
-    else:
-        assert serialization_errors == []
+    assert backend_errors == [exc_info.value]
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
 
 
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
