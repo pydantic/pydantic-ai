@@ -95,6 +95,10 @@ Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [seeding
 
 `GoogleInteractionsModel` sends the complete conversation with `store=False`; it does not continue stored interactions by ID. Signed thought and native-tool steps remain provider data, not evidence of application authorization. The application still authorizes deferred tool approvals and access to persisted history. Interactions remote MCP calls run at Google with the server URL and headers configured by the application; local download address checks do not govern those provider-side requests.
 
+Generated media uses inline delivery. URI-only output raises an error before fetching a provider-selected URL; video URI delivery requires server-side storage.
+
+Input `FileUrl` references are resolved by Google on both transports under its policies. Applications choosing local address and response-size checks set `force_download=True` for HTTP(S) inputs; the default follows the shared provider-native URL contract.
+
 ### URL fetching and provider file references
 
 URLs can select resources reachable with the server's network access or a provider's credentials. Server-side request forgery (SSRF) review covers schemes, resolved addresses, redirects, alternate address forms, response size, and each transport that performs a fetch.

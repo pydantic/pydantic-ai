@@ -185,6 +185,12 @@ caching is provider-managed. Sampling settings absent from this API are ignored;
 describes them. Finish reasons are derived from interaction status, which has less detail than
 GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
 
+Use inline delivery for generated media. Video URI delivery requires `store=True`, so it is outside
+this stateless adapter's scope. URI-only output raises an error.
+
+Input file URLs are resolved by Google on both transports. Set `force_download=True` on an HTTP(S)
+file URL to download it locally with the library's address and response-size checks instead.
+
 !!! note "Gateway support"
     The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured
     Google provider on the Gateway may expose it. Use a direct Gemini API or Google Cloud provider

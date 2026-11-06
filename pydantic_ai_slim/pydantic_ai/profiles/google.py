@@ -139,7 +139,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
     google_supported_mime_types_in_tool_returns: tuple[str, ...]
-    """MIME types supported in native FunctionResponseDict.parts. Default: `()`.
+    """MIME types supported in native tool results: GenerateContent's `FunctionResponseDict.parts`
+    or Interactions' `function_result`. Default: `()`.
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool

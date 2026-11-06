@@ -11,7 +11,7 @@ from datetime import datetime
 from google.genai import interactions as gi
 from pydantic import JsonValue, TypeAdapter
 
-from ... import _utils
+from ... import _model_errors, _utils
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import ModelResponseStreamEvent, TextPart
 from ...native_tools import MCPServerTool
@@ -95,7 +95,9 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
             return ()
         elif isinstance(event, gi.ErrorEvent):
-            raise UnexpectedModelBehavior(f'Google Interactions stream failed: {event}')
+            body = JSON_OBJECT.validate_python(event.error.model_dump(exclude_none=True) if event.error else {})
+            message = (event.error.message if event.error else None) or 'Google Interactions stream failed.'
+            raise _model_errors.stream_error(self.model_name, message, body)
         else:
             raise UnexpectedModelBehavior(f'Unexpected Google Interactions stream event: {event}')
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from pydantic_ai import Agent, BinaryContent, ModelRetry
+from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelRetry
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
@@ -24,6 +24,7 @@ from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+    from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'), pytest.mark.vcr]
@@ -323,12 +324,31 @@ async def test_audio_output(
     )
 
 
-@pytest.mark.parametrize('kind', ['image', 'document', 'audio', 'video'])
+@pytest.mark.parametrize(
+    'model_name,kind,native_result',
+    [pytest.param('gemini-3.8-flash', kind, True, id=kind) for kind in ('image', 'document', 'audio', 'video')]
+    + [
+        pytest.param('gemini-4-argon', kind, True, id=f'argon-{kind}')
+        for kind in ('image', 'document', 'audio', 'video')
+    ]
+    + [pytest.param('gemini-3.8-flash', 'document', False, id='fallback-document')],
+)
 async def test_multimodal_tool_return(
-    interactions_model: GoogleInteractionsModel, kind: str, request: pytest.FixtureRequest, allow_model_requests: None
+    interactions_model: GoogleInteractionsModel,
+    model_name: str,
+    kind: str,
+    native_result: bool,
+    request: pytest.FixtureRequest,
+    request_capture: RequestCapture,
+    allow_model_requests: None,
 ):
     content: BinaryContent = request.getfixturevalue(f'{kind}_content')
-    agent = Agent(interactions_model)
+    provider = interactions_model.provider
+    assert provider is not None
+    profile: GoogleModelProfile | None = (
+        None if native_result else GoogleModelProfile(google_supported_mime_types_in_tool_returns=())
+    )
+    agent = Agent(GoogleInteractionsModel(model_name, provider=provider, profile=profile))
 
     @agent.tool_plain
     def get_file() -> BinaryContent:
@@ -336,6 +356,17 @@ async def test_multimodal_tool_return(
         return content
 
     assert (await agent.run('Use get_file and summarize the file in one sentence.')).output
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(request_capture.body(index=-1)['input'])
+    result = next(step for step in reversed(steps) if step.get('type') == 'function_result')
+    returned = TypeAdapter(list[dict[str, JsonValue]]).validate_python(result['result'])
+    if native_result:
+        assert any(item.get('type') == kind and item.get('mime_type') == content.media_type for item in returned)
+    else:
+        assert all(item.get('type') == 'text' for item in returned)
+        assert steps[-1]['type'] == 'user_input'
+        files = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[-1]['content'])
+        assert any(item.get('type') == kind and item.get('mime_type') == content.media_type for item in files)
+        assert 'get_file' in str(files[0]['text'])
 
 
 @pytest.mark.parametrize('direction', ['to_interactions', 'to_generate_content'])
@@ -398,6 +429,33 @@ async def test_image_uri_output(gemini_api_key: str, request_capture: RequestCap
         await Agent(model, output_type=BinaryImage).run('Draw one small red square on a white background.')
 
 
+async def test_native_url_input(
+    interactions_model: GoogleInteractionsModel, request_capture: RequestCapture, allow_model_requests: None
+):
+    image = ImageUrl('https://storage.googleapis.com/generativeai-downloads/images/scones.jpg')
+    result = await Agent(interactions_model).run(['Describe the baked goods in this picture.', image])
+    assert any(word in result.output.lower() for word in ('scone', 'pastr', 'biscuit', 'bread'))
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(request_capture.body()['input'])
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[0]['content'])
+    assert content[-1] == {'type': 'image', 'uri': image.url, 'mime_type': 'image/jpeg'}
+
+
+async def test_video_uri_output_requires_storage(
+    gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
+):
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
+
+    settings: GoogleInteractionsModelSettings = {'google_response_format': {'type': 'video', 'delivery': 'uri'}}
+    model = GoogleInteractionsModel(
+        'gemini-omni-1.2-flash',
+        provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=120)),
+        settings=settings,
+    )
+    with pytest.raises(ModelHTTPError, match='store=true is required'):
+        await Agent(model).run('Create a short video of a red ball.')
+
+
 async def test_native_settings(
     interactions_model: GoogleInteractionsModel, request_capture: RequestCapture, allow_model_requests: None
 ):
@@ -405,7 +463,7 @@ async def test_native_settings(
 
     settings: GoogleInteractionsModelSettings = {
         'thinking': 'low',
-        'google_safety_settings': [{'type': 'harassment', 'threshold': 'block_only_high'}],
+        'google_interactions_safety_settings': [{'type': 'harassment', 'threshold': 'block_only_high'}],
         'google_labels': {'purpose': 'test'},
         'service_tier': 'default',
     }
@@ -413,7 +471,7 @@ async def test_native_settings(
     assert result.output
     body = request_capture.body()
     assert body['generation_config'] == {'thinking_level': 'low', 'thinking_summaries': 'auto'}
-    assert body['safety_settings'] == settings['google_safety_settings']
+    assert body['safety_settings'] == settings['google_interactions_safety_settings']
     assert body['labels'] == {'purpose': 'test'}
     assert body['service_tier'] == 'standard'
 

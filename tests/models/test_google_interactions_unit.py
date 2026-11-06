@@ -11,7 +11,13 @@ import pytest
 from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai.direct import model_request, model_request_stream
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentInstructionSource,
     BinaryContent,
@@ -39,6 +45,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnPart,
     UploadedFile,
     UserPromptPart,
 )
@@ -53,7 +60,9 @@ with try_import() as imports_successful:
     from google.genai import interactions as gi
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APITimeoutError
     from google.genai._gaos.utils.serializers import ALLOW_UNKNOWN_UNION_VARIANTS
+    from google.genai.types import HarmBlockThreshold, HarmCategory
 
+    from pydantic_ai.models.google import GoogleModelSettings
     from pydantic_ai.models.google_interactions import (
         GoogleInteractionsModel,
         GoogleInteractionsModelSettings,
@@ -101,6 +110,7 @@ def mock_model(mock_google: MockGoogle) -> GoogleInteractionsModel:
 
 
 def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
+    """Resolve the explicit prefix and preserve model identity without a provider request."""
     monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
     model = infer_model('google-interactions:gemini-3.8-flash')
     assert isinstance(model, GoogleInteractionsModel)
@@ -113,7 +123,7 @@ def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
 async def test_settings_and_usage(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Mock the wire for exact parameter and usage semantics that cassette matching does not check."""
+    """Pin exact request and usage fields that cassette matching does not check."""
     mock_google.body['usage'] = {
         'total_input_tokens': 20,
         'total_output_tokens': 5,
@@ -132,7 +142,7 @@ async def test_settings_and_usage(
         'stop_sequences': ['DONE'],
         'thinking': 'high',
         'service_tier': 'default',
-        'google_safety_settings': [{'type': 'harassment', 'threshold': 'block_only_high'}],
+        'google_interactions_safety_settings': [{'type': 'harassment', 'threshold': 'block_only_high'}],
         'google_labels': {'purpose': 'test'},
     }
     response = await model_request(mock_model, [ModelRequest(parts=[UserPromptPart('hello')])], model_settings=settings)
@@ -148,7 +158,7 @@ async def test_settings_and_usage(
     }
     assert body['store'] is False
     assert body['service_tier'] == 'standard'
-    assert body['safety_settings'] == settings['google_safety_settings']
+    assert body['safety_settings'] == settings['google_interactions_safety_settings']
     assert body['labels'] == {'purpose': 'test'}
     assert response.usage.input_tokens == 20
     assert response.usage.output_tokens == 8
@@ -159,9 +169,52 @@ async def test_settings_and_usage(
     assert response.usage.cache_audio_read_tokens == 2
 
 
+async def test_generate_content_safety_settings_are_separate(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
+):
+    """Pin schema isolation on the wire; cassette matching does not inspect settings."""
+    settings: GoogleModelSettings = {
+        'google_safety_settings': [
+            {'category': HarmCategory.HARM_CATEGORY_HARASSMENT, 'threshold': HarmBlockThreshold.BLOCK_ONLY_HIGH}
+        ]
+    }
+    await model_request(mock_model, [ModelRequest.user_text_prompt('hello')], model_settings=settings)
+    assert 'safety_settings' not in mock_google.requests[-1]
+
+
+async def test_tool_return_files_follow_profile(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
+):
+    """Pin mixed MIME routing, grouped results and provenance that cassette matching does not inspect."""
+    provider = mock_model.provider
+    assert provider is not None
+    model = GoogleInteractionsModel(
+        mock_model.model_name,
+        provider=provider,
+        profile=GoogleModelProfile(google_supported_mime_types_in_tool_returns=('image/jpeg',)),
+    )
+    jpeg = BinaryContent(b'jpeg', media_type='image/jpeg')
+    pdf = BinaryContent(b'pdf', media_type='application/pdf')
+    part = ToolReturnPart('get_file', ['found', jpeg, pdf], tool_call_id='call')
+    await model_request(model, [ModelRequest(parts=[part, ToolReturnPart('second', 'ok', tool_call_id='second-call')])])
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+    assert len(steps) == 3
+    result = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[0]['result'])
+    assert result[0] == {'type': 'text', 'text': 'found'}
+    assert result[1] == {'type': 'image', 'mime_type': 'image/jpeg', 'data': base64.b64encode(b'jpeg').decode()}
+    assert pdf.identifier in str(result[2]['text'])
+    assert steps[1]['type'] == 'function_result' and steps[1]['call_id'] == 'second-call'
+    assert steps[2]['type'] == 'user_input'
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[2]['content'])
+    assert 'get_file' in str(content[0]['text']) and 'call' in str(content[0]['text'])
+    assert content[1] == {'type': 'document', 'mime_type': 'application/pdf', 'data': base64.b64encode(b'pdf').decode()}
+    assert str(content[-1]['text']).startswith('</tool_result')
+
+
 async def test_history_edits_are_sent(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
+    """Pin edited replay payloads and annotations; cassette matching ignores these request-body changes."""
     mock_google.body['steps'] = [
         {
             'type': 'model_output',
@@ -210,6 +263,7 @@ async def test_history_edits_are_sent(
 async def test_foreign_history_does_not_replay_signatures(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
+    """Pin foreign-history signature exclusion on the wire; cassette matching ignores the request body."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('hello')]),
         ModelResponse(
@@ -237,6 +291,7 @@ async def test_foreign_history_does_not_replay_signatures(
 async def test_finish_status(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, status: str, reason: str, allow_model_requests: None
 ):
+    """Inject every status and absent usage without relying on nondeterministic provider outcomes."""
     mock_google.body['status'] = status
     response = await model_request(mock_model, [ModelRequest(parts=[UserPromptPart('hello')])])
     assert response.finish_reason == reason
@@ -250,7 +305,7 @@ async def iter_events(values: list[dict[str, JsonValue]]) -> AsyncIterator[gi.In
 
 
 async def test_stream_mixed_content_and_signature_fragments():
-    """Synthetic fragments exercise ordering, signatures, annotations and binary chunk boundaries."""
+    """Inject fragment boundaries, annotations and signatures that a live stream cannot reproduce reliably."""
     values: list[dict[str, JsonValue]] = [
         {'event_type': 'step.start', 'index': 0, 'step': {'type': 'thought'}},
         {
@@ -320,7 +375,6 @@ async def test_stream_mixed_content_and_signature_fragments():
     'values,match',
     [
         ([], 'ended before'),
-        ([{'event_type': 'error', 'error': {'message': 'broken', 'code': 'internal'}}], 'stream failed'),
         (
             [{'event_type': 'future_event'}],
             'Unexpected Google Interactions stream event',
@@ -346,6 +400,7 @@ async def test_stream_mixed_content_and_signature_fragments():
     ],
 )
 async def test_stream_errors(values: list[dict[str, JsonValue]], match: str):
+    """Inject truncated and malformed protocol events that a live request cannot produce reliably."""
     response = GoogleInteractionsStreamedResponse(
         ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
     )
@@ -354,8 +409,33 @@ async def test_stream_errors(values: list[dict[str, JsonValue]], match: str):
             pass
 
 
+@pytest.mark.parametrize(
+    'error,expected',
+    [
+        ({'code': '429', 'message': 'busy'}, ModelRateLimitError),
+        ({'code': '503', 'message': 'overloaded'}, ModelOverloadedError),
+        ({'code': 'internal', 'message': 'broken'}, ModelAPIError),
+        (None, ModelAPIError),
+    ],
+)
+async def test_provider_stream_errors(error: dict[str, JsonValue] | None, expected: type[ModelAPIError]):
+    """Inject provider error events that cannot be induced reliably in a recording."""
+    event: dict[str, JsonValue] = {'event_type': 'error'}
+    if error is not None:
+        event['error'] = error
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events([event]), 'gemini-test', 'google', 'https://example.com'
+    )
+    with pytest.raises(expected) as raised:
+        async for _ in response:
+            pass
+    assert raised.value.in_stream
+    assert raised.value.body == (error or {})
+    assert raised.value.model_name == 'gemini-test'
+
+
 async def test_owned_http_client_refresh_updates_interactions_resource():
-    """The lazy SDK resource captures the original HTTP client, which a later run can replace."""
+    """Exercise lazy SDK transport ownership locally, without relying on a provider response."""
     provider = GoogleProvider(api_key='test-key')
     model = GoogleInteractionsModel('gemini-3.8-flash', provider=provider)
     resource = provider.client.aio.interactions
@@ -373,7 +453,7 @@ async def test_owned_http_client_refresh_updates_interactions_resource():
 async def test_boolean_thinking_and_native_overrides(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, thinking: bool, allow_model_requests: None
 ):
-    """Pin precedence on the wire; the cassette matcher does not compare these settings."""
+    """Pin thinking precedence on the wire; cassette matching does not compare these settings."""
     await model_request(
         mock_model,
         [ModelRequest.user_text_prompt('hello')],
@@ -405,7 +485,7 @@ async def test_boolean_thinking_and_native_overrides(
 async def test_restricted_tools_and_native_parameters(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Assert exact restriction, authentication and provider-specific settings forwarding."""
+    """Pin tool restrictions, MCP authentication and native payloads that cassette matching does not compare."""
     params = ModelRequestParameters(
         function_tools=[
             ToolDefinition(name='first', parameters_json_schema={'type': 'object'}),
@@ -450,7 +530,7 @@ async def test_restricted_tools_and_native_parameters(
 
 
 async def test_image_generation_settings(mock_google: MockGoogle, allow_model_requests: None):
-    """Image settings select a response format rather than declaring a function tool."""
+    """Pin exact response formats and output permissions that cassette matching does not compare."""
     model = GoogleInteractionsModel(
         'gemini-3.1-flash-image',
         provider=GoogleProvider(
@@ -484,7 +564,7 @@ async def test_prompt_content_and_file_references(
     monkeypatch: pytest.MonkeyPatch,
     allow_model_requests: None,
 ):
-    """Exercise reference ownership and forced downloads without an external file service."""
+    """Pin native references and forced-download bytes while controlling the local download response."""
     downloader = AsyncMock(return_value={'data': b'png', 'data_type': 'image/png'})
     monkeypatch.setattr('pydantic_ai.models.google_interactions.download_item', downloader)
     parts: list[ModelRequestPart] = [
@@ -530,7 +610,7 @@ async def test_prompt_content_and_file_references(
 async def test_unstored_history_and_cross_api_signatures(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, user_turn: bool, allow_model_requests: None
 ):
-    """History without complete Interactions metadata still carries compatible Google signatures."""
+    """Pin signature handling for synthetic partial histories; cassette matching ignores replay fields."""
     mock_model = GoogleInteractionsModel(
         mock_model.model_name,
         provider=GoogleProvider(client=mock_model.client),
@@ -568,7 +648,7 @@ async def test_unstored_history_and_cross_api_signatures(
 async def test_native_history_edits_preserve_opaque_fields(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Persisted metadata is replayed with user edits, including invisible signed steps."""
+    """Pin edited opaque replay fields that cassette matching does not inspect."""
     mock_google.body['steps'] = [
         {'type': 'thought', 'signature': 'signature', 'summary': [{'type': 'text', 'text': 'original'}]},
         {
@@ -617,13 +697,14 @@ async def test_native_history_edits_preserve_opaque_fields(
 
 @pytest.mark.parametrize('index', [-1, 3, 'bad'])
 def test_invalid_persisted_content_index(index: int | str):
-    """Reject corrupt persisted references instead of selecting unrelated content."""
+    """Inject corrupt persisted indices and reject them before any provider request."""
     part = TextPart('edited', provider_details={'google_interactions_content_index': index})
     with pytest.raises(UnexpectedModelBehavior, match='Invalid content index'):
         _replay.replay_content({'content': [{'type': 'text', 'text': 'original'}]}, [part])
 
 
 def test_invalid_persisted_part_type():
+    """Inject incompatible persisted part types that a valid provider response cannot produce."""
     with pytest.raises(UnexpectedModelBehavior, match='does not match'):
         _replay.replay_step({'type': 'thought'}, [CompactionPart()])
     part = ThinkingPart('invalid', provider_details={'google_interactions_content_index': 0})
@@ -635,15 +716,18 @@ def test_invalid_persisted_part_type():
 async def test_uri_media_response_and_replay(
     mock_model: GoogleInteractionsModel,
     mock_google: MockGoogle,
-    monkeypatch: pytest.MonkeyPatch,
     media: str,
     allow_model_requests: None,
 ):
-    """Retain persisted URI output while honoring MIME-only and byte edits on replay."""
-    downloader = AsyncMock(return_value={'data': b'original', 'data_type': 'application/octet-stream'})
-    monkeypatch.setattr('pydantic_ai.models.google_interactions._response.download_item', downloader)
-    raw: dict[str, JsonValue] = {'type': media, 'uri': 'https://example.com/output'}
-    mock_google.body['steps'] = [{'type': 'model_output', 'content': [raw]}]
+    """Pin serialized URI, MIME and byte edits that cassette request matching does not inspect."""
+    raw: dict[str, JsonValue] = {
+        'type': media,
+        'uri': 'https://example.com/output',
+        'mime_type': 'application/octet-stream',
+    }
+    mock_google.body['steps'] = [
+        {'type': 'model_output', 'content': [{**raw, 'data': base64.b64encode(b'original').decode()}]}
+    ]
     response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
     response = restored[0]
@@ -668,13 +752,23 @@ async def test_uri_media_response_and_replay(
         'type': 'model_output',
         'content': [{'type': 'image', 'data': 'ZWRpdGVk', 'mime_type': 'image/png'}],
     }
-    downloader.assert_awaited_once()
+
+
+@pytest.mark.parametrize('media', ['image', 'audio', 'video', 'document'])
+@pytest.mark.parametrize('uri', ['https://example.com/output', 'gs://bucket/output'])
+async def test_uri_only_output_requires_inline_delivery(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, media: str, uri: str, allow_model_requests: None
+):
+    """Inject URI-only responses to pin the stateless error before an outbound download."""
+    mock_google.body['steps'] = [{'type': 'model_output', 'content': [{'type': media, 'uri': uri}]}]
+    with pytest.raises(UnexpectedModelBehavior, match='requires inline delivery with store=False'):
+        await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
 
 
 async def test_citations_and_error_metadata(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Pin UTF-8 citation offsets and retain diagnostic fields without relying on live grounding."""
+    """Inject UTF-8 citation offsets and diagnostics without relying on nondeterministic live grounding."""
     mock_google.body.update(
         errors=[{'code': 'internal', 'message': 'provider diagnostic'}],
         steps=[
@@ -729,6 +823,7 @@ async def test_invalid_response_data(
     match: str,
     allow_model_requests: None,
 ):
+    """Inject unsupported steps, content kinds and missing payloads that valid recordings cannot exercise."""
     mock_google.body['steps'] = [step]
     with pytest.raises(UnexpectedModelBehavior, match=match):
         await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
@@ -738,7 +833,7 @@ async def test_invalid_response_data(
 async def test_sdk_error_mapping(
     mock_model: GoogleInteractionsModel, monkeypatch: pytest.MonkeyPatch, error: str, allow_model_requests: None
 ):
-    """SDK exceptions are synthetic; a live API cannot reliably reproduce a transport outage."""
+    """Inject SDK transport failures that a live provider cannot reproduce reliably."""
     request = httpx.Request('POST', 'https://example.com/interactions')
     failures = {
         'timeout': APITimeoutError(request),
@@ -751,7 +846,7 @@ async def test_sdk_error_mapping(
 
 
 async def test_unprepared_history_guards(mock_model: GoogleInteractionsModel, allow_model_requests: None):
-    """Direct Model.request callers must run prepare_messages before provider serialization."""
+    """Reject unprepared direct requests before provider serialization."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='instruction')]),
         ModelRequest(
@@ -770,7 +865,7 @@ async def test_unprepared_history_guards(mock_model: GoogleInteractionsModel, al
 async def test_sdk_response_mode_guard(
     mock_model: GoogleInteractionsModel, monkeypatch: pytest.MonkeyPatch, stream: bool, allow_model_requests: None
 ):
-    """A mismatched SDK result must fail before exposing a misleading model response."""
+    """Inject a mismatched SDK response type before it can expose a misleading model response."""
     result = gi.Interaction(status='completed') if stream else iter_events([])
     monkeypatch.setattr(mock_model.client.aio.interactions, 'create', AsyncMock(return_value=result))
     with pytest.raises(UnexpectedModelBehavior, match=r'Expected a .*streaming Google interaction'):
@@ -789,7 +884,7 @@ async def test_streamed_namespaced_mcp_calls(
     declared: bool,
     allow_model_requests: None,
 ):
-    """Provider-run functions can share the function-call wire shape with client tools."""
+    """Inject paired, unpaired and declared namespace events to pin classification across both response modes."""
     values: list[dict[str, JsonValue]] = [
         {
             'event_type': 'step.start',
@@ -866,6 +961,7 @@ async def test_streamed_namespaced_mcp_calls(
     ['https://generativelanguage.googleapis.com/v1beta/files/test', 'gs://bucket/path', 'http://example.invalid/file'],
 )
 async def test_uploaded_file_uri_validation(mock_google: MockGoogle, cloud: bool, uri: str, allow_model_requests: None):
+    """Pin accepted URI payloads and reject invalid transport schemes before a provider request."""
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle), timeout=120)
     provider = (
         GoogleCloudProvider(api_key='test-key', http_client=http_client)
@@ -894,7 +990,7 @@ async def test_strict_tool_opt_out(
     strict_tool: bool | None,
     allow_model_requests: None,
 ):
-    """Either provider or per-tool opt-out keeps Google's automatic mode unvalidated."""
+    """Pin profile and per-tool precedence that cassette matching does not compare."""
     model = GoogleInteractionsModel(
         mock_model.model_name,
         provider=GoogleProvider(client=mock_model.client),
@@ -918,7 +1014,7 @@ async def test_strict_tool_opt_out(
 async def test_appended_history_part_preserves_existing_steps(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """A history processor can add an ordinary part beside persisted provider steps."""
+    """Pin exact replay when a history processor appends a part; cassette matching ignores the payload."""
     response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
     response.parts = [
         *response.parts,
@@ -933,7 +1029,7 @@ async def test_appended_history_part_preserves_existing_steps(
 
 
 async def test_partial_usage_and_metadata_only_media_delta():
-    """Missing thought/grounding counts and a metadata-only media chunk are valid partial data."""
+    """Inject partial usage and metadata-only media deltas that live chunking cannot reproduce reliably."""
     values: list[dict[str, JsonValue]] = [
         {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
         {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'image', 'mime_type': 'image/png', 'data': 'cG5n'}},
@@ -958,7 +1054,7 @@ async def test_partial_usage_and_metadata_only_media_delta():
 async def test_native_replay_without_response_metadata(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, mcp: bool, allow_model_requests: None
 ):
-    """Per-part replay data survives a history processor dropping response-level metadata."""
+    """Pin exact per-part replay after response metadata is removed; cassette matching ignores the payload."""
     steps: list[dict[str, JsonValue]] = (
         [
             {'type': 'function_call', 'name': 'docs:lookup', 'id': 'call', 'arguments': {}, 'signature': 'opaque'},
@@ -991,6 +1087,7 @@ async def test_native_replay_without_response_metadata(
 async def test_unknown_own_native_tool_is_not_silently_dropped(
     mock_model: GoogleInteractionsModel, allow_model_requests: None
 ):
+    """Inject native history without a supported replay step and reject it before a provider request."""
     response = ModelResponse(
         parts=[NativeToolCallPart('unknown', {}, 'call', provider_name='google')], provider_name='google'
     )
@@ -1001,7 +1098,7 @@ async def test_unknown_own_native_tool_is_not_silently_dropped(
 async def test_provider_environment_and_foreign_file_history(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
-    """Wire-only options and normalized foreign media must not depend on replay metadata."""
+    """Pin environment settings and normalized foreign-file payloads that cassette matching does not inspect."""
     history: list[ModelMessage] = [
         ModelResponse(parts=[FilePart(BinaryContent(b'png', media_type='image/png'))], provider_name='other'),
         ModelRequest.user_text_prompt('describe this'),
@@ -1030,6 +1127,7 @@ async def test_provider_environment_and_foreign_file_history(
 async def test_explicit_mcp_server_identity(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
+    """Inject MCP results without server names to pin identity recovery and serialized per-part replay."""
     call: dict[str, JsonValue] = {
         'type': 'mcp_server_tool_call',
         'id': 'call',
@@ -1076,6 +1174,7 @@ async def test_budget_only_model_does_not_send_thinking_level(
     thinking: ThinkingEffort | bool,
     allow_model_requests: None,
 ):
+    """Pin budget-only profile payloads that cassette matching does not inspect."""
     model = GoogleInteractionsModel('gemini-2.5-flash', provider=GoogleProvider(client=mock_model.client))
     settings: GoogleInteractionsModelSettings = {'thinking': thinking}
     await model_request(model, [ModelRequest.user_text_prompt('hello')], model_settings=settings)
@@ -1085,6 +1184,7 @@ async def test_budget_only_model_does_not_send_thinking_level(
 
 
 async def test_stream_chunk_work_scales_with_payload():
+    """Measure codec and validation work with deterministic fragments; recordings cannot enforce a work bound."""
     measurements: list[tuple[int, int, int]] = []
     marker = 'review-text-chunk'
     encoded = base64.b64encode(b'x').decode()
@@ -1138,6 +1238,7 @@ async def test_stream_chunk_work_scales_with_payload():
 
 @pytest.mark.parametrize('stop', [False, True])
 async def test_prefilled_stream_content_and_deltas(stop: bool):
+    """Inject prefilled media and optional stop events that live chunking cannot reproduce reliably."""
     values: list[dict[str, JsonValue]] = [
         {
             'event_type': 'step.start',
@@ -1180,8 +1281,8 @@ async def test_prefilled_stream_content_and_deltas(stop: bool):
 async def test_shared_google_thinking_uses_profile_on_wire(
     mock_google: MockGoogle, thinking: ThinkingEffort | bool, allow_model_requests: None
 ):
-    """The common resolver preserves GenerateContent's supported-level request contract."""
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    """Pin GenerateContent request preservation that cassette matching does not compare."""
+    from pydantic_ai.models.google import GoogleModel
 
     mock_google.body = {'candidates': [{'content': {'parts': [{'text': 'OK'}], 'role': 'model'}}]}
     model = GoogleModel(

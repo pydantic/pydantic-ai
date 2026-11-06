@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from collections.abc import AsyncGenerator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Literal, assert_never
 
@@ -31,6 +31,7 @@ from ...messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     SpeechPart,
@@ -123,18 +124,22 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     Sampling settings unsupported by this API (`top_k`, penalties, `logit_bias` and
     `parallel_tool_calls`) are ignored. Explicit caching and token counting are unavailable.
     Models that use thinking budgets retain their default effort: Interactions exposes only thinking levels.
+
+    These native Interactions settings are ignored by `GoogleModel`, except for the shared `google_labels`.
+    Use the shared `thinking` and `service_tier` settings when switching between the two APIs.
     """
 
     google_thinking_level: gi.ThinkingLevel
     """Native thinking level; overrides the shared `thinking` setting."""
     google_thinking_summaries: gi.ThinkingSummaries
     """Whether the API includes thought summaries."""
-    google_safety_settings: list[gi.SafetySettingParam]
+    google_interactions_safety_settings: list[gi.SafetySettingParam]
     """Safety settings in the Interactions API format. Support depends on the model and API."""
     google_response_format: gi.CreateModelInteractionResponseFormatParam
     """Native response format for text, image, audio or video generation.
 
     Structured output and `ImageGenerationTool` configure this automatically.
+    Use inline delivery: video URI delivery requires server-side storage, which this model disables.
     """
     google_generation_config: gi.GenerationConfigParam
     """Additional typed generation configuration, including speech, transcription and video.
@@ -172,7 +177,7 @@ class GoogleInteractionsModel(Model[Client]):
         self,
         model_name: GoogleInteractionsModelName,
         *,
-        provider: Literal['google', 'google-cloud', 'gateway'] | Provider[Client] = 'google',
+        provider: Literal['google', 'google-cloud'] | Provider[Client] = 'google',
         profile: ModelProfileSpec | None = None,
         settings: GoogleInteractionsModelSettings | None = None,
     ):
@@ -180,16 +185,12 @@ class GoogleInteractionsModel(Model[Client]):
 
         Args:
             model_name: The public Google model ID.
-            provider: Gemini API, Google Cloud, gateway, or a caller-configured Google provider.
+            provider: Gemini API, Google Cloud, or a caller-configured Google provider.
             profile: Overrides for the model profile.
             settings: Default request settings.
         """
         self._model_name = model_name
-        self._provider = (
-            infer_provider('gateway/google-cloud' if provider == 'gateway' else provider)
-            if isinstance(provider, str)
-            else provider
-        )
+        self._provider = infer_provider(provider) if isinstance(provider, str) else provider
         super().__init__(settings=settings, profile=profile)
 
     @property
@@ -209,7 +210,14 @@ class GoogleInteractionsModel(Model[Client]):
         return self._provider.base_url
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        return merge_profile(profile, ModelProfile(supports_tool_return_schema=False))
+        defaults = GoogleModelProfile(supports_tool_return_schema=False)
+        if self.model_name in ('gemini-3.8-flash', 'gemini-4-argon'):
+            # Recorded Interactions tool results accept audio and video beyond GenerateContent's MIME set.
+            mime_types = GoogleModelProfile(**profile).get('google_supported_mime_types_in_tool_returns', ())
+            defaults['google_supported_mime_types_in_tool_returns'] = tuple(
+                sorted({*mime_types, 'audio/mpeg', 'video/mp4'})
+            )
+        return merge_profile(profile, defaults)
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -359,8 +367,10 @@ class GoogleInteractionsModel(Model[Client]):
         response_format = self._response_format(settings, params, response_format)
         if response_format is not None:
             request['response_format'] = response_format
-        if 'google_safety_settings' in settings:
-            request['safety_settings'] = _SAFETY_SETTINGS.validate_python(settings['google_safety_settings'])
+        if 'google_interactions_safety_settings' in settings:
+            request['safety_settings'] = _SAFETY_SETTINGS.validate_python(
+                settings['google_interactions_safety_settings']
+            )
         if 'google_labels' in settings:
             request['labels'] = _LABELS.validate_python(settings['google_labels'])
         tier = settings.get('google_service_tier')
@@ -507,6 +517,9 @@ class GoogleInteractionsModel(Model[Client]):
             if isinstance(message, ModelRequest):
                 for part in _sendable_request_parts(message.parts):
                     await self._map_request_part(part, context)
+                if context.tool_files:
+                    context.steps.append({'type': 'user_input', 'content': context.tool_files})
+                    context.tool_files = []
             elif isinstance(message, ModelResponse):
                 context.steps.extend(await self._map_model_response(message))
             else:
@@ -524,7 +537,9 @@ class GoogleInteractionsModel(Model[Client]):
             case UserPromptPart():
                 await self._map_user_prompt_part(part, context)
             case ToolReturnPart():
-                context.steps.extend(await self._map_tool_return(part))
+                result, files = await self._map_tool_return(part)
+                context.steps.append(result)
+                context.tool_files.extend(files)
             case InstructionBaselinePart() | InstructionDeltaPart():
                 raise _unprojected_instruction_delta_error()
             case SpeechPart():
@@ -579,13 +594,24 @@ class GoogleInteractionsModel(Model[Client]):
         value['type'] = media_kind(str(value['mime_type']))
         return _CONTENT_PARAM.validate_python(value)
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[dict[str, JsonValue]]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[dict[str, JsonValue], list[gi.ContentParam]]:
         content: list[gi.ContentParam] = []
+        fallback_files: list[MultiModalContent] = []
+        supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
         for item in part.content_items(mode='str', wrap_if_error=False):
             if isinstance(item, str):
                 content.append({'type': 'text', 'text': item})
-            else:
+            elif item.media_type in supported_mime_types:
                 content.append(await self._map_file(item))
+            else:
+                fallback_files.append(item)
+        files: list[gi.ContentParam] = []
+        if fallback_files:
+            text, user_content = replace(part, content=fallback_files).model_response_str_and_user_content(
+                wrap_if_error=False
+            )
+            content.append({'type': 'text', 'text': text})
+            files = await self._map_user_prompt(UserPromptPart(user_content))
         result: _FunctionResultStep = {
             'type': 'function_result',
             'name': part.tool_name,
@@ -593,7 +619,7 @@ class GoogleInteractionsModel(Model[Client]):
             'is_error': part.outcome in ERROR_OUTCOMES,
             'result': content,
         }
-        return [JSON_OBJECT.validate_python(result)]
+        return JSON_OBJECT.validate_python(result), files
 
     async def _map_model_response(self, message: ModelResponse) -> list[gi.StepParam | dict[str, JsonValue]]:
         original = replay_steps(message) if self.accepts_stateless_artifacts(message) else None
@@ -684,6 +710,7 @@ class GoogleInteractionsModel(Model[Client]):
 class _MapMessagesContext:
     instructions: list[str] = field(default_factory=list[str])
     steps: list[gi.StepParam | dict[str, JsonValue]] = field(default_factory=list[gi.StepParam | dict[str, JsonValue]])
+    tool_files: list[gi.ContentParam] = field(default_factory=list[gi.ContentParam])
 
 
 class _FunctionResultStep(TypedDict):

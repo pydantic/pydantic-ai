@@ -14,15 +14,12 @@ from pydantic import JsonValue, TypeAdapter
 from ... import _utils
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import (
-    AudioUrl,
     BinaryContent,
     Citation,
     ContentCitationAnchor,
     DocumentCitationSource,
-    DocumentUrl,
     FilePart,
     FinishReason,
-    ImageUrl,
     ModelResponse,
     ModelResponsePart,
     NativeToolCallPart,
@@ -30,11 +27,10 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
-    VideoUrl,
     WebCitationSource,
 )
 from ...usage import RequestUsage
-from .. import _google_common, download_item
+from .. import _google_common
 
 STEP_PARAMS = TypeAdapter(list[dict[str, JsonValue]])
 JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
@@ -365,17 +361,9 @@ async def map_media_content(
         data = base64.b64decode(content.data)
         mime_type = content.mime_type or 'application/octet-stream'
     elif content.uri is not None:
-        url_class = (
-            ImageUrl
-            if isinstance(content, gi.ImageContent)
-            else AudioUrl
-            if isinstance(content, gi.AudioContent)
-            else VideoUrl
-            if isinstance(content, gi.VideoContent)
-            else DocumentUrl
+        raise UnexpectedModelBehavior(
+            'Google returned URI-only media. GoogleInteractionsModel requires inline delivery with store=False.'
         )
-        downloaded = await download_item(url_class(content.uri), data_format='bytes')
-        data, mime_type = downloaded['data'], downloaded['data_type']
     else:
         raise UnexpectedModelBehavior('Google returned media without data or a URI.')
     return FilePart(BinaryContent.narrow_type(BinaryContent(data, media_type=mime_type)), provider_name=provider_name)
