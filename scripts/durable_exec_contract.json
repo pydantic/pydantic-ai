@@ -107,6 +107,38 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/_durable_replay.py": {
+    "record_durable_unit": {
+      "engines": [
+        "aws_lambda",
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::<module>"
+      ]
+    },
+    "replay_scope": {
+      "engines": [
+        "aws_lambda",
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_bridge.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/_enqueue.py": {
     "EnqueueGuard": {
       "engines": [
