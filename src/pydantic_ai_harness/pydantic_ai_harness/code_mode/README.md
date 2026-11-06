@@ -750,8 +750,8 @@ again against recorded activity results.
 
 Setup errors keep their original types in workflow code. `PydanticAIPlugin` treats `UserError` as a
 workflow failure. Other setup errors, such as `RuntimeError` and `MontyRefusedError`, follow Temporal's
-default: an uncaught error fails the workflow task, which Temporal retries until the deployment is
-fixed. The workflow remains running, and a client awaiting its result keeps waiting. The original
+default: an uncaught error fails the workflow task, not the workflow. Temporal retries the task while
+the workflow remains running, so a client awaiting its result keeps waiting if setup keeps failing. The original
 error is available in the failed task's history and worker logs, not in a model retry.
 To end the workflow instead, catch the expected setup exceptions in your workflow and raise
 `temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.

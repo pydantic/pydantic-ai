@@ -235,8 +235,8 @@ workflow task that does not yield within 2 seconds fails, so move heavy computat
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory
-errors fail the workflow task instead: Temporal retries it until the deployment is fixed, while the
-client keeps waiting. Inspect the task history or worker logs for the original error. To end the
+errors fail the workflow task instead: Temporal retries the task while the workflow remains running,
+so the client keeps waiting if setup keeps failing. Inspect the task history or worker logs for the original error. To end the
 workflow, catch expected setup exceptions and raise
 `temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
