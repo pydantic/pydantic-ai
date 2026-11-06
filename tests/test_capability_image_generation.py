@@ -82,6 +82,8 @@ with try_import() as openai_imports:
 
 with try_import() as google_imports:
     from pydantic_ai.images.google import GoogleImageGenerationModel, GoogleImageGenerationSettings
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as xai_imports:
@@ -1973,11 +1975,12 @@ class TestImageGenerationCapability:
         )
 
     @pytest.mark.vcr()
-    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
+    @pytest.mark.parametrize('api_family', ['generate-content', 'interactions'])
+    async def test_image_generation_local_fallback_google(
+        self, allow_model_requests: None, gemini_api_key: str, api_family: str
+    ):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
@@ -1986,7 +1989,11 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
+        inner_model = (
+            GoogleInteractionsModel('gemini-3.1-flash-image', provider=GoogleProvider(api_key=gemini_api_key))
+            if api_family == 'interactions'
+            else GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
+        )
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_subagent_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')

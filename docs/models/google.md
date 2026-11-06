@@ -136,9 +136,15 @@ See [Google Cloud Model Garden](google-cloud.md#model-garden).
 
 ## Interactions API
 
-[`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] uses Google's
-[Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview).
-Select it explicitly with `google-interactions:<model>`:
+Choose Google's [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview) when you need
+remote MCP servers through [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool], Google Maps,
+or music and video generation. It also exposes remote execution environments through `extra_body`
+when the chosen model supports them. For ordinary text, function tools and structured output,
+use `google:` and [`GoogleModel`][pydantic_ai.models.google.GoogleModel]. Interactions adds no caching or
+conversation-history benefit, and lacks explicit caching, token counting and batch requests.
+
+Select [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel]
+explicitly with `google-interactions:<model>`:
 
 ```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
@@ -176,20 +182,48 @@ and endpoint. Image-capable models support `BinaryImage` output and `ImageGenera
 [`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
 provides typed Interactions settings. `google_native_tools` exposes additional native tools, such as
 Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type. Use the shared `thinking`, `tool_choice`, and `service_tier`
-settings for portable configuration. For native audio or video output, configure
+settings for portable configuration. `google_labels` and `google_video_resolution` use the same types
+as `GoogleModelSettings`. Safety settings have a different API shape: use
+`google_interactions_safety_settings` for Interactions and `google_safety_settings` for GenerateContent.
+For native audio or video output, configure
 `google_response_format` and, when needed, `google_generation_config`, and read the returned
 [`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
+The typed generation configuration also exposes voice selection, transcription and video task controls.
+
+Video inputs support YouTube URLs, `vendor_metadata` keys `start_offset`, `end_offset` and `fps`, and
+the shared `google_video_resolution` setting. Per-file `vendor_metadata['media_resolution']` takes
+precedence over that default. It uses the same `{'level': 'MEDIA_RESOLUTION_HIGH'}` shape as
+`GoogleModel`, including `MEDIA_RESOLUTION_ULTRA_HIGH` where supported by the chosen model.
+
+Native tool results can contain files on supported models. Recordings made in November 2026 show
+PDF, MP3 audio and MP4 video results succeeding on Gemini 3.8 Flash and Gemini 4 Argon, although
+the October 31 probe on [#6192](https://github.com/pydantic/pydantic-ai/issues/6192) rejected PDF and audio.
+Other models retain the conservative GenerateContent MIME profile; unsupported result files are
+sent in a framed user turn that identifies their originating tool call.
+
+Grounding data includes more than citations: search queries are in `NativeToolCallPart.args`, and
+search suggestions, fetched URL status and Maps places are in `NativeToolReturnPart.content`.
+Additional raw step metadata remains in each native part's `provider_details`.
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
 caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
 describes them. Finish reasons are derived from interaction status, which has less detail than
 GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
 
+The public Interactions contract has no equivalent for `google_logprobs`, `google_top_logprobs`,
+or Google Cloud's `google_model_armor_config`; use `GoogleModel` when you need those features.
+Native provider compaction is unavailable. Application-written `CompactionPart` summaries are
+sent as portable user text; another provider's opaque response compaction is omitted.
+The SDK has no per-request `max_retries` option. Use a [retrying HTTP transport](../retries.md#transport-retries)
+to configure retries for this adapter. Empty prompts need sendable content, as tracked in
+[#11123](https://github.com/pydantic/pydantic-ai/issues/11123).
+
 Use inline delivery for generated media. Video URI delivery requires `store=True`, so it is outside
 this stateless adapter's scope. URI-only output raises an error.
 
 Input file URLs are resolved by Google on both transports. Set `force_download=True` on an HTTP(S)
 file URL to download it locally with the library's address and response-size checks instead.
+Google Cloud can reject URLs blocked by the host's `robots.txt`; local downloading also handles that case.
 
 !!! note "Gateway support"
     The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured

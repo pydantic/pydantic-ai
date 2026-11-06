@@ -10,7 +10,8 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
@@ -34,6 +35,7 @@ from pydantic_ai import (
     ModelUnavailableError,
 )
 from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import UnsupportedSettingWarning
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -61,6 +63,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
@@ -202,6 +205,18 @@ def _google(handler: Handler) -> Model:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return GoogleModel(
         'gemini-2.5-flash',
+        provider=GoogleProvider(api_key='test', http_client=http_client, base_url='http://localhost'),
+    )
+
+
+def _google_interactions(handler: Handler | httpx2.AsyncClient) -> Model:
+    http_client = (
+        handler
+        if isinstance(handler, httpx2.AsyncClient)
+        else httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    return GoogleInteractionsModel(
+        'gemini-3.8-flash',
         provider=GoogleProvider(api_key='test', http_client=http_client, base_url='http://localhost'),
     )
 
@@ -1809,6 +1824,51 @@ CASES = [
 ]
 
 
+CASES.extend(
+    replace(case, id=case.id.replace('google-', 'google-interactions-', 1), model=_google_interactions)
+    for case in list(CASES)
+    if case.model is _google and case.id not in ('google-stream-unavailable', 'google-stream-internal')
+)
+CASES.extend(
+    [
+        Case(
+            id='google-interactions-connection',
+            model=_google_interactions,
+            handler=_raise('connect'),
+            categories={ModelConnectionError},
+            attrs={'phase': 'connect'},
+        ),
+        Case(
+            id='google-interactions-timeout',
+            model=_google_interactions,
+            handler=_raise('timeout'),
+            categories={ModelConnectionError, ModelTimeoutError},
+            attrs={'phase': 'read'},
+        ),
+        Case(
+            id='google-interactions-stream-unavailable',
+            model=_google_interactions,
+            handler=_sse_data({'event_type': 'error', 'error': {'code': '503', 'message': 'Service unavailable'}}),
+            categories={ModelHTTPError, ModelUnavailableError},
+            attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': '503'},
+            stream=True,
+            has_cause=False,
+        ),
+        Case(
+            id='google-interactions-stream-internal',
+            model=_google_interactions,
+            handler=_sse_data(
+                {'event_type': 'error', 'error': {'code': '500', 'message': 'An internal error occurred'}}
+            ),
+            categories={ModelHTTPError, ModelServerError},
+            attrs={'status_code': 500, 'in_stream': True, 'provider_error_code': '500'},
+            stream=True,
+            has_cause=False,
+        ),
+    ]
+)
+
+
 @pytest.mark.parametrize('case', CASES, ids=[case.id for case in CASES])
 async def test_http_provider_error_category(allow_model_requests: None, case: Case):
     agent = Agent(case.model(case.handler))
@@ -1872,8 +1932,8 @@ def _retrying_mistral(client: httpx2.AsyncClient) -> Model:
 
 @pytest.mark.parametrize(
     'make_model',
-    [_retrying_openai, _retrying_anthropic, _retrying_google, _retrying_mistral],
-    ids=['openai', 'anthropic', 'google', 'mistral'],
+    [_retrying_openai, _retrying_anthropic, _retrying_google, _google_interactions, _retrying_mistral],
+    ids=['openai', 'anthropic', 'google', 'google-interactions', 'mistral'],
 )
 async def test_model_fallback_after_retrying_transport_gives_up(
     allow_model_requests: None, make_model: Callable[[httpx2.AsyncClient], Model]
@@ -1893,7 +1953,13 @@ async def test_model_fallback_after_retrying_transport_gives_up(
         model_settings={'max_retries': 0},
         capabilities=[ModelFallback(FunctionModel(fallback))],
     )
-    result = await agent.run('hello')
+    # Interactions has no per-request SDK retry option; a caller-configured transport still owns its retries.
+    with (
+        pytest.warns(UnsupportedSettingWarning, match='max_retries')
+        if make_model is _google_interactions
+        else nullcontext()
+    ):
+        result = await agent.run('hello')
 
     assert result.output == 'from the fallback model'
     assert len(requests) == 3

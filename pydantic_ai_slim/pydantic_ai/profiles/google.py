@@ -32,6 +32,16 @@ _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'text/plain',
 )
 
+_INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
+    *_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES,
+    'audio/mpeg',
+    'video/mp4',
+)
+_INTERACTIONS_TOOL_RETURN_MIME_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('gemini-3.8-flash', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    ('gemini-4-argon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+)
+
 _SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
 _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
 _SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
@@ -301,6 +311,18 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    return profile
+
+
+def google_interactions_model_profile(model_name: str) -> GoogleModelProfile:
+    """Profile overrides for Google's Interactions API, independent of GenerateContent."""
+    profile = GoogleModelProfile(supports_tool_return_schema=False)
+    model_name = model_name.rsplit('/', 1)[-1]
+    mime_types = next(
+        (types for prefix, types in _INTERACTIONS_TOOL_RETURN_MIME_TYPES if model_name.startswith(prefix)), None
+    )
+    if mime_types is not None:
+        profile['google_supported_mime_types_in_tool_returns'] = mime_types
     return profile
 
 

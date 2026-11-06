@@ -5,16 +5,20 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelRetry
+from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelRetry, VideoUrl
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.messages import (
+    FilePart,
     ModelMessagesTypeAdapter,
+    ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
@@ -23,7 +27,9 @@ from pydantic_ai.settings import ThinkingEffort
 from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+    from google.genai.types import MediaResolution
+
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel, GoogleInteractionsModelSettings
     from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -171,6 +177,18 @@ async def test_native_tools(
     responses = [message for message in history if isinstance(message, ModelResponse)]
     assert any(isinstance(part, NativeToolCallPart) for response in responses for part in response.parts)
     assert any(isinstance(part, NativeToolReturnPart) for response in responses for part in response.parts)
+    if native_tool in ('search', 'fetch'):
+        calls = [part for response in responses for part in response.parts if isinstance(part, NativeToolCallPart)]
+        returns = [part for response in responses for part in response.parts if isinstance(part, NativeToolReturnPart)]
+        assert any(call.args_as_dict().get('queries' if native_tool == 'search' else 'urls') for call in calls)
+        results = [
+            item for part in returns for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(part.content)
+        ]
+        if native_tool == 'search':
+            assert any(item.get('search_suggestions') for item in results)
+            assert any(call.provider_details and call.provider_details.get('search_type') for call in calls)
+        else:
+            assert any(item.get('url') and item.get('status') for item in results)
     final = await agent.run(
         'Summarize the answer briefly using only the preceding information.', message_history=history
     )
@@ -297,13 +315,35 @@ async def test_multimodal_input(
     assert (await Agent(interactions_model).run(['Summarize this file in one sentence.', content])).output
 
 
+@pytest.mark.parametrize('source', ['binary', 'youtube'])
+async def test_video_processing_controls(
+    interactions_model: GoogleInteractionsModel,
+    video_content: BinaryContent,
+    request_capture: RequestCapture,
+    source: str,
+    allow_model_requests: None,
+):
+    video = VideoUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ') if source == 'youtube' else video_content
+    video.vendor_metadata = {'start_offset': '0s', 'end_offset': '1s', 'fps': 1}
+    settings: GoogleInteractionsModelSettings = {'google_video_resolution': MediaResolution.MEDIA_RESOLUTION_LOW}
+    result = await Agent(interactions_model, model_settings=settings).run(
+        ['Describe this video in one sentence.', video]
+    )
+    assert result.output
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(request_capture.body()['input'])
+    content = TypeAdapter(list[dict[str, JsonValue]]).validate_python(steps[0]['content'])
+    assert content[1]['processing'] == {'type': 'static', 'start_offset': '0s', 'end_offset': '1s', 'fps': 1}
+    assert content[1]['resolution'] == 'low'
+    if source == 'youtube':
+        assert isinstance(video, VideoUrl)
+        assert content[1]['uri'] == video.url
+        assert 'data' not in content[1]
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_audio_output(
     gemini_api_key: str, request_capture: RequestCapture, stream: bool, allow_model_requests: None
 ):
-    from pydantic_ai.direct import model_request, model_request_stream
-    from pydantic_ai.messages import FilePart, ModelRequest, UserPromptPart
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     model = GoogleInteractionsModel(
         'gemini-3.8-flash-tts',
@@ -322,6 +362,24 @@ async def test_audio_output(
         isinstance(part, FilePart) and part.content.media_type.startswith('audio/') and part.content.data
         for part in response.parts
     )
+
+
+async def test_native_voice_configuration(
+    gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
+):
+
+    model = GoogleInteractionsModel(
+        'gemini-3.8-flash-tts',
+        provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=120)),
+    )
+    settings: GoogleInteractionsModelSettings = {
+        'google_response_format': {'type': 'audio'},
+        'google_generation_config': {'speech_config': [{'voice': 'Kore', 'language': 'en-US'}]},
+    }
+    response = await model_request(model, [ModelRequest.user_text_prompt('Say hello.')], model_settings=settings)
+    assert any(isinstance(part, FilePart) and part.content.data for part in response.parts)
+    config = TypeAdapter(dict[str, JsonValue]).validate_python(request_capture.body()['generation_config'])
+    assert config['speech_config'] == [{'voice': 'Kore', 'language': 'en-US'}]
 
 
 @pytest.mark.parametrize(
@@ -415,7 +473,6 @@ async def test_vertex(vertex_provider: GoogleProvider, allow_model_requests: Non
 
 async def test_image_uri_output(gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None):
     from pydantic_ai import BinaryImage
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     settings: GoogleInteractionsModelSettings = {'google_response_format': {'type': 'image', 'delivery': 'uri'}}
     model = GoogleInteractionsModel(
@@ -444,7 +501,6 @@ async def test_video_uri_output_requires_storage(
     gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
 ):
     from pydantic_ai.exceptions import ModelHTTPError
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     settings: GoogleInteractionsModelSettings = {'google_response_format': {'type': 'video', 'delivery': 'uri'}}
     model = GoogleInteractionsModel(
@@ -459,7 +515,6 @@ async def test_video_uri_output_requires_storage(
 async def test_native_settings(
     interactions_model: GoogleInteractionsModel, request_capture: RequestCapture, allow_model_requests: None
 ):
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     settings: GoogleInteractionsModelSettings = {
         'thinking': 'low',
@@ -477,7 +532,6 @@ async def test_native_settings(
 
 
 async def test_google_maps(interactions_model: GoogleInteractionsModel, allow_model_requests: None):
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     settings: GoogleInteractionsModelSettings = {'google_native_tools': [{'type': 'google_maps'}]}
     result = await Agent(interactions_model, model_settings=settings).run(
@@ -489,6 +543,15 @@ async def test_google_maps(interactions_model: GoogleInteractionsModel, allow_mo
         and any(isinstance(part, NativeToolCallPart) and part.tool_name == 'google_maps' for part in message.parts)
         for message in result.all_messages()
     )
+    places = [
+        item.get('places')
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == 'google_maps'
+        for item in TypeAdapter(list[dict[str, JsonValue]]).validate_python(part.content)
+    ]
+    assert any(places)
 
 
 async def test_image_generation_tool_configuration(
@@ -535,9 +598,6 @@ async def test_pptx_input(
 async def test_generated_media(
     gemini_api_key: str, request_capture: RequestCapture, kind: str, allow_model_requests: None
 ):
-    from pydantic_ai.direct import model_request
-    from pydantic_ai.messages import FilePart, ModelRequest
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     model = GoogleInteractionsModel(
         'lyria-3-clip-preview' if kind == 'music' else 'gemini-omni-1.1-flash',
@@ -568,7 +628,6 @@ async def test_minimal_thinking_resolves_to_supported_level(
     allow_model_requests: None,
 ):
     # Verified against the public Interactions API: this model rejects MINIMAL and accepts LOW.
-    from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
     settings: GoogleInteractionsModelSettings = {'thinking': thinking}
     agent = Agent(interactions_model, model_settings=settings)

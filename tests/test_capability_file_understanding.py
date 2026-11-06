@@ -45,6 +45,7 @@ from .conftest import IsStr, try_import
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -562,16 +563,28 @@ async def test_a_text_document_by_url_is_downloaded_once_per_conversation():
 
 @pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')
 @pytest.mark.vcr()
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'], ids=['google', 'google-interactions'])
 async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
-    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    gemini_api_key: str,
+    video_content: BinaryContent,
+    api_family: str,
 ):
     # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
     claude = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    gemini = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    model_class = GoogleInteractionsModel if api_family == 'interactions' else GoogleModel
+    gemini = model_class('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
 
     result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
 
+    if isinstance(gemini, GoogleInteractionsModel):
+        assert result.output == snapshot(
+            'A black digital camera on a tripod, set up on a remote desert dirt road at golden hour, shows its monitor displaying the same canyon landscape that stretches out behind it.'
+        )
+        assert result.usage.requests == 2
+        return
     assert result.output == snapshot(
         'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )

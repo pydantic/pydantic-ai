@@ -11,17 +11,19 @@ from typing import Literal, assert_never
 
 import anyio
 import httpx
+import httpx2
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
-from ... import _model_errors
+from ... import _model_errors, _utils
 from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
-from ...exceptions import UnexpectedModelBehavior, UserError
+from ...exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ...messages import (
     ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
+    CompactionPart,
     FilePart,
     FileUrl,
     InstructionBaselinePart,
@@ -55,7 +57,7 @@ from ...native_tools import (
     WebSearchTool,
 )
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ...profiles.google import GoogleModelProfile
+from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
 from .. import (
@@ -79,6 +81,7 @@ try:
 
     # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
+    from google.genai.types import MediaResolution
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google Interactions API: `pip install "pydantic-ai-slim[google]"`'
@@ -106,7 +109,6 @@ _RESPONSE_FORMAT = TypeAdapter(
 
 _GENERATION_CONFIG = TypeAdapter(gi.GenerationConfigParam)
 _EXTRA_BODY = TypeAdapter(dict[str, object])
-_ENVIRONMENT = TypeAdapter(gi.CreateModelInteractionEnvironmentParam)
 _SAFETY_SETTINGS = TypeAdapter(list[gi.SafetySettingParam])
 _LABELS = TypeAdapter(dict[str, str])
 _SERVICE_TIER = TypeAdapter(gi.ServiceTier)
@@ -116,6 +118,8 @@ _THINKING_SUMMARIES = TypeAdapter(gi.ThinkingSummaries)
 _IMAGE_SIZE = TypeAdapter(gi.ImageResponseFormatImageSize)
 _IMAGE_MIME_TYPE = TypeAdapter(gi.ImageResponseFormatMimeType)
 _NATIVE_TOOLS = TypeAdapter(list[gi.ToolParam], config=ConfigDict(arbitrary_types_allowed=True))
+_VIDEO_RESOLUTION = TypeAdapter(MediaResolution)
+_CONTENT_RESOLUTION = TypeAdapter(gi.MediaResolution)
 
 
 class GoogleInteractionsModelSettings(ModelSettings, total=False):
@@ -125,7 +129,8 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     `parallel_tool_calls`) are ignored. Explicit caching and token counting are unavailable.
     Models that use thinking budgets retain their default effort: Interactions exposes only thinking levels.
 
-    These native Interactions settings are ignored by `GoogleModel`, except for the shared `google_labels`.
+    These native Interactions settings are ignored by `GoogleModel`, except for the shared
+    `google_labels` and `google_video_resolution`.
     Use the shared `thinking` and `service_tier` settings when switching between the two APIs.
     """
 
@@ -153,10 +158,10 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
 
     Use `NativeTool` with the shared native-tool types when one represents the tool.
     """
-    google_environment: gi.CreateModelInteractionEnvironmentParam
-    """A provider environment for a model that supports remote execution."""
     google_labels: dict[str, str]
     """Labels attached to the request."""
+    google_video_resolution: MediaResolution
+    """Default resolution for video inputs. Per-file `vendor_metadata` takes precedence."""
 
 
 @dataclass(init=False)
@@ -209,15 +214,12 @@ class GoogleInteractionsModel(Model[Client]):
     def base_url(self) -> str:
         return self._provider.base_url
 
+    def _provider_model_profile(self) -> ModelProfile:
+        model_name = self.model_name.rsplit('/', 1)[-1]
+        return self._provider._configured_model_profile(model_name) or {}  # pyright: ignore[reportPrivateUsage]
+
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        defaults = GoogleModelProfile(supports_tool_return_schema=False)
-        if self.model_name in ('gemini-3.8-flash', 'gemini-4-argon'):
-            # Recorded Interactions tool results accept audio and video beyond GenerateContent's MIME set.
-            mime_types = GoogleModelProfile(**profile).get('google_supported_mime_types_in_tool_returns', ())
-            defaults['google_supported_mime_types_in_tool_returns'] = tuple(
-                sorted({*mime_types, 'audio/mpeg', 'video/mp4'})
-            )
-        return merge_profile(profile, defaults)
+        return merge_profile(profile, google_interactions_model_profile(self.model_name))
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -308,12 +310,14 @@ class GoogleInteractionsModel(Model[Client]):
             )
             if isinstance(response, gi.Interaction):
                 raise UnexpectedModelBehavior('Expected a streaming Google interaction.')
-            stream = GoogleInteractionsStreamedResponse(params, response, self.model_name, self.system, self.base_url)
+            stream = GoogleInteractionsStreamedResponse(
+                params, response, self.model_name, self.system, self.base_url, _close_response=response.close
+            )
             stream.canonical_system = self._canonical_system_stamp
             try:
                 yield stream
             finally:
-                await response.close()
+                await stream.close_stream()
 
     @contextmanager
     def _map_api_errors(self) -> Generator[None]:
@@ -322,11 +326,31 @@ class GoogleInteractionsModel(Model[Client]):
         except APITimeoutError as exc:
             raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=True) from exc
         except APIConnectionError as exc:
+            if isinstance(exc.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
+                raise _model_errors.transport_status_error(self.model_name, exc.__cause__.response) from exc
             raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=False) from exc
         except APIStatusError as exc:
-            raise _model_errors.transport_status_error(self.model_name, exc.response) from exc
+            raise self._map_status_error(exc) from exc
         except APIError as exc:
             raise _model_errors.stream_error(self.model_name, str(exc), exc.body) from exc
+
+    def _map_status_error(self, exc: APIStatusError) -> ModelHTTPError:
+        body = exc.body
+        error = body.get('error', body) if _utils.is_str_dict(body) else body
+        status = error.get('status') if _utils.is_str_dict(error) else None
+        code = error.get('code') if _utils.is_str_dict(error) else None
+        status = status if isinstance(status, str) else None
+        code = str(code) if isinstance(code, str | int) else None
+        message = error.get('message') if _utils.is_str_dict(error) else str(exc)
+        category = _model_errors.google_status_category(status, message, body)
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(exc.response.status_code, message),
+            status_code=exc.response.status_code,
+            model_name=self.model_name,
+            body=body,
+            headers=dict(exc.response.headers),
+            provider_error_code=status or code,
+        )
 
     def _http_options(self, settings: ModelSettings, steps: list[dict[str, JsonValue]]) -> _HttpOptions:
         options: _HttpOptions = {'extra_headers': {'User-Agent': get_user_agent(), **settings.get('extra_headers', {})}}
@@ -346,7 +370,12 @@ class GoogleInteractionsModel(Model[Client]):
     async def _build_request(
         self, messages: list[ModelMessage], settings: ModelSettings, params: ModelRequestParameters
     ) -> tuple[gi.CreateModelInteractionParam, list[dict[str, JsonValue]]]:
-        instructions, steps = await self._map_messages(messages, params)
+        video_resolution = (
+            _VIDEO_RESOLUTION.validate_python(settings['google_video_resolution'])
+            if 'google_video_resolution' in settings
+            else None
+        )
+        instructions, steps = await self._map_messages(messages, params, video_resolution=video_resolution)
         request: gi.CreateModelInteractionParam = {
             'model': _MODEL_NAME.validate_python(self.model_name),
             'store': False,
@@ -357,8 +386,6 @@ class GoogleInteractionsModel(Model[Client]):
         tools, response_format = self._map_tools(params)
         if 'google_native_tools' in settings:
             tools.extend(_NATIVE_TOOLS.validate_python(settings['google_native_tools']))
-        if 'google_environment' in settings:
-            request['environment'] = _ENVIRONMENT.validate_python(settings['google_environment'])
         if tools:
             request['tools'] = tools
         config = self._generation_config(settings, params)
@@ -510,9 +537,13 @@ class GoogleInteractionsModel(Model[Client]):
         return image_format
 
     async def _map_messages(
-        self, messages: list[ModelMessage], params: ModelRequestParameters
+        self,
+        messages: list[ModelMessage],
+        params: ModelRequestParameters,
+        *,
+        video_resolution: MediaResolution | None = None,
     ) -> tuple[list[str], list[gi.StepParam | dict[str, JsonValue]]]:
-        context = _MapMessagesContext()
+        context = _MapMessagesContext(video_resolution=video_resolution)
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in _sendable_request_parts(message.parts):
@@ -521,7 +552,7 @@ class GoogleInteractionsModel(Model[Client]):
                     context.steps.append({'type': 'user_input', 'content': context.tool_files})
                     context.tool_files = []
             elif isinstance(message, ModelResponse):
-                context.steps.extend(await self._map_model_response(message))
+                context.steps.extend(await self._map_model_response(message, video_resolution=video_resolution))
             else:
                 assert_never(message)
         if parts := self._get_instruction_parts(messages, params):
@@ -537,7 +568,7 @@ class GoogleInteractionsModel(Model[Client]):
             case UserPromptPart():
                 await self._map_user_prompt_part(part, context)
             case ToolReturnPart():
-                result, files = await self._map_tool_return(part)
+                result, files = await self._map_tool_return(part, video_resolution=context.video_resolution)
                 context.steps.append(result)
                 context.tool_files.extend(files)
             case InstructionBaselinePart() | InstructionDeltaPart():
@@ -551,10 +582,12 @@ class GoogleInteractionsModel(Model[Client]):
         context.instructions.append(part.content)
 
     async def _map_user_prompt_part(self, part: UserPromptPart, context: _MapMessagesContext) -> None:
-        if content := await self._map_user_prompt(part):
+        if content := await self._map_user_prompt(part, video_resolution=context.video_resolution):
             context.steps.append({'type': 'user_input', 'content': content})
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> list[gi.ContentParam]:
+    async def _map_user_prompt(
+        self, part: UserPromptPart, *, video_resolution: MediaResolution | None = None
+    ) -> list[gi.ContentParam]:
         if isinstance(part.content, str):
             return [{'type': 'text', 'text': part.content}] if part.content else []
         content: list[gi.ContentParam] = []
@@ -567,20 +600,24 @@ class GoogleInteractionsModel(Model[Client]):
             elif isinstance(item, CachePoint):
                 continue
             elif isinstance(item, (FileUrl, BinaryContent, UploadedFile)):
-                content.append(await self._map_file(item))
+                content.append(await self._map_file(item, video_resolution=video_resolution))
             else:
                 assert_never(item)
         return content
 
-    async def _map_file(self, item: FileUrl | BinaryContent | UploadedFile) -> gi.ContentParam:
+    async def _map_file(
+        self, item: FileUrl | BinaryContent | UploadedFile, *, video_resolution: MediaResolution | None = None
+    ) -> gi.ContentParam:
         if isinstance(item, UploadedFile):
-            self._validate_uploaded_file_provider(item)
+            _utils.validate_uploaded_file_provider(
+                item, system=self.canonical_system, model_type_name=type(self).__name__
+            )
             if self.client.vertexai:
                 if not item.file_id.startswith('gs://'):
                     raise UserError('UploadedFile for Google Interactions on Google Cloud must use a GCS URI (gs://).')
             elif not item.file_id.startswith('https://'):
                 raise UserError(
-                    'UploadedFile for Google Interactions on the Gemini API must use a Files API URI (https://).'
+                    'UploadedFile for Google Interactions on the Gemini API must use an HTTPS URI (https://).'
                 )
             value: dict[str, object] = {'uri': item.file_id, 'mime_type': item.media_type}
         elif isinstance(item, BinaryContent):
@@ -592,9 +629,40 @@ class GoogleInteractionsModel(Model[Client]):
             else:
                 value = {'uri': item.url, 'mime_type': item.media_type}
         value['type'] = media_kind(str(value['mime_type']))
+        self._apply_file_metadata(value, item.vendor_metadata or {}, video_resolution)
         return _CONTENT_PARAM.validate_python(value)
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[dict[str, JsonValue], list[gi.ContentParam]]:
+    def _apply_file_metadata(
+        self, value: dict[str, object], metadata: Mapping[str, object], video_resolution: MediaResolution | None
+    ) -> None:
+        if value['type'] == 'video':
+            self._apply_video_metadata(value, metadata, video_resolution)
+        if 'media_resolution' in metadata:
+            resolution = metadata['media_resolution']
+            level = resolution.get('level') if _utils.is_str_dict(resolution) else resolution
+            if isinstance(level, str):
+                value['resolution'] = _CONTENT_RESOLUTION.validate_python(
+                    level.removeprefix('MEDIA_RESOLUTION_').lower()
+                )
+        if 'media_processing' in metadata:
+            value['processing'] = metadata['media_processing']
+
+    def _apply_video_metadata(
+        self, value: dict[str, object], metadata: Mapping[str, object], video_resolution: MediaResolution | None
+    ) -> None:
+        processing: dict[str, object] = {
+            key: metadata[key] for key in ('start_offset', 'end_offset', 'fps') if key in metadata
+        }
+        if processing:
+            value['processing'] = {'type': 'static', **processing}
+        if video_resolution is not None and video_resolution != MediaResolution.MEDIA_RESOLUTION_UNSPECIFIED:
+            value['resolution'] = _CONTENT_RESOLUTION.validate_python(
+                video_resolution.value.removeprefix('MEDIA_RESOLUTION_').lower()
+            )
+
+    async def _map_tool_return(
+        self, part: ToolReturnPart, *, video_resolution: MediaResolution | None = None
+    ) -> tuple[dict[str, JsonValue], list[gi.ContentParam]]:
         content: list[gi.ContentParam] = []
         fallback_files: list[MultiModalContent] = []
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -602,7 +670,7 @@ class GoogleInteractionsModel(Model[Client]):
             if isinstance(item, str):
                 content.append({'type': 'text', 'text': item})
             elif item.media_type in supported_mime_types:
-                content.append(await self._map_file(item))
+                content.append(await self._map_file(item, video_resolution=video_resolution))
             else:
                 fallback_files.append(item)
         files: list[gi.ContentParam] = []
@@ -611,7 +679,7 @@ class GoogleInteractionsModel(Model[Client]):
                 wrap_if_error=False
             )
             content.append({'type': 'text', 'text': text})
-            files = await self._map_user_prompt(UserPromptPart(user_content))
+            files = await self._map_user_prompt(UserPromptPart(user_content), video_resolution=video_resolution)
         result: _FunctionResultStep = {
             'type': 'function_result',
             'name': part.tool_name,
@@ -621,7 +689,9 @@ class GoogleInteractionsModel(Model[Client]):
         }
         return JSON_OBJECT.validate_python(result), files
 
-    async def _map_model_response(self, message: ModelResponse) -> list[gi.StepParam | dict[str, JsonValue]]:
+    async def _map_model_response(
+        self, message: ModelResponse, *, video_resolution: MediaResolution | None = None
+    ) -> list[gi.StepParam | dict[str, JsonValue]]:
         original = replay_steps(message) if self.accepts_stateless_artifacts(message) else None
         groups: dict[int, list[ModelResponsePart]] = {}
         if original is not None:
@@ -639,19 +709,19 @@ class GoogleInteractionsModel(Model[Client]):
                     steps.append(replay_step(original[index], groups[index]))
                     sent.add(index)
                 continue
-            steps.extend(await self._map_response_part(message, part))
+            steps.extend(await self._map_response_part(message, part, video_resolution=video_resolution))
         return steps
 
     async def _map_response_part(
-        self, message: ModelResponse, part: ModelResponsePart
+        self, message: ModelResponse, part: ModelResponsePart, *, video_resolution: MediaResolution | None = None
     ) -> list[gi.StepParam | dict[str, JsonValue]]:
+        if isinstance(part, CompactionPart):
+            return []
         steps: list[gi.StepParam | dict[str, JsonValue]] = []
         if part.provider_details and self.accepts_stateless_artifacts(message, part):
             signature = part.provider_details.get('thought_signature')
             if isinstance(signature, str):
                 steps.append({'type': 'thought', 'signature': signature})
-        if isinstance(part, _UnpreparedPart):
-            raise _unprepared_part_error(part)
         match part:
             case TextPart():
                 steps.extend(self._map_text_part(part))
@@ -660,7 +730,7 @@ class GoogleInteractionsModel(Model[Client]):
             case ToolCallPart():
                 steps.extend(self._map_tool_call_part(part))
             case FilePart():
-                steps.extend(await self._map_file_part(part))
+                steps.extend(await self._map_file_part(part, video_resolution=video_resolution))
             case NativeToolCallPart() | NativeToolReturnPart():
                 steps.extend(self._map_native_part(message, part))
             case SpeechPart():
@@ -677,8 +747,12 @@ class GoogleInteractionsModel(Model[Client]):
             {'type': 'function_call', 'id': part.tool_call_id, 'name': part.tool_name, 'arguments': part.args_as_dict()}
         ]
 
-    async def _map_file_part(self, part: FilePart) -> list[gi.StepParam]:
-        return [{'type': 'model_output', 'content': [await self._map_file(part.content)]}]
+    async def _map_file_part(
+        self, part: FilePart, *, video_resolution: MediaResolution | None = None
+    ) -> list[gi.StepParam]:
+        return [
+            {'type': 'model_output', 'content': [await self._map_file(part.content, video_resolution=video_resolution)]}
+        ]
 
     def _map_native_part(
         self, message: ModelResponse, part: NativeToolCallPart | NativeToolReturnPart
@@ -708,6 +782,7 @@ class GoogleInteractionsModel(Model[Client]):
 
 @dataclass
 class _MapMessagesContext:
+    video_resolution: MediaResolution | None = None
     instructions: list[str] = field(default_factory=list[str])
     steps: list[gi.StepParam | dict[str, JsonValue]] = field(default_factory=list[gi.StepParam | dict[str, JsonValue]])
     tool_files: list[gi.ContentParam] = field(default_factory=list[gi.ContentParam])

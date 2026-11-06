@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "406"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: none
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What's the weather in Paris?
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2680
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 285
+          total_input_tokens: 54
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 54
+          total_cached_tokens: 0
+          total_output_tokens: 56
+          total_tool_use_tokens: 0
+          total_thought_tokens: 175
+          initial_input_tokens: 8
+        created: 2026-11-06T02:04:39Z
+        updated: 2026-11-06T02:04:39Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Er4GCrsGAWkUfRP8ET/ntXgglrP7KfxclStCsgeEYsdkXv2kk3SzIkToH9pBlyFz0CZJPUOZg/erSe2MBqT1n0y9/GhmKwYSQBAqueVQ6sAPzgYU/mpbsk6YVcIzCp45WDxnMhXHz2GKgyVs4F6U3haQR0320xc2pHr0eWnbIkpEJqAsIbavXSKgyRhXCkZzn33ENTZlf66vJIQoMva+s7zOSwZYjdS5+7a0hFGm9Ssu8xoFQaY37TszB+hIuBEV7KMpbbEo5C45UCL0wYkzX9PNAurATrRzQJTW2hAqVaBjC2mVKXOE2/B5DADbfOZYce4a4iywCkmFcfVNgOOONdd9IiYQIdgJx4GbxhnlW5pb9LnXxBM+W+QGFZw51uYJXaAXrFoRo07YzRti3kwOoxH2RndT9E72dYgGpKMFIPNgOzCbbz+wlf9hMOy7yipxfGSSbl05snTXSrOvboVBDgx5zWDYY3bWkPKkJKGaJfY+vB0xSRxI7GKQj5UjaRbxADOz2iTEEXuD/+pLKxqUGELIqnjdKnQtUOTXKg18WsHnZFcdecAAqUStuY8Ud9L9TlqVR5GcmOWZKNohfuEw5oNzxsaL4CmgM+i6wTnGoVpye9oeLgiidxT+EtAWr+LPw1dzJd3q1rP7YyFQjiqAIBr582Ec+62VJG0qMWmxZVjI0IR6beCKJV8Ayz6CnyLcG/TEzU6xI3bKtZVCyVdkW/R3DU7shqpI8ivF+OBlLglyDjPVUXYwoy3PGdtCQyVmLCzRFcuUFj5D+zfUMUIB+BI34D8YFBbAz3huFID4yhZfTFk7OUdYOoTFiBuC0CjC6d7s/ZgaEykJUfKjRUhVfXaJx9mDN4sUMbR6yU5Kb3sfCfDvZYQ6VBT8AIauRVRSph2oD1uqT6tCL64p5oZqwwn/ZDRAlVZ2Aj50fUq4LxKlFbKQG+YibPRaIPRHcBoAUpgDbWv3DKr53sqbqimvzem0j5jOX9hBWRSffJ9A7Ixe736PNrQm19BqVdT7wmHudAA9yGZw4jwIHyI+O4j15PuUOYyas6F4fdPV+qkTEDePKP/a+jmQmJHTBQwuPyGHOdQSzQDBE0ianU2uJAvZDHM=
+          type: thought
+        - content:
+          - text: |-
+              I do not have access to real-time weather information.
+
+              To check the current weather in Paris, please consult a live weather service like [Météo-France](https://meteofrance.com/), weather.com, or your smartphone's weather app.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:04:39.992670+00:00

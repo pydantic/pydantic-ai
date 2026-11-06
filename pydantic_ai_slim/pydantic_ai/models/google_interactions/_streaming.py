@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import anyio
 from google.genai import interactions as gi
 from pydantic import JsonValue, TypeAdapter
 
@@ -39,6 +40,10 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _model_name: str
     _provider_name: str
     _provider_url: str
+    _close_response: Callable[[], Awaitable[None]] | None = None
+    _stream: _utils.PeekableAsyncStream[gi.InteractionSSEEvent, AsyncIterator[gi.InteractionSSEEvent]] = field(
+        init=False
+    )
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _steps: dict[int, dict[str, JsonValue]] = field(default_factory=dict[int, dict[str, JsonValue]])
     _arguments: dict[int, list[str]] = field(init=False, default_factory=dict[int, list[str]])
@@ -50,8 +55,19 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _media_steps: set[int] = field(init=False, default_factory=set[int])
     _deferred_events: list[gi.InteractionSSEEvent] = field(init=False, default_factory=list[gi.InteractionSSEEvent])
 
+    def __post_init__(self) -> None:
+        self._stream = _utils.PeekableAsyncStream(self._response)
+
+    async def close_stream(self) -> None:
+        with anyio.CancelScope(shield=True):
+            try:
+                await self._stream.aclose()
+            finally:
+                if self._close_response is not None:
+                    await self._close_response()
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._response:
+        async for event in self._stream:
             for value in self._ready_events(event):
                 for result in await self._map_event(value):
                     yield result

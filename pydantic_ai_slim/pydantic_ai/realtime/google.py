@@ -93,12 +93,12 @@ from ..models import (
     _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
+from ..models._google_common import snap_thinking_level, thinking_effort_to_level
+from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
-from ..models._google_common import snap_thinking_level, thinking_effort_to_level
-from ..models._speech import assistant_speech_text
 from ..models.google import (
     _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
     _map_api_error,  # pyright: ignore[reportPrivateUsage]
