@@ -439,12 +439,16 @@ def test_a_report_cut_short_names_the_failures_before_the_cut(
     assert {signature: sorted(failure.pythons) for signature, failure in observation.failures.items()} == {
         UNION: ['3.11', '3.15']
     }
+    limit_reason, parse_reason = observation.failures[UNION].details
+    assert limit_reason == f'Python 3.11 JUnit report read only in part: junit.xml exceeds {cut} bytes'
+    assert parse_reason.startswith('Python 3.15 JUnit report read only in part: no element found')
     assert not observation.complete
 
-    # An open issue for a signature past the cut is not told it passes.
+    # The issue says its count stops at the cut, and an open issue for a signature past it is not told it passes.
     client = FakeClient()
     run(client, root, failing_reports(tmp_path, 'prefect', [prefect]), 1)
     assert run(client, root, reports, 2) == [f'#101: filed `{UNION}`']
+    assert limit_reason in str(client.created[1]['body'])
     assert client.posted == []
 
 

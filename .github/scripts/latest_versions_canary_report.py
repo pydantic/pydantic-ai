@@ -11,9 +11,9 @@ and reconciles them with the issues it filed before, one issue per signature:
   leg's suite first, then those with the most failing tests. The rest are logged
   and wait for a later run.
 - A signature that an open issue carries gets one comment on that issue per run.
-- A run in which every leg finished its test session, with each report read to its end, shows
-  which signatures pass.
-  Each issue records a pass once; closing stays a maintainer decision.
+- A run in which every leg finished its test session and each report was read to
+  its end shows which signatures pass. Each issue records a pass once; closing
+  stays a maintainer decision.
 - A signature whose last issue was closed gets a new issue only if a run
   recorded it passing after its last failure. A close is not proof of recovery:
   automated triage or an incomplete fix can close an issue while the canary
@@ -143,7 +143,8 @@ class Failure:
     pythons: set[str] = field(default_factory=set[str])
     # Test node ID -> first line of its failure. Untrusted text, for issue bodies only.
     tests: dict[str, str] = field(default_factory=dict[str, str])
-    # First lines of failures tied to no test, such as the node a crashed worker was running. Untrusted too.
+    # First lines of failures tied to no test, such as the node a crashed worker was running, and why a report
+    # was read only in part. Untrusted too.
     details: list[str] = field(default_factory=list[str])
 
 
@@ -214,15 +215,13 @@ def collect(reports: Path, root: Path) -> Observation:
             outcome = LegOutcome.model_validate_json(_read(leg / 'outcome.json'))
         except (OSError, ValidationError):
             outcome = None
-        found, cut = _leg_failures(leg, python, outcome, root)
-        # A failed session counts only if it finished and its report was read to the end: an interrupted,
-        # internally failed or worker-starved one writes JUnit for just the tests it reached, a report cut
-        # short names just the failures before the cut, and the absent rest must not read as passes.
-        # Failures not tied to a test, xdist's included, carry no test ID.
-        tested = (
-            not cut
-            and outcome is not None
-            and (outcome.test == 'success' or (outcome.pytest_exit == 1 and all(test for _, test, _ in found)))
+        found = _leg_failures(leg, python, outcome, root)
+        # A failed session counts only if it finished: an interrupted, internally failed or worker-starved
+        # one writes JUnit for just the tests it reached, and the absent rest must not read as passes.
+        # Failures not tied to a test, xdist's included, carry no test ID, as does the reason a report was
+        # read only in part.
+        tested = outcome is not None and (
+            outcome.test == 'success' or (outcome.pytest_exit == 1 and all(test for _, test, _ in found))
         )
         complete = complete and tested
         totals.add(outcome.legs if outcome else 0)
@@ -247,36 +246,35 @@ def _children(directory: Path) -> list[Path]:
     return sorted(directory.iterdir()) if directory.is_dir() else []
 
 
-def _leg_failures(
-    leg: Path, python: str, outcome: LegOutcome | None, root: Path
-) -> tuple[list[tuple[str, str, str]], bool]:
-    """The failures a leg reported, and whether its JUnit report was cut short of the end."""
+def _leg_failures(leg: Path, python: str, outcome: LegOutcome | None, root: Path) -> list[tuple[str, str, str]]:
     if outcome is None:
-        return [(f'canary job on Python {python} left no readable report', '', '')], False
+        return [(f'canary job on Python {python} left no readable report', '', '')]
     for stage, result in (('resolve', outcome.resolve), ('install', outcome.install), ('test', outcome.test)):
         if result == 'success':
             continue
         if result == 'skipped':
-            return [(f'canary job on Python {python} fails before its {stage} step', '', '')], False
+            return [(f'canary job on Python {python} fails before its {stage} step', '', '')]
         if result == 'cancelled':
-            return [(f'{stage} step times out or is cancelled on Python {python}', '', '')], False
+            return [(f'{stage} step times out or is cancelled on Python {python}', '', '')]
         if stage == 'resolve':
             # One universal resolution serves every interpreter, so its failure has no version.
-            return [('dependency resolution fails', '', '')], False
+            return [('dependency resolution fails', '', '')]
         if stage == 'install':
-            return [(f'install fails on Python {python}', '', '')], False
+            return [(f'install fails on Python {python}', '', '')]
         tests: list[tuple[str, str, str]] = []
         try:
             for failure in _test_failures(leg / 'junit.xml', root):
                 tests.append(failure)
         except (OSError, ElementTree.ParseError) as error:
-            # A report past the read limit, as one with every test failing can be, or broken partway still
-            # names the failures before that point.
             reason = _first_line(str(error))
-            unreadable = (f'pytest fails on Python {python} and leaves no readable JUnit report', '', reason)
-            return tests or [unreadable], True
-        return tests or [(f'pytest fails on Python {python} with no failing test reported', '', '')], False
-    return [], False
+            if not tests:
+                return [(f'pytest fails on Python {python} and leaves no readable JUnit report', '', reason)]
+            # A report past the read limit, as one with every test failing can be, or broken partway still
+            # names the failures before that point. Each of their issues says its count stops there.
+            cut = f'Python {python} JUnit report read only in part: {reason}'
+            return [*tests, *((signature, '', cut) for signature in dict.fromkeys(name for name, _, _ in tests))]
+        return tests or [(f'pytest fails on Python {python} with no failing test reported', '', '')]
+    return []
 
 
 def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
@@ -337,7 +335,8 @@ def _finished_testcases(parser: ElementTree.XMLPullParser[ElementTree.Element]) 
         element = event[-1]
         if isinstance(element, ElementTree.Element) and element.tag == 'testcase':
             yield element
-            # Dropping each read case keeps memory to one test's report, however many the file holds.
+            # An emptied case stays in the tree as a bare element, so memory holds one test's report plus a
+            # shell per case read, and the read limit bounds the shells.
             element.clear()
 
 
