@@ -384,9 +384,13 @@ UNKNOWN_SETTINGS: Any = {
 }
 
 
-@pytest.mark.skipif(not (openai_available() and anthropic_available()), reason='openai or anthropic not installed')
+_needs_anthropic = pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
 @pytest.mark.usefixtures('allow_model_requests')
 class TestProviderSettings:
+    @_needs_anthropic
     @pytest.mark.parametrize(('tool', 'option', 'value'), ANTHROPIC_OPTIONS)
     def test_anthropic_option_reaches_the_request(self, tool: AbstractNativeTool, option: str, value: Any) -> None:
         assert _anthropic_request_tool(tool)[option] == value
@@ -413,6 +417,7 @@ class TestProviderSettings:
         }
         assert declared == covered
 
+    @_needs_anthropic
     def test_each_model_reads_only_its_own_settings(self) -> None:
         tool = WebSearchTool(
             provider_settings={'anthropic': {'response_inclusion': 'excluded'}, 'openrouter': {'engine': 'exa'}}
@@ -434,8 +439,8 @@ class TestProviderSettings:
     @pytest.mark.parametrize(
         ('read_request', 'make_tool'),
         [
-            (_anthropic_request_tool, WebSearchTool),
-            (_anthropic_request_tool, WebFetchTool),
+            pytest.param(_anthropic_request_tool, WebSearchTool, marks=_needs_anthropic),
+            pytest.param(_anthropic_request_tool, WebFetchTool, marks=_needs_anthropic),
             (_openrouter_request_parameters, WebSearchTool),
             (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
         ],
