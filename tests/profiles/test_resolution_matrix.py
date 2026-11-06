@@ -3083,23 +3083,41 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
 
 
 def _route_provider(provider_name: str) -> type[Provider[Any]]:
-    """The provider class behind a route name in the forced-tool-choice route tests below."""
-    return {
-        'anthropic': AnthropicProvider,
-        'bedrock': BedrockProvider,
-        'cerebras': CerebrasProvider,
-        'deepseek': DeepSeekProvider,
-        'github-copilot': GitHubCopilotProvider,
-        'groq': GroqProvider,
-        'heroku': HerokuProvider,
-        'litellm': LiteLLMProvider,
-        'nebius': NebiusProvider,
-        'ollama': OllamaProvider,
-        'openrouter': OpenRouterProvider,
-        'snowflake': SnowflakeProvider,
-        'together': TogetherProvider,
-        'vercel': VercelProvider,
-    }[provider_name]
+    """The provider class behind a route name in the forced-tool-choice route tests below.
+
+    Only the requested class is looked up, so a test needs only the extras of the routes it uses.
+    """
+    match provider_name:
+        case 'anthropic':
+            return AnthropicProvider
+        case 'bedrock':
+            return BedrockProvider
+        case 'cerebras':
+            return CerebrasProvider
+        case 'deepseek':
+            return DeepSeekProvider
+        case 'github-copilot':
+            return GitHubCopilotProvider
+        case 'groq':
+            return GroqProvider
+        case 'heroku':
+            return HerokuProvider
+        case 'litellm':
+            return LiteLLMProvider
+        case 'nebius':
+            return NebiusProvider
+        case 'ollama':
+            return OllamaProvider
+        case 'openrouter':
+            return OpenRouterProvider
+        case 'snowflake':
+            return SnowflakeProvider
+        case 'together':
+            return TogetherProvider
+        case 'vercel':
+            return VercelProvider
+        case _:  # pragma: no cover
+            raise ValueError(f'Unknown route provider: {provider_name}')
 
 
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
