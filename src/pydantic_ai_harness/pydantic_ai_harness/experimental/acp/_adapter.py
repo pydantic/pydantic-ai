@@ -672,8 +672,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
         output_type = [self._agent.output_type, DeferredToolRequests]
-        final_result = None  # Track the final run result for context usage reporting
-        final_resolved_model = None  # Track the resolved model used in the final run pass
+        final_result = None
+        final_resolved_model = None
         approval_names, known_non_approval_names = self._scan_approval_names(config)
         turn = _TurnState(
             conn=conn,
