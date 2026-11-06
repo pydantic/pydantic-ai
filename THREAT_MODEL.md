@@ -19,6 +19,8 @@ The same agent can run inside applications with different authority. Evaluate a 
 
 See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/deployment.md), [workspaces](docs/workspace.md), [CLAI 2](src/pydantic_clai2/README.md), and [durable execution](docs/durable_execution/overview.md).
 
+Unlaunched packages: `pydantic-clai2` (CLAI 2). Maintainers handle a report against an unlaunched package as a bug, not a vulnerability. The CLAI 2 rows below still describe its intended boundary.
+
 Examples and documentation snippets show how to use an API; they are not hardened deployments. A flaw in one is a documentation bug for a public issue or pull request, unless the library code it calls breaks a documented boundary.
 
 A vulnerability in a third-party dependency or in CPython belongs to that project. When a dependency publishes a fix, the repository lock raises that dependency's floor, and the published requirements keep admitting the patched release; applications install that release themselves. Pydantic AI code does not work around the vulnerability. A CPython vulnerability fixed only in a later Python release does not change the [supported Python versions](docs/version-policy.md#support-for-python-versions); an application running an affected version carries that vulnerability until it upgrades Python. A Pydantic AI check that relies on dependency or CPython behavior is still a library control, so a bypass of that check is a Pydantic AI vulnerability.
@@ -61,7 +63,7 @@ The hosting application controls which clients may enter this flow. Adapters, to
 
 Protocol-derived history is client-controlled. UI adapters sanitize that input before execution. Direct `message_history` or `conversation` supplied to an entry point is an application-authored path; an application accepting either from a client must apply the corresponding validation and authorization.
 
-Review incoming fields that can select provider state, per-file provider options, instructions, uploaded files, download policy, tool calls, run identity, or a workspace. Review outgoing fields that can reveal server instructions, internal endpoints, provider details, MCP App tool results the model does not see, or other users' state. Use explicit opt-in controls where an adapter supports trusting input or disclosing additional state.
+Review incoming fields that can select provider state, per-file provider options, instructions, uploaded files, download policy, tool calls, tool definitions, run identity, or a workspace. AG-UI frontend tool definitions are client-submitted: their names, descriptions, and schemas reach the model request and the schema processing that prepares it. Review outgoing fields that can reveal server instructions, internal endpoints, provider details, MCP App tool results the model does not see, or other users' state. Use explicit opt-in controls where an adapter supports trusting input or disclosing additional state.
 
 Sanitization does not authenticate a client or prove that a submitted tool call or approval came from a genuine paused run. The application must authorize deferred actions and state access.
 
@@ -111,6 +113,8 @@ Untrusted content can influence model decisions. Instructions, delimiters, model
 
 A `wrap_*` hook that short-circuits skips that stage's `before_*` hooks, including policy hooks. Review where a mandatory control sits in the hook order.
 
+On routes that can reach a host that encodes chat-template special tokens found in message content as control tokens, Pydantic AI breaks those tokens in user, tool and file text and in replayed model output, so that text can't open a real turn (`may_tokenize_special_tokens_in_content` in the model profile). It's an opt-out default. It doesn't cover system prompts, instructions or tool definitions, including tool descriptions from an MCP server, nor files a provider fetches itself, and it doesn't stop a model from following text shaped like a turn. See [Special tokens in content](docs/message-history.md#special-tokens-in-content).
+
 Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools-advanced.md), [deferred tools](docs/deferred-tools.md), [dependencies](docs/dependencies.md), [hooks](docs/hooks.md#wrap-hooks), [Tool Call Judge](docs/harness/tool-call-judge.md#safety-boundary), [Approval Reviewer](docs/harness/approval-reviewer.md#safety-boundary), and [Code Mode](docs/harness/code-mode.md).
 
 ### MCP connections and agent configuration
@@ -144,6 +148,8 @@ Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilit
 ### Availability and resource lifetime
 
 Review how untrusted input affects downloads, queued requests, model usage, tool runtime, persisted work, and background jobs. Distinguish application admission policy from library-owned allocation and cleanup.
+
+An availability report is a vulnerability when untrusted input makes the library consume a resource other runs share, such as the event loop, process memory, or a concurrency pool, out of proportion to that input: work that grows super-linearly with it, an allocation that outlives its request, or an allocation left unbounded where only the library can bound it. Untrusted input includes client-submitted protocol fields, fetched content, model output, tool results, and text a guard inspects. The cost must be significant at an input size the component's default cap admits or, where it has no cap, at 1 MB, [nginx's default request-body limit](https://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size): about a second or more of blocked event loop or CPU time, hundreds of megabytes of memory, or pool capacity that other runs wait on. Cost that grows linearly with input the application can bound is admission policy; a report of it is a performance bug for a public issue, not a vulnerability. Inputs the application authors are trusted, and pathological cost from them is a bug: its code, configuration, agent specs, and tool definitions and schemas, including those from MCP servers it chooses. Client-submitted tool definitions, such as AG-UI frontend tools, are untrusted.
 
 Usage limits, timeouts, and concurrency limits control different resources. Evaluate normal completion, exceptions, cancellation, partial consumption, and recovery against the documented lifetime of each allocation. Scope the consequence to the affected pool, process, backend, or service.
 
@@ -192,6 +198,7 @@ These precedents show what to examine when a component or control changes. Read 
 | URL checks and network resolution disagree | Alternate address forms, hostname normalization, redirects, metadata access, and domain-list semantics. | [Metadata protection](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cg7w-rg45-pc59), [domain-list bypass](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-22h6-qm39-v87j). |
 | Limits apply after expensive work | Streaming download caps, conversion complexity, intermediate memory, and event-loop responsiveness. | [Download size](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-v2xh-2vp8-57h8), [conversion cost](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-v36g-jcw9-x7cw). |
 | A shared allocation outlives its request | Release on completion, cancellation, consumer errors, and partial consumption, including cleanup from another task. | [Concurrency slot retention](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp). |
+| Cost grows super-linearly with untrusted input | Reference and nesting expansion, repeated copying, charset decoding, regex backtracking, and formatting whose output multiplies its input. | [Quadratic processing](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-fpf4-vwcp-v4hp), [JSON formatting](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-m5vj-8mcw-82qx), [schema inlining](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-7494-925c-rrxv), [decision-model schemas](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-484x-x9m4-62cj), [UI message loading](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-r879-rxgj-3g75), [secret redaction](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-mfx5-pc32-32m8). |
 | A browser reaches a privileged local endpoint | Origin, host, content type, and request-controlled UI assets. | [Cross-origin requests](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-h4xc-3qfq-jf93), [DNS rebinding](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-q2xc-rrxj-58x9), [UI asset selection](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-wjp5-868j-wqv7). |
 | Client history changes execution or provider access | The surviving history tail, uploaded-file references, and authorization independent of client approval state. | [History sanitization](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-jpr8-2v3g-wgf9), [uploaded files](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-h7p7-w5gc-xj3w). |
 | Redaction misses another export channel | Events, exceptions, status text, instructions, templates, and every integration that emits content. | [Retry content](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-3gh4-cghq-f8v4), [additional trace channels](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-4x9p-g9wm-8q7f). |
@@ -215,6 +222,8 @@ A configuration-dependent report needs explicit deployment assumptions. For libr
 
 ## Keeping this model current
 
-Update this document when a change adds an input path, transfers authority, changes a trust or disclosure default, or changes an execution backend's guarantee. Keep option-level details in their canonical component documentation.
+Update this document in the PR that adds an input path, transfers authority, changes a trust or disclosure default, or changes an execution backend's guarantee. Keep option-level details in their canonical component documentation.
+
+When the new input path accepts client input, the same PR extends the `Pydantic AI UI Security Review` workflow to it. Add the path's source files to the `detect` step's path list in [`.github/workflows/pydantic-ai-ui-security-review.md`](.github/workflows/pydantic-ai-ui-security-review.md), and recompile its lock file.
 
 For a change crossing a boundary, trace the incoming value to its authorization or validation and trace the outgoing value to its audience. Include a regression test for the specific control. Review adapter protocols, local/provider transports, execution backends, and cancellation or recovery paths that share the affected mechanism.

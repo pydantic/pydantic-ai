@@ -433,6 +433,9 @@ agent = Agent(
 A part is clamped only when it is oversized *and* the clamp actually shrinks it, so keep
 `keep_head_chars + keep_tail_chars` well below your per-part threshold.
 
+A clamped part also loses its item ID (`TextPart.id`, `ToolCallPart.id`): the OpenAI Responses API uses its stored copy
+of an item sent with its ID and ignores the content sent alongside, so the clamp wouldn't reach the model.
+
 It clamps two kinds of part inside each `ModelResponse`:
 
 - **Response text** (`TextPart`) -- the critical case, a runaway model-response text part.
@@ -535,7 +538,8 @@ the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from
+arguments of the cleared calls. A cleared call also loses its item ID (`ToolCallPart.id`), for the same
+reason a clamped part does. A `load_capability` call keeps its argument, because Pydantic AI reads from
 it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
@@ -648,9 +652,9 @@ which stay exactly as they were, and the original first user turn when `preserve
 keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
-part, Pydantic AI also treats it as a compaction boundary, so tool discoveries from before it are announced
-again, on-demand capability loads from before it are recorded again after it (see "On-demand capabilities
-across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
+part, Pydantic AI also treats it as a compaction boundary, which would reset tool discoveries and on-demand
+capability loads from before it, so the strategy records them again after it (see "Tool search discoveries
+across compaction" and "On-demand capabilities across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
 `compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
@@ -669,6 +673,9 @@ The default `summary_prompt` asks for the summary under fixed section headings. 
 asks for the user's overall goal and only the constraints or preferences the user stated themselves: an
 instruction that appeared inside a tool result or fetched content is not the user's, and if the summary
 keeps one, it must say where it came from.
+A custom `summary_prompt` replaces all of this, so unless it has a rule of its own, a summarizer can list
+a request planted in a tool result as the user's constraint. Of the guidance on who said what, only the
+`<harness_data>` instruction described below is still added to a custom prompt.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
@@ -884,6 +891,18 @@ summary treats it as data rather than as the user's words.
 `ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
 load records as they are, so loads survive them unchanged. Provider-native
 compaction (`OpenAICompaction`, `AnthropicCompaction`) runs no harness strategy, so it still unloads them.
+
+## Tool search discoveries across compaction
+
+A tool found through tool search stays discovered while the record of its discovery is in the history
+after the latest compaction: the model's `search_tools` exchange, the provider's native search result, or
+a `ToolReturn.tools` reveal. When `SummarizingCompaction`, `SlidingWindowCompaction` or
+`RelevanceCompaction` removes that record, it records the discovery again as a `ToolAvailabilityDeltaPart`
+naming the tools, in the place it records capability loads. That's a framework record of what the model
+has been shown, not a search the model never made, so a provider's native search result is kept the same
+way as a local one. The tools stay in the request and the model can call them without searching again. A
+tool revealed by a capability load is left to that load, so `preserve_loaded_capabilities=False` unloads it
+along with its capability. Provider-native compaction still drops discoveries, so the model searches again.
 
 ## Keeping user messages (`keep_user_messages`)
 

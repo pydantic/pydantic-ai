@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.google import google_model_profile
@@ -128,6 +129,7 @@ class VLLMProvider(_OpenAISDKProvider):
                 supports_json_object_output=True,
                 native_output_requires_schema_in_instructions=True,
             ),
+            special_token_route_profile('vllm', model_name),
         )
 
     @overload
