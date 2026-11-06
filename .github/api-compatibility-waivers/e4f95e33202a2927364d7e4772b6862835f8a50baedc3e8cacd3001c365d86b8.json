@@ -1,5 +1,0 @@
-{
-  "against": "v2.66.0",
-  "reason": "Adds the 'stav' provider name to `OpenAIResponsesCompatibleProvider`, since Stav serves `/v1/responses` (#12749); existing values are unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12750"
-}
