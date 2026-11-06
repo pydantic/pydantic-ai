@@ -287,7 +287,14 @@ class GoogleInteractionsModel(Model[Client]):
             )
         if not isinstance(response, gi.Interaction):
             raise UnexpectedModelBehavior('Expected a non-streaming Google interaction.')
-        return process_response(response, self.model_name, self.system, self.base_url, self._canonical_system_stamp)
+        return process_response(
+            response,
+            self.model_name,
+            self.system,
+            self.base_url,
+            self._canonical_system_stamp,
+            web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -309,7 +316,13 @@ class GoogleInteractionsModel(Model[Client]):
             if isinstance(response, gi.Interaction):
                 raise UnexpectedModelBehavior('Expected a streaming Google interaction.')
             stream = GoogleInteractionsStreamedResponse(
-                params, response, self.model_name, self.system, self.base_url, _close_response=response.close
+                params,
+                response,
+                self.model_name,
+                self.system,
+                self.base_url,
+                _close_response=response.close,
+                _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
             )
             stream.canonical_system = self._canonical_system_stamp
             try:
@@ -564,9 +577,10 @@ class GoogleInteractionsModel(Model[Client]):
             raise _unprepared_part_error(part)
         match part:
             case SystemPromptPart():
-                self._map_system_prompt(part, context)
+                context.instructions.append(part.content)
             case UserPromptPart():
-                await self._map_user_prompt_part(part, context)
+                if content := await self._map_user_prompt(part, context):
+                    context.steps.append({'type': 'user_input', 'content': content})
             case ToolReturnPart():
                 result, files = await self._map_tool_return(part, context)
                 context.steps.append(result)
@@ -577,13 +591,6 @@ class GoogleInteractionsModel(Model[Client]):
                 raise _unconverted_speech_part_error()
             case _:
                 assert_never(part)
-
-    def _map_system_prompt(self, part: SystemPromptPart, context: _MapMessagesContext) -> None:
-        context.instructions.append(part.content)
-
-    async def _map_user_prompt_part(self, part: UserPromptPart, context: _MapMessagesContext) -> None:
-        if content := await self._map_user_prompt(part, context):
-            context.steps.append({'type': 'user_input', 'content': content})
 
     async def _map_user_prompt(self, part: UserPromptPart, context: _MapMessagesContext) -> list[gi.ContentParam]:
         if isinstance(part.content, str):
@@ -691,12 +698,7 @@ class GoogleInteractionsModel(Model[Client]):
         self, message: ModelResponse, context: _MapMessagesContext
     ) -> list[gi.StepParam | dict[str, JsonValue]]:
         original = replay_steps(message) if self.accepts_stateless_artifacts(message) else None
-        groups: dict[int, list[ModelResponsePart]] = {}
-        if original is not None:
-            for part in message.parts:
-                index = step_index(part)
-                if index is not None and 0 <= index < len(original) and self.accepts_stateless_artifacts(message, part):
-                    groups.setdefault(index, []).append(part)
+        groups = self._replay_groups(message, original) if original is not None else {}
         steps: list[gi.StepParam | dict[str, JsonValue]] = []
         sent: set[int] = set()
         for part in message.parts:
@@ -707,11 +709,22 @@ class GoogleInteractionsModel(Model[Client]):
                     steps.append(replay_step(original[index], groups[index]))
                     sent.add(index)
                 continue
-            steps.extend(await self._map_response_part(message, part, context))
+            signed = any(step.get('signature') or step.get('type') == 'function_call' for step in steps)
+            steps.extend(await self._map_response_part(message, part, context, signed=signed))
         return steps
 
+    def _replay_groups(
+        self, message: ModelResponse, original: list[dict[str, JsonValue]]
+    ) -> dict[int, list[ModelResponsePart]]:
+        groups: dict[int, list[ModelResponsePart]] = {}
+        for part in message.parts:
+            index = step_index(part)
+            if index is not None and 0 <= index < len(original) and self.accepts_stateless_artifacts(message, part):
+                groups.setdefault(index, []).append(part)
+        return groups
+
     async def _map_response_part(
-        self, message: ModelResponse, part: ModelResponsePart, context: _MapMessagesContext
+        self, message: ModelResponse, part: ModelResponsePart, context: _MapMessagesContext, *, signed: bool
     ) -> list[gi.StepParam | dict[str, JsonValue]]:
         if isinstance(part, CompactionPart):
             return []
@@ -722,13 +735,14 @@ class GoogleInteractionsModel(Model[Client]):
                 steps.append({'type': 'thought', 'signature': signature})
         match part:
             case TextPart():
-                steps.extend(self._map_text_part(part))
+                if part.content:
+                    steps.append({'type': 'model_output', 'content': [{'type': 'text', 'text': part.content}]})
             case ThinkingPart():
                 steps.extend(self._map_thinking_part(message, part))
             case ToolCallPart():
-                steps.extend(self._map_tool_call_part(part))
+                steps.append(self._map_tool_call_part(part, signed=signed or bool(steps)))
             case FilePart():
-                steps.extend(await self._map_file_part(part, context))
+                steps.append({'type': 'model_output', 'content': [await self._map_file(part.content, context)]})
             case NativeToolCallPart() | NativeToolReturnPart():
                 steps.extend(self._map_native_part(message, part))
             case SpeechPart():
@@ -737,16 +751,19 @@ class GoogleInteractionsModel(Model[Client]):
                 assert_never(part)
         return steps
 
-    def _map_text_part(self, part: TextPart) -> list[gi.StepParam]:
-        return [{'type': 'model_output', 'content': [{'type': 'text', 'text': part.content}]}] if part.content else []
-
-    def _map_tool_call_part(self, part: ToolCallPart) -> list[gi.StepParam]:
-        return [
-            {'type': 'function_call', 'id': part.tool_call_id, 'name': part.tool_name, 'arguments': part.args_as_dict()}
-        ]
-
-    async def _map_file_part(self, part: FilePart, context: _MapMessagesContext) -> list[gi.StepParam]:
-        return [{'type': 'model_output', 'content': [await self._map_file(part.content, context)]}]
+    def _map_tool_call_part(self, part: ToolCallPart, *, signed: bool) -> dict[str, JsonValue]:
+        step: dict[str, JsonValue] = {
+            'type': 'function_call',
+            'id': part.tool_call_id,
+            'name': part.tool_name,
+            'arguments': JSON_OBJECT.validate_python(part.args_as_dict()),
+        }
+        if not signed:
+            # Gemini rejects a turn whose first function call has no signature, which is the case for history from
+            # another provider or transport. The SDK's step type has no `signature`, but the API accepts the documented
+            # placeholder that `GoogleModel` also sends: https://ai.google.dev/gemini-api/docs/thought-signatures#faqs
+            step['signature'] = _SKIP_THOUGHT_SIGNATURE
+        return step
 
     def _map_native_part(
         self, message: ModelResponse, part: NativeToolCallPart | NativeToolReturnPart
@@ -773,6 +790,9 @@ class GoogleInteractionsModel(Model[Client]):
                 return [{'type': 'user_input', 'content': [{'type': 'text', 'text': text}]}]
             return [{'type': 'model_output', 'content': [{'type': 'text', 'text': text}]}]
         return []
+
+
+_SKIP_THOUGHT_SIGNATURE = base64.b64encode(b'skip_thought_signature_validator').decode()
 
 
 @dataclass

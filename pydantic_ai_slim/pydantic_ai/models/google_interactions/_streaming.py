@@ -41,6 +41,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
     _close_response: Callable[[], Awaitable[None]] | None = None
+    _web_search_billed_per_prompt: bool = False
     _stream: _utils.PeekableAsyncStream[gi.InteractionSSEEvent, AsyncIterator[gi.InteractionSSEEvent]] = field(
         init=False
     )
@@ -218,6 +219,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             self.provider_name,
             self.provider_url,
             self.canonical_system,
+            web_search_billed_per_prompt=self._web_search_billed_per_prompt,
         )
         self.provider_details = response.provider_details
         self.provider_response_id = response.provider_response_id

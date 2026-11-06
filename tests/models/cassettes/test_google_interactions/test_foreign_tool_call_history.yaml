@@ -1,0 +1,98 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "713"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Look up the current temperature in the requested city.
+          name: city_temperature
+          parameters:
+            type: object
+            properties:
+              city:
+                type: string
+            required:
+            - city
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Use city_temperature to find the temperature in Paris.
+        - type: function_call
+          id: call_1
+          name: city_temperature
+          arguments:
+            city: Paris
+          signature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        - type: function_result
+          name: city_temperature
+          call_id: call_1
+          is_error: false
+          result:
+          - type: text
+            text: "21"
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1739
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 118
+          total_input_tokens: 85
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 85
+          total_cached_tokens: 0
+          total_output_tokens: 12
+          total_tool_use_tokens: 0
+          total_thought_tokens: 21
+          initial_input_tokens: 59
+        created: 2026-11-06T18:44:10Z
+        updated: 2026-11-06T18:44:10Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Er0BCroBAWkUfRPwyLLAbSpDzKhEZ3fSo55JgapUHk5Pv/AMyIbCMOy3N7aplxtV6nKH+upcC8gOfsuHFR6CHoiHyPhFgA0Z1lYEV1H0artLAYedTdxl9hoecTZCB1y1kttvWFpXJi4auEGfxr5oB/JBWHnTi0VQkoAPs1ovdh6jUxLdLXtSeHy0yj9u3Rxmgu13BVe6glYUHdNxQNU+vKvgZmRDlD3v3kaBQ3tgXfyFw/llEGl4n1MI7Lqay+8Z
+          type: thought
+        - content:
+          - text: The current temperature in Paris is 21°C.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T18:44:10.208206+00:00

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -7,9 +8,19 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelRetry, VideoUrl
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ImageUrl,
+    ModelRetry,
+    VideoUrl,
+)
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     Citation,
     ContentCitationAnchor,
@@ -27,9 +38,18 @@ from pydantic_ai.messages import (
     UserPromptPart,
     WebCitationSource,
 )
-from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.settings import ThinkingEffort
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -38,6 +58,7 @@ from ..conftest import IsDatetime, IsSameStr, IsStr, RequestCapture, try_import
 with try_import() as imports_successful:
     from google.genai.types import MediaResolution
 
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_interactions import GoogleInteractionsModel, GoogleInteractionsModelSettings
     from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers.google import GoogleProvider
@@ -1745,7 +1766,8 @@ The latest stable version of Python is **Python 3.15.2**, released on October 25
                     output_tokens=500,
                     cache_read_tokens=87,
                     output_reasoning_tokens=359,
-                    cost=Decimal('0.001991775'),
+                    web_searches=3,
+                    cost=Decimal('0.043991775'),
                 ),
                 model_name='gemini-3.8-flash',
                 model_id='google:gemini-3.8-flash',
@@ -2027,7 +2049,8 @@ The current stable version of Python is **Python 3.15.2**, released on October 2
                     input_tokens=66,
                     output_tokens=235,
                     output_reasoning_tokens=131,
-                    cost=Decimal('0.00093075'),
+                    web_searches=2,
+                    cost=Decimal('0.02893075'),
                 ),
                 model_name='gemini-3.8-flash',
                 model_id='google:gemini-3.8-flash',
@@ -2633,7 +2656,6 @@ async def test_image_input(
 async def test_deferred_approval(
     interactions_model: GoogleInteractionsModel, request_capture: RequestCapture, allow_model_requests: None
 ):
-    from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
     agent = Agent(interactions_model, output_type=[str, DeferredToolRequests])
 
@@ -2843,7 +2865,6 @@ async def test_deferred_approval(
 async def test_image_output(
     gemini_api_key: str, request_capture: RequestCapture, stream: bool, allow_model_requests: None
 ):
-    from pydantic_ai import BinaryImage
 
     model = GoogleInteractionsModel(
         'gemini-3.1-flash-image',
@@ -3333,7 +3354,6 @@ Available pages for pydantic/pydantic:
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_mcp(interactions_model: GoogleInteractionsModel, stream: bool, allow_model_requests: None):
-    from pydantic_ai.native_tools import MCPServerTool
 
     agent = Agent(
         interactions_model,
@@ -3356,9 +3376,6 @@ async def test_mcp(interactions_model: GoogleInteractionsModel, stream: bool, al
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_file_search(interactions_model: GoogleInteractionsModel, stream: bool, allow_model_requests: None):
-    import io
-
-    from pydantic_ai.native_tools import FileSearchTool
 
     client = interactions_model.client
     store = await client.aio.file_search_stores.create(config={'display_name': 'interactions-test'})
@@ -4094,6 +4111,72 @@ The secret phrase retrieved is **"emerald tiger"**.\
 }
 
 
+async def test_foreign_tool_call_history(
+    interactions_model: GoogleInteractionsModel, request_capture: RequestCapture, allow_model_requests: None
+):
+    """Continue another provider's unsigned tool loop: Gemini 3 rejects it unless the first call carries the placeholder."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Use city_temperature to find the temperature in Paris.'),
+        ModelResponse(parts=[ToolCallPart('city_temperature', {'city': 'Paris'}, 'call_1')], provider_name='openai'),
+        ModelRequest(parts=[ToolReturnPart('city_temperature', '21', 'call_1')]),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='city_temperature',
+                description='Look up the current temperature in the requested city.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                },
+            )
+        ]
+    )
+    response = await model_request(interactions_model, history, model_request_parameters=params)
+    assert request_capture.body(index=-1)['input'] == snapshot(
+        [
+            {
+                'type': 'user_input',
+                'content': [{'type': 'text', 'text': 'Use city_temperature to find the temperature in Paris.'}],
+            },
+            {
+                'type': 'function_call',
+                'id': 'call_1',
+                'name': 'city_temperature',
+                'arguments': {'city': 'Paris'},
+                'signature': 'c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=',
+            },
+            {
+                'type': 'function_result',
+                'name': 'city_temperature',
+                'call_id': 'call_1',
+                'is_error': False,
+                'result': [{'type': 'text', 'text': '21'}],
+            },
+        ]
+    )
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(
+                content='',
+                signature=IsStr(),
+                provider_name='google',
+                provider_details={'google_interactions_step_index': 0, 'google_interactions_content_index': 0},
+            ),
+            TextPart(
+                content='The current temperature in Paris is 21°C.',
+                provider_name='google',
+                provider_details={
+                    'google_interactions_step_index': 1,
+                    'google_interactions_content_index': 0,
+                    'google_interactions_text_sha256': 'faf1b9798e9c2858114b84dce9d05c5e7a0519a99f6ce62ea3ff86a7701a68be',
+                },
+            ),
+        ]
+    )
+
+
 @pytest.mark.parametrize('direction', ['to_interactions', 'to_generate_content'])
 async def test_cross_api_history(
     interactions_model: GoogleInteractionsModel,
@@ -4102,7 +4185,6 @@ async def test_cross_api_history(
     allow_model_requests: None,
 ):
     """GenerateContent native parts carry no Interactions steps, so continuing on Interactions omits them."""
-    from pydantic_ai.models.google import GoogleModel
 
     provider = interactions_model.provider
     assert provider is not None
@@ -4148,7 +4230,6 @@ async def test_vertex(vertex_provider: GoogleProvider, allow_model_requests: Non
 
 
 async def test_image_uri_output(gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None):
-    from pydantic_ai import BinaryImage
 
     settings: GoogleInteractionsModelSettings = {
         'google_interactions_response_format': {'type': 'image', 'delivery': 'uri'}
@@ -4158,7 +4239,6 @@ async def test_image_uri_output(gemini_api_key: str, request_capture: RequestCap
         provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=120)),
         settings=settings,
     )
-    from pydantic_ai.exceptions import ModelHTTPError
 
     with pytest.raises(ModelHTTPError, match='Image delivery mode is not supported'):
         await Agent(model, output_type=BinaryImage).run('Draw one small red square on a white background.')
@@ -4178,7 +4258,6 @@ async def test_native_url_input(
 async def test_video_uri_output_requires_storage(
     gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
 ):
-    from pydantic_ai.exceptions import ModelHTTPError
 
     settings: GoogleInteractionsModelSettings = {
         'google_interactions_response_format': {'type': 'video', 'delivery': 'uri'}
@@ -4237,8 +4316,6 @@ async def test_google_maps(interactions_model: GoogleInteractionsModel, allow_mo
 async def test_image_generation_tool_configuration(
     gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
 ):
-    from pydantic_ai.messages import BinaryImage
-    from pydantic_ai.native_tools import ImageGenerationTool
 
     model = GoogleInteractionsModel(
         'gemini-3.1-flash-image',

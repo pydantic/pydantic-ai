@@ -68,7 +68,7 @@ with try_import() as imports_successful:
     from google.genai._gaos.utils.serializers import ALLOW_UNKNOWN_UNION_VARIANTS
     from google.genai.types import HarmBlockThreshold, HarmCategory, MediaResolution
 
-    from pydantic_ai.models.google import GoogleModelSettings
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.google_interactions import (
         GoogleInteractionsModel,
         GoogleInteractionsModelSettings,
@@ -330,6 +330,28 @@ reasoning
             {'type': 'user_input', 'content': [{'type': 'text', 'text': 'continue'}]},
         ]
     )
+
+
+@pytest.mark.parametrize('billed_per_prompt,expected', [(False, 3), (True, 1)])
+async def test_web_search_usage_follows_billing(
+    mock_google: MockGoogle, billed_per_prompt: bool, expected: int, allow_model_requests: None
+):
+    """Pin the billed search count genai-prices reads, on both sides of the per-prompt profile flag."""
+    mock_google.body['usage'] = {
+        'total_input_tokens': 10,
+        'total_output_tokens': 5,
+        'grounding_tool_count': [{'type': 'google_search', 'count': 3}],
+    }
+    model = GoogleInteractionsModel(
+        'gemini-3.8-flash',
+        provider=GoogleProvider(
+            api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle))
+        ),
+        profile=GoogleModelProfile(google_web_search_billed_per_prompt=billed_per_prompt),
+    )
+    response = await model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.usage.details['google_search_count'] == 3
+    assert getattr(response.usage, 'web_searches') == expected
 
 
 @pytest.mark.parametrize(
@@ -1545,8 +1567,9 @@ async def test_mcp_images_redact_and_replay(
             {'event_type': 'step.stop', 'index': 1},
             {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
         ]
+        params = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')])
         stream = GoogleInteractionsStreamedResponse(
-            ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+            params, iter_events(values), 'gemini-test', 'google', 'https://example.com'
         )
         async for _ in stream:
             pass
@@ -1694,7 +1717,6 @@ async def test_shared_google_thinking_uses_profile_on_wire(
     mock_google: MockGoogle, thinking: ThinkingEffort | bool, allow_model_requests: None
 ):
     """Pin GenerateContent request preservation that cassette matching does not compare."""
-    from pydantic_ai.models.google import GoogleModel
 
     mock_google.body = {'candidates': [{'content': {'parts': [{'text': 'OK'}], 'role': 'model'}}]}
     model = GoogleModel(

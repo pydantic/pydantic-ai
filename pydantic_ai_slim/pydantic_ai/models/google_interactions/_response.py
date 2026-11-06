@@ -152,12 +152,22 @@ def process_response(
     provider_name: str,
     provider_url: str,
     canonical_system: str | None,
+    *,
+    web_search_billed_per_prompt: bool,
 ) -> ModelResponse:
     parts: list[ModelResponsePart] = []
     server_calls = mcp_server_names(response.steps or [])
     for index, step in enumerate(response.steps or []):
         parts.extend(mark_step(map_step(step, provider_name, server_calls=server_calls), index))
-    return build_response(response, parts, model_name, provider_name, provider_url, canonical_system)
+    return build_response(
+        response,
+        parts,
+        model_name,
+        provider_name,
+        provider_url,
+        canonical_system,
+        web_search_billed_per_prompt=web_search_billed_per_prompt,
+    )
 
 
 def build_response(
@@ -167,7 +177,13 @@ def build_response(
     provider_name: str,
     provider_url: str,
     canonical_system: str | None,
+    *,
+    web_search_billed_per_prompt: bool,
 ) -> ModelResponse:
+    usage = usage_from_interaction(response.usage)
+    if searches := usage.details.get('google_search_count'):
+        # The count `GoogleModel` bills: one per query on Gemini 3, one per grounded prompt on older models.
+        usage.web_searches = 1 if web_search_billed_per_prompt else searches  # pyright: ignore[reportAttributeAccessIssue]
     details: dict[str, JsonValue] = {
         'status': response.status,
         'google_interactions_steps': [
@@ -201,7 +217,7 @@ def build_response(
         timestamp=datetime.fromisoformat(response.created.replace('Z', '+00:00'))
         if response.created
         else _utils.now_utc(),
-        usage=usage_from_interaction(response.usage),
+        usage=usage,
         provider_details=details,
         finish_reason=finish_reasons.get(response.status),
     )

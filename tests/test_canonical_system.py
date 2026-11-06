@@ -93,6 +93,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model provider SDKs not installed')
 
 SIGNATURE = base64.b64encode(b'signature').decode()
+SKIP_THOUGHT_SIGNATURE = base64.b64encode(b'skip_thought_signature_validator').decode()
 GEMINI_API_URL = 'https://generativelanguage.googleapis.com/'
 VERTEX_URL = 'https://us-central1-aiplatform.googleapis.com/'
 
@@ -1247,12 +1248,15 @@ async def test_google_interactions_replays_signatures_to_their_own_transport(
     _, steps = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages([ModelRequest.user_text_prompt('hi'), response], params), params
     )
+    own_transport = model.canonical_system == source
     signatures = [step.get('signature') for step in steps if step.get('type') == 'thought']
-    assert signatures == ([SIGNATURE] if model.canonical_system == source else [])
-    assert (
-        any(step.get('type') == ('model_output' if signature_part == 'thinking' else 'function_call') for step in steps)
-        or signatures
-    )
+    assert signatures == ([SIGNATURE] if own_transport else [])
+    calls = [step for step in steps if step.get('type') == 'function_call']
+    if signature_part == 'tool-call':
+        # Another transport's signature is rejected, and an unsigned first call is too, so it gets the placeholder.
+        assert [call.get('signature') for call in calls] == [None if own_transport else SKIP_THOUGHT_SIGNATURE]
+    else:
+        assert calls == [] and (any(step.get('type') == 'model_output' for step in steps) or signatures)
 
 
 async def test_xai_replays_by_canonical_system():
