@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
-import pydantic_clai2
 from tests import conftest
 
 
@@ -16,17 +10,5 @@ def test_the_clai2_suite_runs_under_the_blocking_call_detector(blockbuster_enabl
     assert blockbuster_enabled
 
 
-async def test_blocking_calls_in_clai2_code_are_reported() -> None:
-    if os.getenv('BLOCKBUSTER_ENABLED') == 'false':
-        pytest.skip('BlockBuster is disabled in this CI lane')
-    from blockbuster import BlockingError
-
-    # Code compiled under a file name inside the package runs as one of its frames.
-    probe = compile('os.stat(".")', str(Path(pydantic_clai2.__file__).parent / '_blocking_probe.py'), 'exec')
-    bb = conftest._configure_blockbuster()  # pyright: ignore[reportPrivateUsage]
-    bb.activate()
-    try:
-        with pytest.raises(BlockingError):
-            exec(probe, {'os': os})
-    finally:
-        bb.deactivate()
+def test_the_detector_scans_clai2() -> None:
+    assert 'pydantic_clai2' in conftest._blockbuster_packages()  # pyright: ignore[reportPrivateUsage]

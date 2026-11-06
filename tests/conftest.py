@@ -718,6 +718,16 @@ def _function_names(path: str) -> tuple[str, ...]:
     return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
+def _blockbuster_packages() -> list[str]:
+    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    optional = [
+        package
+        for package in ('pydantic_ai_harness', 'pydantic_clai2')
+        if importlib.util.find_spec(package) is not None
+    ]
+    return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
+
+
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
@@ -726,16 +736,7 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
-    # The harness and CLAI aren't installed in every CI lane (the `pydantic-evals` one, say).
-    optional = [
-        package
-        for package in ('pydantic_ai_harness', 'pydantic_clai2')
-        if importlib.util.find_spec(package) is not None
-    ]
-    bb = BlockBuster(
-        ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai'],
-        excluded_modules=excluded_modules or None,
-    )
+    bb = BlockBuster(_blockbuster_packages(), excluded_modules=excluded_modules or None)
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
     for path in BLOCKBUSTER_TEST_DOUBLES:
