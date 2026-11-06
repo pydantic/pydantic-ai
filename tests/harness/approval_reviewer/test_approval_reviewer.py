@@ -263,8 +263,7 @@ class TestConfiguration:
             },
             custom_capability_types=[ApprovalReviewer],
         )
-        capability = agent.root_capability.capabilities[-1]
-        assert isinstance(capability, ApprovalReviewer)
+        capability = next(c for c in agent.root_capability.capabilities if isinstance(c, ApprovalReviewer))
         assert capability.question == 'Could this cause harm?'
         assert capability.tools == ['danger']
 

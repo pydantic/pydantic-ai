@@ -90,6 +90,8 @@ jobs:
                   models/batch.py) return 0 ;;
                   # These entry modules are imported without loading provider implementations or profiles.
                   profiles/__init__.py|profiles/decision.py|providers/__init__.py) return 0 ;;
+                  # Imported by the auto-injected `GatewayFallback` capability, which every agent loads.
+                  providers/gateway.py) return 0 ;;
                   # Public exports import shared primitives without loading engine or live-provider integrations.
                   durable_exec/__init__.py|durable_exec/_capability_operation.py|durable_exec/_codec.py) return 0 ;;
                   durable_exec/_operation.py|durable_exec/_operation_backend.py|durable_exec/_operation_names.py) return 0 ;;
