@@ -6,6 +6,7 @@ import asyncio
 import json
 import pathlib
 import sys
+from collections.abc import Callable, Coroutine
 
 import httpx2
 import pytest
@@ -22,7 +23,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolR
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.retries import AsyncHTTPX2TenacityTransport
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
@@ -400,14 +401,54 @@ def _streamed_message(text: str) -> httpx2.Response:
     return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
 
 
+_LOOPBACK = 'http://127.0.0.1:1'
+
+
+def _recording_factory(seen: list[object]) -> Callable[..., httpx2.AsyncClient]:
+    """Record the transport the model is built with, and fail when it is not the retry transport."""
+    real_factory = _rate_limit.create_async_httpx2_client
+
+    def factory(**kwargs: object) -> httpx2.AsyncClient:
+        transport = kwargs.get('transport')
+        seen.append(transport)
+        assert isinstance(transport, AsyncHTTPX2TenacityTransport), (
+            'the model must be built with the retry transport, not a bare client'
+        )
+        return real_factory(transport=transport)
+
+    return factory
+
+
+def _mocked_client_factory(
+    handler: Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]],
+) -> Callable[..., httpx2.AsyncClient]:
+    """Keep the capability's own retry transport and swap only the hop that reaches the wire."""
+    real_factory = _rate_limit.create_async_httpx2_client
+
+    def factory(**kwargs: object) -> httpx2.AsyncClient:
+        transport = kwargs.get('transport')
+        assert isinstance(transport, AsyncHTTPX2TenacityTransport), (
+            'the model must be built with the retry transport, not a bare client'
+        )
+        return real_factory(
+            transport=AsyncHTTPX2TenacityTransport(transport.config, wrapped=httpx2.MockTransport(handler))
+        )
+
+    return factory
+
+
 def test_anthropic_models_are_built_with_the_retry_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
-    capability = _rate_limit.AnthropicRetryTransport()
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', _LOOPBACK)
+    seen: list[object] = []
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', _recording_factory(seen))
+    capability = _rate_limit.RateLimitRetry()
     context = ModelResolutionContext[object](agent=build_agent(), deps=None)
 
     model = asyncio.run(capability.resolve_model_id(context, model_id='anthropic:glm-5.3-flash'))
     assert isinstance(model, AnthropicModel)
     assert model.model_name == 'glm-5.3-flash'
+    assert isinstance(seen[0], AsyncHTTPX2TenacityTransport)
 
     assert asyncio.run(capability.resolve_model_id(context, model_id='openai-chat:gpt-5')) is None
     assert asyncio.run(capability.resolve_model_id(context, model_id='glm-5.3-flash')) is None
@@ -415,6 +456,7 @@ def test_anthropic_models_are_built_with_the_retry_transport(monkeypatch: pytest
 
 def test_build_agent_retries_a_transient_429_through_its_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', _LOOPBACK)
     monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
     calls = 0
 
@@ -425,12 +467,7 @@ def test_build_agent_retries_a_transient_429_through_its_model(monkeypatch: pyte
             return httpx2.Response(429, json={'error': {'code': 1302}})
         return _model_response(request, 'done')
 
-    real_factory = _rate_limit.create_async_httpx2_client
-
-    def factory(**_: object) -> httpx2.AsyncClient:
-        return real_factory(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
-
-    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', factory)
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', _mocked_client_factory(handler))
 
     result = asyncio.run(build_agent().run('hello', model='anthropic:glm-5.3-flash'))
     assert result.output == 'done'
@@ -439,6 +476,7 @@ def test_build_agent_retries_a_transient_429_through_its_model(monkeypatch: pyte
 
 def test_compaction_summariser_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', _LOOPBACK)
     monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
     calls = 0
 
@@ -449,10 +487,11 @@ def test_compaction_summariser_retries_a_transient_429(monkeypatch: pytest.Monke
             return httpx2.Response(429, json={'error': {'code': 1305}})
         return _model_response(request, '## Goal\nsummarised')
 
-    http_client = _rate_limit.create_async_httpx2_client(
-        transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler))
-    )
-    model = AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(http_client=http_client))
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', _mocked_client_factory(handler))
+    resolution = ModelResolutionContext[object](agent=build_agent(), deps=None)
+    model = asyncio.run(_rate_limit.RateLimitRetry().resolve_model_id(resolution, model_id='anthropic:glm-5.3-flash'))
+    assert isinstance(model, AnthropicModel)
+
     prompt = ModelRequest(parts=[UserPromptPart('the task')])
     messages: list[ModelMessage] = [
         prompt,
@@ -474,6 +513,7 @@ def test_compaction_summariser_retries_a_transient_429(monkeypatch: pytest.Monke
 
 def test_delegated_child_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', _LOOPBACK)
     monkeypatch.setattr(_rate_limit, 'wait_random_exponential', _no_wait)
     calls = 0
 
@@ -488,12 +528,7 @@ def test_delegated_child_retries_a_transient_429(monkeypatch: pytest.MonkeyPatch
             return _model_response(request, 'child done')
         return _model_response(request, 'done')
 
-    real_factory = _rate_limit.create_async_httpx2_client
-
-    def factory(**_: object) -> httpx2.AsyncClient:
-        return real_factory(transport=_rate_limit.rate_limit_retry_transport(httpx2.MockTransport(handler)))
-
-    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', factory)
+    monkeypatch.setattr(_rate_limit, 'create_async_httpx2_client', _mocked_client_factory(handler))
 
     result = asyncio.run(build_agent().run('hello', model='anthropic:glm-5.3-flash'))
     assert result.output == 'done'

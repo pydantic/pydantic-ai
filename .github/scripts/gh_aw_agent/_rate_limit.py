@@ -112,7 +112,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
 
 
 @dataclass
-class AnthropicRetryTransport(AbstractCapability[object]):
+class RateLimitRetry(AbstractCapability[object]):
     """Build a selected `anthropic:` model with the retry transport already on its client."""
 
     async def resolve_model_id(
