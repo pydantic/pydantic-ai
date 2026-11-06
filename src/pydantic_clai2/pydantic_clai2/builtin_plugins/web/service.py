@@ -584,20 +584,15 @@ class WebService:
         """Run About's Update, after which `session` hears how the `/update now` it entered ends.
 
         That runs in the session CLAI restarts from, as `SessionRuntime.restarter` picks it, so only its
-        `/update now` tells `session`, not one typed in another session meanwhile. Set before it runs, as
-        `/update now` may end first, and under the edit lock, so a page's Update waiting its turn takes over
-        no earlier page's. A cancelled or refused one enters nothing, so the page that asked before keeps hearing.
+        `/update now` tells `session`, not one typed in another session meanwhile. A cancelled or refused
+        Update enters nothing and returns no messages, so the page that asked before keeps hearing.
         """
-        restarter = self.live.restarter() if isinstance(self.live, LiveRuntimes) else None
-        entered_in = session.session.id if restarter is None else restarter.live_session.id
-        before, self._update_asked = self._update_asked, (session, entered_in)
-        try:
-            messages = await action(menu)
-        except BaseException:
-            self._update_asked = before
-            raise
-        if not messages:
-            self._update_asked = before
+        messages = await action(menu)
+        if messages:
+            # Nothing awaits between entering `/update now` and here: the restarter is still the session it went
+            # into, even if the terminal moved while the dialog was open, and it has not started running it.
+            restarter = self.live.restarter() if isinstance(self.live, LiveRuntimes) else None
+            self._update_asked = (session, session.session.id if restarter is None else restarter.live_session.id)
         return messages
 
     async def _edit_command(
