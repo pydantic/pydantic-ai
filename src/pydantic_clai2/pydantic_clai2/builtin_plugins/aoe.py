@@ -466,8 +466,9 @@ class AoePlugin(Plugin[AoeSettings]):
         self.pane = os.environ.get('TMUX_PANE')
         # Headless runs have no terminal, and AoE only starts CLAI in a tmux pane on a POSIX system.
         candidate = sys.platform != 'win32' and bool(os.environ.get('TMUX')) and bool(self.pane)
-        reporting = candidate and host.console.is_terminal
-        self.reporter = _Reporter(host=host, titles=settings.titles) if reporting else None
+        self.reporter = _Reporter(host=host) if candidate and host.console.is_terminal else None
+        if self.reporter is not None:
+            self.reporter.titles = settings.titles
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return () if self.reporter is None else (_Reporting(self.reporter),)
