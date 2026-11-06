@@ -1373,12 +1373,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         return result
 
-    async def _runtime_error_advice(self, error: MontyRuntimeError, run_state: MontyRunState) -> str:
+    @staticmethod
+    async def _runtime_error_advice(error: MontyRuntimeError, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
             advice = _TIME_LIMIT_MESSAGE
-        elif self.monty_sandbox is not None and isinstance(error.exception(), MemoryError):
+        elif (
+            isinstance(error.exception(), MemoryError)
+            and not error.traceback()
+            and error.display(format='msg') == 'the worker exceeded its memory limit and was terminated'
+        ):
             advice = (
-                'The code exhausted the sandbox memory and the session was reset. '
+                'The sandbox worker ran out of memory and the session was reset. '
                 'Re-run any imports, recreate any state you need, and use less memory: '
                 'process smaller batches and avoid large intermediate values.'
             )

@@ -135,8 +135,9 @@ reset state. A timeout, worker crash, or interrupted eager statement also resets
 retry message says so -- the next snippet must recreate its state.
 
 A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
-Remote session and idle timeouts explain that state is lost. A remote `MemoryError` resets the
-session and asks the model to use smaller batches. Remote host-side error details are omitted
+Remote session and idle timeouts explain that state is lost. A worker-terminating `MemoryError`
+resets the session and asks the model to use smaller batches; memory-limit errors and snippet or
+nested-tool `MemoryError`s keep the live session's state. Remote host-side error details are omitted
 from retries because they may contain pool URLs or credentials; the original exception remains
 the cause for application-side diagnostics. Retries list nested calls that already started so
 the model can avoid repeating their side effects.
@@ -219,7 +220,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
-- For Logfire Agent Sandboxes, pass `monty_sandbox=logfire.agent_sandboxes` without calling the factory. This requires a Logfire version that provides `agent_sandboxes`; configure credentials in Logfire, not in model-visible text.
+- For Logfire Agent Sandboxes, install `logfire[agent-sandboxes]>=5.4.0`. Logfire 5.4.0 still adds `/monty-ws/`, so use `partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev')` with the server root for your key's region. When your Logfire release uses the gRPC server root by default, pass `monty_sandbox=logfire.agent_sandboxes` directly. Configure credentials in Logfire, not in model-visible text.
 
 ## Durable Execution
 

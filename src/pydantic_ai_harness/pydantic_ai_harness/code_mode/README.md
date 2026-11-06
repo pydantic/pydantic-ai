@@ -625,10 +625,26 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
 in place of `max_duration_secs`.
 
-For Logfire Agent Sandboxes, use a Logfire version that provides `agent_sandboxes` and pass its
-pool factory without calling it:
+For Logfire Agent Sandboxes, install Logfire 5.4.0 or later with its sandbox extra:
+
+uv:
+
+```bash
+uv add "logfire[agent-sandboxes]>=5.4.0"
+```
+
+pip:
+
+```bash
+pip install "logfire[agent-sandboxes]>=5.4.0"
+```
+
+Logfire 5.4.0 still builds a WebSocket URL with a `/monty-ws/` path. With Monty 1.5,
+pass the server root explicitly, using the region that matches your API key:
 
 ```python {test="skip"}
+from functools import partial
+
 import logfire
 
 from pydantic_ai import Agent
@@ -636,9 +652,14 @@ from pydantic_ai_harness import CodeMode
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty_sandbox=logfire.agent_sandboxes)],
+    capabilities=[
+        CodeMode(monty_sandbox=partial(logfire.agent_sandboxes, url='https://logfire-us.pydantic.dev'))
+    ],
 )
 ```
+
+When your Logfire release uses the gRPC server root by default, pass the factory directly:
+`CodeMode(monty_sandbox=logfire.agent_sandboxes)`.
 
 Configure the sandbox credentials in Logfire, not in the model's instructions or tool arguments.
 
@@ -665,8 +686,9 @@ Errors the model can act on are returned as model retries:
 - Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
   session and ask the model to do less work per call.
 - Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
-- A remote `MemoryError` resets the session and asks the model to use less memory, for example by
-  processing smaller batches.
+- A `MemoryError` from a terminated worker resets the session and asks the model to use less memory,
+  for example by processing smaller batches. A sandbox memory-limit error or a `MemoryError` raised
+  by the snippet or a nested tool keeps the live session and its state.
 - A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
   Remote host-side error details are omitted from model retries because they can contain pool URLs
   or credentials. The original exception remains the retry's cause for application-side diagnostics.
