@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from tests.conftest import try_import
 from .test_engine_definition import CLAI2_SOURCE, definition, launch, parse_log, proxy_env
 
 with try_import() as exporter_installed:
-    import opentelemetry.exporter.otlp.json.file  # noqa: F401 # pyright: ignore[reportUnusedImport]
+    importlib.import_module('opentelemetry.exporter.otlp.json.file')
 
 pytestmark = pytest.mark.subprocess(reason='executes the generated protected launcher and its real tracing exporter')
 
