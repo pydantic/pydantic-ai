@@ -83,6 +83,8 @@ def step_metadata(raw: dict[str, JsonValue]) -> dict[str, JsonValue]:
         metadata.pop('arguments', None)
     elif step_type == 'function_result' or step_type.removesuffix('_result') in NATIVE_TOOL_NAMES:
         metadata.pop('result', None)
+    elif step_type == 'thought':
+        metadata.pop('summary', None)
     if raw.get('type') == 'model_output':
         content = _CONTENT_OBJECTS.validate_python(raw.get('content', []))
         for value in content:

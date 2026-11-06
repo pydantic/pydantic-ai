@@ -300,9 +300,6 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     def _map_summary(self, index: int, delta: gi.ThoughtSummaryDelta) -> Iterable[ModelResponseStreamEvent]:
         if not isinstance(delta.content, gi.TextContent):
             raise UnexpectedModelBehavior('Expected text in a Google thought summary.')
-        summary = _OBJECT_LIST.validate_python(self._steps[index].get('summary', []))
-        summary.append({'type': 'text', 'text': delta.content.text})
-        self._steps[index]['summary'] = [value for value in summary]
         return self._parts_manager.handle_thinking_delta(
             vendor_part_id=index, content=delta.content.text, provider_name=self.provider_name
         )

@@ -103,10 +103,11 @@ def replay_thought(raw: dict[str, JsonValue], part: ThinkingPart) -> None:
         raw.pop('signature', None)
     else:
         raw['signature'] = part.signature
-    summary = _OBJECT_LIST.validate_python(raw.get('summary', []))
-    text = ''.join(str(item.get('text', '')) for item in summary)
-    if text != part.content:
-        raw['summary'] = [{'type': 'text', 'text': part.content}] if part.content else []
+    # Persisted thought steps carry no summary: `ThinkingPart.content` owns it.
+    if part.content:
+        raw['summary'] = [{'type': 'text', 'text': part.content}]
+    else:
+        raw.pop('summary', None)
 
 
 def replay_content(raw: dict[str, JsonValue], parts: list[ModelResponsePart]) -> list[JsonValue]:

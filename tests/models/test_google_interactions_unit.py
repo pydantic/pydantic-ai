@@ -803,7 +803,7 @@ async def test_native_history_edits_preserve_opaque_fields(
     steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
     assert steps[:3] == snapshot(
         [
-            {'type': 'thought', 'summary': []},
+            {'type': 'thought'},
             {
                 'type': 'code_execution_call',
                 'id': 'call',
@@ -891,12 +891,16 @@ async def test_uri_only_output_requires_inline_delivery(
     [
         ('user_input_step', 'does not match its message part'),
         ('document_as_text', 'Invalid content part'),
-        ('thought_summary_uri', 'cannot replay a file URI'),
+        ('thought_summary_uri', None),
         ('mcp_result_uri', 'cannot replay a file URI'),
     ],
 )
 async def test_client_history_cannot_replay_file_uris(
-    mock_model: GoogleInteractionsModel, case: str, error: str, allow_model_requests: None
+    mock_model: GoogleInteractionsModel,
+    mock_google: MockGoogle,
+    case: str,
+    error: str | None,
+    allow_model_requests: None,
 ):
     """Forge client history no provider response produces, so sanitized history cannot make Google read a file."""
     system = mock_model.system
@@ -957,8 +961,14 @@ async def test_client_history_cannot_replay_file_uris(
         provider_details={'google_interactions_steps': steps},
     )
     history = sanitize_messages([ModelRequest.user_text_prompt('hello'), response])
-    with pytest.raises(UnexpectedModelBehavior, match=error):
-        await model_request(mock_model, [*history, ModelRequest.user_text_prompt('continue')])
+    messages = [*history, ModelRequest.user_text_prompt('continue')]
+    if error is None:
+        # A thought summary is rebuilt from `ThinkingPart.content`, so persisted summary items are never sent.
+        await model_request(mock_model, messages)
+        assert 'gs://private/secret.pdf' not in str(mock_google.requests[-1])
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match=error):
+            await model_request(mock_model, messages)
 
 
 async def test_citations_and_error_metadata(
