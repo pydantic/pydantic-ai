@@ -15,6 +15,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import _gpt_oss_schema_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -85,6 +86,9 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             elif provider == 'zai-org':
                 # Only GLM-5.3's schema fix: every other GLM id only gets the route's special-token setting.
                 return merge_profile(_glm_5_3_schema_profile(model_name), route_profile)
+            elif provider == 'openai':
+                # Only gpt-oss's schema fix: other OpenAI ids only get the route's special-token setting.
+                return merge_profile(_gpt_oss_schema_profile(model_name), route_profile)
 
         # Only recognized `provider/model` names get a profile; bare names and unknown providers
         # only get the route's special-token setting. Recognized providers always advertise inline system

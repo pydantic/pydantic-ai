@@ -10,7 +10,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -670,6 +670,8 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         return BedrockModelProfile(bedrock_supported_on_converse=False)
     # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
+        # gpt-oss doesn't see a tool schema's `$defs`, as on every other host (see `openai_model_profile`).
+        json_schema_transformer=InlineDefsJsonSchemaTransformer,
         bedrock_thinking_variant='openai',
         supports_thinking=True,
         thinking_always_enabled=True,

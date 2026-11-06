@@ -404,3 +404,68 @@ def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
             'additionalProperties': False,
         }
     )
+
+
+class _Address(BaseModel):
+    street: str
+    city: str
+
+
+class _Person(BaseModel):
+    name: str
+    home: _Address
+    work: _Address | None
+
+
+class _OrgUnit(BaseModel):
+    name: str
+    subunits: list[_OrgUnit]
+
+
+def test_gpt_oss_schema_transformer_inlines_defs():
+    """gpt-oss schemas have their `$defs` inlined, and are otherwise transformed as for any OpenAI model.
+
+    gpt-oss doesn't see a tool schema's `$defs` on any host, so it guesses the shape of each field that refers to
+    one. This is a unit test because the strictness the transformer infers, and the recursive definition it has to
+    keep, never reach a recording: `test_groq.py::test_gpt_oss_tool_output_inlines_defs` covers the request.
+    """
+    transformer = openai_model_profile('gpt-oss-120b').get('json_schema_transformer')
+    assert transformer is not None and transformer is not OpenAIJsonSchemaTransformer
+    assert openai_model_profile('gpt-5.5').get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+
+    for strict in (None, True):
+        inlined = transformer(_Person.model_json_schema(), strict=strict)
+        reference = OpenAIJsonSchemaTransformer(_Person.model_json_schema(), strict=strict)
+        assert inlined.walk() == snapshot(
+            {
+                'properties': {
+                    'name': {'type': 'string'},
+                    'home': {
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'type': 'object',
+                        'additionalProperties': False,
+                    },
+                    'work': {
+                        'anyOf': [
+                            {
+                                'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                                'required': ['street', 'city'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            {'type': 'null'},
+                        ]
+                    },
+                },
+                'required': ['name', 'home', 'work'],
+                'type': 'object',
+                'additionalProperties': False,
+            }
+        )
+        reference.walk()
+        assert inlined.is_strict_compatible is reference.is_strict_compatible is True
+
+    # A recursive definition can't be inlined, so it stays under `$defs`, as without inlining.
+    recursive = _OrgUnit.model_json_schema()
+    assert transformer(recursive).walk() == OpenAIJsonSchemaTransformer(recursive).walk()

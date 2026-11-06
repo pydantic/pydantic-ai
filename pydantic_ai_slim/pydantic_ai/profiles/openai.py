@@ -5,7 +5,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
+from .._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    inline_objects,
+    split_definitions,
+)
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -663,7 +669,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
     profile = OpenAIModelProfile(
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        json_schema_transformer=(
+            _GptOssJsonSchemaTransformer if model_name.startswith('gpt-oss') else OpenAIJsonSchemaTransformer
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
@@ -690,6 +698,16 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
     return profile
+
+
+def _gpt_oss_schema_profile(model_name: str) -> ModelProfile | None:  # pyright: ignore[reportUnusedFunction]
+    """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
+
+    Returns `None` for every other model, so they keep the provider's defaults.
+    """
+    if model_name.startswith('gpt-oss'):
+        return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
+    return None
 
 
 def is_openai_live_model(model_name: str) -> bool:
@@ -1023,6 +1041,21 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 )
             elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
+
+
+class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    """`OpenAIJsonSchemaTransformer` on a schema whose `$defs` are inlined first, for the gpt-oss models.
+
+    gpt-oss doesn't see a tool schema's `$defs`, wherever it's served, so it guesses the shape of every field that
+    refers to one and fails validation. Only recursive definitions, which can't be inlined, are kept under `$defs`.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = InlineDefsJsonSchemaTransformer(self.schema).walk()
+        transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
+        result = transformer.walk()
+        self.is_strict_compatible = transformer.is_strict_compatible
+        return result
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
