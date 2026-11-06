@@ -145,7 +145,7 @@ async def test_auto_mode_holds_rm_rf_for_approval(page: Page, approvals: Approva
     assert interrupt is not None and meter is not None and composer is not None
     assert interrupt['width'] == interrupt['height'], interrupt
     assert meter['height'] < 20, meter
-    assert meter['x'] + meter['width'] <= composer['x'] + composer['width'], (meter, composer)
+    assert interrupt['x'] + interrupt['width'] <= composer['x'] + composer['width'], (interrupt, composer)
     # The button stays beside the meter, on its right, when the bar wraps.
     assert interrupt['x'] >= meter['x'] + meter['width'], (interrupt, meter)
     assert abs(interrupt['y'] + interrupt['height'] / 2 - (meter['y'] + meter['height'] / 2)) < 8, (interrupt, meter)
