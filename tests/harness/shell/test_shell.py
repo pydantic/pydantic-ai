@@ -38,6 +38,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
@@ -2119,6 +2120,11 @@ def writable_after(shell_dir: Path) -> Iterator[Path]:
         path.chmod(path.stat().st_mode | 0o200)
 
 
+class _RefusesRemove(LocalWorkspaceBackend):
+    async def remove(self, path: str) -> None:
+        raise WorkspaceReadOnlyError('read-only')
+
+
 class TestReadOnlyJobDirectory:
     @pytest.mark.parametrize(
         'command',
@@ -2140,6 +2146,14 @@ class TestReadOnlyJobDirectory:
         await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
         result = await ts.stop_command(_ctx(writable_after), command_id)
         assert result.splitlines()[-3:] == ['[stopped]', '[exit code: 0]', '[job files not removed: permission denied]']
+
+    async def test_a_read_only_workspace_still_fails_the_stop(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(_ctx(shell_dir), 'true'))
+        await _wait_for_exit((await _job(ts, _ctx(shell_dir), command_id)).pid)
+        with pytest.raises(ToolFailed) as failed:
+            await ts.stop_command(_run_context(Workspace(_RefusesRemove(shell_dir))), command_id)
+        assert failed.value.message == READ_ONLY_FAILURE
 
 
 class TestResolveEnv:
