@@ -98,22 +98,16 @@ def _last_response(messages: list[Any]) -> ModelResponse:
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 @pytest.mark.parametrize(
-    ('settings', 'sent', 'provider_details'),
+    ('geo', 'provider_details'),
     [
-        pytest.param(
-            AnthropicModelSettings(anthropic_inference_geo='us'),
-            'us',
-            {'finish_reason': 'end_turn', 'inference_geo': 'us'},
-            id='set',
-        ),
-        pytest.param(AnthropicModelSettings(), None, {'finish_reason': 'end_turn'}, id='unset'),
+        pytest.param('us', {'finish_reason': 'end_turn', 'inference_geo': 'us'}, id='set'),
+        pytest.param(None, {'finish_reason': 'end_turn'}, id='unset'),
     ],
 )
 async def test_inference_geo_sent_and_reported(
     allow_model_requests: None,
     stream: bool,
-    settings: AnthropicModelSettings,
-    sent: str | None,
+    geo: str | None,
     provider_details: dict[str, Any],
 ):
     """The setting is sent as `inference_geo`, and where the request ran is reported only when the request set it.
@@ -127,7 +121,10 @@ async def test_inference_geo_sent_and_reported(
             'claude-sonnet-5-5',
             provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
         )
-        agent = Agent(model, model_settings={'max_tokens': _MAX_TOKENS, **settings})
+        settings = AnthropicModelSettings(max_tokens=_MAX_TOKENS)
+        if geo is not None:
+            settings['anthropic_inference_geo'] = geo
+        agent = Agent(model, model_settings=settings)
         if stream:
             async with agent.run_stream('Reply with exactly: OK') as streamed:
                 await streamed.get_output()
@@ -137,7 +134,7 @@ async def test_inference_geo_sent_and_reported(
 
     [body] = bodies
     assert body.get('stream', False) is stream
-    assert body.get('inference_geo') == sent
+    assert body.get('inference_geo') == geo
     assert _last_response(messages).provider_details == provider_details
 
 
