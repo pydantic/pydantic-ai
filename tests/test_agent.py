@@ -2539,6 +2539,28 @@ def test_output_type_union_text_fallback():
     assert result.output == snapshot(Apple(color='red'))
 
 
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(NativeOutput([Literal['red', 'green'], Banana]), id='native'),
+        pytest.param(PromptedOutput([Literal['red', 'green'], Banana]), id='prompted'),
+        pytest.param([Literal['red', 'green'], Banana], id='tool-text-fallback'),
+    ],
+)
+def test_output_type_union_literal_member(output_type: OutputSpec[Literal['red', 'green'] | Banana]):
+    """A union output picking its `Literal` member returns the value instead of raising `TypeError`
+    from `isinstance`, which can't check a `Literal`.
+    """
+
+    def return_literal(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        text = '{"result": {"kind": "Literal", "data": {"response": "green"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_literal), output_type=output_type)
+    result = agent.run_sync('What color is it?')
+    assert result.output == 'green'
+
+
 def test_output_type_union_text_fallback_invalid_data_retries():
     """When the union envelope text has the right `kind` but `data` that doesn't match that
     member's schema, validation fails and the model is re-prompted with the validation error.
