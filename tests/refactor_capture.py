@@ -21,19 +21,19 @@ When a capture starts, it runs an agent over a streamed canary response and stop
 recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
-`send`, and one a botocore client sends, like Bedrock's, from `Endpoint.make_request`, before it's signed and after a
-model's extra headers are added. Either is recorded with its method and URL as the target, its headers and its body,
-parsed when it's JSON. Two kinds of header are left out: credentials (`authorization`, `proxy-authorization`,
-`x-api-key`, `api-key`, `x-goog-api-key`, `cookie`), so a capture never writes a key to disk, and trace context
-(`traceparent`, `tracestate`, `baggage`), whose ids are random per run. A test that hands a model one of the SDK client
-mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded instead, with
-the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When a capture
-starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on botocore,
-and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture doesn't
-wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a listed
-mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's tests
-define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client,
-escape it.
+`send`, once per attempt, and one a botocore client sends, like Bedrock's, from `Endpoint.make_request`, before it's
+signed and after a model's extra headers are added, once per call: botocore retries a call below `make_request`, so its
+retries aren't recorded. Either is recorded with its method and URL as the target, its headers and its body, parsed when
+it's JSON. Two kinds of header are left out: credentials (`authorization`, `proxy-authorization`, `x-api-key`,
+`api-key`, `x-goog-api-key`, `cookie`), so a capture never writes a key to disk, and trace context (`traceparent`,
+`tracestate`, `baggage`), whose ids are random per run. A test that hands a model one of the SDK client mocks
+`SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded instead, with the
+method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When a capture starts,
+it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on botocore, and stops
+the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture doesn't wrap fails
+loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a listed mock method
+that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's tests define, and
+client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape it.
 
 A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
 call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
