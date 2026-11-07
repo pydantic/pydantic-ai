@@ -333,6 +333,7 @@ try:
         last_pass_input_tokens,
         map_usage,
         mark_continuation_context_input_tokens,
+        report_inference_geo,
         report_input_transformations,
     )
     from ._streaming import AnthropicEventStream, AnthropicStreamedResponse
@@ -2425,9 +2426,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.diagnostics is not None:
             provider_details = provider_details or {}
             provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
-        if self._sends_inference_geo(model_settings, self.profile) and response.usage.inference_geo is not None:
-            provider_details = provider_details or {}
-            provider_details['inference_geo'] = response.usage.inference_geo
+        provider_details = report_inference_geo(
+            provider_details,
+            response.usage.inference_geo,
+            report=self._sends_inference_geo(model_settings, self.profile),
+        )
 
         model_response = ModelResponse(
             parts=items,

@@ -66,6 +66,7 @@ from ._response import (
     compaction_provider_details,
     last_pass_input_tokens,
     map_usage,
+    report_inference_geo,
     report_input_transformations,
 )
 
@@ -126,9 +127,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
                     # Where the request ran is only reported on the opening message's usage.
-                    if self._report_inference_geo and event.message.usage.inference_geo is not None:
-                        self.provider_details = self.provider_details or {}
-                        self.provider_details['inference_geo'] = event.message.usage.inference_geo
+                    self.provider_details = report_inference_geo(
+                        self.provider_details, event.message.usage.inference_geo, report=self._report_inference_geo
+                    )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
