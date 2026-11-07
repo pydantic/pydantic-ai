@@ -59,12 +59,15 @@ pre-agent-steps:
   - name: Install tools for the AWF sandbox (ripgrep, uv)
     run: bash .github/scripts/install-sandbox-tools.sh
 post-steps:
-  # gh-aw only allows a custom job before the agent or after detection, so this runs
-  # in the agent job. It fetches the forwarder from the default branch and calls the
-  # interpreter and curl by absolute path, so a directory prepended to PATH does not
-  # redirect these two calls. The rest of the step is not isolated: it declares no
-  # `shell:`, so `bash` itself still resolves through PATH, and GITHUB_ENV can set
-  # `BASH_ENV`, `LD_PRELOAD` or `PYTHONPATH` for it.
+  # gh-aw only allows a custom job before the agent or after detection, so the
+  # forwarder runs in the agent job. It is NOT a credential boundary: `LOGFIRE_TOKEN`
+  # already reaches every step of this job through the workflow-level
+  # `OTEL_EXPORTER_OTLP_HEADERS` that `shared/otel-logfire.md` compiles in, so the job
+  # holds that credential with or without this step. The hardening below is defense in
+  # depth: `curl -q` ignores `~/.curlrc`, the script runs from a private `mktemp -d`
+  # with `python3 -I` so neither the workspace nor `PYTHONPATH` can supply code, and
+  # both binaries are named by absolute path so a prepended directory cannot redirect
+  # them.
   - name: Forward agent spans to the OTLP endpoint
     if: always()
     continue-on-error: true
@@ -72,7 +75,10 @@ post-steps:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     run: |
       set -euo pipefail
-      /usr/bin/curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DEFAULT_BRANCH}/.github/scripts/forward_agent_traces.py" \
-        -o "$RUNNER_TEMP/forward_agent_traces.py"
-      /usr/bin/python3 "$RUNNER_TEMP/forward_agent_traces.py"
+      forwarder_dir="$(mktemp -d)"
+      trap 'rm -rf "$forwarder_dir"' EXIT
+      /usr/bin/curl -qfsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DEFAULT_BRANCH}/.github/scripts/forward_agent_traces.py" \
+        -o "$forwarder_dir/forward_agent_traces.py"
+      cd "$forwarder_dir"
+      /usr/bin/python3 -I forward_agent_traces.py
 ---

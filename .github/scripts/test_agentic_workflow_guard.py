@@ -43,7 +43,7 @@ from agentic_workflow_guard import (
     check_safe_output_job_max,
     check_shell_exposure,
     check_timeout_declared,
-    check_trace_forwarder_isolation,
+    check_trace_forwarder_hardening,
     run_checks,
 )
 
@@ -689,7 +689,7 @@ def test_shell_exposure_matches_tools_bash(tmp_path: Path):
     assert [v.check for v in check_shell_exposure(allowed_shell)] == ['shell-exposure']
 
 
-def test_trace_forwarder_uses_absolute_paths_and_trusted_source(tmp_path: Path):
+def test_trace_forwarder_is_hardened_and_fetched_from_the_default_branch(tmp_path: Path):
     good = _write(
         tmp_path / 'a.lock.yml',
         """
@@ -697,14 +697,18 @@ jobs:
   agent:
     steps:
       - run: |
-          /usr/bin/curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$RUNNER_TEMP/f.py"
-          /usr/bin/python3 "$RUNNER_TEMP/f.py"
+          set -euo pipefail
+          forwarder_dir="$(mktemp -d)"
+          trap 'rm -rf "$forwarder_dir"' EXIT
+          /usr/bin/curl -qfsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$forwarder_dir/f.py"
+          cd "$forwarder_dir"
+          /usr/bin/python3 -I f.py
 """,
     )
-    assert check_trace_forwarder_isolation(good) == []
+    assert check_trace_forwarder_hardening(good) == []
 
     missing = _write(tmp_path / 'b.lock.yml', 'jobs:\n  agent:\n    steps: []\n')
-    assert [v.check for v in check_trace_forwarder_isolation(missing)] == ['trace-forwarder-isolation']
+    assert [v.check for v in check_trace_forwarder_hardening(missing)] == ['trace-forwarder-hardening']
 
     path_resolved = _write(
         tmp_path / 'c.lock.yml',
@@ -713,11 +717,12 @@ jobs:
   agent:
     steps:
       - run: |
-          curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$RUNNER_TEMP/f.py"
-          python3 "$RUNNER_TEMP/f.py"
+          forwarder_dir="$(mktemp -d)"
+          curl -qfsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py -o "$forwarder_dir/f.py"
+          python3 -I "$forwarder_dir/f.py"
 """,
     )
-    assert [v.check for v in check_trace_forwarder_isolation(path_resolved)] == ['trace-forwarder-isolation']
+    assert [v.check for v in check_trace_forwarder_hardening(path_resolved)] == ['trace-forwarder-hardening']
 
     checkout_source = _write(
         tmp_path / 'd.lock.yml',
@@ -725,10 +730,48 @@ jobs:
 jobs:
   agent:
     steps:
-      - run: /usr/bin/python3 .github/scripts/forward_agent_traces.py
+      - run: /usr/bin/python3 -I .github/scripts/forward_agent_traces.py
 """,
     )
-    assert [v.check for v in check_trace_forwarder_isolation(checkout_source)] == ['trace-forwarder-isolation']
+    assert [v.check for v in check_trace_forwarder_hardening(checkout_source)] == ['trace-forwarder-hardening']
+
+
+@pytest.mark.parametrize(
+    ('run_body', 'missing'),
+    [
+        (
+            'forwarder_dir="$(mktemp -d)"\n'
+            '          /usr/bin/curl -fsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py '
+            '-o "$forwarder_dir/f.py"\n          cd "$forwarder_dir"\n          /usr/bin/python3 -I f.py',
+            'a quiet curl (`-q`)',
+        ),
+        (
+            'forwarder_dir="$(mktemp -d)"\n'
+            '          /usr/bin/curl -qfsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py '
+            '-o "$forwarder_dir/f.py"\n          cd "$forwarder_dir"\n          /usr/bin/python3 f.py',
+            'an isolated interpreter (`-I`)',
+        ),
+        (
+            '/usr/bin/curl -qfsSL https://raw.githubusercontent.com/o/r/main/.github/scripts/forward_agent_traces.py '
+            '-o "$RUNNER_TEMP/f.py"\n          cd "$RUNNER_TEMP"\n          /usr/bin/python3 -I f.py',
+            'a private working directory (`mktemp -d`)',
+        ),
+    ],
+)
+def test_trace_forwarder_reports_each_missing_hardening(tmp_path: Path, run_body: str, missing: str):
+    lock = _write(
+        tmp_path / 'a.lock.yml',
+        f"""
+jobs:
+  agent:
+    steps:
+      - run: |
+          {run_body}
+""",
+    )
+    [violation] = check_trace_forwarder_hardening(lock)
+    assert violation.check == 'trace-forwarder-hardening'
+    assert missing in violation.message
 
 
 # --- timeout, compiler drift, lock freshness ---------------------------------

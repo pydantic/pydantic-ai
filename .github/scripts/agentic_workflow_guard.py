@@ -1536,8 +1536,14 @@ def changed_files(base_ref: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
-def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
-    """The credentialed span forwarder must not resolve its interpreter through PATH."""
+def check_trace_forwarder_hardening(lock: Path) -> list[Violation]:
+    """The span forwarder runs hardened; it is not a credential boundary.
+
+    `LOGFIRE_TOKEN` reaches every step of the agent job through the workflow-level
+    `OTEL_EXPORTER_OTLP_HEADERS`, so the post-step adds no credential the job does not
+    already hold. These checks pin the hardening that keeps a checkout-controlled step
+    from redirecting the fetch or the interpreter, not an isolation the step cannot have.
+    """
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
     steps_value = agent.get('steps')
@@ -1549,27 +1555,30 @@ def check_trace_forwarder_isolation(lock: Path) -> list[Violation]:
         return [
             Violation(
                 str(lock),
-                'trace-forwarder-isolation',
+                'trace-forwarder-hardening',
                 'the agent job must run the span forwarder exactly once as a post-step.',
             )
         ]
     run = forwarder_runs[0]
-    missing: list[str] = []
-    if 'raw.githubusercontent.com' not in run:
-        missing.append('a default-branch fetch')
-    if '/usr/bin/curl' not in run:
-        missing.append('an absolute curl path')
-    if '/usr/bin/python3' not in run:
-        missing.append('an absolute interpreter path')
+    required = {
+        'a default-branch fetch': 'raw.githubusercontent.com',
+        'an absolute curl path': '/usr/bin/curl',
+        'a quiet curl (`-q`)': '/usr/bin/curl -q',
+        'an absolute interpreter path': '/usr/bin/python3',
+        'an isolated interpreter (`-I`)': '/usr/bin/python3 -I',
+        'a private working directory (`mktemp -d`)': 'mktemp -d',
+    }
+    missing = [label for label, marker in required.items() if marker not in run]
     if not missing:
         return []
     return [
         Violation(
             str(lock),
-            'trace-forwarder-isolation',
-            f'the forwarder step is missing {", ".join(missing)}; a checkout-controlled GITHUB_PATH entry can '
-            'shadow a PATH-resolved interpreter or curl. Absolute paths keep these two calls off PATH; they '
-            'do not isolate the rest of the step, whose shell still resolves through it.',
+            'trace-forwarder-hardening',
+            f'the forwarder step is missing {", ".join(missing)}. The step is not a credential boundary: '
+            '`LOGFIRE_TOKEN` already reaches every step of this job through the workflow-level '
+            '`OTEL_EXPORTER_OTLP_HEADERS`, so these keep a checkout-controlled step from redirecting the '
+            'fetch or the interpreter rather than protecting a credential.',
         )
     ]
 
@@ -1655,7 +1664,7 @@ def run_checks(
         violations += check_compiled_engine_contract(lock)
         violations += check_ai_credits_accounting(lock)
         violations += check_daily_aic_guardrail(lock)
-        violations += check_trace_forwarder_isolation(lock)
+        violations += check_trace_forwarder_hardening(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
