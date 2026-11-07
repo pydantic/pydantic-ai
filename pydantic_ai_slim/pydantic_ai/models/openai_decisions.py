@@ -10,7 +10,7 @@ from typing import ClassVar, Literal, assert_never, cast
 from pydantic import JsonValue
 
 from .. import _model_errors
-from .._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
+from .._framing import TOOL_RESULT_TAG, frame_tags
 from .._http import to_httpx2_timeout
 from .._thinking_part import render_replayed_thinking
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -473,11 +473,8 @@ class _Conversation:
         else:
             # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
             # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
-            framed: list[str | MultiModalContent] = [
-                open_tag(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id),
-                *(neutralize_tags(item) if isinstance(item, str) else item for item in part.content_items(mode='str')),
-                close_tag(TOOL_RESULT_TAG),
-            ]
+            open_tag, close_tag = frame_tags(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+            framed: list[str | MultiModalContent] = [open_tag, *part.content_items(mode='str'), close_tag]
             self._user(framed)
 
     def _response_part(self, part: ModelResponsePart, calls: set[str]) -> None:

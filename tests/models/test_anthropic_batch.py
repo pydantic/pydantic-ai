@@ -260,7 +260,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     assert body['service_tier'] == 'standard_only'
     assert body['diagnostics'] == {'previous_message_id': None}
     assert body['temperature'] == 0.5
-    assert body['system'][0]['text'] == 'Answer briefly'
+    assert body['system'][-1]['text'] == 'Answer briefly'
     assert body['tools'][0]['name'] == 'weather'
 
 

@@ -53,7 +53,6 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
-from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -1640,6 +1639,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     # Chat Completions has no video content part.
     _unsupported_file_inputs = frozenset({'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'top_k'})
 
@@ -2352,6 +2353,28 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 return WebSearchOptions(search_context_size=tool.search_context_size)
         return None
 
+    def _auto_thinking_field(self, part: ThinkingPart) -> str | None:
+        """The custom field `part` goes back in under `openai_chat_send_back_thinking_parts='auto'`, or `None` for tags.
+
+        It goes back in a field when it came from a custom field of this same provider. `id='content'` means it came
+        from tags in the content, not a custom field.
+        """
+        custom_field = self.profile.get('openai_chat_thinking_field', None)
+        if (
+            part.id
+            and part.id != 'content'
+            and part.provider_name == self.system
+            and (not custom_field or part.id == custom_field)
+        ):
+            return part.id
+        return None
+
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        if not part.content or not self.profile.get('mimics_assistant_message_formatting', False):
+            return False
+        send_back = self.profile.get('openai_chat_send_back_thinking_parts', 'auto')
+        return send_back == 'tags' or (send_back == 'auto' and self._auto_thinking_field(part) is None)
+
     @dataclass
     class _MapModelResponseContext:
         """Context object for mapping a `ModelResponse` to OpenAI chat completion parameters.
@@ -2447,18 +2470,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
             # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
-                # Check if thinking came from a custom field from the same provider
-                custom_field = profile.get('openai_chat_thinking_field', None)
-                matches_custom_field = (not custom_field) or (item.id == custom_field)
-
-                if (
-                    item.id
-                    and item.id != 'content'
-                    and item.provider_name == self._model.system
-                    and matches_custom_field
-                ):
+                if field := self._model._auto_thinking_field(item):
                     # Store both content and field name for later use in _into_message_param
-                    self.thinkings.setdefault(item.id, []).append(item.content)
+                    self.thinkings.setdefault(field, []).append(item.content)
                 else:
                     # Fall back to tags mode
                     self._map_response_thinking_as_text(item)
@@ -2939,9 +2953,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _inline_text_file_part(
         self, text: str, *, media_type: str, identifier: str
     ) -> ChatCompletionContentPartTextParam:
-        if not self.profile.get('supports_inline_system_prompts', False):
-            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
-            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
@@ -3370,6 +3381,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     _renders_effort_deltas = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.

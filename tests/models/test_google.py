@@ -68,7 +68,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -6502,7 +6502,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
 
     assert system_instruction == {
         'role': 'user',
-        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+        'parts': [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
+        ],
     }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
@@ -6887,9 +6890,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]

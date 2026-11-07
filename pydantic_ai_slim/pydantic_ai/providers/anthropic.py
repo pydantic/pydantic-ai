@@ -52,13 +52,33 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
-to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
-separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta. It matches the published list
+for `{'role': 'system'}` entries, but not `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-haiku-5-5`
+for its sealed `<system>` rendering: the two are separate features, one GA and one beta. Haiku 5.5 keeps these
+blocks, which were measured alongside that rendering. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
 `claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
+"""
+
+
+_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that take a request-scoped `{'role': 'system'}` entry with `clear_at`.
+
+The list Anthropic publishes for the `mid-conversation-system-clear-at-2026-08-21` beta. It's separate from
+`_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-sonnet-5-5` and `claude-haiku-5-5` for their sealed
+`<system>` rendering of lasting system messages. Both bind thinking blocks, and a block that's gone from the next
+request invalidates every thinking block after it, while a cleared entry left in place doesn't. So these two get the
+entry, with the sealed block inside it. `claude-sonnet-5` accepts and clears these entries too (verified live), but it's
+left out because it ignores the role: see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.
 """
 
 
@@ -144,11 +164,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
-                # Request-scoped (`clear_at`) entries are published for the same models and transports as
-                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
-                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
-                # the same reason it's left out above.
-                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                supports_request_scoped_system_prompts=model_name.startswith(
+                    _REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES
+                ),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
             # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only

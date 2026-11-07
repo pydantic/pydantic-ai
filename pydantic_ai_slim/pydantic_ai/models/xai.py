@@ -378,6 +378,8 @@ class XaiModel(Model[AsyncClient]):
 
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
@@ -454,10 +456,7 @@ class XaiModel(Model[AsyncClient]):
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                mapped_request_parts = await self._map_request_parts(
-                    message.parts,
-                    pending_tool_call_ids,
-                )
+                mapped_request_parts = await self._map_request_parts(message.parts, pending_tool_call_ids)
                 xai_messages.extend(mapped_request_parts)
             elif isinstance(message, ModelResponse):
                 xai_messages.extend(self._map_response_parts(message))
