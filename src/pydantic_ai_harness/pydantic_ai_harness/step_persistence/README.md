@@ -37,6 +37,8 @@ which `StepPersistence` works alongside.
    `Agent.run(message_history=...)` to continue or fork.
 3. **Tool-effect ledger** -- every tool call's lifecycle (`started`,
    `completed`, `failed`) is recorded against `(run_id, tool_call_id)`.
+   A tool that fails, including with `ModelRetry` or `ToolFailed`, is
+   recorded `failed`.
    After a crash, a tool with a `started` record and no terminal update
    should be treated as `unknown_after_crash`: the side effect may or may
    not have happened.
@@ -349,8 +351,8 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
 The helper reads the active `run_id` from the `StepPersistence`
 `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the
 metadata into the prior record. It is a no-op when called outside a
-step-persistence-wrapped tool call. `after_tool_execute` preserves both
-fields when it writes the terminal `completed` / `failed` entry.
+step-persistence-wrapped tool call. The terminal `completed` / `failed`
+entry preserves both fields.
 
 ## Compaction receipt handles
 
