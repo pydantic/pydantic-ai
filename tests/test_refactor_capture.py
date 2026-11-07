@@ -24,6 +24,12 @@ from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx2
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     from . import refactor_capture
     from .refactor_capture import (
         CAPTURE_OPTION,
@@ -470,6 +476,36 @@ async def test_capture_records_a_request_botocore_sends(tmp_path: Path):
             }
         ]
     )
+
+
+async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
+    """A request SigV4 signs with a session token is recorded without the token, which is a credential."""
+    sent: list[httpx2.Request] = []
+
+    def answer_400(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(400)
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(answer_400)) as http_client:
+            client = AsyncAnthropicBedrock(
+                aws_access_key='canary',
+                aws_secret_key='canary',
+                aws_session_token='canary-session-token',
+                aws_region='us-east-1',
+                http_client=http_client,
+            )
+            model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+            with override_allow_model_requests(True), suppress(ModelHTTPError):
+                await Agent(model).run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    assert [request.headers['x-amz-security-token'] for request in sent] == ['canary-session-token']
+    assert len(capture.records) == 1
+    assert 'canary-session-token' not in json.dumps(capture.records)
 
 
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
