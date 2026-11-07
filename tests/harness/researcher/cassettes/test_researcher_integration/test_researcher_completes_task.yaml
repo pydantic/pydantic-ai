@@ -2793,8 +2793,8 @@ interactions:
       documentation does not present it as a drop-in production replacement for ordinary
       CPython 3.13.\"},{\"id\":\"ws_0e58f8341a296874006a7f846a28a48196a9f3353186566c64\",\"action\":{\"pattern\":\"Limited
       C API and Stable ABI\",\"type\":\"find_in_page\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"web_fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\"}\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846cb90881969b89b1d5de82c56f\"},{\"type\":\"function_call_output\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"output\":\"[Tool
-      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
+      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\nshape: {'url': str, 'title':
       str, 'content': str}\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
@@ -2887,7 +2887,7 @@ interactions:
         null,\n  \"model\": \"gpt-5.6-sol\",\n  \"moderation\": null,\n  \"output\":
         [\n    {\n      \"id\": \"fc_0e58f8341a296874006a7f846fa6188196bd76e08b904579c3\",\n
         \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
-        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
+        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
         ABI\\\",\\\"limit\\\":50}\",\n      \"call_id\": \"call_9QGqlCO9vWmh9yKF1C730LaP\",\n
         \     \"name\": \"read_tool_result\"\n    }\n  ],\n  \"parallel_tool_calls\":
         true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\":
@@ -3268,8 +3268,8 @@ interactions:
       documentation does not present it as a drop-in production replacement for ordinary
       CPython 3.13.\"},{\"id\":\"ws_0e58f8341a296874006a7f846a28a48196a9f3353186566c64\",\"action\":{\"pattern\":\"Limited
       C API and Stable ABI\",\"type\":\"find_in_page\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"web_fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\"}\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846cb90881969b89b1d5de82c56f\"},{\"type\":\"function_call_output\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"output\":\"[Tool
-      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
+      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\nshape: {'url': str, 'title':
       str, 'content': str}\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
@@ -3283,9 +3283,9 @@ interactions:
       for more information.  \\\\n  \\\\nThe Python Software Foundation is a non-profit
       corporation.\\\\n[Please donate.](https://www.python.org/psf/donations/)\\\\n
       \ \\\\n  \\\\nLast updated on Aug 14, 2026 (13:12 UTC).\\\\n[Found a bug](/bugs.html)?\\\\n
-      \ \\\\nCreated using [Sphinx](https://www.sphinx-doc.org/) 8.2.3.\\\"}\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
+      \ \\\\nCreated using [Sphinx](https://www.sphinx-doc.org/) 8.2.3.\\\"}\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
       ABI\\\",\\\"limit\\\":50}\",\"call_id\":\"call_9QGqlCO9vWmh9yKF1C730LaP\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846fa6188196bd76e08b904579c3\"},{\"type\":\"function_call_output\",\"call_id\":\"call_9QGqlCO9vWmh9yKF1C730LaP\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0': 1 matching
+      '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0': 1 matching
       line(s); showing 1]\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
       API Extension Support for Free Threading \u2014 Python 3.14.7 documentation\\\\n\\\\n@media
