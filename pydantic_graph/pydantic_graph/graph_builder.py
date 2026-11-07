@@ -1440,7 +1440,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         )
 
     # Edge building
-    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:  # noqa: C901
+    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:
         """Add one or more edge paths to the graph.
 
         This method processes edge paths and automatically creates any necessary
@@ -1449,53 +1449,67 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Args:
             *edges: The edge paths to add to the graph
         """
+        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+        self._add(edges, parent_namespace)
 
-        def _handle_path(p: Path):
-            """Process a path and create necessary fork nodes.
-
-            Args:
-                p: The path to process
-            """
-            for item in p.items:
-                if isinstance(item, BroadcastMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_map=False, downstream_join_id=None)
-                    self._insert_node(new_node)
-                    for path in item.paths:
-                        _handle_path(Path(items=[*path.items]))
-                elif isinstance(item, MapMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_map=True, downstream_join_id=item.downstream_join_id)
-                    self._insert_node(new_node)
-                elif isinstance(item, DestinationMarker):
-                    pass
-
-        def _handle_destination_node(d: AnyDestinationNode):
-            if id(d) in destination_ids:
-                return  # prevent infinite recursion if there is a cycle of decisions
-
-            destination_ids.add(id(d))
-            destinations.append(d)
-            self._insert_node(d)
-            if isinstance(d, Decision):
-                for branch in d.branches:
-                    _handle_path(branch.path)
-                    for d2 in branch.destinations:
-                        _handle_destination_node(d2)
-
-        destination_ids = set[int]()
+    def _add(
+        self,
+        edges: Iterable[EdgePath[StateT, DepsT]],
+        parent_namespace: dict[str, object] | None,
+        *,
+        infer_missing: bool = False,
+    ) -> None:
+        destination_ids: set[int] = set()
         destinations: list[AnyDestinationNode] = []
         for edge in edges:
             for source_node in edge.sources:
                 self._insert_node(source_node)
                 self._edges_by_source[source_node.id].append(edge.path)
             for destination_node in edge.destinations:
-                _handle_destination_node(destination_node)
-            _handle_path(edge.path)
+                self._insert_destination_node(destination_node, destinations, destination_ids)
+            self._insert_path_nodes(edge.path)
 
-        # Automatically create edges from step function return hints including `BaseNode`s
+        self._infer_step_edges(destinations, parent_namespace, infer_missing=infer_missing)
+
+    def _insert_path_nodes(self, path: Path) -> None:
+        for item in path.items:
+            if isinstance(item, BroadcastMarker):
+                new_node = Fork[Any, Any](id=item.fork_id, is_map=False, downstream_join_id=None)
+                self._insert_node(new_node)
+                for nested_path in item.paths:
+                    self._insert_path_nodes(Path(items=[*nested_path.items]))
+            elif isinstance(item, MapMarker):
+                new_node = Fork[Any, Any](id=item.fork_id, is_map=True, downstream_join_id=item.downstream_join_id)
+                self._insert_node(new_node)
+
+    def _insert_destination_node(
+        self, destination: AnyDestinationNode, destinations: list[AnyDestinationNode], destination_ids: set[int]
+    ) -> None:
+        if id(destination) in destination_ids:
+            return  # prevent infinite recursion if there is a cycle of decisions
+
+        destination_ids.add(id(destination))
+        destinations.append(destination)
+        self._insert_node(destination)
+        if isinstance(destination, Decision):
+            for branch in destination.branches:
+                self._insert_path_nodes(branch.path)
+                for nested_destination in branch.destinations:
+                    self._insert_destination_node(nested_destination, destinations, destination_ids)
+
+    def _infer_step_edges(
+        self,
+        destinations: Iterable[AnyDestinationNode],
+        parent_namespace: dict[str, object] | None,
+        *,
+        infer_missing: bool,
+    ) -> None:
+        # Automatically create edges from step function return hints including `BaseNode`s.
         for destination in destinations:
             if not isinstance(destination, Step) or isinstance(destination, NodeStep):
                 continue
-            parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+            if infer_missing and self._edges_by_source.get(destination.id):
+                continue
             type_hints = get_type_hints(destination.call, localns=parent_namespace, include_extras=True)
             try:
                 return_hint = type_hints['return']
@@ -1504,7 +1518,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             else:
                 edge = self._edge_from_return_hint(destination, return_hint)
                 if edge is not None:
-                    self.add(edge)
+                    # Only discovery resolves nested steps against the public caller's namespace.
+                    if infer_missing:
+                        self._add((edge,), parent_namespace, infer_missing=True)
+                    else:
+                        self.add(edge)
 
     def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
         """Add a simple edge between two nodes.
@@ -1637,6 +1655,66 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             GraphSetupError: If the node type is missing required type hints
         """
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+        return self._node(node_type, parent_namespace)
+
+    def add_reachable(self, *node_types: type[BaseNode[StateT, DepsT, GraphOutputT]]) -> None:
+        """Register `BaseNode` classes and recursively infer their reachable outgoing edges.
+
+        Existing outgoing paths take precedence over return annotations. Configure paths
+        through steps, decisions and joins before calling this method so discovery can
+        follow them. Only nodes reachable from the supplied roots are inspected.
+
+        This method does not instantiate nodes or connect the graph's start node.
+        Cycles, duplicate roots and repeated calls do not duplicate inferred edges.
+
+        Args:
+            *node_types: The `BaseNode` subclasses to start discovery from.
+
+        Raises:
+            GraphSetupError: If a node's return annotation cannot describe its edges.
+            GraphBuildingError: If different nodes have the same ID.
+            NameError: If an annotation contains an unresolved reference.
+        """
+        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+        pending: list[NodeID] = []
+        for node_type in node_types:
+            node = NodeStep(node_type)
+            self._insert_node(node)
+            pending.append(node.id)
+
+        processed_types: set[type[BaseNode[StateT, DepsT, GraphOutputT]]] = set()
+        processed_paths: set[int] = set()
+        while pending:
+            node_id = pending.pop()
+            node = self._nodes[node_id]
+            if isinstance(node, NodeStep) and node.node_type not in processed_types:
+                processed_types.add(node.node_type)
+                if not self._edges_by_source.get(node_id):
+                    self._add((self._node(node.node_type, parent_namespace),), parent_namespace, infer_missing=True)
+
+            paths = list(self._edges_by_source.get(node_id, ()))
+            if isinstance(node, Decision):
+                paths.extend(branch.path for branch in node.branches)
+            pending.extend(self._reachable_destinations(paths, processed_paths))
+
+    # Helpers
+    def _reachable_destinations(self, paths: list[Path], processed_paths: set[int]) -> Iterable[NodeID]:
+        while paths:
+            path = paths.pop()
+            if id(path) in processed_paths:
+                continue
+            processed_paths.add(id(path))
+            for item in path.items:
+                if isinstance(item, DestinationMarker):
+                    yield item.destination_id
+                elif isinstance(item, BroadcastMarker):
+                    paths.extend(item.paths)
+
+    def _node(
+        self,
+        node_type: type[BaseNode[StateT, DepsT, GraphOutputT]],
+        parent_namespace: dict[str, object] | None,
+    ) -> EdgePath[StateT, DepsT]:
         type_hints = get_type_hints(node_type.run, localns=parent_namespace, include_extras=True)
         try:
             return_hint = type_hints['return']
@@ -1653,7 +1731,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         return edge
 
-    # Helpers
     def _insert_node(self, node: AnyNode) -> None:
         """Insert a node into the graph, checking for ID conflicts.
 
@@ -1699,7 +1776,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             if return_type_origin is End:
                 destinations.append(self.end_node)
             elif return_type_origin is BaseNode:
-                raise exceptions.GraphSetupError(  # pragma: no cover
+                raise exceptions.GraphSetupError(
                     f'Node {node} return type hint includes a plain `BaseNode`. '
                     'Edge inference requires each possible returned `BaseNode` subclass to be listed explicitly.'
                 )
