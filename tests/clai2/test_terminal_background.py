@@ -11,7 +11,7 @@ from typing import IO
 
 import pytest
 from prompt_toolkit.application import create_app_session
-from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.input import DummyInput, create_pipe_input
 from prompt_toolkit.keys import Keys
 
 from pydantic_clai2.ui.prompt.terminal_background import detect_background
@@ -128,6 +128,13 @@ def test_keys_typed_before_the_answer_reach_the_editor(terminal: tuple[int, IO[s
     with create_pipe_input() as editor_input, create_app_session(input=editor_input):
         detect_background(stdin=stdin, stdout=display)
         assert [key.key for key in editor_input.read_keys()] == ['h', 'i', Keys.Up]
+
+
+def test_keys_typed_for_an_input_that_decodes_no_vt100_are_dropped(terminal: tuple[int, IO[str]]) -> None:
+    """A host's own input that is no VT100 decoder cannot take them back; the colour still arrives."""
+    keyboard, stdin = terminal
+    with create_app_session(input=DummyInput()):
+        assert detect_background(stdin=stdin, stdout=Display(keyboard, b'h\x1b]11;rgb:00/00/00\x07' + DA1)) == '#000000'
 
 
 @pytest.mark.parametrize('piped', ['stdin', 'stdout'])
