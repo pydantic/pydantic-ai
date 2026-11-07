@@ -1717,11 +1717,20 @@ async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
     Its `for_run_step` swaps the inner toolset in place, so a run-resolved instance shared by
     parallel tool-call units would race. The factory asked to be re-evaluated per step, so the
     per-unit resolution that has always happened is also what it asked for.
+
+    The session economics are the contract: each unit opens its own session and both calls reach
+    the server. The `tools/list` count is the MCP SDK's: it lists before a call only when its
+    output-schema cache is cold, and that cache's behavior varies across fastmcp releases — the
+    latest-versions canary recorded a fresh session skipping its listing while the session and
+    call counts held — so assert the SDK-owned bound, not its count.
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
 
-    assert counts == snapshot({'initialize': 5, 'tools/list': 5, 'tools/call': 2})
     assert resolutions == snapshot(5)
+    assert counts['initialize'] == resolutions
+    assert counts['tools/call'] == snapshot(2)
+    assert set(counts) == snapshot({'initialize', 'tools/list', 'tools/call'})
+    assert 0 < counts['tools/list'] <= counts['initialize']
 
 
 async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot_carry_one() -> None:
