@@ -3200,9 +3200,10 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
 @pytest.mark.parametrize(
     'setting, standing_prompt',
     [
-        pytest.param(None, ['leading', '<announcement>'], id='default'),
-        # `'always'` puts the announcement in the instructions instead, which `prepare_messages` doesn't touch.
-        pytest.param('always', ['leading'], id='always'),
+        # Both put the announcement ahead of the standing prompt: `'when_needed'` here because of the mid-conversation
+        # prompt, `'always'` because there is a standing prompt.
+        pytest.param(None, ['<announcement>', 'leading'], id='default'),
+        pytest.param('always', ['<announcement>', 'leading'], id='always'),
         pytest.param('never', ['leading'], id='never'),
     ],
 )
