@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
+from inspect import Signature, signature
 from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
     Docstring,
+    DocstringSection,
     DocstringSectionKind,
     DocstringSectionParameters,
     GoogleOptions,
@@ -27,7 +29,11 @@ def doc_descriptions(
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
-    and extracts both the main description and parameter descriptions. If a returns section
+    and extracts both the main description and parameter descriptions. Recognized admonition
+    sections (e.g. `Warning:` and `Note:`) are included in the main description in source order,
+    while other sections (e.g. `Raises` and `Examples`) keep their current handling. For a function
+    with a Python return annotation, a Google-style returns section keeps its whole text as the
+    return description instead of splitting a type off at the first colon. If a returns section
     is present in the docstring, the main description will be formatted as XML.
 
     Returns:
@@ -59,23 +65,53 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
-    main_desc = ''
-    if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
-        main_desc = main.value
+    main_desc = _main_description(sections)
 
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
-        return_statement = return_.value[0]
-        return_desc = return_statement.description
-        return_type = return_statement.annotation
-        type_tag = f'<type>{return_type}</type>\n' if return_type else ''
-        return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
-
-        if main_desc:
-            main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
-        else:
-            main_desc = return_xml
+        main_desc = _main_desc_with_returns(return_, docstring_style, func, main_desc)
 
     return main_desc, params
+
+
+def _main_description(sections: list[DocstringSection]) -> str:
+    """Build the main description from the docstring's text and admonition sections, in source order.
+
+    The first text section supplies the description; recognized admonition sections (e.g. `Warning:`) are
+    appended where they appear.
+    """
+    main_desc_parts: list[str] = []
+    text_seen = False
+    for section in sections:
+        if section.kind == DocstringSectionKind.text and not text_seen:
+            main_desc_parts.append(section.value)
+            text_seen = True
+        elif section.kind == DocstringSectionKind.admonition:
+            # Recognized admonition sections (e.g. `Warning:`) reach the model verbatim, in source order;
+            # other sections keep their current handling.
+            main_desc_parts.append(f'{section.value.kind.capitalize()}:\n{section.value.contents}')
+    return '\n\n'.join(main_desc_parts)
+
+
+def _main_desc_with_returns(
+    return_: DocstringSection,
+    docstring_style: DocstringStyle,
+    func: Callable[..., Any],
+    main_desc: str,
+) -> str:
+    """Format the returns section as the `<returns>` XML the model sees, folding in the main description."""
+    return_statement = return_.value[0]
+    return_desc = return_statement.description
+    return_type = return_statement.annotation
+    if docstring_style == 'google' and return_type and signature(func).return_annotation is not Signature.empty:
+        # The Python return annotation is authoritative: keep the whole docstring text as the return
+        # description instead of griffe splitting a type off at the first colon.
+        return_desc = f'{return_type}: {return_desc}'
+        return_type = None
+    type_tag = f'<type>{return_type}</type>\n' if return_type else ''
+    return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
+    if main_desc:
+        return f'<summary>{main_desc}</summary>\n{return_xml}'
+    return return_xml
 
 
 def _parser_options(docstring_style: DocstringStyle) -> GoogleOptions | NumpyOptions | SphinxOptions:

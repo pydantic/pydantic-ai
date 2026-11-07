@@ -391,8 +391,7 @@ def test_google_style_with_returns():
             'description': """\
 <summary>A function that does something.</summary>
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {
@@ -546,8 +545,7 @@ def test_only_returns_type():
             'name': 'only_returns_type',
             'description': """\
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
@@ -5834,4 +5832,173 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'title': 'Level',
             'type': 'string',
         }
+    )
+
+
+def test_admonition_sections_reach_tool_description():
+    """Recognized admonition sections reach the model instead of being dropped."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Note: the API caps results at 1000 rows and does not say so.
+
+        Warning:
+            Blank spend means no data, not zero.
+
+        Important:
+            Result rows are capped at 1000.
+
+        Trailing prose after the admonition.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Note: the API caps results at 1000 rows and does not say so.\n'
+        '\n'
+        'Warning:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Important:\n'
+        'Result rows are capped at 1000.'
+    )
+
+
+def test_admonition_sections_reach_tool_description_numpy():
+    """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain(docstring_format='numpy')
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Parameters
+        ----------
+        account_id : str
+            The ad account id.
+
+        Warnings
+        --------
+        Blank spend means no data, not zero.
+
+        Notes
+        -----
+        Result rows are capped at 1000.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Warning:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Note:\n'
+        'Result rows are capped at 1000.'
+    )
+
+
+def test_raises_and_examples_sections_still_dropped():
+    """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+
+        Examples:
+            Fetch rows for an account.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == 'Fetch ad rows for an account.'
+
+
+def test_returns_with_colon_whole_text_when_return_annotated():
+    """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            The rows. Example: [{"id": 1}]
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<description>The rows. Example: [{"id": 1}]</description>\n'
+        '</returns>'
+    )
+
+
+def test_returns_with_colon_still_split_when_not_annotated():
+    """Without a Python return annotation, a `Returns:` type prefix keeps its current handling."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str):
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            str: The rows.
+        """
+        return None
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<type>str</type>\n'
+        '<description>The rows.</description>\n'
+        '</returns>'
     )
