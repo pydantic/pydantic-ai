@@ -21,6 +21,8 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 Besides the request, [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback for cancelled runs. Both callbacks can optionally yield additional Vercel AI events.
 
+While a run is producing no events, `dispatch_request()` and `streaming_response()` emit an SSE comment (`: keepalive`) every 15 seconds of silence so proxies and clients can tell the connection is still alive. Pass `keepalive_interval` (in seconds) to change the cadence, or `keepalive_interval=None` to disable keepalives; non-positive intervals are rejected.
+
 ```py {title="dispatch_request.py"}
 from fastapi import FastAPI
 from starlette.requests import Request

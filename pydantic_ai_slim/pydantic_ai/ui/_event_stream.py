@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -69,12 +70,26 @@ if TYPE_CHECKING:
 SSE_CONTENT_TYPE = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
 
+DEFAULT_KEEPALIVE_INTERVAL: float = 15.0
+"""The default interval in seconds between keepalive SSE comments emitted while the stream is idle."""
+
 
 class _PendingToolCall(NamedTuple):
     """A tool call that's been dispatched but not yet completed."""
 
     kind: Literal['function', 'output']
     tool_name: str
+
+
+@dataclass
+class _StreamEnded:
+    """Sentinel queued for the keepalive consumer when the source stream finishes."""
+
+
+def _validate_keepalive_interval(keepalive_interval: float | None) -> None:
+    """Reject non-positive keepalive intervals, which would emit a comment in a busy loop."""
+    if keepalive_interval is not None and keepalive_interval <= 0:
+        raise ValueError(f'`keepalive_interval` must be a positive number of seconds, got {keepalive_interval!r}')
 
 
 EventT = TypeVar('EventT')
@@ -192,13 +207,68 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """Encode a protocol-specific event as a string."""
         raise NotImplementedError
 
-    async def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
-        """Encode a stream of protocol-specific events as strings according to the `Accept` header value."""
-        async for event in stream:
-            yield self.encode_event(event)
+    async def encode_stream(
+        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL
+    ) -> AsyncIterator[str]:
+        """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
 
-    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
-        """Generate a streaming response from a stream of protocol-specific events."""
+        Args:
+            stream: The stream of protocol-specific events to encode.
+            keepalive_interval: Interval in seconds between keepalive SSE comments (`: keepalive`) emitted while
+                no event has been sent, so proxies don't close an idle connection while the run is silent, e.g.
+                during a long tool call. `None` disables keepalives. Defaults to 15 seconds.
+
+        Raises:
+            ValueError: If `keepalive_interval` is not `None` and not positive.
+        """
+        _validate_keepalive_interval(keepalive_interval)
+        if keepalive_interval is None:
+            async for event in stream:
+                yield self.encode_event(event)
+            return
+
+        # Buffer source events in a queue so the idle timer can't cancel the source read. The pump task
+        # feeds the queue and finishes with a sentinel; awaiting the pump after the sentinel surfaces any
+        # source error, and cancelling the pump on cleanup propagates cancellation into the source stream.
+        queue: asyncio.Queue[EventT | _StreamEnded] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for event in stream:
+                    queue.put_nowait(event)
+            finally:
+                queue.put_nowait(_StreamEnded())
+
+        pump_task = asyncio.create_task(pump())
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=keepalive_interval)
+                except TimeoutError:
+                    yield ': keepalive\n\n'
+                    continue
+                if isinstance(item, _StreamEnded):
+                    await pump_task
+                    break
+                yield self.encode_event(item)
+        finally:
+            pump_task.cancel()
+            try:
+                await pump_task
+            except asyncio.CancelledError:
+                pass
+
+    def streaming_response(
+        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL
+    ) -> StreamingResponse:
+        """Generate a streaming response from a stream of protocol-specific events.
+
+        Args:
+            stream: The stream of protocol-specific events to encode.
+            keepalive_interval: Interval in seconds between keepalive SSE comments (`: keepalive`) emitted while
+                no event has been sent, so proxies don't close an idle connection. `None` disables keepalives.
+                Defaults to 15 seconds.
+        """
         try:
             from starlette.responses import StreamingResponse
         except ImportError as e:  # pragma: no cover
@@ -208,7 +278,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             ) from e
 
         return StreamingResponse(
-            self.encode_stream(stream),
+            self.encode_stream(stream, keepalive_interval=keepalive_interval),
             headers=self.response_headers,
             media_type=self.content_type,
         )
