@@ -39,20 +39,19 @@ _TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_i
 def gate_tool_instance_defaults(
     toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
 ) -> dict[str, ToolsetTool[AgentDepsT]]:
-    """Drop `toolset`'s `sequential` and `defer_loading` from its `Tool` instances in histories recorded before it set them.
+    """Drop the `sequential` and `defer_loading` a `FunctionToolset` set on `Tool` instances, in histories recorded before it did.
 
     A sequential or deferred tool changes which activities the workflow schedules, so those histories
     replay only without them.
     """
-    made_sequential = toolset._tools_made_sequential  # pyright: ignore[reportPrivateUsage]
-    made_deferred = toolset._tools_made_deferred  # pyright: ignore[reportPrivateUsage]
     unpatched: dict[str, ToolsetTool[AgentDepsT]] = {}
     for name, tool in tools.items():
-        assert isinstance(tool, FunctionToolsetTool)
+        assert isinstance(tool, FunctionToolsetTool) and tool.original_name is not None
+        held = toolset.tools[tool.original_name]
         tool_def = replace(
             tool.tool_def,
-            sequential=tool.tool_def.sequential and tool.original_name not in made_sequential,
-            defer_loading=tool.tool_def.defer_loading and tool.original_name not in made_deferred,
+            sequential=tool.tool_def.sequential and not held._sequential_from_toolset,  # pyright: ignore[reportPrivateUsage]
+            defer_loading=tool.tool_def.defer_loading and not held._defer_loading_from_toolset,  # pyright: ignore[reportPrivateUsage]
         )
         if tool_def != tool.tool_def:
             unpatched[name] = replace(tool, tool_def=tool_def)

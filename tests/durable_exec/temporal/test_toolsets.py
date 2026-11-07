@@ -2250,12 +2250,19 @@ def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[No
     )
 
 
+_shared_first = Tool(first)
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+_sequential_toolset = FunctionToolset([_shared_first], sequential=True)
+
 _tool_instances_agents = {
     'sequential': _tool_instances_agent(
         'sequential_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', sequential=True)
     ),
     'defer_loading': _tool_instances_agent(
         'deferred_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', defer_loading=True)
+    ),
+    'shared_sequential': _tool_instances_agent(
+        'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)], id='tools')
     ),
 }
 
@@ -2287,6 +2294,7 @@ def _tool_activity_events(history: WorkflowHistory) -> list[str]:
     [
         ('sequential', ['scheduled', 'completed', 'scheduled', 'completed']),
         ('defer_loading', []),
+        ('shared_sequential', ['scheduled', 'completed', 'scheduled', 'completed']),
     ],
 )
 async def test_function_toolset_defaults_on_tool_instances_replay(
@@ -2295,8 +2303,8 @@ async def test_function_toolset_defaults_on_tool_instances_replay(
     """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
 
     Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
-    and neither tool is deferred. A new run gets the toolset's value. Unsandboxed, so `workflow.patched` can be faked
-    for the original run.
+    and neither tool is deferred, including a `Tool` that another toolset made sequential. A new run gets the
+    toolset's value. Unsandboxed, so `workflow.patched` can be faked for the original run.
     """
     agent = _tool_instances_agents[flag]
 

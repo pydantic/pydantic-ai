@@ -6811,28 +6811,6 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
-    "FunctionToolset._tools_made_deferred": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
-      ]
-    },
-    "FunctionToolset._tools_made_sequential": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
-      ]
-    },
     "FunctionToolset.call_tool": {
       "engines": [
         "dbos",
@@ -6907,7 +6885,8 @@
     "FunctionToolset.tools": {
       "engines": [
         "durable_exec",
-        "render"
+        "render",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
@@ -6915,6 +6894,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets.collect",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::RenderOperationBackend._validate_tool_options"
       ]
     },
