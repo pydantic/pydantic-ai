@@ -1298,24 +1298,31 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-        tool_results: dict[str, ToolReturnPart] = {}
+        # A response's results ride in the `ModelRequest` right after it, so they are collected per response
+        # rather than by id across the whole history: `tool_call_id` is unique within a response, not within a
+        # conversation, and a provider that reuses one would otherwise show a later turn's result on an earlier
+        # call.
+        tool_results_by_response: dict[int, dict[str, ToolReturnPart]] = {}
 
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        tool_results[part.tool_call_id] = part
-                    # TODO(v3): remove `RetryPromptPart`
-                    elif isinstance(part, RetryPromptPart) and isinstance(  # pyright: ignore[reportDeprecated]
-                        translated := _translate_legacy_retry_part(part), ToolReturnPart
-                    ):
-                        tool_results[part.tool_call_id] = translated
+        for index, msg in enumerate(messages):
+            if not isinstance(msg, ModelRequest) or index == 0:
+                continue
+            tool_results: dict[str, ToolReturnPart] = {}
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_results[part.tool_call_id] = part
+                # TODO(v3): remove `RetryPromptPart`
+                elif isinstance(part, RetryPromptPart) and isinstance(  # pyright: ignore[reportDeprecated]
+                    translated := _translate_legacy_retry_part(part), ToolReturnPart
+                ):
+                    tool_results[part.tool_call_id] = translated
+            tool_results_by_response[index - 1] = tool_results
 
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
         message_index = 0
 
-        for msg in messages:
+        for message_number, msg in enumerate(messages):
             if isinstance(msg, ModelRequest):
                 segments = cls._dump_request_message(msg)
                 # Metadata goes on one UIMessage of a split request, so reload applies it once to the
@@ -1340,7 +1347,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(
+                    msg, tool_results_by_response.get(message_number, {}), sdk_version
+                )
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(
