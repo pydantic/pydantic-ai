@@ -240,9 +240,6 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
-# complexipy 8.3.0 is the audited release the `lint` group pins exactly.
-# TODO(dsfaccini): Remove after 2026-11-03 05:00 UTC, then run `uv lock`.
-complexipy = "2026-10-27T05:00:00Z"
 # boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
 # TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
@@ -317,6 +314,9 @@ dev = [
     # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
     # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
+    # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
+    # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
+    "grpclib>=0.4.7",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -330,8 +330,7 @@ coverage = [
 ]
 lint = [
     # The cognitive complexity gate scores code with complexipy in-process. This exact release was
-    # audited by dsfaccini, which is why it is pinned, and why `[tool.uv.exclude-newer-package]` admits
-    # it until it is 7 days old. Bump it deliberately, after auditing the new release.
+    # audited by dsfaccini, which is why it is pinned. Bump it deliberately, after auditing the new release.
     "complexipy==8.3.0",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
@@ -381,8 +380,6 @@ include = [
     ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
-    ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/community_demand.py",
     ".github/scripts/test_community_demand.py",
     ".github/scripts/triage_telemetry.py",
@@ -401,6 +398,12 @@ include = [
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
     ".github/scripts/test_clai2_web_bundle.py",
+    ".github/scripts/douwebot_usage_limit.py",
+    ".github/scripts/test_douwebot_usage_limit.py",
+    ".github/scripts/douwebot_opencode_run.py",
+    ".github/scripts/douwebot_opencode_result.py",
+    ".github/scripts/test_douwebot_opencode_run.py",
+    ".github/scripts/test_douwebot_opencode_result.py",
 ]
 
 [tool.ruff.lint]
@@ -481,7 +484,6 @@ quote-style = "single"
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
-".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
 ".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
@@ -494,6 +496,9 @@ quote-style = "single"
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 ".github/scripts/test_latest_versions_canary_report.py" = ["D"]
 ".github/scripts/test_clai2_web_bundle.py" = ["D"]
+".github/scripts/test_douwebot_usage_limit.py" = ["D"]
+".github/scripts/test_douwebot_opencode_run.py" = ["D"]
+".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
@@ -629,6 +634,8 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
+    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
     # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
     # TODO(v3): Require `dbos>=2.31.0` and drop this filter.

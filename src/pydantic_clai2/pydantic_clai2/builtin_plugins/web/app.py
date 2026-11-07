@@ -344,15 +344,29 @@ class Assets:
 
     async def get(self, name: str) -> Asset | None:
         path = self.directory / name
-        if path.parent != self.directory or not path.is_file():
+        if path.parent != self.directory:
             return None
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
+        key = await to_thread.run_sync(_file_version, path)
+        if key is None:
+            return None
         built = self._built.get(name)
         if built is None or built[0] != key:
             built = key, await to_thread.run_sync(_build_asset, path)
             self._built[name] = built
         return built[1]
+
+
+def _file_version(path: Path) -> tuple[int, int] | None:
+    """The modification time and size of the file at `path`, or `None` when there is no file."""
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _read_text(path: Path) -> str | None:
+    """The text of the file at `path`, or `None` when there is no file."""
+    return path.read_text(encoding='utf-8') if path.is_file() else None
 
 
 def _build_asset(path: Path) -> Asset:
@@ -392,10 +406,9 @@ def _page(app: FastAPI, *, token: str, static: Path, assets: Assets) -> None:
 
     @app.get('/', include_in_schema=False)
     async def index() -> Response:
-        index = static / 'index.html'
-        if not index.is_file():
+        page = await to_thread.run_sync(_read_text, static / 'index.html')
+        if page is None:
             return Response(UNBUILT, status_code=503, media_type='text/plain')
-        page = index.read_text(encoding='utf-8')
         versions = {name: await assets.get(name) for _, name in _ASSET.findall(page)}
 
         def link(match: re.Match[str]) -> str:

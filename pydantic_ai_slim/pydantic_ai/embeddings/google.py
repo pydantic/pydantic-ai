@@ -40,7 +40,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 _model_errors.google_status_category(
                     status,
                     e.message,
-                    _model_errors.google_error_reason(e.details),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 )
                 or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,

@@ -10,7 +10,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -2500,11 +2500,110 @@ class SandboxWorkspace(WorkspaceBackend):
 
 
 class TestTaskControlBoundaries:
-    async def test_task_control_and_dynamic_agents_refuse_durable_execution(self) -> None:
-        for capability in (controlled(), SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())):
-            agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
-            with pytest.raises(UserError, match='not supported under durable execution'):
+    async def test_a_recorded_delegation_keeps_the_delegating_level(self) -> None:
+        poet_tools: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if (info.instructions or '').startswith('Write.'):
+                poet_tools.append([tool.name for tool in info.function_tools])
+                return ModelResponse(parts=[TextPart('a poem')])
+            returns = tool_returns(messages)
+            first = messages[0].parts[-1]
+            if isinstance(first, UserPromptPart) and first.content == 'Top.':
+                return text('Done.') if returns else call('delegate_task', agent_name='self', task='Inner.')
+            if not returns:
+                return call('create_agent', name='poet', description='d', instructions='Write.')
+            return call('delegate_task', agent_name='poet', task='Go.') if len(returns) == 1 else text('Inner done.')
+
+        def factory(spec: DynamicAgentSpec) -> Agent[Any, str]:
+            return Agent(
+                FunctionModel(respond), instructions=spec.instructions, capabilities=[SubAgents(include_self=True)]
+            )
+
+        parent = Agent(
+            FunctionModel(respond),
+            name='durable',
+            capabilities=[
+                SubAgents(include_self=True, dynamic_agents=DynamicAgents(factory=factory)),
+                RecordingDurability(isolated=True),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            await parent.run('Top.')
+        # The poet runs at the third level, the default `max_depth`, so it gets no delegate tool.
+        assert poet_tools == [[]]
+
+    async def test_task_control_and_owned_dynamic_agents_refuse_durable_execution(self) -> None:
+        agent = Agent(TestModel(), name='durable', capabilities=[controlled(), RecordingDurability()])
+        with pytest.raises(UserError, match='not supported under durable execution'):
+            await agent.run('Go.')
+        dynamic = SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())
+        agent = Agent(TestModel(), name='durable', capabilities=[dynamic, RecordingDurability()])
+        owner = DelegationTasks()
+        async with owner.opened():
+            with owner.bind(), pytest.raises(UserError, match='outside a `DelegationTasks` owner'):
                 await agent.run('Go.')
+
+    async def test_dynamic_agents_refuse_an_engine_that_records_their_tools(self) -> None:
+        class WrappingDurability(RecordingDurability):
+            engine_spec = replace(
+                RecordingDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}), tool_config_key='x'
+            )
+
+        dynamic = SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())
+        agent = Agent(TestModel(), name='durable', capabilities=[dynamic, WrappingDurability()])
+        with pytest.raises(UserError, match='on an engine that runs its tools in workflow code'):
+            await agent.run('Go.')
+
+    def test_durable_execution_requires_an_id(self) -> None:
+        with pytest.raises(UserError, match='needs an explicit `id`'):
+            Agent(
+                TestModel(),
+                name='durable',
+                capabilities=[SubAgents(agents=[researcher()], id=None), RecordingDurability()],
+            )
+
+    async def test_dynamic_agents_record_each_delegation_under_durable_execution(self) -> None:
+        def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ValueError('boom')
+
+        def factory(spec: DynamicAgentSpec) -> Agent[Any, str]:
+            model = FunctionModel(crash) if spec.name == 'broken' else TestModel(custom_output_text=spec.instructions)
+            return Agent(model)
+
+        def parent(*capabilities: AbstractCapability[Any]) -> Agent[Any, str]:
+            return Agent(
+                scripted(
+                    call('create_agent', name='poet', description='d', instructions='A poem.'),
+                    call('create_agent', name='broken', description='d', instructions='i'),
+                    call('delegate_task', agent_name='poet', task='Write.'),
+                    call('delegate_task', agent_name='broken', task='Write.'),
+                    call('delegate_task', agent_name='researcher', task='Look.'),
+                    text('Done.'),
+                ),
+                name='durable',
+                capabilities=[
+                    SubAgents(
+                        agents=[researcher()], dynamic_agents=DynamicAgents(factory=factory), contain_errors=True
+                    ),
+                    *capabilities,
+                ],
+            )
+
+        durability = RecordingDurability()
+        with anyio.fail_after(WAIT):
+            durable = await parent(durability).run('Go.')
+            plain = await parent().run('Go.')
+        # Recorded delegations, a crash's `ModelRetry` included, reach the model as they do without durability.
+        assert tool_returns(durable.all_messages()) == tool_returns(plain.all_messages())
+        assert tool_returns(plain.all_messages())[2:] == [
+            'A poem.',
+            '{"error":"Sub-agent \'broken\' crashed: ValueError: boom. Treat this as a recoverable failure and decide '
+            'from existing evidence."}',
+            'child output',
+        ]
+        delegations = [name for name, _ in durability.calls if name.endswith('.delegate')]
+        assert delegations == ['durable__capability__sub_agents.delegate'] * 3
 
     async def test_a_run_a_tool_starts_gets_an_owner_of_its_own(self) -> None:
         inner = Agent(

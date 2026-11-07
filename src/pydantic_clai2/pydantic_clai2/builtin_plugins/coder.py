@@ -460,7 +460,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                         'Review the code or changes described in the task. '
                         'Return actionable findings with file paths.'
                     ),
-                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](expose_inventory_tool=False)],
+                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](walk_up='repo_root')],
                 )
                 agents.append(SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False))
             models: dict[str, ModelOption] = {
