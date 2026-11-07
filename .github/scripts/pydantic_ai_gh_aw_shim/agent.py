@@ -142,8 +142,8 @@ def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
     return _model
 
 
-# Workflows whose source declares `tools: bash: []`. This engine receives no compiled tool allowlist,
-# so their shell is withheld here.
+# Workflows that get no shell. gh-aw rejects `tools: bash: []` for this engine and passes it no tool
+# allowlist, so this set is the only place the restriction exists. Each name is the source's `name:`.
 NO_SHELL_WORKFLOWS = frozenset({cli.ATTENTION_WORKFLOW, 'Pydantic AI Community Demand', 'Pydantic AI Feature Digest'})
 
 

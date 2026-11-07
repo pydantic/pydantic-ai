@@ -44,9 +44,6 @@ models:
             input: 0.00000015
             cache_read: 0.00000003
             output: 0.00000050
-sandbox:
-  agent:
-    token-steering: false
 engine:
   id: pydantic-ai
   version: '0.64.0'
@@ -73,7 +70,7 @@ engine:
   concurrency:
     group: "gh-aw-pydantic-ai-${{ github.workflow }}${{ github.workflow == 'Pydantic AI UI Security Review' && format('-{0}', github.event.pull_request.number || github.ref) || '' }}"
     queue: max
-# gh-aw 1.0.1 caps the agent job at 60 minutes and detection at 10. Keep GitHub's
+# gh-aw caps the agent job at 60 minutes and detection at 10 by default. Keep GitHub's
 # 360-minute job maximum, so each source's engine step budget fits, and a 20-minute detector.
 jobs:
   agent:

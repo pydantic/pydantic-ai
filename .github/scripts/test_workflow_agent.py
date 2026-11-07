@@ -118,7 +118,11 @@ WORKFLOW_SOURCES = sorted((Path(__file__).parents[1] / 'workflows').glob('pydant
 async def test_shell_exposure_follows_the_workflow_source(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The engine receives no compiled tool allowlist, so a source's `bash: []` must withhold the shell."""
+    """A source marked for `NO_SHELL_WORKFLOWS` gets no shell, and only those sources lose it.
+
+    gh-aw rejects `bash: []` for this engine, so the source comment naming the set is the declaration.
+    A renamed workflow would otherwise silently regain its shell.
+    """
     frontmatter = guard.parse_frontmatter(source)
     (tmp_path / 'attention-candidates.json').write_text('{"candidates": []}')
     monkeypatch.setenv('GITHUB_WORKFLOW', frontmatter['name'])
@@ -134,7 +138,7 @@ async def test_shell_exposure_follows_the_workflow_source(
     agent = workflow.build_agent()
     with agent.override(model=streaming_model(respond)):
         result = await agent.run('Report the tools you were given')
-    granted = frontmatter.get('tools', {}).get('bash') != []
+    granted = 'NO_SHELL_WORKFLOWS' not in source.read_text(encoding='utf-8')
     assert ('shell' in offered[0]) == granted
     assert (frontmatter['name'] in workflow.NO_SHELL_WORKFLOWS) == (not granted)
     if not granted:

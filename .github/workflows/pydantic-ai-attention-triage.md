@@ -38,7 +38,7 @@ network:
     - logfire-eu.pydantic.info
     - logfire-us.pydantic.info
 tools:
-  bash: []
+  # No shell: gh-aw rejects `bash: []` for this engine, so NO_SHELL_WORKFLOWS in pydantic_ai_gh_aw_shim/agent.py withholds it.
   cli-proxy: false
   github: false
 safe-outputs:

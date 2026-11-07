@@ -21,7 +21,7 @@ concurrency:
   group: weekly-ce-audit
   cancel-in-progress: false
 tools:
-  bash: ['git *', 'python3 .github/scripts/weekly_ce_audit.py prepare-review *']
+  bash: ['*']
   github:
     mode: gh-proxy
     toolsets: [default]

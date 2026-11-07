@@ -250,35 +250,26 @@ approval current.
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
-Protected session capture requires gh-aw v1.0.1 or newer with AWF v0.29.0 or newer.
-Compilation currently uses v1.0.1 plus [the status-only metadata fix](https://github.com/dsfaccini/gh-aw/commit/4bffded947f776546cc1a8410aaeca917b20708f).
-The fix lets the review failure reporter read trusted pre-agent eligibility outputs after detection errors.
-Keep released v1.0.1 Actions helpers when compiling with this patched authoring tool:
-
-```bash
-gh_aw_build_dir=$(mktemp -d)
-git clone --depth 1 --branch v1.0.1 https://github.com/github/gh-aw.git "$gh_aw_build_dir"
-git -C "$gh_aw_build_dir" fetch --depth 2 https://github.com/dsfaccini/gh-aw.git 4bffded947f776546cc1a8410aaeca917b20708f
-git -C "$gh_aw_build_dir" cherry-pick --no-commit 4bffded947f776546cc1a8410aaeca917b20708f
-make -C "$gh_aw_build_dir" build VERSION='v1.0.1+status-only.4bffded94'
-```
-
-Use a released compiler containing that fix once available; the runtime minimum remains v1.0.1/AWF v0.29.0.
+Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1), which ships AWF v0.29.7.
+It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
+after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
+`shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.64.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
 passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
 `shared/engine-zai.md` also sets the agent job to GitHub's 360-minute maximum and detection to 20 minutes;
-gh-aw 1.0.1 would otherwise cap them at 60 and 10.
-The public engine also ignores `tools:` allowlists. `pydantic_ai_gh_aw_shim/agent.py` withholds the shell
-from each source that declares `bash: []`.
+gh-aw would otherwise cap them at 60 and 10.
+The public engine ignores `tools:` allowlists, and gh-aw rejects `bash: []` or a command list for it.
+`NO_SHELL_WORKFLOWS` in `pydantic_ai_gh_aw_shim/agent.py` withholds the shell by workflow name; mark each
+such source with a comment naming that set. Every other workflow gets an unrestricted shell.
 
 - **Never hand-edit a `*.lock.yml`.** It is generated — the header says so. Manual edits are silently overwritten on the next recompile, and until then the running workflow diverges from its source.
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
 
   ```
-  "$gh_aw_build_dir/gh-aw" compile --action-mode action --action-tag v1.0.1
+  gh aw compile --action-mode action --action-tag v1.2.1
   ```
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.

@@ -3060,10 +3060,10 @@ def test_clai2_engine_names_the_staged_shim_sources():
 
 
 def test_compiled_job_limits_and_ui_security_concurrency():
-    """gh-aw 1.0.1 caps the agent job at 60 minutes and detection at 10; the previous compiler capped neither job.
+    """gh-aw caps the agent job at 60 minutes and detection at 10 by default; main's compiler capped neither job.
 
     Stale Issues Finder's 60-minute engine step did not fit the agent cap, and the detector step had 20 minutes.
-    gh-aw 1.0.1 gives the detector step its job's budget. UI Security reviewed PRs in parallel.
+    gh-aw gives the detector step its job's budget. UI Security reviewed PRs in parallel.
     """
     workflows = Path(__file__).parent.parent / 'workflows'
     ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']
