@@ -893,7 +893,7 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Web Tool Callers
 
-On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions, or as the `20260318` versions when you use [web tool settings](#web-tool-settings). By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
 
 Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md). When you ask for citations, with the [`Citations`][pydantic_ai.capabilities.Citations] capability and text output, or with [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] for web fetch, Pydantic AI sends the cited tools with `allowed_callers=['direct']` on the Anthropic API (the `AsyncAnthropic` client), so the model calls them itself and their results are cited. This turns off dynamic filtering for those tools, so the model reads every result in full. Claude Platform on AWS and Microsoft Foundry keep Anthropic's default, since they haven't been verified to accept `allowed_callers` with citations: set [`anthropic_calls_cited_web_tools_directly`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_calls_cited_web_tools_directly] in the model's `profile` to route them there too.
 
@@ -912,6 +912,53 @@ agent = Agent(
     model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
 )
 ```
+
+## Web Tool Settings
+
+Anthropic's newer web tool versions have a few settings that are not shared by other providers. Pass
+the matching typed settings to each native tool:
+
+```python {title="anthropic_web_tool_options.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import (
+    AnthropicWebFetchToolSettings,
+    AnthropicWebSearchToolSettings,
+    WebFetchTool,
+    WebSearchTool,
+)
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebSearchToolSettings(
+                        response_inclusion='excluded'
+                    )
+                }
+            )
+        ),
+        NativeTool(
+            WebFetchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebFetchToolSettings(
+                        use_cache=False,
+                        response_inclusion='excluded',
+                    )
+                }
+            )
+        ),
+    ],
+)
+```
+
+Setting `use_cache`, even to its default value, selects Anthropic's `web_fetch_20260318` tool version. `response_inclusion` selects `web_search_20260318` or `web_fetch_20260318` when code execution may call the tool: on models with dynamic filtering, or when [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] names a code execution caller. Otherwise the tool is called directly, where `response_inclusion` has no effect, so it doesn't change the version. Without these options, Pydantic AI keeps choosing the version from the model and client, as described above. `response_inclusion` defaults to `'full'`, and `use_cache` defaults to `True`: turning the cache off fetches the page fresh, which adds latency.
+
+On a model without dynamic filtering, `web_fetch_20260318` is sent with `allowed_callers=['direct']`, so it doesn't bring code execution with it; set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls, including when [citations](#web-tool-callers) route the tools to them. Results from a code execution call that paused before completing are also returned in full.
+
+Pydantic AI sends these versions to every client that offers the web tool, and the provider's API decides whether to accept them. Vertex AI has no dynamic filtering, so `response_inclusion` on `WebSearchTool` keeps `web_search_20250305` there. The Bedrock clients and web fetch on Vertex raise a `UserError` as described above. Anthropic documents only the older web tool versions on Microsoft Foundry deployments hosted on Azure, so Foundry's API may reject these settings there.
 
 ## Code Execution Tool Version
 
@@ -933,7 +980,7 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 ### Code Execution Containers
 
-When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
+When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` and `20260318` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
 If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 

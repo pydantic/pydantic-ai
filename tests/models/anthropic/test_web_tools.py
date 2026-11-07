@@ -19,6 +19,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentStreamEvent,
     DeferredToolResults,
     ModelMessage,
@@ -88,6 +89,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container_params import BetaContainerParams
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
+    from pydantic_ai.native_tools import AnthropicWebFetchToolSettings, AnthropicWebSearchToolSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
@@ -213,6 +215,165 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     tools, _, beta_features = m._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert [tool.get('type') for tool in tools] == case.expected_tool_types
     assert sorted(beta_features) == case.expected_betas
+
+
+@pytest.mark.parametrize('tool_kind', ['search', 'fetch'])
+@pytest.mark.parametrize(
+    ('model_name', 'enables_code_execution'),
+    [('claude-sonnet-4-6', True), ('claude-sonnet-4-5', False)],
+)
+def test_anthropic_20260318_web_tools_implicit_code_execution(
+    tool_kind: str, model_name: str, enables_code_execution: bool
+):
+    """The `20260318` web tools provision code execution unless the model has dynamic filtering off.
+
+    This whitelist controls response filtering and is not visible in the outgoing request, so the
+    test exercises the helper that supplies it to streamed and non-streamed response processing.
+    """
+    tool: AbstractNativeTool
+    if tool_kind == 'search':
+        tool = WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
+    else:
+        tool = WebFetchTool(provider_settings={'anthropic': AnthropicWebFetchToolSettings(use_cache=False)})
+
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test'))
+    params = ModelRequestParameters(native_tools=[tool])
+
+    enabled_names = m._get_enabled_server_tool_names(  # pyright: ignore[reportPrivateUsage]
+        params, AnthropicModelSettings(), code_execution_in_open_turn=False
+    )
+
+    assert ('code_execution' in enabled_names) is enables_code_execution
+
+
+def test_anthropic_response_inclusion_keeps_older_web_search_on_vertex():
+    """Vertex calls web search directly, where `response_inclusion` has no effect, so the version Vertex takes is kept."""
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(
+            anthropic_client=mock_anthropic_client(
+                AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
+            )
+        ),
+    )
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
+        ]
+    )
+
+    tools, *_ = model._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    assert tools == snapshot(
+        [
+            {
+                'name': 'web_search',
+                'type': 'web_search_20250305',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+            }
+        ]
+    )
+
+
+def _native_parts(result: AgentRunResult[str]) -> list[tuple[str, str]]:
+    """The native tool calls and returns in a run, which show what `response_inclusion` left in the response."""
+    return [
+        (type(part).__name__, part.tool_name)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ]
+
+
+@pytest.mark.vcr()
+async def test_anthropic_20260318_web_search_response_inclusion(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic accepts response exclusion and omits search results consumed by code execution."""
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='excluded')}
+                )
+            )
+        ],
+    )
+
+    result = await agent.run(
+        "In code execution, use web_search with the query 'site:ai.pydantic.dev Pydantic AI' "
+        'and reply with the first result title.'
+    )
+
+    assert result.output == snapshot('The title of the first search result is **"pydantic ai"**.')
+    assert result.usage.details.get('web_search_requests') == 1
+    assert _native_parts(result) == snapshot(
+        [('NativeToolCallPart', 'code_execution'), ('NativeToolReturnPart', 'code_execution')]
+    )
+    assert request_capture.body('/v1/messages')['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'max_uses': None,
+                'name': 'web_search',
+                'response_inclusion': 'excluded',
+                'type': 'web_search_20260318',
+                'user_location': None,
+            }
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_20260318_web_fetch_settings(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic accepts the tool settings and excludes the consumed fetch result."""
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebFetchTool(
+                    provider_settings={
+                        'anthropic': AnthropicWebFetchToolSettings(use_cache=False, response_inclusion='excluded')
+                    }
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')
+
+    assert result.output == snapshot('The page title is **Pydantic AI**.')
+    assert _native_parts(result) == snapshot(
+        [('NativeToolCallPart', 'code_execution'), ('NativeToolReturnPart', 'code_execution')]
+    )
+    assert request_capture.body('/v1/messages')['tools'] == snapshot(
+        [
+            {
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+                'max_uses': None,
+                'name': 'web_fetch',
+                'response_inclusion': 'excluded',
+                'type': 'web_fetch_20260318',
+                'use_cache': False,
+            }
+        ]
+    )
 
 
 def test_anthropic_explicit_profile_instance_narrows_web_tools():
@@ -459,6 +620,43 @@ ALLOWED_CALLERS_CASES = [
         expected_tools=snapshot(
             [('web_search_20260209', ['code_execution_20260120']), ('web_fetch_20260209', ['code_execution_20260120'])]
         ),
+    ),
+    AllowedCallersCase(
+        id='settings-20260318-setting-direct',
+        model_name='claude-sonnet-5-5',
+        native_tools=[
+            WebSearchTool(max_uses=1, provider_settings={'anthropic': {'response_inclusion': 'full'}}),
+            WebFetchTool(max_uses=1, provider_settings={'anthropic': {'use_cache': False}}),
+        ],
+        allowed_callers=['direct'],
+        expected_tools=snapshot([('web_search_20260318', ['direct']), ('web_fetch_20260318', ['direct'])]),
+    ),
+    AllowedCallersCase(
+        id='settings-20260318-citations',
+        model_name='claude-sonnet-5-5',
+        native_tools=[WebSearchTool(max_uses=1, provider_settings={'anthropic': {'response_inclusion': 'full'}})],
+        citations=True,
+        prompt="Use web search to find Pydantic AI's documentation and say in one sentence where it is.",
+        expected_tools=snapshot([('web_search_20260318', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_search', None)]),
+        expected_cited_domains=snapshot(['github.com']),
+    ),
+    AllowedCallersCase(
+        id='settings-20260318-no-dynamic-filtering',
+        model_name='claude-sonnet-4-5',
+        native_tools=[
+            WebSearchTool(max_uses=1, provider_settings={'anthropic': {'response_inclusion': 'full'}}),
+            WebFetchTool(max_uses=1, provider_settings={'anthropic': {'use_cache': False}}),
+        ],
+        # Only code execution calls are affected by `response_inclusion`, so it keeps the older search version here.
+        expected_tools=snapshot([('web_search_20250305', None), ('web_fetch_20260318', ['direct'])]),
+    ),
+    AllowedCallersCase(
+        id='settings-20260318-no-dynamic-filtering-setting-wins',
+        model_name='claude-sonnet-4-5',
+        native_tools=[WebSearchTool(max_uses=1, provider_settings={'anthropic': {'response_inclusion': 'full'}})],
+        allowed_callers=['code_execution_20260120'],
+        expected_tools=snapshot([('web_search_20260318', ['code_execution_20260120'])]),
     ),
     AllowedCallersCase(
         id='citations-previous-versions',
@@ -1196,11 +1394,11 @@ async def test_anthropic_web_tools_rejected_by_bedrock_messages_api(
     https://github.com/pydantic/pydantic-ai/issues/11481
     """
     if isinstance(tool, WebSearchTool):
-        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
+        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
         beta = None
     else:
         assert isinstance(tool, WebFetchTool)
-        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
+        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
     client = request.getfixturevalue('anthropic_bedrock_mantle_client')
 
     with pytest.raises(APIStatusError, match=rf"tool type '{tool_param['type']}' is not supported for this model"):

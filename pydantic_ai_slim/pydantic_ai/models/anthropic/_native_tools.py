@@ -92,7 +92,9 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 
-_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
+_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset(
+    {'web_search_20260209', 'web_fetch_20260209', 'web_search_20260318', 'web_fetch_20260318'}
+)
 """Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
 
 _CODE_EXECUTION_TOOL_TYPES = frozenset(

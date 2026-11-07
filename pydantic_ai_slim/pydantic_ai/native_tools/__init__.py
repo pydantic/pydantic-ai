@@ -14,12 +14,15 @@ from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
+    'AnthropicWebSearchToolSettings',
     'OpenRouterWebSearchToolSettings',
     'WebSearchProviderSettings',
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
     'CodeExecutionTool',
+    'AnthropicWebFetchToolSettings',
+    'WebFetchProviderSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
     'ImageGenerationTool',
@@ -159,6 +162,19 @@ class AbstractNativeTool(ABC):
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class AnthropicWebSearchToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    response_inclusion: Literal['full', 'excluded']
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    Anthropic defaults to `'full'`. This has no effect when the model calls the tool directly, which is the default on
+    models without dynamic filtering and on requests whose citations route the tool to direct calls: direct results,
+    and results from code execution calls that paused before completing, are returned in full.
+    """
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class OpenRouterWebSearchToolSettings(TypedDict, total=False):
     """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
 
@@ -189,6 +205,7 @@ class OpenRouterWebSearchToolSettings(TypedDict, total=False):
 class WebSearchProviderSettings(TypedDict, total=False):
     """Provider-specific web search settings, keyed by the model class that reads them."""
 
+    anthropic: AnthropicWebSearchToolSettings
     openrouter: OpenRouterWebSearchToolSettings
 
 
@@ -458,6 +475,32 @@ class CodeExecutionTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class AnthropicWebFetchToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
+
+    use_cache: bool
+    """Whether Anthropic may return cached web content.
+
+    Anthropic defaults to `True`; `False` fetches the page fresh, which adds latency.
+    """
+
+    response_inclusion: Literal['full', 'excluded']
+    """Whether results consumed by completed code execution calls remain in the response.
+
+    Anthropic defaults to `'full'`. This has no effect when the model calls the tool directly, which is the default on
+    models without dynamic filtering and on requests whose citations route the tool to direct calls: direct results,
+    and results from code execution calls that paused before completing, are returned in full.
+    """
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class WebFetchProviderSettings(TypedDict, total=False):
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
+
+    anthropic: AnthropicWebFetchToolSettings
+
+
 @dataclass(kw_only=True)
 class WebFetchTool(AbstractNativeTool):
     """Allows your agent to access contents from URLs.
@@ -519,6 +562,9 @@ class WebFetchTool(AbstractNativeTool):
 
     * Anthropic
     """
+
+    provider_settings: WebFetchProviderSettings | None = None
+    """Provider-specific web fetch settings, keyed by the model class that reads them."""
 
     kind: str = 'web_fetch'
     """The kind of tool."""

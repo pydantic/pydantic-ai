@@ -70,6 +70,11 @@ The outer `TypedDict` lists the known keys. Each key maps to its own
 tool-specific `TypedDict`, so autocomplete and type checking apply at both levels. A model adapter
 reads only the options it knows from its own entry, so settings for several models can coexist on one tool.
 
+Anthropic has `response_inclusion` on `WebSearchTool` and `WebFetchTool` (`AnthropicWebSearchToolSettings`,
+`AnthropicWebFetchToolSettings`) and `use_cache` on `WebFetchTool`. `use_cache` selects the `20260318` web fetch
+version; `response_inclusion` selects the `20260318` versions only when code execution may call the tool, since it
+has no effect on direct calls.
+
 ## Dynamic Native Tool Configuration
 
 Prepare native tools from `RunContext` when configuration depends on the current user or request. Wrap the prepare function in `NativeTool(...)`.
