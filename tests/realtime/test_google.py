@@ -732,7 +732,7 @@ def test_ws_trace_context_injects_and_restores_headers() -> None:
 def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> None:
     # Header names are case-insensitive and `websockets` stores them that way, so a client already
     # carrying `Traceparent` must not gain a second, lowercase one — the handshake can be rejected for
-    # the duplicate.
+    # the duplicate (the same hazard `_single_ws_user_agent` reconciles for `User-Agent`).
     pytest.importorskip('opentelemetry.sdk')
     from types import SimpleNamespace
 
@@ -823,6 +823,37 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
 
     assert {captured['traceparent'] for captured in handshake_headers} == {'trace-1', 'trace-2'}
     assert all(sum(key.lower() == 'user-agent' for key in captured) == 1 for captured in handshake_headers)
+    assert headers == original_headers
+
+
+async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
+    client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _CapturingConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _CapturingConnect:
+        return _CapturingConnect()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    async with _connect(model, ''):
+        pass
+
+    [captured] = handshake_headers
+    assert [key for key in captured if key.lower() == 'user-agent'] == ['user-agent']
     assert headers == original_headers
 
 
