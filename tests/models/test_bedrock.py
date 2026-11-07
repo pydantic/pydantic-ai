@@ -2405,6 +2405,56 @@ async def test_map_user_prompt_with_text_content_input(allow_model_requests: Non
     )
 
 
+@pytest.mark.parametrize('prompt', ['', ' \t\n', [' ', TextContent(content='')]])
+async def test_bedrock_empty_user_prompt_uses_placeholder(
+    prompt: str | list[str | TextContent], bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    empty_prompt = [ModelRequest(parts=[UserPromptPart(content=prompt)])]
+    _, bedrock_messages = await model._map_messages(empty_prompt, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+    assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[TextPart(content='Hello')]),
+        ModelRequest(parts=[UserPromptPart(content=prompt)]),
+    ]
+    _, bedrock_messages = await model._map_messages(history, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hi'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hello'}]},
+            {'role': 'user', 'content': [{'text': '.'}]},
+        ]
+    )
+
+
+async def test_bedrock_map_user_prompt_omits_empty_text_items(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    messages = [ModelRequest(parts=[UserPromptPart(content=[' ', 'Hello', TextContent(content=' \t'), 'Again'])])]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Again'}]}])
+
+
+async def test_bedrock_map_messages_omits_empty_text_parts(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[TextPart(content=''), TextPart(content=' \t'), TextPart(content='Hello')]),
+        ModelRequest(parts=[UserPromptPart(content='Again')]),
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hi'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hello'}]},
+            {'role': 'user', 'content': [{'text': 'Again'}]},
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)

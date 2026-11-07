@@ -1934,7 +1934,8 @@ class BedrockConverseModel(Model[BaseClient]):
                 carried_thinking: list[ContentBlockUnionTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        content.append({'text': item.content})
+                        if item.content.strip():
+                            content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.signature
@@ -2270,13 +2271,20 @@ class BedrockConverseModel(Model[BaseClient]):
         prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
+        has_blank_text = False
         if isinstance(part.content, str):
-            content.append({'text': part.content})
+            if part.content.strip():
+                content.append({'text': part.content})
+            else:
+                has_blank_text = True
         else:
             for item in part.content:
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
-                    content.append({'text': text})
+                    if text.strip():
+                        content.append({'text': text})
+                    else:
+                        has_blank_text = True
                 elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                     content.append(
                         await BedrockConverseModel._map_file_to_content_block(
@@ -2340,6 +2348,9 @@ class BedrockConverseModel(Model[BaseClient]):
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
             content.insert(0, {'text': 'See attached document(s).'})
+        if has_blank_text and not content:
+            # An empty user turn still needs text for Bedrock, so use the same placeholder as synthetic turns below.
+            content.append({'text': '.'})
         # A part that contained only a CachePoint has nothing left to send: emit no message.
         return [{'role': 'user', 'content': content}] if content else []
 
