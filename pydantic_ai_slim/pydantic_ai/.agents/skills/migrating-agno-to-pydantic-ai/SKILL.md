@@ -36,12 +36,13 @@ The normal migration is one reusable `Agent`, application services supplied thro
 
 - Agno `dependencies`, `user_id`, `session_id`, and authenticated identity are trusted runtime context, not model arguments. Put them in typed dependencies and authorize storage or effects in application code.
 - Agno sessions combine distinct owners. Map chat history to serialized Pydantic AI messages; keep mutable product/session state in an application store; treat summaries, user memories, knowledge retrieval, workflow checkpoints, and Harness `Memory` as separate contracts. Choose and test record conversion, a read-through adapter, or starting fresh as an accepted change.
-- Inspect a `Team`'s actual delegation mode and caller-visible member events. Use Harness `SubAgents` only for model-directed, isolated task delegation. Keep routing, broadcast, deterministic fan-out, shared-context collaboration, aggregation, and retries in application or graph code unless parity is proved.
+- Agno's session tables are often a trace store too. Before cutover, find every application reader of them, such as scorers, analytics, and dashboards, and move each to an application-owned record. Writing Agno-shaped rows from the new agent keeps the old schema and package alive.
+- Inspect a `Team`'s actual delegation mode and caller-visible member events. Use Harness `SubAgents` only for model-directed, isolated task delegation; it hands the leader `str(result.output)`. When the leader uses members' structured results, map those members to agent-as-tool with a typed return instead. Keep routing, broadcast, deterministic fan-out, shared-context collaboration, aggregation, and retries in application or graph code unless parity is proved.
 - Keep Agno `Workflow` steps, conditions, routers, loops, and parallel joins deterministic. Do not move them into an agent prompt. Graph state alone is not a persisted checkpoint.
 - Agno pauses for confirmation, user input, and external execution have different payloads and owners. Core deferred tools can preserve pending model tool calls; the application still owns identity, authorization, UI, audit, persistence, correlation, and idempotency. Prove restart when the source pause survives one.
 - Map pre/post hooks, tool hooks, and guardrails by firing point, mutation, short-circuit behavior, ordering, retries, streaming visibility, and persistence. Similar hook names do not prove lifecycle parity.
 - Map consumer intent for streaming. Pydantic AI output streaming, run-event streaming, capability events, UI adapters, and graph iteration are different surfaces; none promises Agno's run-event taxonomy or resume cursor.
-- Agno Skills can expose instructions, references, and scripts. Harness `Skills` loads `SKILL.md` instructions on demand but does not load bundled resources or execute scripts; add explicit `FileSystem`, `Shell`, or application tools only for observed, trusted behavior.
+- Agno Skills can expose instructions, references, and scripts. Harness `Skills` loads `SKILL.md` instructions on demand but does not load bundled resources or execute scripts; add explicit `FileSystem`, `Shell`, or application tools only for observed, trusted behavior. Do not port a habit of stripping skill-loading tool calls from stored history: a skill or other deferred capability counts as loaded only while its `load_capability` call and return are in the history, so dropping them unloads it on the next turn: its current instructions are no longer delivered and any tools it owns are hidden.
 - AgentOS routes, auth, session APIs, telemetry, control plane, database selection, and deployment are product infrastructure. Keep or replace each deliberately rather than treating an agent port as an AgentOS port.
 - Tool allowlists, path checks, and guardrails are policy, not OS isolation. Use a container, VM, or cloud sandbox when untrusted execution is in scope.
 
@@ -49,9 +50,10 @@ The normal migration is one reusable `Agent`, application services supplied thro
 
 1. Preserve the supported caller boundary and replace only agent-owned internals.
 2. Start core-only. Add `pydantic_graph`, Harness, Evals, or a durable runtime only after a source contract requires it.
-3. Test inputs, typed outputs, errors, event order, tool arguments/results, hook decisions, state across turns, and side effects at that boundary. Use deterministic models and fake application services offline; add a focused recorded or live test only when provider behavior is the contract.
-4. For persistence, pauses, concurrent workflows, or external effects, test interruption and restart, lineage, authorization, failure aggregation, and idempotency at the exact boundary Agno promised.
-5. Remove `agno`, AgentOS setup, and Agno storage or event adapters only after no retained path needs them.
+3. On a live product, change the framework before the model and prove parity as [Verification and cutover](references/VERIFICATION-AND-CUTOVER.md) describes before switching traffic.
+4. Test inputs, typed outputs, errors, event order, tool arguments/results, hook decisions, state across turns, and side effects at that boundary. Use deterministic models and fake application services offline; add a focused recorded or live test only when provider behavior is the contract.
+5. For persistence, pauses, concurrent workflows, or external effects, test interruption and restart, lineage, authorization, failure aggregation, and idempotency at the exact boundary Agno promised.
+6. Remove `agno`, AgentOS setup, and Agno storage or event adapters only after no retained path needs them.
 
 Explain any consequential semantic change before implementing it: state the source behavior, target behavior, caller impact, recommended choice, and remaining risk.
 
