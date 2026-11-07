@@ -175,14 +175,14 @@ async def test_eager_and_on_demand_servers(tmp_path: Path, monkeypatch: pytest.M
     assert 'on demand (not loaded)' in await run('/mcp status docs'), 'loading belongs to the conversation'
 
 
-OLD_PROPAGATOR_WARNING = 'Found propagated trace context.'
-NEW_PROPAGATOR_WARNING = 'Found propagated context.'
-
-
 async def test_logfire_propagator_warning_does_not_escape_in_process_tool_return(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A Logfire propagator `RuntimeWarning` stays filtered instead of replacing the tool return."""
+    # The tool call below emits only the installed logfire's wording. Under `filterwarnings = ['error']`,
+    # these raise if the `pyproject.toml` filter stops matching either wording.
+    warnings.warn('Found propagated trace context.', RuntimeWarning)  # logfire < 5.5
+    warnings.warn('Found propagated context.', RuntimeWarning)  # logfire 5.5+
     current = propagate.get_global_textmap()
     try:
         logfire.configure(send_to_logfire=False, console=False, metrics=False)
@@ -203,8 +203,6 @@ async def test_logfire_propagator_warning_does_not_escape_in_process_tool_return
         assert returns['docs_search'] == 'found setup', 'the propagator warning is filtered, not the tool return'
     finally:
         propagate.set_global_textmap(current)
-    warnings.warn(OLD_PROPAGATOR_WARNING, RuntimeWarning)  # logfire 5.3 wording
-    warnings.warn(NEW_PROPAGATOR_WARNING, RuntimeWarning)  # logfire 5.5 wording
 
 
 async def test_a_loaded_server_that_cannot_connect_does_not_fail_the_prompt(
