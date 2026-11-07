@@ -43,7 +43,11 @@ class OverflowStore(Protocol):
     """
 
     async def write(self, key: str, data: bytes) -> str:
-        """Persist `data` under `key` and return a handle that `read` accepts."""
+        """Persist `data` under `key` and return a handle that `read` accepts.
+
+        Under durable execution, a write that succeeded just before a worker crash runs again on
+        recovery with the same `key`, so treat a repeated `write` of a key as an overwrite.
+        """
         ...  # pragma: no cover
 
     async def read(self, handle: str) -> bytes:

@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -11,6 +11,38 @@
+@@ -15,6 +15,38 @@
 -   "role": "assistant",
 -   "content": [
 -    {
@@ -45,7 +45,7 @@
 +  {
 +   "role": "assistant",
 +   "content": [
-@@ -68,6 +100,38 @@
+@@ -76,6 +108,38 @@
 -   "role": "assistant",
 -   "content": [
 -    {
@@ -90,7 +90,7 @@
 +  {
 +   "role": "assistant",
 +   "content": [
-@@ -93,28 +157,28 @@
+@@ -101,28 +165,28 @@
 -     "id": "unlock-7",
 -     "type": "tool_use",
 -     "name": "unlock",
@@ -147,13 +147,13 @@
 +   "content": [
 +    {
 +     "id": "pyd_ai_d423da1b0b2cc7e6",
-@@ -135 +199 @@
+@@ -143 +207 @@
 -     "tool_use_id": "pyd_ai_5d1e13150984a66d",
 +     "tool_use_id": "pyd_ai_d423da1b0b2cc7e6",
-@@ -179 +243 @@
+@@ -191 +255 @@
 -   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
 +   "text": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
-@@ -184,6 +248,38 @@
+@@ -196,6 +260,38 @@
 -   "role": "assistant",
 -   "content": [
 -    {
@@ -198,7 +198,7 @@
 +  {
 +   "role": "assistant",
 +   "content": [
-@@ -209,28 +305,207 @@
+@@ -221,28 +317,211 @@
 -     "id": "unlock-7",
 -     "type": "tool_use",
 -     "name": "unlock",
@@ -297,6 +297,10 @@
 +}
 +{
 + "system": [
++  {
++   "type": "text",
++   "text": "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed."
++  },
 +  {
 +   "type": "text",
 +   "text": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
@@ -434,10 +438,10 @@
 +   "content": [
 +    {
 +     "id": "pyd_ai_d423da1b0b2cc7e6",
-@@ -251 +526 @@
+@@ -263 +542 @@
 -     "tool_use_id": "pyd_ai_5d1e13150984a66d",
 +     "tool_use_id": "pyd_ai_d423da1b0b2cc7e6",
-@@ -262,22 +536,0 @@
+@@ -274,22 +552,0 @@
 -  },
 -  {
 -   "role": "assistant",
@@ -460,9 +464,13 @@
 -     "type": "text"
 -    }
 -   ]
-@@ -312,355 +564,0 @@
+@@ -324,363 +580,0 @@
 -{
 - "system": [
+-  {
+-   "type": "text",
+-   "text": "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed."
+-  },
 -  {
 -   "type": "text",
 -   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
@@ -627,6 +635,10 @@
 -}
 -{
 - "system": [
+-  {
+-   "type": "text",
+-   "text": "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed."
+-  },
 -  {
 -   "type": "text",
 -   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."

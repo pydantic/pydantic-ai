@@ -48,6 +48,10 @@ VOICED = base64.b64encode(b'\x00\x10' * 2400).decode()
 SILENT = base64.b64encode(b'\x00' * 4800).decode()
 """100 ms of the idle track."""
 TURN_SILENCE_MS = 500
+PAUSE_FRAMES = 5
+"""How many 100 ms idle frames are a pause in the model's speech (the connection's `_MAX_FORWARDED_PAUSE_MS`)."""
+_SPEECH_FRAMES = ('session.output_audio.delta', 'session.output_transcript.delta', 'session.usage.updated')
+"""Frames a reply held open for the model to pause goes on through: anything else ends it."""
 BACKEND_MODEL = 'gpt-6-sol'
 
 
@@ -109,6 +113,8 @@ class LiveServer:
         self.queued_texts: list[tuple[list[str], str | None]] = []
         """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
         self.delegations: dict[str, _Delegation] = {}
+        self.held_delegations = 0
+        """Delegations the model decided on while another was open, which Live opens once none is (see `decide()`)."""
         self.seconds = 0.0
         self.backend_terminals_read = 0
         self.backends_failed = 0
@@ -116,6 +122,14 @@ class LiveServer:
         self._next_delegation = 1
         self._next_backend = 1
         self._timeline_ms = 0
+        self._pause_frames = PAUSE_FRAMES
+        """Idle frames since the model's voice last sounded, as far as the client can tell: a tool call it asked for
+        ends the speech before it, so the quiet after one is no pause."""
+        self._ends_at_pause: _Delegation | None = None
+        """A delegation that settled while the model was mid-sentence: the reply that called its tools ends at the
+        model's next pause, or at whatever else happens first."""
+        self._ends_tag: str | None = None
+        """A reply that ended ahead of the next frame, which the client sees ending as it handles that frame."""
 
     # --- transport ---------------------------------------------------------------------------------
 
@@ -127,6 +141,7 @@ class LiveServer:
         self.truth.connections += 1
 
     def on_disconnect(self, socket: FakeWebSocket) -> None:
+        self._ends_at_pause = None
         self.truth.connection_losses.append(self.truth.tick())
         for response in self.truth.responses.values():
             if response.terminal_read is None:
@@ -135,6 +150,9 @@ class LiveServer:
     def _emit(self, frame: dict[str, Any], *, immediately: bool = False) -> None:
         socket = self.socket
         assert socket is not None
+        if self._ends_tag is not None and frame['type'] not in _SPEECH_FRAMES:
+            frame = {**frame, '_simulation': {**frame.get('_simulation', {}), 'ends': self._ends_tag}}
+            self._ends_tag = None
         frame = {'event_id': f'event_{self._next_event}', **frame}
         self._next_event += 1
         socket.emit(frame, immediately=immediately)
@@ -225,6 +243,7 @@ class LiveServer:
     def _spoken_response(self) -> TruthResponse:
         """The reply the model is speaking, or a new one if it has been quiet longer than the turn silence."""
         if self.speaking is None or self._quiet():
+            self._ends_at_pause = None
             if self.speaking is not None and self.speaking.status == 'in_progress':  # pragma: lax no cover (unread end)
                 self.speaking.status = 'completed'
                 self.speaking.seq_end = self.truth.tick()
@@ -248,8 +267,15 @@ class LiveServer:
         self.triggers.extend(self.inline)
         self.inline.clear()
 
+    def _end_held(self) -> None:
+        """Something other than the model's speech happens: a reply held open for the model to pause ends ahead of it."""
+        if (delegation := self._ends_at_pause) is not None:
+            self._ends_at_pause = None
+            self._ends_tag = self._end_spoken(delegation)
+
     def speak(self, chunks: int = 1) -> None:
         response = self._spoken_response()
+        self._pause_frames = 0
         for _ in range(chunks):
             self._emit(
                 {
@@ -274,6 +300,7 @@ class LiveServer:
         self.last_voice = self._now()
 
     def user_says(self) -> str:
+        self._end_held()
         key = self.truth.new_user_turn()
         self.truth.add_input(key, 'speech', solicits=True)
         self.triggers.append(key)
@@ -283,10 +310,17 @@ class LiveServer:
 
     def idle(self, frames: int = 1) -> None:
         for _ in range(frames):
-            self._emit({'type': 'session.output_audio.delta', 'delta': SILENT})
+            self._pause_frames += 1
+            frame: dict[str, Any] = {'type': 'session.output_audio.delta', 'delta': SILENT}
+            if (delegation := self._ends_at_pause) is not None and self._pause_frames >= PAUSE_FRAMES:
+                # The model paused: the reply held open for it is over.
+                self._ends_at_pause = None
+                frame['_simulation'] = {'ends': self._end_spoken(delegation)}
+            self._emit(frame)
 
     def _take_up(self, texts: list[str], client_event_id: str | None) -> None:
         """The model opens a delegation for typed text, in the reply under way if it goes on, and a new one otherwise."""
+        self._end_held()
         if self.speaking is not None and self.speaking.status == 'in_progress' and not self._quiet():
             self.inline.extend(texts)
         else:
@@ -294,8 +328,20 @@ class LiveServer:
             self._spoken_response()
         self.delegate(client_event_id=client_event_id)
 
+    def decide(self) -> None:
+        """The model decides on its own to hand a request to its Responses backend.
+
+        Live works on one delegation at a time: one it decides on while another is open (waiting for a tool's result,
+        say) opens only once that one settles (seen live).
+        """
+        if self.delegations:
+            self.held_delegations += 1
+        else:
+            self.delegate()
+
     def delegate(self, client_event_id: str | None = None) -> str:
         """The model hands the request to its Responses backend."""
+        self._end_held()
         response = (
             self.speaking
             if self.speaking is not None and self.speaking.status == 'in_progress'
@@ -324,6 +370,7 @@ class LiveServer:
         return delegation_id
 
     def _start_backend(self, delegation: _Delegation) -> None:
+        self._end_held()
         backend = f'resp_b{self._next_backend}'
         self._next_backend += 1
         delegation.backend = backend
@@ -354,6 +401,7 @@ class LiveServer:
         return spoken.key
 
     def backend_call(self, count: int = 1) -> list[str]:
+        self._end_held()
         delegation = self.running_delegation()
         assert delegation is not None
         ended: str | None = None
@@ -373,6 +421,8 @@ class LiveServer:
             delegation.spoken.tool_calls.append(call_id)
             delegation.pending_calls.add(call_id)
             delegation.backend_calls.append(call_id)
+            # The call ends the speech before it: the quiet after it is a wait, not a pause.
+            self._pause_frames = PAUSE_FRAMES
             self._emit(
                 {
                     'type': 'response.event',
@@ -402,6 +452,7 @@ class LiveServer:
         return ids
 
     def backend_finish(self, status: Literal['completed', 'failed'] = 'completed') -> None:
+        self._end_held()
         delegation = self.running_delegation()
         assert delegation is not None and delegation.backend is not None
         backend, delegation.backend = delegation.backend, None
@@ -411,7 +462,13 @@ class LiveServer:
         settled = status == 'failed' or not asked_for_tools
         # The reply that called tools goes on, and the model with it, while the backend waits for their results: only
         # the delegation's outcome is said with them in hand, in a reply of its own.
-        ended = self._end_spoken(delegation) if settled and delegation.spoken.tool_calls else None
+        ended: str | None = None
+        if settled and delegation.spoken.tool_calls:
+            if status == 'completed' and self.speaking is delegation.spoken and self._pause_frames < PAUSE_FRAMES:
+                # The model is mid-sentence: the reply goes on to its next pause.
+                self._ends_at_pause = delegation
+            else:
+                ended = self._end_spoken(delegation)
         self._emit(
             {
                 'type': 'response.event',
@@ -439,6 +496,9 @@ class LiveServer:
             del self.delegations[delegation.id]
             # A settled delegation restarts the turn clock, as the model's voice does.
             self.last_voice = self._now()
+            if self.held_delegations and not self.delegations:
+                self.held_delegations -= 1
+                self.delegate()
         # Otherwise the backend waits for the results and the client's `response.create` to continue it.
         if self.queued_texts and self.running_delegation() is None:
             texts, client_event_id = self.queued_texts.pop(0)
@@ -460,6 +520,8 @@ class LiveServer:
                 response.status = 'completed'
                 response.seq_end = response.terminal_read
             self.speaking = None
+            self._ends_at_pause = None
+            self._pause_frames = PAUSE_FRAMES
             self._inline_unanswered()
 
 
@@ -531,7 +593,7 @@ class LiveSimulation(Simulation):
 
     @step
     def delegate(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.delegate()
+        self.server.decide()
         self._after_server(deliver, ticks)
 
     @step

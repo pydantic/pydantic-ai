@@ -15,6 +15,7 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -31,7 +32,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
-    SystemPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -39,8 +39,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness._message_text import tool_return_text
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -53,7 +54,6 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
-    CHARS_PER_TOKEN,
     CLEARED_TOOL_RESULT_METADATA,
     cleared_return,
     compact_with_span,
@@ -69,15 +69,14 @@ from pydantic_ai_harness.compaction._shared import (
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
-    SUMMARY_PREFIX,
     SummarizingCompaction,
     bridge_summary,
     extract_previous_summary,
     format_transcript,
-    is_summary_part,
-    user_prompt_text,
+    is_legacy_summary,
     write_summary,
 )
+from pydantic_ai_harness.compaction._summary import WrittenSummary, is_summary_part, summary_request
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -241,6 +240,16 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
 
     truncated_result_chars: int = 300
     """Characters of a tool result kept when a step is reduced without a `summarizer`."""
+
+    preserve_loaded_capabilities: bool = True
+    """Keep a deferred capability loaded when the step that loaded it is summarized or dropped.
+
+    Core counts a capability as loaded while the record of its load is after the latest compaction,
+    so removing the step would unload it. Each such load is recorded again ahead of the
+    kept steps instead, and the capability's tools and current instructions are sent again. When
+    `False`, those capabilities are unloaded, and a note names them so the model can load the ones
+    it still needs.
+    """
 
     receipts: bool = False
     """Insert a deterministic note after the head of the history saying how much was summarized or dropped."""
@@ -471,37 +480,58 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             step_messages = messages[step.start : step.end]
             if index in kept:
                 middle.extend(step_messages)
-            elif index in reduced and self.summarizer is None:
-                middle.extend(self._truncated(step_messages))
-            elif index in reduced:
-                summarized.extend(step_messages)
+            elif index not in reduced:
                 removed.extend(step_messages)
+            elif self.summarizer is None:
+                middle.extend(self._truncated(step_messages))
             else:
+                summarized.extend(step_messages)
                 removed.extend(step_messages)
 
         added: list[ModelMessage] = []
         if self.summarizer is not None and summarized:
-            previous = extract_previous_summary(messages) if self.summarizer.incremental else None
-            if previous is None and (earlier := _summary_parts(head)):
-                # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
-                summarized = [ModelRequest(parts=earlier), *summarized]
-            summary = await self._summarize(ctx, summarized, previous)
-            # The summarizer is reused as configured, including its cross-model bridge note.
-            summary = bridge_summary(self.summarizer, summary, messages, ctx)
+            added.append(await self._summary_request(self.summarizer, messages, ctx, head, summarized))
             head = _without_summaries(head)
-            added.append(ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}{summary}')]))
         if self.receipts and removed:
             head = [message for message in head if not is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
 
         tail = messages[tail_start:]
         # Pins a removed step held go back after the head, which stays as it was.
-        return reinject_pinned(
+        compacted = reinject_pinned(
             messages,
             [*head, *added, *middle, *tail],
             protected_tail=len(tail),
             insert_at=len(head) + len(added),
         )
+        return keep_loaded_state(
+            messages,
+            compacted,
+            kept_from=len(compacted) - len(tail),
+            deferred_ids=deferred_capability_ids(ctx),
+            preserve=self.preserve_loaded_capabilities,
+        )
+
+    async def _summary_request(
+        self,
+        summarizer: SummarizingCompaction[AgentDepsT],
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        head: Sequence[ModelRequest],
+        summarized: list[ModelMessage],
+    ) -> ModelRequest:
+        """The request holding the summary of *summarized*, written as an update of the newest earlier one, if any."""
+        previous = extract_previous_summary(messages) if summarizer.incremental else None
+        if previous is None and (earlier := _summary_parts(head)):
+            # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
+            summarized = [ModelRequest(parts=earlier), *summarized]
+        written = await self._summarize(ctx, summarized, previous)
+        # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
+        text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
+        # The summarizer is reused as configured, including its cross-model bridge note.
+        summary = bridge_summary(summarizer, text, messages, ctx)
+        # Written as `SummarizingCompaction` writes its own: a marked `CompactionPart` in a request of its own.
+        return summary_request(summary, created_at)
 
     def _receipt(
         self, ctx: RunContext[AgentDepsT], removed: Sequence[ModelMessage], *, has_summary: bool
@@ -536,12 +566,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         requests of one compaction count as one request of the run, checked against its limits like the
         summary request, and their tokens are added to its usage.
         """
-        judgements: list[_Judgement | None] = [None] * len(steps)
         keys = [_cache_key(task, step) for step in steps]
-        for index, key in enumerate(keys):
-            if (cached := self._judgements.get(key)) is not None:
-                self._judgements.move_to_end(key)
-                judgements[index] = _Judgement(*cached, cached=True)
+        judgements = self._cached_judgements(keys)
         pending = [index for index, judgement in enumerate(judgements) if judgement is None]
         if pending and (limits := reserved_usage_limits(ctx.usage_limits)) is not None:
             limits.check_before_request(ctx.usage)
@@ -583,6 +609,15 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             ctx.usage_limits.check_cost(ctx.usage)
         return [judgement for judgement in judgements if judgement is not None]
 
+    def _cached_judgements(self, keys: Sequence[str]) -> list[_Judgement | None]:
+        """The cached judgement of each step by its key, or `None`, marking each one found as recently used."""
+        judgements: list[_Judgement | None] = [None] * len(keys)
+        for index, key in enumerate(keys):
+            if (cached := self._judgements.get(key)) is not None:
+                self._judgements.move_to_end(key)
+                judgements[index] = _Judgement(*cached, cached=True)
+        return judgements
+
     def _remember(self, key: str, judgement: tuple[float, float]) -> None:
         self._judgements[key] = judgement
         if len(self._judgements) > _SCORE_CACHE_SIZE:
@@ -591,15 +626,18 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     @durable_operation('summarize')
     async def _summarize(
         self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], previous_summary: str | None
-    ) -> str:
+    ) -> WrittenSummary | str:
         """The summarizer's summary of the reduced steps, as a durable operation of this capability.
 
         The summarizer is not registered on the agent, so its own durable operation does not bind; this
         one does, and the summary is written inline within it. Going through the summarizer's own operation
-        would hand the summary to a registered `SummarizingCompaction` that shares its `id`.
+        would hand the summary to a registered `SummarizingCompaction` that shares its `id`. The return
+        type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
         assert self.summarizer is not None
-        return await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
+        text = await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
+        # The time is recorded with the text, so a replay restores the summary's metadata exactly.
+        return WrittenSummary(text, datetime.now(UTC))
 
 
 def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start: int, end: int) -> list[_Step]:
@@ -608,20 +646,7 @@ def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start:
     if not bounds:
         return []
     ranges = [(begin, stop) for begin, stop in zip(bounds, [*bounds[1:], end])]
-    owner: dict[str, int] = {}
-    joined: set[int] = set()
-    for index, (begin, stop) in enumerate(ranges):
-        for message in messages[begin:stop]:
-            if isinstance(message, ModelResponse):
-                for response_part in message.parts:
-                    if isinstance(response_part, ToolCallPart):
-                        owner[response_part.tool_call_id] = index
-                continue
-            for part in message.parts:
-                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
-                if isinstance(part, ToolReturnPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
-                    caller = owner.get(part.tool_call_id, index)
-                    joined.update(range(caller + 1, index + 1))
+    joined = _joined_ranges(messages, ranges)
     steps: list[_Step] = []
     for index, (begin, stop) in enumerate(ranges):
         if index in joined:
@@ -636,6 +661,27 @@ def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start:
             )
         )
     return steps
+
+
+def _joined_ranges(messages: Sequence[ModelMessage], ranges: Sequence[tuple[int, int]]) -> set[int]:
+    """Indices of the ranges that merge into the range before them, because a tool result links them to its call.
+
+    Each range is a response and the requests up to the next response. A result in range `i` answering a call in
+    range `c` joins ranges `c + 1` through `i`.
+    """
+    owner: dict[str, int] = {}
+    joined: set[int] = set()
+    for index, (begin, stop) in enumerate(ranges):
+        for response_part in messages[begin].parts:
+            if isinstance(response_part, ToolCallPart):
+                owner[response_part.tool_call_id] = index
+        for request in messages[begin + 1 : stop]:
+            for part in request.parts:
+                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
+                if isinstance(part, ToolReturnPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                    caller = owner.get(part.tool_call_id, index)
+                    joined.update(range(caller + 1, index + 1))
+    return joined
 
 
 def _is_user_request(message: ModelMessage) -> bool:
@@ -657,15 +703,19 @@ def _user_text(message: ModelMessage) -> str:
 
 
 def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:
-    """The earlier compaction summaries in *messages*."""
-    return [part for message in messages for part in message.parts if is_summary_part(part)]
+    """The earlier compaction summaries in *messages*, including those an earlier release wrote as system prompts."""
+    return [part for message in messages for part in message.parts if _is_earlier_summary(part)]
+
+
+def _is_earlier_summary(part: ModelRequestPart) -> bool:
+    return is_summary_part(part) or is_legacy_summary(part)
 
 
 def _without_summaries(messages: Sequence[ModelRequest]) -> list[ModelRequest]:
     """*messages* without earlier compaction summaries, which the new summary updates."""
     out: list[ModelRequest] = []
     for message in messages:
-        parts = [part for part in message.parts if not is_summary_part(part)]
+        parts = [part for part in message.parts if not _is_earlier_summary(part)]
         if parts:
             out.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
     return out

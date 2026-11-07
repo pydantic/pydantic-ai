@@ -32,8 +32,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     delivered_steering,
     dump,
+    fork_entry,
+    fork_notice,
+    history_entries,
     history_images,
-    history_items,
     queued_item,
     usage_info,
     usage_report,
@@ -41,8 +43,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     user_item,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
-from pydantic_clai2.commands import is_command_input
-from pydantic_clai2.plugins import CommandEnd, LiveSession, TurnOutcome
+from pydantic_clai2.commands import expand_bare_command, is_command_input
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PermissionMode
+from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
@@ -55,6 +59,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 USAGE_COMMANDS = frozenset({'/usage', '/cost'})
 """Commands whose notice carries the figures they report, for the page's usage card."""
+FORKS_COMMAND = '/forks'
+"""The command whose notice carries the forks its table lists, for the page's forks card."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -75,7 +81,7 @@ class SessionChannel:
         self.running = False
         """Whether a run of the held conversation streams now, as browsers see it."""
         self.workers = Workers(publish=self.publish, history=self._task_history)
-        """The session's delegated tasks, which the plugin's `on_task_event` keeps up to date."""
+        """The session's delegated tasks, which the plugin's `on_task_progress` keeps up to date."""
         self._translator = EventTranslator()
         """One for the session's life, so item IDs stay unique across turns in a browser that keeps them all."""
         self._turn = ItemLog()
@@ -105,7 +111,7 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages, image_ids=self._image_ids)
+        items = history_entries(conversation.messages, image_ids=self._image_ids)
         self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
@@ -139,7 +145,7 @@ class SessionChannel:
             model=status.model,
             activity=status.activity if self.running else 'ready',
             context_tokens=status.context_tokens,
-            context_window=status.context_window,
+            context_window=status.window,
             cost=None if status.cost is None else str(status.cost),
             cost_is_lower_bound=status.cost_is_lower_bound,
             streamed_tokens=math.ceil(status.streamed_chars / 4),
@@ -147,7 +153,15 @@ class SessionChannel:
             run=None if self._usage is None else usage_info(self._usage),
             code_mode=self._switch(CODE_MODE),
             speculation=self._switch(SPECULATION),
+            permissions=self._permissions(),
         )
+
+    def _permissions(self) -> PermissionMode | None:
+        try:
+            mode = self.session.setting(PERMISSIONS)
+        except KeyError:
+            return None
+        return next((known for known in PERMISSION_MODES if known == mode), None)
 
     def _switch(self, key: str) -> bool | None:
         try:
@@ -183,11 +197,7 @@ class SessionChannel:
             self._usage = usage
         if isinstance(event, EnqueuedMessagesEvent):
             # Steering, from here or the terminal, shows once the run's model receives it.
-            for part in delivered_steering(event):
-                self._steered += 1
-                # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
-                self._prompt_images += user_images(part)
-                self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
+            self._show_steering(event)
         for message in self._translator.translate(event):
             if by_user:
                 # Only the cell itself: the scripted model's closing text is not the user's.
@@ -199,11 +209,18 @@ class SessionChannel:
         if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
             self.publish_status()
 
+    def _show_steering(self, event: EnqueuedMessagesEvent) -> None:
+        for part in delivered_steering(event):
+            self._steered += 1
+            # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
+            self._prompt_images += user_images(part)
+            self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
+
     def _show(self, message: ItemMessage) -> None:
         self._turn.apply(message)
         self.publish(message)
 
-    def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
+    def run_started(self, prompt: str | Sequence[UserContent] | None, *, run_id: str | None = None) -> None:
         """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
         self._usage = None
@@ -212,7 +229,7 @@ class SessionChannel:
         if prompt is not None:
             part = UserPromptPart(prompt)
             self._prompt_images = user_images(part)
-            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids)
+            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids, run_id=run_id)
         self.publish(TurnStarted(item=item))
         self.publish_status()
 
@@ -237,21 +254,30 @@ class SessionChannel:
             self.publish(TitleChanged(title=title))
             return False
         hub = self.service.hub
-        hub.rename(self.shown, self.id)
+        replaced = self.shown
+        hub.rename(replaced, self.id)
         self.shown = self.id
         self.workers.reset()
         self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
-        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
+        snapshot = replace(self.snapshot(), replaces=replaced)
+        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(snapshot))
         return True
 
     def command_ended(self, event: CommandEnd) -> None:
         if event.error is not None:
             self.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
-            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
-            usage = usage_report(session_usage(self.session.conversation.messages)) if reports else None
-            self.publish(Notice(text=event.output, command=event.text, usage=usage))
+            command = event.text.split(maxsplit=1)[0]
+            usage = (
+                usage_report(session_usage(self.session.conversation.messages)) if command in USAGE_COMMANDS else None
+            )
+            forks = [fork_entry(fork) for fork in self.session.forks] if command == FORKS_COMMAND else []
+            self.publish(Notice(text=event.output, command=event.text, usage=usage, forks=forks or None))
+
+    def fork_ended(self, event: ForkEnd) -> None:
+        """A background `/fork` ended: its answer or failure, which the terminal prints, reaches the page too."""
+        self.publish(fork_notice(event))
 
     # What the browser does.
 
@@ -300,6 +326,39 @@ class SessionChannel:
         self.session.remove_queued(input_id)
         return True
 
+    async def rewind(self, run_id: str, text: str | None) -> None:
+        """Drop the turn `run_id` started and every later one, then send `text` with that prompt's images in its place.
+
+        `None` sends the prompt again as it was saved, as Retry does.
+
+        As the terminal's rewind, files and tool side effects are not undone.
+        """
+        if self.session.busy:
+            raise RuntimeError('Wait for the running turn, command, or queued input to end.')
+        conversation = self.session.conversation
+        messages = conversation.messages
+        point = next(
+            (
+                point
+                for point in rewind_points(messages)
+                if not point.reason and messages[point.message_index].run_id == run_id
+            ),
+            None,
+        )
+        if point is None:
+            raise LookupError('That prompt can no longer be edited: it left the conversation or predates a compaction.')
+        text = _entered(point.text if text is None else text, images=point.images)
+        if is_command_input(expand_bare_command(text)):
+            raise ValueError('Send a prompt in its place, not a /command.')
+        await conversation.commit_messages(messages[: point.message_index])
+        try:
+            self.session.send_input(text, images=point.images)
+        except (ValueError, RuntimeError):
+            await conversation.commit_messages(messages)
+            raise
+        finally:
+            self.service.hub.publish_session(self.snapshot(), session=self.id)
+
     def switch(self, key: Switch, on: bool) -> None:
         """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
         self.session.send_input(f'/set {key} {"true" if on else "false"}')
@@ -314,6 +373,10 @@ class SessionChannel:
             )
             for completion in await self.session.complete(text)
         ]
+
+    async def files(self, query: str) -> list[CompletionInfo]:
+        """The files and folders in the session's folder that best match `query`, the text after an `@`."""
+        return await self.service.files.find(self.session.workspace, query)
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer one of the session's open questions, or decline it with `None`."""

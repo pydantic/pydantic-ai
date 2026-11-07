@@ -142,6 +142,10 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # live), so an `output_modality='text'` session would silently come back as audio.
         'supports_text_output': False,
         'supports_session_seeding': True,
+        # xAI accepts a mid-session `system` message but doesn't answer it as instructions (checked live: asked to
+        # greet the newly verified caller by name, Grok did in none of six runs with a `system` message, and in all
+        # three runs with `<system>`-tagged user text).
+        'supports_system_messages': False,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
@@ -153,6 +157,8 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # answered right away. The protocol has no setting that makes it wait.
         'async_tool_call_mode': 'always',
         'emits_input_speech_events': True,
+        # Each transcript delta, of a few words to a sentence, says where it starts in its item's audio.
+        'output_speech_timestamp_granularity': 'segment',
         # A response's `input_tokens` counts only the input added since the previous response, not the
         # whole conversation, so it can't measure how full the context window is.
         'response_usage_covers_context': False,

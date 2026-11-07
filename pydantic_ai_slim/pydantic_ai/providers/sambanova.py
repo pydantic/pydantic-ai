@@ -5,6 +5,7 @@ import os
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -21,13 +22,13 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 __all__ = ['SambaNovaProvider']
 
 
-class SambaNovaProvider(_OpenAICompatibleProvider):
+class SambaNovaProvider(_OpenAISDKProvider):
     """Provider for SambaNova AI models.
 
     SambaNova uses an OpenAI-compatible API.
@@ -73,7 +74,11 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
                 break
 
         # Wrap into OpenAIModelProfile since SambaNova is OpenAI-compatible
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            special_token_route_profile('sambanova', model_name),
+        )
 
     def __init__(
         self,

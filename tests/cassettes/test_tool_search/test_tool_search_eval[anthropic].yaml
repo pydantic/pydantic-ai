@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2045"
+      - "2046"
       content-type:
       - application/json
       host:
@@ -19,13 +19,13 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: What is the current exchange rate from USD to EUR?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -114,10 +114,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=118
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8c5cc67c1136d97b1e7c87fe42ce5fbb-d9722b5ad4274ba9-01
+      - 00-6d9b69769c82f2c4838bd1f7cfd62856-dae472976a156358-01
       transfer-encoding:
       - chunked
       vary:
@@ -126,78 +128,57 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3joUNoVGRbQsci97bt","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":749,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ7ypre6qGbE6QWvvtU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":736,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01GjuGRS7zVDLVmWsK4YZPdt","name":"search_tools","input":{},"caller":{"type":"direct"}}          }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for a"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that can help with"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"exchang"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currency exchange rates."}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"e rate\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":",\"curre"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ncy con"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"version"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\",\"USD "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"EUR for"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ex\"]}"}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0   }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01H4NWPp7dGuHyBCSeJVZDfQ","name":"search_tools","input":{},"caller":{"type":"direct"}}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"exchang"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e rate\""}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"curre"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ncy con"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"version"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\",\"USD "}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"EUR\",\"f"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"orex\"]}"}          }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1            }
+        data: {"type":"content_block_stop","index":0     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":749,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":82}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":736,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":72,"output_tokens_details":{"thinking_tokens":0}}      }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop" }
 
-  recorded_at: 2026-09-29T16:29:46.283699+00:00
+  recorded_at: 2026-10-25T18:06:09.912540+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -205,11 +186,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2513"
+      - "2420"
       content-type:
       - application/json
       host:
@@ -217,7 +198,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -225,26 +206,23 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll search for a tool that can help with currency exchange rates.
-            type: text
-          - id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+          - id: toolu_01GjuGRS7zVDLVmWsK4YZPdt
             type: tool_use
             name: search_tools
             input:
               queries:
               - exchange rate
               - currency conversion
-              - USD EUR
-              - forex
+              - USD EUR forex
         - role: user
           content:
-          - tool_use_id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+          - tool_use_id: toolu_01GjuGRS7zVDLVmWsK4YZPdt
             type: tool_result
             content:
             - tool_name: get_exchange_rate
               type: tool_reference
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -259,6 +237,20 @@ interactions:
             required:
             - city
             type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
         - name: stock_lookup
           description: Look up stock price by ticker symbol.
           input_schema:
@@ -308,20 +300,6 @@ interactions:
             required:
             - queries
             type: object
-        - name: get_exchange_rate
-          description: Look up the current exchange rate between two currencies.
-          input_schema:
-            additionalProperties: false
-            properties:
-              from_currency:
-                type: string
-              to_currency:
-                type: string
-            required:
-            - from_currency
-            - to_currency
-            type: object
-          defer_loading: true
   response:
     status: 200
     headers:
@@ -333,10 +311,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=103
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f4b6f4771f2da950ff0e64f04c6a2183-387c9266f37c7cc5-01
+      - 00-cb11c4f811a56dfe3db993f1a0fa4652-7fa8adf68f2fc862-01
       transfer-encoding:
       - chunked
       vary:
@@ -345,78 +325,51 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3jvb1S8vHhKy5eTVPw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ84xRnHdAfMYWegEzH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":943,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01TjeVLVsBv9RJVsfNwiF5ko","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}            }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I found a tool"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"from_"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"currenc"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" get exchange"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"y\": \"US"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rates. Let me look"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"D\""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" up the current USD"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"to_c"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to EUR exchange rate for you."}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"urrency"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \"EUR"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Cfb5E6DB6J4ZJnQVbWf5G9","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"from_"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"currenc"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y\": \"US"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"D\""}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"to_c"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"urrency"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"EUR"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}               }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1}
+        data: {"type":"content_block_stop","index":0        }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":102}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":943,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":82,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T16:29:48.000301+00:00
+  recorded_at: 2026-10-25T18:06:12.571048+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -424,11 +377,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2983"
+      - "2759"
       content-type:
       - application/json
       host:
@@ -436,7 +389,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -444,20 +397,17 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll search for a tool that can help with currency exchange rates.
-            type: text
-          - id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+          - id: toolu_01GjuGRS7zVDLVmWsK4YZPdt
             type: tool_use
             name: search_tools
             input:
               queries:
               - exchange rate
               - currency conversion
-              - USD EUR
-              - forex
+              - USD EUR forex
         - role: user
           content:
-          - tool_use_id: toolu_01H4NWPp7dGuHyBCSeJVZDfQ
+          - tool_use_id: toolu_01GjuGRS7zVDLVmWsK4YZPdt
             type: tool_result
             content:
             - tool_name: get_exchange_rate
@@ -465,11 +415,7 @@ interactions:
             is_error: false
         - role: assistant
           content:
-          - text: >-
-              Great! I found a tool to get exchange rates. Let me look up the current USD to
-              EUR exchange rate for you.
-            type: text
-          - id: toolu_01Cfb5E6DB6J4ZJnQVbWf5G9
+          - id: toolu_01TjeVLVsBv9RJVsfNwiF5ko
             type: tool_use
             name: get_exchange_rate
             input:
@@ -477,193 +423,13 @@ interactions:
               to_currency: EUR
         - role: user
           content:
-          - tool_use_id: toolu_01Cfb5E6DB6J4ZJnQVbWf5G9
+          - tool_use_id: toolu_01TjeVLVsBv9RJVsfNwiF5ko
             type: tool_result
             content:
             - text: 1 USD = 0.92 EUR
               type: text
             is_error: false
-        model: claude-sonnet-4-5
-        stream: true
-        tool_choice:
-          type: auto
-        tools:
-        - name: get_weather
-          description: Get the current weather for a city.
-          input_schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-        - name: stock_lookup
-          description: Look up stock price by ticker symbol.
-          input_schema:
-            additionalProperties: false
-            properties:
-              symbol:
-                type: string
-            required:
-            - symbol
-            type: object
-          defer_loading: true
-        - name: mortgage_calculator
-          description: Calculate monthly mortgage payment for a home loan.
-          input_schema:
-            additionalProperties: false
-            properties:
-              principal:
-                type: number
-              rate:
-                type: number
-              years:
-                type: integer
-            required:
-            - principal
-            - rate
-            - years
-            type: object
-          defer_loading: true
-        - name: search_tools
-          description: >-
-            Search first for a standalone deferred tool when current tools and catalog
-            descriptions do not name the requested operation. A capability id used as an ordinary
-            domain word does not request that capability. This cannot find capability-owned
-            tools; load a listed capability by id instead. If no tools are found, do not
-            retry.
-          input_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: >-
-                  List of search queries to match against tool names and descriptions. Use
-                  specific words likely to appear in tool names or descriptions to narrow down relevant
-                  tools. Each query is independently tokenized; matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-        - name: get_exchange_rate
-          description: Look up the current exchange rate between two currencies.
-          input_schema:
-            additionalProperties: false
-            properties:
-              from_currency:
-                type: string
-              to_currency:
-                type: string
-            required:
-            - from_currency
-            - to_currency
-            type: object
-          defer_loading: true
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-f0cb26082650165795f593edeaf9cd84-b7e391705640b24c-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3k3raVPozSE7q8svKx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1063,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current exchange rate from USD to EUR is"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 USD = 0.92"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" EUR**"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". "} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThis means that "}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 US"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Dollar"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is equal"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to 0.92 "}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Euros."}              }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1063,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}        }
-
-        event: message_stop
-        data: {"type":"message_stop"               }
-
-  recorded_at: 2026-09-29T16:29:49.656747+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "2036"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 64000
-        messages:
-        - role: user
-          content:
-          - text: What is the current stock price for AAPL?
-            type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -752,10 +518,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=159
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-43b6e719a3223450eca5f40f40cbfd46-102c907619817a5a-01
+      - 00-db6725fb5903f2530f4f110dc6a84dbd-8923b7625a39915a-01
       transfer-encoding:
       - chunked
       vary:
@@ -764,298 +532,36 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kAzwB7jwV1vxALNRY","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ8GTyExM3vwdQ42fbF","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1043,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":26,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search for a"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The current exchange rate is"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 USD = 0."}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" can help"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me get"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" price"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" information."}             }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0     }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01MHxc8fCjLk3ww14PN1npb7","name":"search_tools","input":{},"caller":{"type":"direct"}}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"stock p"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rice\",\""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"AAPL\",\""}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"market "}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"data\",\""}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ticker\""}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":",\"equit"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y price"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"]}"}            }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1   }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":89}         }
-
-        event: message_stop
-        data: {"type":"message_stop"      }
-
-  recorded_at: 2026-09-29T16:29:51.869697+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "2504"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 64000
-        messages:
-        - role: user
-          content:
-          - text: What is the current stock price for AAPL?
-            type: text
-        - role: assistant
-          content:
-          - text: I'll search for a tool that can help me get stock price information.
-            type: text
-          - id: toolu_01MHxc8fCjLk3ww14PN1npb7
-            type: tool_use
-            name: search_tools
-            input:
-              queries:
-              - stock price
-              - AAPL
-              - market data
-              - ticker
-              - equity price
-        - role: user
-          content:
-          - tool_use_id: toolu_01MHxc8fCjLk3ww14PN1npb7
-            type: tool_result
-            content:
-            - tool_name: stock_lookup
-              type: tool_reference
-            is_error: false
-        model: claude-sonnet-4-5
-        stream: true
-        tool_choice:
-          type: auto
-        tools:
-        - name: get_weather
-          description: Get the current weather for a city.
-          input_schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-        - name: get_exchange_rate
-          description: Look up the current exchange rate between two currencies.
-          input_schema:
-            additionalProperties: false
-            properties:
-              from_currency:
-                type: string
-              to_currency:
-                type: string
-            required:
-            - from_currency
-            - to_currency
-            type: object
-          defer_loading: true
-        - name: mortgage_calculator
-          description: Calculate monthly mortgage payment for a home loan.
-          input_schema:
-            additionalProperties: false
-            properties:
-              principal:
-                type: number
-              rate:
-                type: number
-              years:
-                type: integer
-            required:
-            - principal
-            - rate
-            - years
-            type: object
-          defer_loading: true
-        - name: search_tools
-          description: >-
-            Search first for a standalone deferred tool when current tools and catalog
-            descriptions do not name the requested operation. A capability id used as an ordinary
-            domain word does not request that capability. This cannot find capability-owned
-            tools; load a listed capability by id instead. If no tools are found, do not
-            retry.
-          input_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: >-
-                  List of search queries to match against tool names and descriptions. Use
-                  specific words likely to appear in tool names or descriptions to narrow down relevant
-                  tools. Each query is independently tokenized; matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-        - name: stock_lookup
-          description: Look up stock price by ticker symbol.
-          input_schema:
-            additionalProperties: false
-            properties:
-              symbol:
-                type: string
-            required:
-            - symbol
-            type: object
-          defer_loading: true
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-ccf8397b6f72598676f28fa459b65c1b-da134fc8a49058bf-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kLUD74MpgWNcQ8Qcs","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":922,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I found a"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" lookup"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool. Let"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me get"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the current stock price for AA"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"PL."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"92 EUR**."}   }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0 }
 
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01251yjfDKxUx8zpTi28zQSv","name":"stock_lookup","input":{},"caller":{"type":"direct"}}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"symbo"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"l\": \"AA"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"PL\"}"}           }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1             }
-
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":922,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":79}            }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1043,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"           }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T16:29:53.808616+00:00
+  recorded_at: 2026-10-25T18:06:15.504144+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -1063,205 +569,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "2921"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 64000
-        messages:
-        - role: user
-          content:
-          - text: What is the current stock price for AAPL?
-            type: text
-        - role: assistant
-          content:
-          - text: I'll search for a tool that can help me get stock price information.
-            type: text
-          - id: toolu_01MHxc8fCjLk3ww14PN1npb7
-            type: tool_use
-            name: search_tools
-            input:
-              queries:
-              - stock price
-              - AAPL
-              - market data
-              - ticker
-              - equity price
-        - role: user
-          content:
-          - tool_use_id: toolu_01MHxc8fCjLk3ww14PN1npb7
-            type: tool_result
-            content:
-            - tool_name: stock_lookup
-              type: tool_reference
-            is_error: false
-        - role: assistant
-          content:
-          - text: Great! I found a stock lookup tool. Let me get the current stock price for AAPL.
-            type: text
-          - id: toolu_01251yjfDKxUx8zpTi28zQSv
-            type: tool_use
-            name: stock_lookup
-            input:
-              symbol: AAPL
-        - role: user
-          content:
-          - tool_use_id: toolu_01251yjfDKxUx8zpTi28zQSv
-            type: tool_result
-            content:
-            - text: "Stock AAPL: $150.00"
-              type: text
-            is_error: false
-        model: claude-sonnet-4-5
-        stream: true
-        tool_choice:
-          type: auto
-        tools:
-        - name: get_weather
-          description: Get the current weather for a city.
-          input_schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-        - name: get_exchange_rate
-          description: Look up the current exchange rate between two currencies.
-          input_schema:
-            additionalProperties: false
-            properties:
-              from_currency:
-                type: string
-              to_currency:
-                type: string
-            required:
-            - from_currency
-            - to_currency
-            type: object
-          defer_loading: true
-        - name: mortgage_calculator
-          description: Calculate monthly mortgage payment for a home loan.
-          input_schema:
-            additionalProperties: false
-            properties:
-              principal:
-                type: number
-              rate:
-                type: number
-              years:
-                type: integer
-            required:
-            - principal
-            - rate
-            - years
-            type: object
-          defer_loading: true
-        - name: search_tools
-          description: >-
-            Search first for a standalone deferred tool when current tools and catalog
-            descriptions do not name the requested operation. A capability id used as an ordinary
-            domain word does not request that capability. This cannot find capability-owned
-            tools; load a listed capability by id instead. If no tools are found, do not
-            retry.
-          input_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: >-
-                  List of search queries to match against tool names and descriptions. Use
-                  specific words likely to appear in tool names or descriptions to narrow down relevant
-                  tools. Each query is independently tokenized; matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-        - name: stock_lookup
-          description: Look up stock price by ticker symbol.
-          input_schema:
-            additionalProperties: false
-            properties:
-              symbol:
-                type: string
-            required:
-            - symbol
-            type: object
-          defer_loading: true
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-8204059fd30d6c7b569c771833dc3054-87e293278fb95f8b-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kUmH2o79NPqWByrxe","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1023,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" stock price for AAPL ("}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Apple Inc.) is **"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"$150.00**."}            }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1023,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":23} }
-
-        event: message_stop
-        data: {"type":"message_stop"    }
-
-  recorded_at: 2026-09-29T16:29:55.170580+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -1273,13 +581,559 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=118
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-009793d36e989e1a4ddcb285c8649366-56ad088c53d9aac5-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ8Ur71nBqnqBBUNSnc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":732,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01Evu5M63gbC51qDZWwV1Z8R","name":"search_tools","input":{},"caller":{"type":"direct"}}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"stock p"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"rice\",\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"stock q"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"uote\",\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ticker\""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"]}"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":732,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":65,"output_tokens_details":{"thinking_tokens":0}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-10-25T18:06:16.515625+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2389"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01Evu5M63gbC51qDZWwV1Z8R
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - stock price
+              - stock quote
+              - ticker
+        - role: user
+          content:
+          - tool_use_id: toolu_01Evu5M63gbC51qDZWwV1Z8R
+            type: tool_result
+            content:
+            - tool_name: stock_lookup
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=97
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-441557547b848d67df4df3bb20282c51-fbaaf8fa95f8c39c-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ8Z8b7xjbrwcuDo5HK","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":905,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_013TXM9iTgoP3Nkdq5ojogeC","name":"stock_lookup","input":{},"caller":{"type":"direct"}}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"symbo"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"l\": \"AA"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"PL\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":905,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":55,"output_tokens_details":{"thinking_tokens":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T18:06:20.833032+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2700"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the current stock price for AAPL?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01Evu5M63gbC51qDZWwV1Z8R
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - stock price
+              - stock quote
+              - ticker
+        - role: user
+          content:
+          - tool_use_id: toolu_01Evu5M63gbC51qDZWwV1Z8R
+            type: tool_result
+            content:
+            - tool_name: stock_lookup
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - id: toolu_013TXM9iTgoP3Nkdq5ojogeC
+            type: tool_use
+            name: stock_lookup
+            input:
+              symbol: AAPL
+        - role: user
+          content:
+          - tool_use_id: toolu_013TXM9iTgoP3Nkdq5ojogeC
+            type: tool_result
+            content:
+            - text: "Stock AAPL: $150.00"
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: mortgage_calculator
+          description: Calculate monthly mortgage payment for a home loan.
+          input_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=146
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-738c3253c5da01b3729767fa790f6a0d-a86039d8176087e5-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ8sqyBACZY6kABTh94","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":977,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":20,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"APL的"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"当"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"前股价为"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**$150.00**。"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":977,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20,"output_tokens_details":{"thinking_tokens":0}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-10-25T18:06:23.165973+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2038"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Translate 'hello, how are you?' to French.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -1368,10 +1222,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=115
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-eed3f3110a1f0d7c7e523602b484a3cd-6cb7614b7672387f-01
+      - 00-cce19129598ce9f5008a396b09c16826-f23a04331d4d58f2-01
       transfer-encoding:
       - chunked
       vary:
@@ -1380,153 +1236,63 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kaWZ9ir99MFsix6Ff","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ93YczT4SBPod43SxP","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":735,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I don"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\"H"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ello, how are you?\" in"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to a"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" French is **\""}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" translation tool in"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bonjour, comment"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" my"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" allez-vous "}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current set"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"?\"**\n\nIn"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of available"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" inform"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" functions"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"al sett"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". However"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ings, you can say **\""}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", I can help you with this"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Salut, comment ça va"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" translation"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ?\"** or **\""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Salut, "}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\""}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello, how are you?\""}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in French is"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Bonjour, comment al"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lez-vous?\"**\n\nOr"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" inform"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ally:"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\""} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Salut, comment ça va?\""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**\n\n-"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \""}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bonjour\" ="}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Hello"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"formal"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/standard"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" greeting"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")\n- \""} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sal"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ut\" = Hi"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/Hello (informal)"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- \"Comment al"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lez-vous?\" = How are you"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"? (formal)\n- \"Comment"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ça va?\" = How are you"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"? (informal)"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ça va ?\"**"}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0     }
+        data: {"type":"content_block_stop","index":0      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":138}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":735,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":73,"output_tokens_details":{"thinking_tokens":0}}        }
 
         event: message_stop
-        data: {"type":"message_stop"       }
+        data: {"type":"message_stop"            }
 
-  recorded_at: 2026-09-29T16:29:58.776330+00:00
+  recorded_at: 2026-10-25T18:06:24.509239+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -1534,11 +1300,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2047"
+      - "2048"
       content-type:
       - application/json
       host:
@@ -1546,13 +1312,13 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Book a flight from New York to London for next week.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -1641,10 +1407,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=104
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-de0d69bd4b866fcdd0bf794731e5a1a8-27f4c868fddcbc37-01
+      - 00-13d35d8d2a1803cbd2f3c2426ef9601a-ed8e32e10fde298b-01
       transfer-encoding:
       - chunked
       vary:
@@ -1653,138 +1421,63 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kr6fmZHdYusYP1uAe","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ99VZWbUZApuyr82cL","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":733,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_017ky5csYfH3RzkQ1fnjFuQk","name":"search_tools","input":{},"caller":{"type":"direct"}}  }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I don"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access to a"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flight"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" booking tool"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"book fl"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ight\",\""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The only"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"flight "}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"booking"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currently"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\",\"airl"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" available to me are:\n\n1."}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ine res"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **get"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ervatio"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"_weather** - for"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n\",\"sea"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" checking"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"rch fli"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" weather in"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a city\n2. **search_"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"tools** - for finding"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" other"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" available"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nLet"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me search"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" see if there are any flight booking"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tools available:"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ghts\"]}"}}
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01BLmsJ3XEXsTUMRKkdM2yo1","name":"search_tools","input":{},"caller":{"type":"direct"}}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"book fl"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ight\",\""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"flight "} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"booking"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\",\"airl"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ine res"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ervatio"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"n\",\"tra"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"vel boo"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"king\"]}"}             }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1         }
+        data: {"type":"content_block_stop","index":0        }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":750,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":133}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":733,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":72,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-09-29T16:30:01.825078+00:00
+  recorded_at: 2026-10-25T18:06:25.813944+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -1792,11 +1485,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2772"
+      - "2471"
       content-type:
       - application/json
       host:
@@ -1804,7 +1497,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -1812,15 +1505,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: |-
-              I don't have access to a flight booking tool. The only tools currently available to me are:
-
-              1. **get_weather** - for checking weather in a city
-              2. **search_tools** - for finding other available tools
-
-              Let me search to see if there are any flight booking tools available:
-            type: text
-          - id: toolu_01BLmsJ3XEXsTUMRKkdM2yo1
+          - id: toolu_017ky5csYfH3RzkQ1fnjFuQk
             type: tool_use
             name: search_tools
             input:
@@ -1828,16 +1513,16 @@ interactions:
               - book flight
               - flight booking
               - airline reservation
-              - travel booking
+              - search flights
         - role: user
           content:
-          - tool_use_id: toolu_01BLmsJ3XEXsTUMRKkdM2yo1
+          - tool_use_id: toolu_017ky5csYfH3RzkQ1fnjFuQk
             type: tool_result
             content:
             - text: No matching tools found. The tools you need may not be available.
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -1926,10 +1611,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=105
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8811ccb1bdac53c909ff124300ddc4c2-e7209f57d9003cff-01
+      - 00-9e04125021bfcf56569b46c0a61e9e41-05c82558c24fb004-01
       transfer-encoding:
       - chunked
       vary:
@@ -1938,150 +1625,222 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3m4rsRuGaVHYzXPspN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":908,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPQ9Eq2Y6rF6tYW9WSqY","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":827,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":269,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Unfortunately"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I can"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", I don"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t book this"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'t have access"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flight."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to any"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" I don't have a fl"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flight booking tools. To"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ight boo"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" book a flight from New York to London"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"king or search"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool here"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" next week, you"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and a"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" would need to:"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" search for one"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n1. **Use"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" found"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a flight booking website"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" nothing."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nHere are"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" app"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" some ways to get"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** such"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it boo"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as:\n   -"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ked:"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Airline"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Search"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" websites (British"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" s"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Airways, American Airlines, Delta, United"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ites:** Google Flights"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", etc.)\n   - Travel booking"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", Kayak, and"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" platforms (Exp"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Sk"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"edia, Kayak, Google"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yscanner are"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Flights,"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" good for comparing prices across"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Skyscanner,"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" air"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" etc.)"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lines.\n- **Dire"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n2. **Contact"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ct airline"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" bookings:** Several"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" travel agent** who can help you book"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" airlines f"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the flight\n\n3. **Call"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ly New"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" airlines"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" York ("}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" directly** to make"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"JFK/"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"EWR) to London ("}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" reservation\n\nWould"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"L"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you like me to help you with"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"HR/L"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" anything"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"GW). They"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" else,"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" include British Airways, Vir"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" such as checking"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"gin"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the weather in"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Atlantic, American"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" New"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" York or London"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Delta, and United"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n- **Travel ag"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ent"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" trip planning"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** This"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"?"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" hel"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ps if you want some"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"one else"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to handle the booking."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nIf you'd like help"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pre"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"paring, send"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me these"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" details:\n-"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Exact trav"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"el dates,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and whether the"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" trip is one-way or round"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-trip\n- Number"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of passengers\n- C"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"abin class"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- Preferred airports"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" any"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" budget lim"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"it"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nI can also check the we"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ather in London for your trav"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"el d"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ates."}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0              }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":908,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":149}       }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":827,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":269,"output_tokens_details":{"thinking_tokens":0}}         }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"         }
 
-  recorded_at: 2026-09-29T16:30:05.213759+00:00
+  recorded_at: 2026-10-25T18:06:29.632146+00:00

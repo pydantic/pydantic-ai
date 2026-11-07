@@ -998,7 +998,7 @@ def _mistral_client_raising(error: Any) -> Any:
 
 
 def _mistral_sdk_error(status_code: int, message: str) -> SDKError:
-    return SDKError(message, httpx.Response(status_code, request=httpx.Request('POST', 'https://api.mistral.ai')))
+    return SDKError(message, httpx2.Response(status_code, request=httpx2.Request('POST', 'https://api.mistral.ai')))
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')

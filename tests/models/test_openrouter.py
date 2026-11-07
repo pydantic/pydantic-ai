@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
@@ -23,6 +24,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelServerError,
+    ModelSettingsDeltaPart,
     ModelTimeoutError,
     PartEndEvent,
     PartStartEvent,
@@ -31,8 +33,10 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolDefinition,
+    ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
@@ -58,7 +62,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModelSettings
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -68,7 +72,6 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
-    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -676,10 +679,12 @@ async def test_openrouter_missing_finish_reason_keeps_native_finish_reason(
 
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
+    model = OpenRouterModel('anthropic/claude-sonnet-5', provider=provider)
 
-    user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
-    response = await model_request(model, [user_message])
+    user_message = ModelRequest.user_text_prompt(
+        'How many prime numbers are there between 100 and 150? Reply with just the number.'
+    )
+    response = await model_request(model, [user_message], model_settings=OpenRouterModelSettings(thinking=True))
 
     mapped_messages = await model._map_messages([user_message, response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
@@ -690,17 +695,10 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
                 'id': None,
                 'type': 'reasoning.text',
                 'text': """\
-This question is asking me about my identity. Let me think about how to respond clearly and accurately.
+Listing out the primes between 100 and 150, I count ten of them.
 
-I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
-
-My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
-
-I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
-
-I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.\
 """,
-                'signature': 'ErcBCkgICBACGAIiQHtMxpqcMhnwgGUmSDWGoOL9ZHTbDKjWnhbFm0xKzFl0NmXFjQQxjFj5mieRYY718fINsJMGjycTVYeiu69npakSDDrsnKYAD/fdcpI57xoMHlQBxI93RMa5CSUZIjAFVCMQF5GfLLQCibyPbb7LhZ4kLIFxw/nqsTwDDt6bx3yipUcq7G7eGts8MZ6LxOYqHTlIDx0tfHRIlkkcNCdB2sUeMqP8e7kuQqIHoD52GAI=',
+                'signature': 'Eo8ECuQCCBMYAipA8987lftZNg5q2mL7VZDNjesY0w3T80s1vd0MPMZgvDjG/16K5m7lsXf7ADSOK43AnRTgUrKVv+llaFAR+al8ETIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNmV0xtdjlGeVFOcGF6WUtxRVNxepoBEQoPY2xhdWRlLXNvbm5ldC01qAG7ofbWBsIBOggEEAAaDALaigNPNwX4fQQmrSABMgQScc8lOgQ4MyOKQgQ4MyOKSgQ4MyOKUABaBNkF4VZgAmgBcADaAWAKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIH8heLMmd810iLLi0ur1ezD0AYmV/SUDIjTk2DjWHXPfIgAyIMLAE8hqnJLiL5ZvPYYXdo+LekTJAq3MCXv6HgmK+04fSAMSDGmWwq5YguuZ1FhVeRoM7m4sdu1nHIomVHXxIjDYxkWOmv/DYjjRlQUEB/yOAuD7Zdzzs3yDI0ulHVhoVzT0jCBiDm97WayS+qQCH58qWOoTSwk6V12vS+SimlcQcwBvWC8K6PpnMaoTZlbIrPfstrZCUGV+2fai3R0mpyOfEFLB3TD5a7FN4NQ8X3L19cYFkJt2hjc7PLg/PV2twAFmlKhqGguiAEAYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS0yMDI2MDYzMHxjbGF1ZGUtb24tYXdzIn0',
                 'format': 'anthropic-claude-v1',
                 'index': 0,
             }
@@ -714,6 +712,8 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     class FindEducationContentFilters(BaseModel):
         title: str | None = None
 
+    # The Sonnet 4.5 recording's tool call has no `arguments` at all; current routes send `'{}'`, so a re-record
+    # would stop covering the missing-arguments case.
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
     response = await model_request(
         model,
@@ -758,24 +758,29 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
 
 async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = OpenRouterModel('anthropic/claude-sonnet-5', provider=provider)
     agent = Agent(
         model=model,
         model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
     )
 
-    async with agent.run_stream('What is 2+2?') as stream:
+    async with agent.run_stream(
+        'How many prime numbers are there between 100 and 150? Reply with just the number.'
+    ) as stream:
         _ = await stream.get_output()
 
         assert stream.response.parts == snapshot(
             [
                 ThinkingPart(
-                    content='This is a simple arithmetic question. 2+2 equals 4.',
-                    signature='Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==',
+                    content="""\
+Listing out primes between 100 and 150, I count ten total: 101, 103, 107, 109, 113, 127, 131, 137, 139, 149.
+
+""",
+                    signature='Ep4ECuQCCBMYAipA7tdZQtDS3of6+DqMe+LVvjPwBJejG27qrfusDTA/SBo+x0x2/3jWCPIb2hp+2Stw2mPICZPI9vDh6/8t/FW08zIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNmV0xtdjlGeVFOcGF6WUtxRVNxepoBEQoPY2xhdWRlLXNvbm5ldC01qAHBofbWBsIBOggEEAAaDALaigNPNwX4fQQmrSABMgQScc8lOgQ4MyOKQgQ4MyOKSgQ4MyOKUABaBNkF4VZgAmgBcADaAWAKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIH8heLMmd810iLLi0ur1ezD0AYmV/SUDIjTk2DjWHXPfIgAyIMLAE8hqnJLiL5ZvPYYXdo+LekTJAq3MCXv6HgmK+04fSAMSDAvygw0KBw80IraDwRoMOxE2nmn9NwrV6xiYIjDZKm9Xcrp/abUT83qL0Sv+beRJcr8tTqlV0sc9AYC+3Q1mny2579xE1c7/pNkkNYIqZ9HyfHYbrsBHGiyoOORmBg+OAlOqhlTfgUZlaggi+GmGf4Rr0rcuoVa2VfAK6rfKQMBNHsReBh+EOCwFvU/WfuGa4mzdWMS+s1AkhuneLDno97IGoQnE8IJXi0JvaLzXns62MO9h5yIYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS0yMDI2MDYzMHxjbGF1ZGUtb24tYXdzIn0',
                     provider_name='openrouter',
                     provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
                 ),
-                TextPart(content='2 + 2 = 4'),
+                TextPart(content='10'),
             ]
         )
 
@@ -936,6 +941,92 @@ async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_
     ]
 
 
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_earlier_tool_call_turn_renders_the_same_after_later_reasoning(
+    allow_model_requests: None,
+) -> None:
+    """A tool-call turn sent without `reasoning` doesn't gain `reasoning: ''` once a later response reasons.
+
+    The first step calls a tool without reasoning, the second reasons and calls a tool again. The second
+    request sends the first turn without the field, so the third has to as well, or its messages stop starting
+    with the previous request's. A mock transport stands in for a cassette: whether the model reasons on a given
+    step can't be chosen when recording, and the property spans two request bodies.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        step = len(request_bodies)
+        message: dict[str, Any] = {'role': 'assistant', 'content': None}
+        if step < 3:
+            message['tool_calls'] = [
+                {'id': f'call_{step}', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}
+            ]
+        else:
+            message['content'] = 'Done.'
+        if step == 2:
+            message['reasoning'] = 'One more lookup.'
+            message['reasoning_details'] = [
+                {
+                    'type': 'reasoning.text',
+                    'text': 'One more lookup.',
+                    'signature': 'sig',
+                    'format': 'anthropic-claude-v1',
+                }
+            ]
+        completion = {
+            'id': f'gen-{step}',
+            'object': 'chat.completion',
+            'created': 1704067200,
+            'model': 'anthropic/claude-haiku-4.5',
+            'provider': 'Anthropic',
+            'choices': [{'index': 0, 'finish_reason': 'tool_calls' if step < 3 else 'stop', 'message': message}],
+        }
+        return httpx2.Response(200, json=completion)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(openai_client=client)))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'ok'
+
+        await agent.run('Look it up.')
+
+    second, third = (json.loads(body)['messages'] for body in request_bodies[1:])
+    assert third[: len(second)] == second
+    assert [message for message in third if message['role'] == 'assistant'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+            },
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_2', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+                'reasoning_details': [
+                    {
+                        'id': None,
+                        'format': 'anthropic-claude-v1',
+                        'index': None,
+                        'type': 'reasoning.text',
+                        'text': 'One more lookup.',
+                        'signature': 'sig',
+                    }
+                ],
+                'reasoning': '',
+            },
+        ]
+    )
+
+
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
     """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
     from unittest.mock import patch
@@ -957,6 +1048,29 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     assert result.provider_details == snapshot(
         {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
+
+
+async def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(allow_model_requests: None) -> None:
+    """Fields `OpenRouterModel`'s response type declares, like `provider` and `native_finish_reason`, aren't unmapped."""
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test', 'vendor_note': 'x'},
+        finish_reason='stop',
+        native_finish_reason='stop',
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(openai_client=mock_client))
+
+    result = await Agent(model).run(
+        'hello', model_settings=OpenAIChatModelSettings(openai_include_unmapped_response_data=True)
+    )
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    assert (response_message.provider_details or {}).get('unmapped') == snapshot({'message': {'vendor_note': 'x'}})
 
 
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -1021,6 +1135,110 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     assert result.output.level_type == LevelType.ground
     assert result.output.space_count == 3
+
+
+async def test_openrouter_google_inlines_property_names_and_contains_refs(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Gemini over OpenRouter accepts tools whose `propertyNames` and `contains` held a `$ref`.
+
+    The transformer drops `$defs`, so both `$ref`s go out inlined. The `Literal` key and the ref-free
+    `contains` go out as written. Pydantic never emits `contains`, so `pick` takes a hand-written schema.
+    """
+    from enum import Enum
+
+    class Color(str, Enum):  # noqa: UP042
+        red = 'red'
+        blue = 'blue'
+
+    def pick(numbers: list[int], threes: list[int]) -> str:
+        return f'Picked {len(numbers) + len(threes)} numbers.'
+
+    pick_tool = Tool.from_schema(
+        pick,
+        name='pick',
+        description='Pick numbers.',
+        json_schema={
+            '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+            'type': 'object',
+            'properties': {
+                'numbers': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'$ref': '#/$defs/Positive'}},
+                'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+            },
+            'required': ['numbers', 'threes'],
+        },
+    )
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('google/gemini-3.6-flash', provider=provider)
+    agent = Agent(model, tools=[pick_tool])
+
+    @agent.tool_plain
+    def tally(counts: dict[Color, int], labels: dict[Literal['a', 'b'], int]) -> str:
+        """Tally counts per color and per label."""
+        return f'Tallied {len(counts) + len(labels)} keys.'
+
+    result = await agent.run(
+        'Call tally with counts {"red": 2} and labels {"a": 1}, and pick with numbers [0, 4] and threes [3]. '
+        'Then reply "done".'
+    )
+
+    assert request_capture.body()['tools'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'pick',
+                    'description': 'Pick numbers.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {
+                            'numbers': {
+                                'type': 'array',
+                                'items': {'type': 'integer'},
+                                'contains': {'type': 'integer', 'minimum': 1},
+                            },
+                            'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+                        },
+                        'required': ['numbers', 'threes'],
+                    },
+                    'strict': True,
+                },
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'tally',
+                    'description': 'Tally counts per color and per label.',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {
+                            'counts': {
+                                'additionalProperties': {'type': 'integer'},
+                                'propertyNames': {'enum': ['red', 'blue'], 'type': 'string'},
+                                'type': 'object',
+                            },
+                            'labels': {
+                                'additionalProperties': {'type': 'integer'},
+                                'propertyNames': {'enum': ['a', 'b']},
+                                'type': 'object',
+                            },
+                        },
+                        'required': ['counts', 'labels'],
+                        'type': 'object',
+                    },
+                    'strict': True,
+                },
+            },
+        ]
+    )
+    assert [
+        (part.tool_name, part.args_as_dict())
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == snapshot([('tally', {'labels': {'a': 1}, 'counts': {'red': 2}}), ('pick', {'threes': [3], 'numbers': [0, 4]})])
+    assert result.output == snapshot('done')
 
 
 async def test_openrouter_file_annotation(
@@ -1279,8 +1497,15 @@ async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() 
     assert extra_body == {}
 
 
-@pytest.mark.parametrize('model_name', ['z-ai/glm-5.3', 'z-ai/glm-5.2'])
-def test_openrouter_glm_thinking_false(model_name: str) -> None:
+@pytest.mark.parametrize(
+    ('model_name', 'effort'),
+    [
+        # OpenRouter makes GLM-5.3's reasoning mandatory, so it gets the lowest effort.
+        ('z-ai/glm-5.3', 'low'),
+        ('z-ai/glm-5.2', 'none'),
+    ],
+)
+def test_openrouter_glm_thinking_false(model_name: str, effort: str) -> None:
     """GLM schema quirks must not change OpenRouter's reasoning translation.
 
     This inspects the prepared payload directly because cassette matching does not pin its body.
@@ -1292,7 +1517,7 @@ def test_openrouter_glm_thinking_false(model_name: str) -> None:
 
     assert params.thinking is False
     assert prepared is not None
-    assert prepared.get('extra_body') == {'reasoning': {'effort': 'none'}}
+    assert prepared.get('extra_body') == {'reasoning': {'effort': effort}}
 
 
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
@@ -1351,44 +1576,287 @@ def _openrouter_completion(content: str) -> ChatCompletion:
     )
 
 
-async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:
-    """OpenRouter gets the fallback while the same history stays native on OpenAI.
+_MID_CONVERSATION_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='Hello.')]),
+    ModelResponse(parts=[TextPart(content='Hi.')]),
+    ModelRequest(parts=[SystemPromptPart(content='Answer in one sentence.')]),
+]
 
-    Mocked clients pin the rendered request bodies directly: OpenRouter accepts an inline `system`
-    message but silently transforms it, so a successful gateway response cannot prove native support.
+
+@pytest.mark.parametrize(
+    'model_name,inline',
+    [
+        ('openai/gpt-4o', True),
+        ('openai/gpt-5.6-luna', True),
+        ('openai/gpt-6-luna', True),
+        ('openai/gpt-6-luna-pro', True),
+        ('openai/gpt-6.1-terra', True),
+        ('openai/o3', True),
+        ('openai/gpt-oss-120b', False),
+        ('anthropic/claude-fable-5', True),
+        ('anthropic/claude-fable-5.1', True),
+        ('anthropic/claude-mythos-5', True),
+        ('anthropic/claude-opus-4.8', True),
+        ('anthropic/claude-opus-5', True),
+        ('anthropic/claude-opus-5.5', True),
+        ('anthropic/claude-sonnet-5.5', True),
+        ('anthropic/claude-haiku-5.5', True),
+        ('~anthropic/claude-opus-latest', False),
+        ('anthropic/claude-sonnet-5', False),
+        ('anthropic/claude-opus-4.7', False),
+        ('anthropic/claude-sonnet-4.6', False),
+        ('anthropic/claude-haiku-4.5', False),
+        ('google/gemini-3.5-flash-lite', False),
+        ('x-ai/grok-4.3', False),
+        ('moonshotai/kimi-k3', False),
+    ],
+)
+def test_openrouter_inline_system_prompts_per_route(model_name: str, inline: bool) -> None:
+    """Only the routes OpenRouter was measured to keep a mid-conversation system message on take one natively."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_inline_system_prompts') is inline
+
+
+@pytest.mark.parametrize(
+    'model_name,expected_messages',
+    [
+        pytest.param(
+            'openai/gpt-5',
+            [
+                {'role': 'system', 'content': 'You are helpful.'},
+                {'role': 'user', 'content': 'Hello.'},
+                {'role': 'assistant', 'content': 'Hi.'},
+                {'role': 'system', 'content': 'Answer in one sentence.'},
+                {'role': 'user', 'content': 'Continue.'},
+            ],
+            id='openai-in-place',
+        ),
+        pytest.param(
+            'anthropic/claude-opus-5.5',
+            [
+                {'role': 'system', 'content': 'You are helpful.'},
+                {'role': 'user', 'content': 'Hello.'},
+                {'role': 'assistant', 'content': 'Hi.'},
+                {'role': 'user', 'content': 'Continue.'},
+                {'role': 'system', 'content': 'Answer in one sentence.'},
+            ],
+            id='anthropic-before-generation',
+        ),
+        pytest.param(
+            'google/gemini-3.5-flash-lite',
+            [
+                {'role': 'system', 'content': 'You are helpful.'},
+                {
+                    'role': 'system',
+                    'content': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+                },
+                {'role': 'user', 'content': 'Hello.'},
+                {'role': 'assistant', 'content': 'Hi.'},
+                {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
+                {'role': 'user', 'content': 'Continue.'},
+            ],
+            id='google-wrapped',
+        ),
+    ],
+)
+async def test_openrouter_mid_conversation_system_prompt_rendering(
+    allow_model_requests: None, model_name: str, expected_messages: list[dict[str, Any]]
+) -> None:
+    """Each route family renders the same history its own way.
+
+    A unit test because the claim is the exact message order sent, which a recorded test only checks when re-recorded.
+    OpenAI routes keep the system message where it was authored. Anthropic routes keep it native only right before
+    generation, so it moves past the user message after it. Other routes get the `<system>`-wrapped fallback.
     """
-    history = [
-        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='Hello.')]),
-        ModelResponse(parts=[TextPart(content='Hi.')]),
-        ModelRequest(parts=[SystemPromptPart(content='Answer in one sentence.')]),
+    client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=client))
+
+    await Agent(model).run('Continue.', message_history=_MID_CONVERSATION_HISTORY)
+
+    assert get_mock_chat_completion_kwargs(client)[0]['messages'] == expected_messages
+
+
+@pytest.mark.parametrize('model_name', ['openai/gpt-6-luna', 'anthropic/claude-opus-5.5'])
+async def test_openrouter_native_mid_conversation_system_prompt(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, model_name: str
+) -> None:
+    """A mid-conversation system prompt goes out as a `system` message, and the model acts on it.
+
+    The withdrawal is one both models ignore when the same text arrives as a user message, measured through OpenRouter
+    (0 of 4 on each). On the Anthropic route the message moves past the user prompt that follows it, the only place
+    OpenRouter keeps it native there.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel(model_name, provider=provider)
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant. The current access code word is PINEAPPLE.'),
+                UserPromptPart(content='Hi there.'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hello! How can I help you today?')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='The access code word has been withdrawn. There is no current access code word.'
+                )
+            ]
+        ),
     ]
-    openrouter_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
-    openai_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
 
-    openrouter_model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=openrouter_client))
-    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+    result = await Agent(model).run(
+        'What is the current access code word? Reply with just the word, or NONE if there is none.',
+        message_history=history,
+    )
 
-    await Agent(openrouter_model).run('Continue.', message_history=history)
-    await Agent(openai_model).run('Continue.', message_history=history)
+    assert result.output == 'NONE'
+    roles = [message['role'] for message in cast(list[dict[str, Any]], request_capture.body()['messages'])]
+    if model_name.startswith('anthropic/'):
+        assert roles == ['system', 'user', 'assistant', 'user', 'system']
+    else:
+        assert roles == ['system', 'user', 'assistant', 'system', 'user']
 
-    assert openrouter_model.profile.get('supports_inline_system_prompts') is False
-    assert openai_model.profile.get('supports_inline_system_prompts') is True
-    assert get_mock_chat_completion_kwargs(openrouter_client)[0]['messages'] == snapshot(
+
+async def test_openrouter_anthropic_system_message_moves_past_tool_results(allow_model_requests: None) -> None:
+    """On an Anthropic route a mid-conversation system message moves past tool results and stops before the assistant turn.
+
+    A unit test because no real model produces a system prompt between a tool call and its results; it pins that the
+    move never separates a tool call from its results, and never overtakes a later system message.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look it up.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args='{}', tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Be brief.'),
+                ToolReturnPart(tool_name='lookup', content='found', tool_call_id='call_1'),
+                SystemPromptPart(content='Answer in French.'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Trouvé.')]),
+    ]
+    client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+
+    await Agent(model).run('Thanks.', message_history=history)
+
+    assert [
+        (message['role'], message.get('content')) for message in get_mock_chat_completion_kwargs(client)[0]['messages']
+    ] == snapshot(
         [
-            {'role': 'system', 'content': 'You are helpful.'},
-            {'role': 'user', 'content': 'Hello.'},
-            {'role': 'assistant', 'content': 'Hi.'},
-            {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
-            {'role': 'user', 'content': 'Continue.'},
+            ('user', 'Look it up.'),
+            ('assistant', None),
+            ('tool', 'found'),
+            ('system', 'Be brief.'),
+            ('system', 'Answer in French.'),
+            ('assistant', 'Trouvé.'),
+            ('user', 'Thanks.'),
         ]
     )
-    assert get_mock_chat_completion_kwargs(openai_client)[0]['messages'] == snapshot(
+
+
+async def test_openrouter_anthropic_system_message_moves_past_effort_change(allow_model_requests: None) -> None:
+    """A mid-conversation system message also moves past a content-less effort change, which can sit anywhere.
+
+    A unit test because the claim is the exact message order sent.
+    """
+    client = MockOpenAI.create_mock(_openrouter_completion('Shelf 41.'))
+    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Where is item 12?'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('Answer in French.'),
+                ModelSettingsDeltaPart(settings={'thinking': 'high'}),
+                UserPromptPart('And item 40?'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Étagère 40.')]),
+    ]
+
+    await Agent(model).run('And item 41?', message_history=history, model_settings={'thinking': 'high'})
+
+    assert [
+        (message['role'], message.get('content'), message.get('configuration_update'))
+        for message in get_mock_chat_completion_kwargs(client)[0]['messages']
+    ] == snapshot(
         [
-            {'role': 'system', 'content': 'You are helpful.'},
+            ('user', 'Where is item 12?', None),
+            ('assistant', 'Shelf 12, bin 1.', None),
+            ('system', '', {'reasoning': {'effort': 'high'}}),
+            ('user', 'And item 40?', None),
+            ('system', 'Answer in French.', None),
+            ('assistant', 'Étagère 40.', None),
+            ('user', 'And item 41?', None),
+        ]
+    )
+
+
+async def test_openrouter_cache_instructions_skip_mid_conversation_system_message(allow_model_requests: None) -> None:
+    """With no instructions, the system prompt's breakpoint goes on the leading system message, not a later one.
+
+    A unit test because the claim is where the breakpoint lands in the request body.
+    """
+    client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+
+    await Agent(model).run(
+        'Continue.',
+        message_history=_MID_CONVERSATION_HISTORY,
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    assert get_mock_chat_completion_kwargs(client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {'type': 'text', 'text': 'You are helpful.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+                ],
+            },
             {'role': 'user', 'content': 'Hello.'},
             {'role': 'assistant', 'content': 'Hi.'},
-            {'role': 'system', 'content': 'Answer in one sentence.'},
             {'role': 'user', 'content': 'Continue.'},
+            {'role': 'system', 'content': 'Answer in one sentence.'},
+        ]
+    )
+
+
+async def test_openrouter_cache_messages_skip_request_scoped_system_message(allow_model_requests: None) -> None:
+    """The automatic message breakpoint skips a request-scoped prompt sent as a native system message.
+
+    The next request won't contain it, so a breakpoint on it would write a cache entry nothing reads. A unit test
+    because the claim is where the breakpoint lands in the request body.
+    """
+    client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello.')]),
+        ModelResponse(parts=[TextPart(content='Hi.')]),
+        ModelRequest(parts=[SystemPromptPart(content='It is 9am.', scope='request')]),
+    ]
+
+    await Agent(model).run(
+        'Continue.', message_history=history, model_settings=OpenRouterModelSettings(openrouter_cache_messages=True)
+    )
+
+    assert get_mock_chat_completion_kwargs(client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'Continue.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+            {'role': 'system', 'content': 'It is 9am.'},
         ]
     )
 
@@ -1692,6 +2160,52 @@ async def test_openrouter_thinking_false_on_always_on_route(
         model_settings=OpenRouterModelSettings(thinking=False),
     )
     assert response.parts[-1] == TextPart(content='OK')
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
+async def test_openrouter_thinking_false_on_claude_sonnet_5_5(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Sonnet 5.5 turns thinking off with `between_tools` on the Anthropic API, but OpenRouter makes its reasoning
+    mandatory and rejects `effort='none'`, so `thinking=False` sends `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.parts[-1] == TextPart(content='OK')
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'google/gemini-3.5-flash',
+        'moonshotai/kimi-k2.7-code',
+        'openai/gpt-5.2-codex',
+        'openai/gpt-oss-120b',
+        'qwen/qwen3-235b-a22b-thinking-2507',
+        'x-ai/grok-build-0.1',
+        'z-ai/glm-5.3',
+    ],
+)
+async def test_openrouter_thinking_false_on_mandatory_reasoning_route(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, model_name: str
+) -> None:
+    """OpenRouter makes reasoning mandatory on these routes and rejects `effort='none'`, so `thinking=False` sends
+    `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel(model_name, provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.text
     assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
 
 
@@ -2498,11 +3012,17 @@ async def test_openrouter_thinking_true_emits_effort_medium(
     (e.g. parts of `google/gemma-*`) that silently leave reasoning disabled when
     only `effort` is set. No-op for reasoning-by-default models."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = OpenRouterModel('anthropic/claude-sonnet-5', provider=provider)
     settings = OpenRouterModelSettings(thinking=True)
 
     response = await model_request(
-        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+        model,
+        [
+            ModelRequest.user_text_prompt(
+                'How many prime numbers are there between 100 and 150? Reply with just the number.'
+            )
+        ],
+        model_settings=settings,
     )
 
     sent = single_request_body(vcr)
@@ -2518,7 +3038,7 @@ async def test_openrouter_thinking_true_emits_effort_medium(
                 provider_name='openrouter',
                 provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
             ),
-            TextPart(content='ok'),
+            TextPart(content='10'),
         ]
     )
     assert response.timestamp == IsDatetime()
@@ -2532,7 +3052,7 @@ async def test_openrouter_thinking_false_supports_thinking_model(
     `thinking=False` reaches the wire as `reasoning.effort='none'` via the
     transformer's unified-emit path."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = OpenRouterModel('anthropic/claude-sonnet-5', provider=provider)
     settings = OpenRouterModelSettings(thinking=False)
 
     response = await model_request(
@@ -2555,7 +3075,7 @@ async def test_openrouter_thinking_high_emits_effort_high(
     the only wire-level effort value covered was `'medium'` (via `thinking=True`),
     leaving the `high`/`low`/`xhigh` branches unit-only."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=provider)
     settings = OpenRouterModelSettings(thinking='high')
 
     await model_request(
@@ -2569,8 +3089,8 @@ async def test_openrouter_thinking_high_emits_effort_high(
 @pytest.mark.parametrize(
     'model_name,eager_enabled,expected_eager_key',
     [
-        ('anthropic/claude-sonnet-4-5', True, True),
-        ('anthropic/claude-sonnet-4-5', False, False),
+        ('anthropic/claude-sonnet-5.5', True, True),
+        ('anthropic/claude-sonnet-5.5', False, False),
         ('openai/gpt-5-mini', True, False),
     ],
     ids=['anthropic-enabled', 'anthropic-disabled', 'non-anthropic-enabled'],

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -49,14 +50,13 @@ def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
         *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
         parent,
     ]
-    for member in candidates:
-        member = _flatten_all_of(member)
-        for key, value in member.items():
-            if key == 'properties' and isinstance(value, dict):
+    for key, value in chain.from_iterable(_flatten_all_of(member).items() for member in candidates):
+        match key, value:
+            case 'properties', dict():
                 properties.update(cast('dict[str, Any]', value))
-            elif key == 'required' and isinstance(value, list):
+            case 'required', list():
                 required.extend(name for name in cast('list[str]', value) if name not in required)
-            else:
+            case _:
                 merged[key] = value
     if properties:
         merged['properties'] = properties
@@ -70,31 +70,37 @@ def _drop_unsupported_schema_keywords(
 ) -> dict[str, Any]:
     """Drop unsupported Gemini schema keywords recursively without importing `google-genai`."""
     json_schema = _flatten_all_of(json_schema)
-    kept: dict[str, Any] = {}
-    for key, value in json_schema.items():
-        if key not in accepted_keywords:
-            continue
-        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            kept[key] = {
-                name: {}
-                if schema is True
-                else _drop_unsupported_schema_keywords(schema, accepted_keywords=accepted_keywords)
-                for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
-                if schema is not False
-            }
-        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            kept[key] = [
-                {} if item is True else _drop_unsupported_schema_keywords(item, accepted_keywords=accepted_keywords)
-                for item in cast('list[dict[str, Any] | bool]', value)
-                if item is not False
-            ]
-        elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
-            kept[key] = _drop_unsupported_schema_keywords(
-                cast('dict[str, Any]', value), accepted_keywords=accepted_keywords
-            )
-        else:
-            kept[key] = value
-    return kept
+    return {
+        key: _drop_unsupported_keyword_value(key, value, accepted_keywords=accepted_keywords)
+        for key, value in json_schema.items()
+        if key in accepted_keywords
+    }
+
+
+def _drop_unsupported_keyword_value(key: str, value: object, *, accepted_keywords: frozenset[str]) -> object:
+    """Drop unsupported Gemini schema keywords from the subschemas an accepted keyword's value holds."""
+    if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+        return {
+            name: _drop_unsupported_subschema_keywords(schema, accepted_keywords=accepted_keywords)
+            for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
+            if schema is not False
+        }
+    if key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
+        return [
+            _drop_unsupported_subschema_keywords(item, accepted_keywords=accepted_keywords)
+            for item in cast('list[dict[str, Any] | bool]', value)
+            if item is not False
+        ]
+    if key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
+        return _drop_unsupported_schema_keywords(cast('dict[str, Any]', value), accepted_keywords=accepted_keywords)
+    return value
+
+
+def _drop_unsupported_subschema_keywords(
+    schema: dict[str, Any] | Literal[True], *, accepted_keywords: frozenset[str]
+) -> dict[str, Any]:
+    """`_drop_unsupported_schema_keywords` for a subschema, where a `true` schema becomes `{}`."""
+    return {} if schema is True else _drop_unsupported_schema_keywords(schema, accepted_keywords=accepted_keywords)
 
 
 class GoogleModelProfile(ModelProfile, total=False):
@@ -189,6 +195,16 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini 3+ bills each unique search query. This decides the `web_searches` count on
     [`RequestUsage`][pydantic_ai.usage.RequestUsage].
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
+    google_supports_batch_api: bool
+    """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
+    Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `GoogleModel` sets it when its client
+    talks to the Gemini API, and not on Google Cloud (Vertex AI), whose batch prediction jobs read from Cloud Storage
+    or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
 
@@ -292,8 +308,27 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
     'gemini-3.1-flash-live',
     'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
     'gemini-live-2.5-flash',  # Vertex AI
+    'gemini-robotics-er',
 )
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
+
+
+def _realtime_async_tool_call_mode(
+    model_name: str, *, is_extended_thinking: bool, is_3_8_live: bool
+) -> AsyncToolCallMode:
+    """Whether a Gemini Live model runs tool calls asynchronously: never, at the session's choice, or always."""
+    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
+    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
+    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
+    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
+    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
+    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
+    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
+    if is_extended_thinking:
+        return 'always'
+    if 'native-audio' in model_name or is_3_8_live:
+        return 'optional'
+    return 'never'
 
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -315,18 +350,6 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
-    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
-    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
-    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
-    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
-    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
-    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
-    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
-    async_tool_call_mode: AsyncToolCallMode = 'never'
-    if is_extended_thinking:
-        async_tool_call_mode = 'always'
-    elif 'native-audio' in model_name or is_3_8_live:
-        async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
         # The speech-to-speech Live models are audio-only: a session asking for `TEXT` is closed with
@@ -379,7 +402,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # setting is skipped for it too.
         'supports_thinking': is_extended_thinking
         or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
-        'async_tool_call_mode': async_tool_call_mode,
+        'async_tool_call_mode': _realtime_async_tool_call_mode(
+            model_name, is_extended_thinking=is_extended_thinking, is_3_8_live=is_3_8_live
+        ),
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
@@ -432,7 +457,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
-    # sees images in its own content, so these get the recent image sent again there.
+    # sees images in its own content, so these get the recent image sent again there. Verified live
+    # 2026-10-27 the same way on `gemini-robotics-er-2-streaming-preview`: without the second send it
+    # described a different object 3/3, and with it the image it was sent 3/3.
     # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
     # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
     # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it
@@ -523,12 +550,18 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         return super()._walk_def(key, siblings)
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
-        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
-        # `$ref` the declaration doesn't contain.
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties` or `propertyNames`,
+        # so none of these subschemas reaches Gemini. Walking them anyway would refuse a recursive
+        # `dict[str, Node]` over a `$ref` the declaration doesn't contain.
         schema.pop('additionalProperties', None)
         schema.pop('patternProperties', None)
+        schema.pop('propertyNames', None)
         return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # `Schema` has no `contains` either: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives
@@ -540,20 +573,7 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
 
         # Gemini only accepts string enums here, and `Schema.enum` is typed `list[str]`.
         if enum := schema.get('enum'):
-            if all(isinstance(value, str) for value in enum):
-                schema['type'] = 'string'
-            else:
-                # Stringifying the values would be a trap: the model would answer `"1"` for a
-                # `Literal[1, 2]`, exactly as asked, and validation would then reject its own
-                # schema's answer, since Pydantic won't coerce a string into an int literal. Keep the
-                # declared type so the answer validates, and move the choices into the description so
-                # they're still stated — an unenforced hint beats an unanswerable argument.
-                del schema['enum']
-                allowed = ', '.join(repr(value) for value in enum)
-                description = schema.get('description')
-                schema['description'] = (
-                    f'{description} (allowed values: {allowed})' if description else f'Allowed values: {allowed}'
-                )
+            _fit_enum_to_strings(schema, enum)
 
         if 'oneOf' in schema and 'type' not in schema:
             # A discriminated union. Gemini rejects `oneOf` outright (despite what its own error message
@@ -568,21 +588,44 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         if 'prefixItems' in schema:
             # A tuple. The subset has no positional item types, so the element type widens to the union
             # of the positions, and the length is pinned instead.
-            prefix_items = schema.pop('prefixItems')
-            items = schema.get('items')
-            unique_items = [items] if items is not None else []
-            for item in prefix_items:
-                if item not in unique_items:
-                    unique_items.append(item)
-            if len(unique_items) > 1:
-                schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:  # pragma: no branch
-                schema['items'] = unique_items[0]
-            schema.setdefault('minItems', len(prefix_items))
-            if items is None:  # pragma: no branch
-                schema.setdefault('maxItems', len(prefix_items))
+            _widen_tuple(schema)
 
         return schema
+
+
+def _fit_enum_to_strings(schema: JsonSchema, enum: list[object]) -> None:
+    """Type a string `enum` as `string`, or move the values of any other into the description."""
+    if all(isinstance(value, str) for value in enum):
+        schema['type'] = 'string'
+    else:
+        # Stringifying the values would be a trap: the model would answer `"1"` for a
+        # `Literal[1, 2]`, exactly as asked, and validation would then reject its own
+        # schema's answer, since Pydantic won't coerce a string into an int literal. Keep the
+        # declared type so the answer validates, and move the choices into the description so
+        # they're still stated — an unenforced hint beats an unanswerable argument.
+        del schema['enum']
+        allowed = ', '.join(repr(value) for value in enum)
+        description = schema.get('description')
+        schema['description'] = (
+            f'{description} (allowed values: {allowed})' if description else f'Allowed values: {allowed}'
+        )
+
+
+def _widen_tuple(schema: JsonSchema) -> None:
+    """Replace a tuple's `prefixItems` with the union of its positions as `items`, and pin its length."""
+    prefix_items = schema.pop('prefixItems')
+    items = schema.get('items')
+    unique_items = [items] if items is not None else []
+    for item in prefix_items:
+        if item not in unique_items:
+            unique_items.append(item)
+    if len(unique_items) > 1:
+        schema['items'] = {'anyOf': unique_items}
+    elif len(unique_items) == 1:  # pragma: no branch
+        schema['items'] = unique_items[0]
+    schema.setdefault('minItems', len(prefix_items))
+    if items is None:  # pragma: no branch
+        schema.setdefault('maxItems', len(prefix_items))
 
 
 def _fold_described_options(schema: JsonSchema) -> None:

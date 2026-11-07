@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
@@ -21,12 +22,15 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
@@ -229,7 +233,26 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'hint': 'Check the provider account setting',
             },
         ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelNotFoundError,
+                status_code=404,
+                model_name='gpt-5x',
+                provider_error_code='model_not_found',
+                suggested_model_id='openai:gpt-5',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'provider_error_code': 'model_not_found',
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
+        ),
     ],
     ids=[
         'ModelRetry',
@@ -256,7 +279,9 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelContextWindowExceededError',
         'ModelHTTPError-with-hint',
         'ModelHTTPError-with-model-suggestion-and-hint',
+        'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'InlinedSchemaTooLargeError',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):
@@ -833,7 +858,18 @@ _HTTP_CATEGORIES = [
     ModelOverloadedError,
     ModelServerError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 ]
+
+
+@pytest.mark.parametrize('category', [ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError])
+def test_rejection_subcategories_are_rejected_requests(category: type[ModelRequestRejectedError]):
+    """An overflow, a rejected credential and an unknown model are rejected requests, with or without a status."""
+    assert isinstance(category('gpt-4', 'rejected'), ModelRequestRejectedError)
+    http_error = ModelHTTPError.for_category(category, status_code=400, model_name='gpt-4')
+    assert isinstance(http_error, ModelRequestRejectedError) and isinstance(http_error, category)
 
 
 @pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)

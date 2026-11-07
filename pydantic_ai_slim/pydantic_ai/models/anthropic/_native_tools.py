@@ -2,8 +2,9 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -56,12 +57,15 @@ from pydantic import TypeAdapter
 
 from ... import _utils
 from ...messages import (
+    ModelMessage,
+    ModelRequest,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     ToolReturnPart,
     ToolSearchReturnPart,
+    UserPromptPart,
 )
 from ...native_tools import AdvisorTool, CodeExecutionTool, MCPServerTool, WebFetchTool, WebSearchTool
 from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch
@@ -88,6 +92,54 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 
+_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
+"""Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
+
+_CODE_EXECUTION_TOOL_TYPES = frozenset(
+    f'code_execution_{version}' for version in get_args(AnthropicCodeExecutionToolVersion)
+)
+
+
+def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
+    """Whether Anthropic gives a request with these tools a code execution container.
+
+    `CodeExecutionTool` does, and so does a tool that code execution may call: one whose `allowed_callers` names a
+    code execution caller, on any version, or one of `_CODE_EXECUTING_WEB_TOOL_TYPES` sent without `allowed_callers`.
+    Tools are matched by wire type, since a function tool can have any name.
+    """
+    return any(
+        tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
+        or (
+            any(caller != 'direct' for caller in tool['allowed_callers'])
+            if 'allowed_callers' in tool
+            else tool.get('type') in _CODE_EXECUTING_WEB_TOOL_TYPES
+        )
+        for tool in tools
+    )
+
+
+def open_turn_has_code_execution(messages: Sequence[ModelMessage], provider_name: str) -> bool:
+    """Whether the open user turn has already used code execution on this provider.
+
+    The open turn is everything after the last request with a user prompt: the responses to it, and the tool results
+    sent back in between. A response used code execution when it has a code execution call, under any of its tool
+    names, or a container. Its container and pending calls stay in the turn until the next user prompt.
+    """
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            if any(isinstance(part, UserPromptPart) for part in message.parts):
+                return False
+        elif message.provider_name == provider_name and (
+            (message.provider_details is not None and message.provider_details.get('container_id'))
+            or any(
+                isinstance(part, NativeToolCallPart) and part.tool_name in _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES
+                for part in message.parts
+            )
+        ):
+            return True
+    return False
+
+
 def build_custom_tool_search_replay_blocks(
     request_part: ToolReturnPart, deferred_tools_active: bool, declared_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
@@ -97,8 +149,10 @@ def build_custom_tool_search_replay_blocks(
     off `part.content` (the local `search_tools` return shape) and unpacks it into:
 
     * `tool_references`: matched tools, ready to be wrapped in `BetaToolReferenceBlockParam`s.
-    * `empty_message`: fallback text to send when no matches were found (Anthropic
-      rejects an empty `tool_result` content list).
+    * `empty_message`: fallback text to send when there is no reference to send (Anthropic
+      rejects an empty `tool_result` content list): the typed return's own message when the
+      search matched nothing, or a line naming the matches when none of them is declared on
+      this request.
 
     Returns `(None, None)` when the current request withholds no tool schemas — nothing for a
     reference to unhide — or when this isn't a typed `search_tools` return; the caller then falls
@@ -122,7 +176,13 @@ def build_custom_tool_search_replay_blocks(
         for match in request_part.discovered_tools
         if match['name'] in declared_tool_names
     ]
-    return refs, request_part.message
+    if refs or not request_part.discovered_tools:
+        return refs, request_part.message
+    # The search matched, but none of its matches is declared on this request: the tool was folded
+    # into a code-execution tool, or its toolset failed to produce it this turn. The toolset's
+    # no-matches text would tell the model the search found nothing, so name what it found instead.
+    names = ', '.join(match['name'] for match in request_part.discovered_tools)
+    return refs, f'Discovered tools: {names}. None is declared as a top-level tool in this request.'
 
 
 def build_code_execution_tool_result_block(

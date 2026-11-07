@@ -99,13 +99,19 @@ class CerebrasModel(OpenAIChatModel):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> Any:
-        """Pass through an explicit `openai_reasoning_effort` (including the `'none'` injected to disable reasoning)."""
+        """Pass through an explicit `openai_reasoning_effort` (including the `'none'` injected to disable reasoning).
+
+        Unified thinking levels are only sent to models whose profile pins the efforts they accept.
+        """
         from openai import omit
 
         # `thinking=False` is injected as `openai_reasoning_effort` in `_cerebras_settings_to_openai_settings`;
-        # other unified thinking levels are omitted because Cerebras reasons by default.
+        # other unified thinking levels are omitted because Cerebras reasons by default, except on models that
+        # accept only some efforts (Kimi K3, GLM-5.3), where they resolve to the nearest accepted one.
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
+        if 'openai_reasoning_efforts' in self.profile:
+            return super()._translate_thinking(model_settings, model_request_parameters)
         return omit
 
     @override
@@ -148,8 +154,8 @@ def _cerebras_settings_to_openai_settings(
         model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
         replays_thinking_as_tags: Whether prior reasoning is replayed as `<think>` content (zai/GLM).
             When set, `clear_thinking` defaults to `False` so Cerebras doesn't strip the replayed reasoning.
-        thinking_always_enabled: Whether the model can't turn reasoning off (gpt-oss), so `thinking=False` sends
-            its lowest effort instead of `'none'`.
+        thinking_always_enabled: Whether the model can't turn reasoning off (gpt-oss, Kimi K3, GLM-5.3), so
+            `thinking=False` sends its lowest effort instead of `'none'`.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -185,7 +191,8 @@ def _cerebras_settings_to_openai_settings(
         # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration
         openai_settings['openai_reasoning_effort'] = 'none'
     elif model_request_parameters.thinking is False and 'openai_reasoning_effort' not in openai_settings:
-        # gpt-oss can't turn reasoning off and documents `low`/`medium`/`high`, so it reasons as little as it can.
+        # gpt-oss, Kimi K3 and GLM-5.3 can't turn reasoning off, and `low` is the lowest effort each documents,
+        # so they reason as little as they can.
         # https://inference-docs.cerebras.ai/capabilities/reasoning
         openai_settings['openai_reasoning_effort'] = 'low'
     return openai_settings

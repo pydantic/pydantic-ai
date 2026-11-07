@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
     InstructionBaselinePart,
+    InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -54,6 +55,7 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,
     ToolReturnPart,
@@ -89,6 +91,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
 from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -455,18 +458,18 @@ _CASES = [
         ),
     ),
     ModelCase(
-        model_name='anthropic:claude-sonnet-4-5',
+        model_name='anthropic:claude-sonnet-5-5',
         marks=[
             pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
         ],
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': "['exchange rate', 'currency conversion', 'USD EUR', 'forex']",
+                    'keywords': "['exchange rate', 'currency conversion', 'USD EUR forex']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': "['stock price', 'AAPL', 'market data', 'ticker', 'equity price']",
+                    'keywords': "['stock price', 'stock quote', 'ticker']",
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {
@@ -474,7 +477,7 @@ _CASES = [
                     'tool_calls': [],
                 },
                 'no_matching_tool': {
-                    'keywords': "['book flight', 'flight booking', 'airline reservation', 'travel booking']",
+                    'keywords': "['book flight', 'flight booking', 'airline reservation', 'search flights']",
                     'tool_calls': ['search_tools'],
                 },
             }
@@ -1798,7 +1801,7 @@ async def test_anthropic_native_tool_search_round_trip(
     """
     pytest.importorskip('anthropic')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
@@ -1879,7 +1882,7 @@ async def test_anthropic_custom_callable_round_trip(
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         model=model,
         capabilities=[ToolSearch(strategy=match_exchange_rate)],
@@ -1960,7 +1963,7 @@ async def test_anthropic_promotes_local_search_history_round_trip(
     """
     pytest.importorskip('anthropic')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
@@ -2121,7 +2124,7 @@ async def test_anthropic_native_tool_search_regex_strategy(
     """
     pytest.importorskip('anthropic')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
 
     @agent.tool_plain(defer_loading=True)
@@ -3006,7 +3009,7 @@ async def test_live_tool_search_handoff_anthropic_to_openai(
 ) -> None:
     """A real Anthropic native search remains callable after replay on OpenAI."""
     first_agent = _cross_provider_tool_search_agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     )
     first = await first_agent.run('What is the USD/EUR exchange rate?')
     assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
@@ -3041,7 +3044,7 @@ async def test_live_tool_search_handoff_openai_to_anthropic(
     assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
 
     second_agent = _cross_provider_tool_search_agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     )
     second = await second_agent.run(
         'Now call get_exchange_rate for GBP/USD without searching again.',
@@ -3064,7 +3067,7 @@ async def test_live_tool_search_handoff_anthropic_openai_anthropic(
 ) -> None:
     """Twice-travelled real history remains accepted and callable on its origin vendor."""
     first_agent = _cross_provider_tool_search_agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     )
     first = await first_agent.run('What is the USD/EUR exchange rate?')
     assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
@@ -3079,7 +3082,7 @@ async def test_live_tool_search_handoff_anthropic_openai_anthropic(
     _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
 
     third_agent = _cross_provider_tool_search_agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     )
     third = await third_agent.run(
         'Now call get_exchange_rate for CAD/USD without searching again.',
@@ -3105,8 +3108,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
         for part in msg.parts:
-            if isinstance(part, InstructionBaselinePart):
-                # Records the instructions the request was sent, not a step of the conversation.
+            if isinstance(part, InstructionBaselinePart | ThinkingPart):
+                # The instructions the request was sent, or the model's reasoning: neither is a step of the story.
                 continue
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
@@ -3116,6 +3119,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
+            elif isinstance(part, InstructionDeltaPart):
+                part_info = {'type': 'instruction_delta', 'id': str(part.id), 'content': part.content}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -3145,7 +3150,7 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
 _TraceShape = list[tuple[str, list[dict[str, Any]]]]
 
 _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
-    ('anthropic:claude-sonnet-4-5', 'openai-responses:gpt-5.4'): snapshot(
+    ('anthropic:claude-sonnet-5-5', 'openai-responses:gpt-5.4'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
             ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
@@ -3154,9 +3159,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3176,7 +3186,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
-    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-4-5'): snapshot(
+    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-5-5'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
             ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
@@ -3185,9 +3195,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3216,9 +3231,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3247,9 +3267,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3269,7 +3294,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
-    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-5-5'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
             ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
@@ -3278,9 +3303,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3306,7 +3336,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
 # Resume-turn structure also varies per provider — some prepend a text part before the
 # tool_call. Keyed like `_FIRST_TURN_EXPECTED` so each row's record stays distinct.
 _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
-    ('anthropic:claude-sonnet-4-5', 'openai-responses:gpt-5.4'): snapshot(
+    ('anthropic:claude-sonnet-5-5', 'openai-responses:gpt-5.4'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
             (
@@ -3326,7 +3356,7 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
-    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-4-5'): snapshot(
+    ('openai-responses:gpt-5.4', 'anthropic:claude-sonnet-5-5'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
             (
@@ -3386,7 +3416,7 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
-    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-5-5'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
             (
@@ -3501,7 +3531,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for msg in messages:
             part_trace: list[dict[str, Any]] = []
             for part in msg.parts:
-                if isinstance(part, InstructionBaselinePart):
+                if isinstance(part, InstructionBaselinePart | ThinkingPart):
                     continue
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
@@ -3514,6 +3544,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 # the whole point of the part. If one ever shows up here again the `else` below names it.
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
+                elif isinstance(part, InstructionDeltaPart):
+                    part_info = {'type': 'instruction_delta', 'id': str(part.id), 'content': part.content}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -3529,7 +3561,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         return trace
 
     anthropic_agent: Agent[None, str] = Agent(
-        model='anthropic:claude-sonnet-4-5',
+        model='anthropic:claude-sonnet-5-5',
         capabilities=[make_refunds_cap()],
         model_settings=AnthropicModelSettings(anthropic_cache=True),
     )
@@ -3550,9 +3582,14 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3617,11 +3654,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             ('ModelResponse', [{'type': 'text'}]),
         ]
     )
-    assert google_result.output == snapshot("""\
-For order-456, the policy is the same: a refund is allowed for 30 days after the purchase date.
-
-Would you like to proceed with a refund for either of these orders?\
-""")
+    assert google_result.output == snapshot(
+        'Order-456 also qualifies for a refund within a 30-day window from the date of purchase.'
+    )
 
 
 class _TransientlyFailingModel(WrapperModel):
@@ -3673,7 +3708,7 @@ async def test_live_fallback_failover_capability_load_and_recovery(
         return f'{order_id}: refund allowed for 30 days'
 
     primary = _TransientlyFailingModel(
-        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)), failures=1
+        AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)), failures=1
     )
     fallback = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(
@@ -4808,7 +4843,7 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
     deferred tool by its plain name, and the agent loop runs to a final text response."""
     pytest.importorskip('anthropic')
 
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
@@ -7809,6 +7844,50 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
     assert refusals and 'search for it first' in refusals[0]
 
 
+async def test_a_summary_beside_a_search_result_keeps_the_discovery_through_normalization() -> None:
+    """Normalizing history merges the summary's request with the next and hoists the search result ahead of
+    the summary, as providers require. The window opens at the request turn, so that reordering leaves the
+    discovery, and the deferred tool stays advertised and callable."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='discover tools')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['refund']}, tool_call_id='s1')]),
+        ModelRequest(
+            parts=[
+                CompactionPart(content='Summary: the user wants a refund.'),
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'issue_refund'}]}, tool_call_id='s1'),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content='refund now')]),
+    ]
+    normalized = _clean_message_history(history)
+    assert [type(part) for part in normalized[-1].parts] == [ToolSearchReturnPart, CompactionPart, UserPromptPart]
+    assert parse_discovered_tools(normalized) == parse_discovered_tools(history) == {'issue_refund'}
+
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append([tool.name for tool in info.function_tools])
+        if executed:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
+    )
+    await agent.run(message_history=history)
+
+    assert 'issue_refund' in advertised[0]
+    assert executed == ['issue_refund']
+
+
 async def test_delta_in_history_does_not_reveal_a_capability_tool_without_a_load(allow_model_requests: None):
     """A delta naming a capability-owned tool is dropped unless the history also loads its capability.
 
@@ -8193,6 +8272,7 @@ async def _keyword_search_results(
     return [part.content for part in completed(result.all_messages())]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 @pytest.mark.parametrize(
     'second,expected',
     [
@@ -8210,6 +8290,7 @@ async def test_keyword_search_sees_corpus_changes_within_a_run(
     assert results == [{'discovered_tools': [{'name': 'one'}]}, {'discovered_tools': [{'name': expected}]}]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_keyword_search_ties_follow_current_corpus_order() -> None:
     first = [('a', 'alpha'), ('b', 'alpha'), ('c', 'alpha')]
     results = await _keyword_search_results([first, first[::-1]], [['alpha'], ['alpha']], max_results=1)
@@ -8221,3 +8302,60 @@ async def test_keyword_search_max_results_slicing(max_results: int, expected: li
     corpus = [('z', 'alpha beta'), ('a', 'alpha'), ('b', 'alpha beta'), ('k', 'unmatched')]
     results = await _keyword_search_results([corpus], [['alpha', 'beta']], max_results=max_results)
     assert results == [{'discovered_tools': [{'name': name} for name in expected]}]
+
+
+async def test_anthropic_replays_search_whose_matches_are_no_longer_declared(allow_model_requests: None):
+    """A `search_tools` return whose matches are all missing from this request's `tools` names them.
+
+    Anthropic rejects a `tool_reference` to a tool the request doesn't declare, so the replay filters
+    the references against the declared tools. When that removes every match (here the toolset that
+    provided `slack_send` didn't produce it on this run), the search still found something: replaying
+    the toolset's no-matches text would tell the model it found nothing and send it searching again.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/10518
+    """
+    pytest.importorskip('anthropic')
+
+    response = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def gmail_search(query: str) -> str:  # pragma: no cover
+        return query
+
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Send a Slack message'),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['slack']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'slack_send'}]}, tool_call_id='search-1')
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Which channel?')]),
+    ]
+    await agent.run('#general', message_history=history)
+
+    [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    tool_results = [
+        block
+        for msg in kwargs['messages']
+        for block in cast('list[dict[str, Any]]', msg['content'])
+        if block.get('type') == 'tool_result'
+    ]
+    assert tool_results == snapshot(
+        [
+            {
+                'tool_use_id': 'search-1',
+                'type': 'tool_result',
+                'content': [
+                    {
+                        'text': 'Discovered tools: slack_send. None is declared as a top-level tool in this request.',
+                        'type': 'text',
+                    }
+                ],
+                'is_error': False,
+            }
+        ]
+    )

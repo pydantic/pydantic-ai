@@ -74,7 +74,7 @@ Whether a file can travel inside the tool result depends on the model **and** th
 
 - **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
 - **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set).
-- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on Bedrock, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
+- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on OpenAI's models without `audio` in their name, audio on Bedrock and video on Bedrock outside Nova, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
 
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
@@ -350,26 +350,28 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
 
-Here's an example that makes all tools strict if the model is an OpenAI model:
+Here's an example that makes all tools strict if the model's [profile](models/overview.md#inspecting-a-models-profile) says it supports JSON schema output, with [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output]. That flag describes native structured output, not strict tool definitions; it stands in here because there's no provider-agnostic strict-tools flag:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 
-async def turn_on_strict_if_openai(
+async def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
 
 test_model = TestModel()
-agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_supported)])
 
 
 @agent.tool_plain
@@ -381,11 +383,10 @@ agent.run_sync('testing...')
 assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
-# Set the system attribute of the test_model to 'openai'
-test_model._system = 'openai'
-
-agent.run_sync('testing with openai...')
-assert test_model.last_model_request_parameters.function_tools[0].strict
+structured_model = TestModel(profile=ModelProfile(supports_json_schema_output=True))
+agent.run_sync('testing with JSON schema output...', model=structured_model)
+assert structured_model.last_model_request_parameters is not None
+assert structured_model.last_model_request_parameters.function_tools[0].strict
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -577,7 +578,7 @@ Whether a model can be forced to call a tool is a property of the model, set on 
 
 Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
 
-- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses and OpenAI Chat through `OpenAIProvider` (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
 The table below covers the cases where Pydantic AI must change the tools array client-side and therefore breaks cache:
@@ -585,7 +586,7 @@ The table below covers the cases where Pydantic AI must change the tools array c
 | Provider | Cache-breaking case |
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
-| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Chat | Only where `openai_chat_supports_allowed_tools` is off, as for OpenAI-compatible providers other than [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]: `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing. `OpenAIProvider` (including through a custom `base_url`) handles these cases natively with `allowed_tools`; a compatible server that rejects or ignores it opts out with `openai_chat_supports_allowed_tools=False` in the model's [profile](models/overview.md#models-and-providers) |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing, OR `'none'` while the history has no tool calls |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |

@@ -8,16 +8,20 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash`. Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review. The `OPENCODE_API_KEY` secret must be a Console key for the Go workspace.
 
-The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present immediately before Claude starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
+If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
+Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
+Cancellation keeps ordinary-label cleanup and ends without a failure notice. Report actual review or publisher failures.
+
+The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present before each reviewer starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
 
 Removing the approval label cancels in-flight work on a best-effort basis; cancellation may not stop a reviewer that has already started. Both review labels share the per-PR concurrency group, so removing the approval label can also cancel an ordinary review, and reapplying it starts another workflow run that uses that shared slot.
 
-Other label removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
+Unrelated label additions and removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -26,6 +30,11 @@ previous label-as-switch design left a window in which a push got *neither* revi
 
 `Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
 It never owns the merge-gate verdict.
+
+A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
+variable skips this review, and the skipped check reports as success. Separate branch names with
+commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
+left in the list also exempts any later branch with that name, compared case-insensitively.
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
@@ -52,7 +61,16 @@ PR has closed or moved to a new head. The engine's gh-aw harness must exit on a 
 (`hasNoopInSafeOutputs`). Any other engine harness, including
 `src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
 spends a full review. The `noop` does not skip the `detection` job, which still runs
-one threat-detection pass outside the agent slot.
+one threat-detection pass outside the agent slot. The shim withholds `noop` from the
+`CI Review` model, so this step writes the run's only `noop`. Keep `safe-outputs.noop`
+enabled for it.
+
+Both review workflows require a formal review from this run on the reviewed head.
+Their shim completion validator rejects placeholder noops and missing-data signals alone.
+After safe outputs, the [host verifier](shared/review-publication.md) checks GitHub for the exact workflow marker, run URL and head.
+A missing publication fails the workflow and marks the current PR head with its failure label.
+A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
+UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, and
 allows one `engine` across a workflow and its imports. `CI Review` therefore inlines the
@@ -177,6 +195,56 @@ Two consequences of the trigger, both easy to get backwards:
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
 
+# PR metadata gates enforce the merge bar
+
+`pr-gates.yml` checks that a PR adding an API compatibility waiver has the `compatibility impact` label.
+It runs the PR's copy of `pr_gates.py` with a read-only token. The separate `pr-review-gates.yml`
+workflow runs default-branch `review_gates.py` with permission to publish commit statuses, so it
+never executes contribution code with a write token. The workflows have distinct job names because
+GitHub matches required checks by job name, even across workflows and event types.
+
+The review status requires a clean douwebot approval for M/L/XL.
+The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
+lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
+Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
+members because the review requirements are enforced before admission.
+
+A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
+review-body findings on that head, including optional or resolved findings. A clean retry may
+supersede an empty incomplete review, but cannot erase earlier findings. PR Bots uses a read-only
+reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
+receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
+Maintainer-authorized protected-configuration reviews satisfy the same rule.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
+
+`pr-review-gates-events.yml` observes reviews and inline-comment changes with a read-only token,
+including on forks. Its completion wakes `PR Review Gates`, which also runs on PR edits, pushes,
+reopening, label changes and PR Bots completion. The latter covers writes by `GITHUB_TOKEN`, which
+cannot trigger review or label workflows. The publisher binds each wake-up to the unique open PR
+GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
+or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
+
+The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
+those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
+Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
+incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
+failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
+default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
+branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
+
+# Code owners approve dependency and CI config changes
+
+`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
+`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
+`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
+dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
+approval current.
+
+- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
+  to someone else's PR can still approve that push.
+- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
+  current owners.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
@@ -190,6 +258,24 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
+
+## Weekly agent instructions audit
+
+`pydantic-ai-weekly-ce-audit.md` audits tracked context engineering (CE) Markdown weekly and on manual dispatch, proposing at most one focused trimming PR or a noop.
+An existing workflow PR stops primary inference; threat detection remains enabled.
+
+`.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and rejects incomplete reported coverage or edits outside existing canonical instruction Markdown.
+Workflow sources, imports, distributed package instructions and the packaged gh-aw definition remain report-only.
+Keep candidate edits in a separate worktree and the reviewer checkout at the immutable policy base.
+
+A fresh read-only Task must assess the actual diff, template exemption and scope of cited maintainer agreement.
+Typos, broken links and small documentation improvements may omit an issue; nontrivial changes need an existing aligned issue assigned to the workflow actor, or noop.
+For non-exempt proposals, host validation checks frozen issue identity, open state, assignment, cited maintainer authority and closing reference.
+It also checks staged evidence and binds the review to the candidate, task and PR metadata; semantic classification belongs to the mandatory reviewer.
+Local Task evidence is an execution check, not attestation against a compromised coordinator.
+
+The separate PR publication job uses the existing Docs app and retains protected-file review.
+The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; use the compilation rules above when changing the workflow source.
 
 ## Shared Z.AI account limits
 
@@ -226,8 +312,8 @@ The provider-health job checks out the default branch and runs outside the agent
 container. It writes a decision summary and the `provider-health` artifact for every
 decision. A blocked gate must skip inference without emitting a passing review or other
 fabricated agent result. The non-model provider-health monitor owns incident issue
-creation and recovery; do not enable gh-aw's generic failure-as-issue reporting for these
-workflows.
+creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
+failed-job reporting (`report-failed-jobs`) for these workflows.
 
 The agent job waits for its engine concurrency slot after `provider_health` decides,
 sometimes for hours. Incidents and quota exhaustion from that wait must still stop
@@ -340,16 +426,18 @@ the agent and model.
 
 For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
 Manual dispatch does not provide `github.event.pull_request.number`, which this
-workflow requires to run its agent and publish results. After the corrected workflow
-is deployed, complete the existing UI Security review Environment approval for the
-fresh PR run.
+workflow requires to run its agent and publish results.
 
-For workflow and task incidents, inspect the affected host stage and output, link that
-evidence to the incident, and close it manually. A green run that skips the model or
-affected stage is not proof.
-Resolve closed-PR tasks as retired only after API verification and representative
-workflow recovery. Record why each task is retired. Do not describe retired tasks as
-same-target recoveries.
+For workflow incidents, and task incidents the hourly run does not retire, inspect the
+affected host stage and output, link that evidence to the incident, and close it manually.
+A green run that skips the model or affected stage is not proof.
+
+The hourly scheduled run retires a task incident that can no longer block a run.
+That is the case when the pull request is merged or closed, when its head moved off the SHA in
+the key, or when the manual dispatch run in the key has concluded. The run comments the state
+it read once, then closes the incident. A retired incident records no recovery. Do not
+describe a retired task as a same-target recovery. Close a task incident manually when its
+key names neither a pull request head nor a manual dispatch run, such as a scheduled run's key.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
@@ -361,7 +449,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |

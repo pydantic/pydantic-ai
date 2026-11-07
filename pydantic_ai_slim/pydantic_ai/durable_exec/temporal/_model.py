@@ -16,7 +16,7 @@ from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import repair_messages
+from pydantic_ai.messages import ModelResponsePart, repair_messages
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     Model,
@@ -25,6 +25,7 @@ from pydantic_ai.models import (
     infer_model_profile,
     parse_model_id,
 )
+from pydantic_ai.models._request_timeout import RequestDeadline, open_durable_unit_stream
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
@@ -32,7 +33,8 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .._utils import managed_model_scope
+from .._operation_backend import durable_unit_scope
+from .._utils import managed_model_scope, reject_serving_wrapper
 from ._activity_execution import execute_activity
 from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
@@ -114,15 +116,16 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
-                messages = self._reprepare_messages(params, active_model)
-                return await active_model.request(
-                    messages,
-                    cast(ModelSettings | None, params.model_settings),
-                    params.model_request_parameters,
-                )
+            with durable_unit_scope():
+                async with managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as active_model:
+                    messages = self._reprepare_messages(params, active_model)
+                    return await active_model.request(
+                        messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                    )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
@@ -144,20 +147,22 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
-                messages = self._reprepare_messages(params, active_model)
-                async with active_model.request_stream(
-                    messages,
-                    cast(ModelSettings | None, params.model_settings),
-                    params.model_request_parameters,
-                    run_context,
-                ) as streamed_response:
-                    await self.event_stream_handler(run_context, streamed_response)
+            with durable_unit_scope():
+                async with managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as active_model:
+                    messages = self._reprepare_messages(params, active_model)
+                    async with open_durable_unit_stream(
+                        active_model,
+                        messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                        run_context,
+                    ) as streamed_response:
+                        await self.event_stream_handler(run_context, streamed_response)
 
-                    async for _ in streamed_response:
-                        pass
+                        async for _ in streamed_response:
+                            pass
             return streamed_response.get()
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
@@ -208,6 +213,14 @@ class TemporalModel(WrapperModel):
 
         Activities send the requests from the worker's event loop, not the workflow's.
         """
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # In a workflow, the activity consumes the stream before this side gets it, so the activity enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        return super()._start_request_deadline(model_settings, stream=stream and not workflow.in_workflow())
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        return reject_serving_wrapper(self, wrap, 'TemporalAgent', 'TemporalDurability')
 
     async def request(
         self,
@@ -415,6 +428,39 @@ class TemporalModel(WrapperModel):
             provider_name, _ = parse_model_id(current)
             return provider_name or self.wrapped.system
         return current.system
+
+    @property
+    def canonical_system(self) -> str:
+        """The currently active model's, like `system`; an unregistered model ID's provider name."""
+        current = self._current_model()
+        return self.system if isinstance(current, str) else current.canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """The currently active model's, like `system`; none for an unregistered model ID."""
+        current = self._current_model()
+        return frozenset() if isinstance(current, str) else current.compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, so judge by the provider name in the ID, as `Model` does.
+            return models.Model.accepts_stateless_artifacts(self, response, part)
+        return current.accepts_stateless_artifacts(response, part)
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, and the wrapped model's provider isn't the one the ID selects: judge by name alone,
+            # as `Model` does for a model without a provider.
+            return response.provider_name == self.system
+        return current.accepts_server_state(response)
+
+    def _model_for_response(self, response: ModelResponse) -> models.Model:
+        current = self._current_model()
+        return self if isinstance(current, str) else current._model_for_response(response)
 
     @property
     def model_id(self) -> str:

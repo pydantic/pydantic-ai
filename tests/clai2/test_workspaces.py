@@ -9,10 +9,11 @@ from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_clai2._app import DEFAULT_PLUGINS
+from pydantic_clai2.app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.workspaces import (
     USAGE,
     Workspaces,
@@ -281,7 +282,7 @@ async def test_destroy_refuses_a_folder_outside_the_workspaces_root(directory: P
             await workspaces.destroy(workspace.id)
         assert repository.exists() and workspace.path.exists()
     workspaces.registry.save(workspace)
-    remove_worktree(path=workspace.path)
+    await anyio.to_thread.run_sync(lambda: remove_worktree(path=workspace.path))
     await workspaces.destroy(workspace.id)
     assert await workspaces.listing() == [], 'a checkout already gone is only forgotten'
 

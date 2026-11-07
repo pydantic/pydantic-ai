@@ -192,11 +192,11 @@ class SessionTracing(AbstractCapability[None]):
         with parent_span(self.root()):
             try:
                 return await handler()
-            except Exception as error:
+            except Exception as exc:
                 # Every enabled copy of the plugin looks the error up at turn end, but `combine` keeps only the last
                 # copy's `wrap_run`, so this one tells them all.
                 for tracing in _live_tracings():
-                    tracing._run_errors.append(error)
+                    tracing._run_errors.append(exc)
                 raise
 
 

@@ -6,7 +6,7 @@ import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal, assert_never, overload
 
 import anyio
@@ -20,24 +20,32 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     RetryFeedbackPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
+    ToolReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
     _drop_superseded_request_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
+    _project_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _render_append_blocks,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_contexts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
@@ -45,7 +53,7 @@ from ..models import (
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
-from .codec import RealtimeSessionInput
+from .codec import TextContext
 from .settings import ReconnectPolicy
 
 
@@ -64,11 +72,45 @@ def session_instructions(messages: Sequence[ModelMessage], model_request_paramet
     The standing system prompt the first request opens with comes first, then the resolved
     instructions, the order a standard run's providers send them in. `ModelRequest.instructions`
     recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
+
+    Both are rendered as a standard model renders them: append-mode blocks and appending dynamic system
+    prompts as tagged `<context>` elements, so the changes a session delivers later can name them.
     """
-    blocks = [part.content for part in _standing_system_prompt(messages) if part.content]
-    if instructions := get_instructions(messages, model_request_parameters):
+    standing = _standing_system_prompt(messages)
+    if any(part.context_id is not None for part in standing):
+        (opening,) = _render_system_prompt_contexts(
+            [ModelRequest(parts=[*standing])],
+            inline_system=True,
+            prefix_states_rule=bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
+        )
+        standing = [part for part in opening.parts if isinstance(part, SystemPromptPart)]
+    blocks = [part.content for part in standing if part.content]
+    if instructions := get_instructions(messages, _render_append_blocks(model_request_parameters)):
         blocks.append(instructions)
     return '\n\n'.join(blocks)
+
+
+def render_instruction_change(
+    history: Sequence[ModelMessage],
+    request: ModelRequest,
+    *,
+    prefix: Sequence[InstructionPart],
+    inline_system: bool,
+) -> str:
+    """The text a realtime session delivers a recorded instruction change as, rendered as a standard model renders it.
+
+    `request` records the change (instruction deltas, or statements of appending dynamic system prompts) after
+    `history`, and `prefix` are the instruction parts the session was opened with. Rendered the same every time, so
+    a reconnect replays exactly what was sent.
+    """
+    messages = _project_instruction_state([*history, request], inline_system=inline_system, prefix=None)
+    messages = _render_system_prompt_contexts(
+        messages,
+        inline_system=inline_system,
+        prefix_states_rule=bool(_tagged_append_parts(prefix)),
+    )
+    rendered = messages[-1]
+    return '\n\n'.join(part.content for part in rendered.parts if isinstance(part, SystemPromptPart) and part.content)
 
 
 def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -84,6 +126,30 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     standing_prompt_count = len(_standing_system_prompt(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
     return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+
+
+def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
+    """Turn the system prompts the first request of a session's own history opens with into `<system>`-tagged user text.
+
+    For a session that opened with no request of its own: whatever it then recorded first was sent mid-session, such
+    as `send(SystemPromptPart(...))` before anything else, not the standing system prompt the connection was configured
+    with. Its replay keeps the instructions it opened with and leaves the standing prompt to them, so a prompt taken
+    for it would be lost; as `<system>`-tagged text it is replayed where it was sent, as a later one is.
+    """
+    index = next((i for i, message in enumerate(messages) if isinstance(message, ModelRequest)), None)
+    if index is None:
+        return messages
+    first_request = messages[index]
+    assert isinstance(first_request, ModelRequest)
+    if not (standing_count := _standing_system_prompt_count(first_request)):
+        return messages
+    parts = [
+        UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
+        if position < standing_count and isinstance(part, SystemPromptPart)
+        else part
+        for position, part in enumerate(first_request.parts)
+    ]
+    return [*messages[:index], replace(first_request, parts=parts), *messages[index + 1 :]]
 
 
 def resolve_advertised_tools(
@@ -104,14 +170,52 @@ def resolve_advertised_tools(
     return tools, resolved
 
 
-class SystemPromptText(str):
-    """`<system>`-tagged text a session delivers for system-prompt parts alone (`enqueue(SystemPromptPart(...))`).
+def reject_forced_tool_choice(tool_choice: ResolvedToolChoice | None, message: str) -> None:
+    """Raise `UserError(message)` for a resolved `tool_choice` that forces a tool call.
 
-    It goes out as a `str` text turn like any other, so a connection that doesn't look for it delivers it as one; one
-    whose protocol says who wrote what can deliver it as the operator's rather than the user's.
+    No realtime session can honor one: a provider that takes a tool choice applies it to every response,
+    including the one after a tool result, so the model could never answer, and one that takes none
+    can't express it. `message` gives the provider's reason and what to use instead.
+    """
+    if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
+        raise UserError(message)
+
+
+class SystemPromptText(str):
+    """A mid-session system prompt sent as a text turn: `send(SystemPromptPart(...))`, or `enqueue()` of system prompts alone.
+
+    Its value is the prompt `<system>`-tagged, so a connection that doesn't look for it delivers it as user text that
+    says where it came from; one whose protocol has a channel for the operator's own text delivers `system_prompt`
+    there instead.
     """
 
-    __slots__ = ()
+    system_prompt: str
+    """The prompt as written, without the tags."""
+
+    def __new__(cls, system_prompt: str) -> SystemPromptText:
+        text = super().__new__(cls, wrap(SYSTEM_TAG, system_prompt))
+        text.system_prompt = system_prompt
+        return text
+
+
+@dataclass
+class SystemPromptContext(TextContext):
+    """A mid-session system prompt added as context, without asking for a response: `send(SystemPromptPart(...), respond=False)`.
+
+    Like `SystemPromptText`, `text` is the prompt `<system>`-tagged, for a connection that delivers it as any other
+    context, and `system_prompt` the prompt as written, for one with a channel for the operator's own text.
+    """
+
+    system_prompt: str
+
+
+@dataclass
+class InstructionChangeContext(SystemPromptContext):
+    """A change to the session's instructions, added as context on the operator's channel without asking for a response.
+
+    Delivered as any other `SystemPromptContext`, except by a connection whose instructions go somewhere other than the
+    conversation, such as GPT-Live's delegation backend.
+    """
 
 
 DEFAULT_MAX_RECONNECTS = 50
@@ -143,10 +247,10 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
 
 async def seed_user_content(
     *, part: UserPromptPart, provider_name: str, supports_images: bool
-) -> list[RealtimeSessionInput]:
+) -> list[str | BinaryContent]:
     """Normalize a user prompt to replayable text and image content."""
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-    result: list[RealtimeSessionInput] = []
+    result: list[str | BinaryContent] = []
     for item in content:
         if isinstance(item, str):
             result.append(item)
@@ -209,10 +313,10 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
 
 
 @overload
-def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> RealtimeSessionInput: ...
+def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> str | BinaryContent: ...
 
 
-def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> RealtimeSessionInput:
+def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> str | BinaryContent:
     """Return replayable speech content, preferring its transcript."""
     if part.transcript is not None:
         return part.transcript
@@ -360,3 +464,40 @@ def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tup
         return text, delta(text, text)
     # A revision: nothing was *added*, so only the corrected whole is reported.
     return text, delta(text, '')
+
+
+# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
+# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
+# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
+# keeps the turn as the `SpeechPart` it was.
+_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
+
+
+def without_media(message: ModelMessage) -> ModelMessage | None:
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
+
+    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
+    a marker saying the user spoke.
+    """
+    if isinstance(message, ModelRequest):
+        request_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if isinstance(part, SpeechPart):
+                if part.transcript:
+                    request_parts.append(replace(part, audio=None))
+                else:
+                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
+                    request_parts.append(replace(part, content=text))
+            elif isinstance(part, ToolReturnPart) and part.files:
+                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
+            else:
+                request_parts.append(part)
+        return replace(message, parts=request_parts) if request_parts else None
+    response_parts = [
+        replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        for part in message.parts
+        if not isinstance(part, FilePart)
+    ]
+    return replace(message, parts=response_parts) if response_parts else None
