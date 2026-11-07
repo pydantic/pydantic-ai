@@ -689,8 +689,8 @@ def _comparable(text: str) -> str:
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
     `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
-    Cyrillic, Greek and small-capital look-alikes of the letters in the system-voice tags folded to Latin. Entities are decoded again
-    after that, as folding can leave one behind, such as from a full-width `&`.
+    Cyrillic, Greek and small-capital look-alikes of the letters in the system-voice tags folded to Latin. Entities are
+    decoded again after that, as folding can leave one behind, such as from a full-width `&`.
     """
     text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
     if text.isascii():
