@@ -47,39 +47,67 @@ async def bash(ctx: RunContext[object], command: str, timeout: int | None = None
     return out
 
 
+def _simple_commands(command: str) -> list[list[str]] | None:
+    """The words of each simple command joined in `command`, or `None` where the shell would read other syntax.
+
+    Quotes and backslashes are followed the way the shell follows them, so a quoted `|` stays an argument. Refused:
+    redirection, subshells, background jobs, command substitution, `$'...'` strings and unterminated quotes.
+    """
+    segments: list[str] = []
+    start = index = 0
+    quote = ''
+    while index < len(command):
+        char = command[index]
+        substitution = char == '`' or command.startswith('$(', index)
+        if char == '\\' and quote != "'":
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ''
+            elif quote == '"' and substitution:
+                return None
+        elif char in '\'"':
+            quote = char
+        elif substitution or command.startswith("$'", index) or char in '()<>':
+            return None
+        elif char in '|&;':
+            end = index
+            while end < len(command) and command[end] in '|&;':
+                end += 1
+            if command[index:end] not in _COMMAND_SEPARATORS:
+                return None
+            segments.append(command[start:index])
+            start = index = end
+            continue
+        index += 1
+    if quote:
+        return None
+    try:
+        return [shlex.split(segment) for segment in [*segments, command[start:]]]
+    except ValueError:
+        return None
+
+
 def scoped_bash(scopes: BashScopes) -> Callable[[RunContext[object], str, int | None], Awaitable[str]]:
     """`bash` limited to commands whose every simple command starts with the tokens of one of `scopes`.
 
     Pipelines and `;`, `&&` and `||` lists are checked command by command. Whatever a prefix cannot scope is
-    refused: newlines, redirection, background jobs, subshells, and command substitution.
+    refused: newlines, redirection, background jobs, subshells, command substitution and `$'...'` strings.
     """
     allowed = ', '.join(f'`{" ".join(scope)}`' for scope in scopes) or 'none'
     refusal = (
         f'error: this workflow allows only Bash commands that start with {allowed}, alone or joined by `|`, `&&`, '
-        '`||` or `;`. Redirection, substitution, subshells, background jobs and multi-line commands are not allowed.'
+        "`||` or `;`. Redirection, substitution, subshells, background jobs, `$'...'` strings and multi-line commands "
+        'are not allowed.'
     )
 
     async def bash_in_scope(ctx: RunContext[object], command: str, timeout: int | None = None) -> str:
-        if '\n' in command or '\r' in command:
+        commands = None if '\n' in command or '\r' in command else _simple_commands(command)
+        if commands is None or not all(
+            any(tuple(words[: len(scope)]) == scope for scope in scopes) for words in commands
+        ):
             return refusal
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        # A `#` mid-word would end the parse, while the shell still runs what follows it.
-        lexer.commenters = ''
-        try:
-            tokens = list(lexer)
-        except ValueError:
-            return refusal
-        segment: list[str] = []
-        for token in [*tokens, ';']:
-            if token in _COMMAND_SEPARATORS:
-                if not any(tuple(segment[: len(scope)]) == scope for scope in scopes):
-                    return refusal
-                segment = []
-            elif (token and token[0] in '();<>|&') or '`' in token or '$(' in token:
-                return refusal
-            else:
-                segment.append(token)
         return await bash(ctx, command, timeout)
 
     return bash_in_scope

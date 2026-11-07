@@ -581,6 +581,9 @@ def _call_bash(
         'gh pr list',
         'cat AGENTS.md; git status',
         'grep -n "a|b" AGENTS.md',
+        "grep '|' AGENTS.md",
+        'grep -n ";" AGENTS.md && git status',
+        "git commit -m 'a && b' -m \\;",
     ],
 )
 def test_scoped_bash_runs_the_commands_its_grants_allow(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -605,6 +608,9 @@ def test_scoped_bash_runs_the_commands_its_grants_allow(command: str, monkeypatc
         '(touch marker)',
         'GIT_DIR=x git status',
         'git status "unterminated',
+        "git status $'x'",
+        'git commit -m "a" "b`touch marker`"',
+        'git status |& cat',
     ],
 )
 def test_scoped_bash_refuses_commands_outside_its_grants(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
