@@ -132,9 +132,6 @@ AGENT_START_HEALTH_CHECK = re.compile(
     r'python3\s+(?P=path)\s+check\b'
 )
 
-# `always()` as a condition term, not negated: the step runs after a failed one.
-RUNS_AFTER_FAILURE = re.compile(r'(?:^|[^!\w\s])\s*always\(\)')
-
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
@@ -1170,31 +1167,33 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
         steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
         gate_env = _as_mapping(next((step.get('env') for step in gate if step.get('id') == 'health'), None))
         execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), len(steps))
-        fetched = next(
+        recheck = next(
             (
-                match['path']
+                (match['path'], step.get('id'))
                 for step in steps[:execution]
                 if (match := AGENT_START_HEALTH_CHECK.search(str(step.get('run', ''))))
             ),
             None,
         )
+        fetched, recheck_id = recheck if recheck is not None else (None, None)
+        # Both steps must run after a failed engine step, the run whose result matters most, once the recheck passed.
+        after_failure = _normalized_condition(f"always() && steps.{recheck_id}.outputs.ready == 'true'")
         after = steps[execution + 1 :]
         record = next((i for i, step in enumerate(after) if step.get('name') == record_name), None)
         record_env = _as_mapping(after[record].get('env')) if record is not None else {}
         # The record step needs the gate's identity to match the agent's result, and the key for its own check.
         identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
-        # Both steps must also run after a failed engine step, the run whose result matters most.
         recorded = (
             record is not None
             and fetched is not None
-            and RUNS_AFTER_FAILURE.search(str(after[record].get('if', ''))) is not None
+            and _normalized_condition(str(after[record].get('if', ''))) == after_failure
             and f'python3 -I {fetched} record ' in str(after[record].get('run', ''))
             and bool(gate_env)
             and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
         )
         uploaded = record is not None and any(
             step.get('name') == upload_name
-            and RUNS_AFTER_FAILURE.search(str(step.get('if', ''))) is not None
+            and _normalized_condition(str(step.get('if', ''))) == after_failure
             and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
             for step in after[record + 1 :]
         )
