@@ -387,12 +387,20 @@ engine:
               )
           # The checkout joins sys.path only for a target that lives there, and after installed packages:
           # the agent imports some dependencies after this point, and a checkout module must not replace one.
-          # A namespace package, which has no origin, can have a portion in the checkout.
-          _top_level = _module_name.partition('.')[0]
-          _imported = sys.modules.get(_top_level)
-          _spec = importlib.util.find_spec(_top_level) if _imported is None else _imported.__spec__
-          if _spec is None or _spec.origin is None:
-              sys.path.append(os.getcwd())
+          # Only the whole module name tells: a regular package anywhere on sys.path takes precedence over
+          # namespace package portions. find_spec raises for an imported module without a spec, such as
+          # __main__, and finding a submodule imports its parent packages, as importing it would.
+          if _module_name not in sys.modules:
+              try:
+                  _spec = importlib.util.find_spec(_module_name)
+              except ModuleNotFoundError as _error:
+                  if _error.name is None or not (
+                      _module_name == _error.name or _module_name.startswith(f'{_error.name}.')
+                  ):
+                      raise
+                  _spec = None
+              if _spec is None:
+                  sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')

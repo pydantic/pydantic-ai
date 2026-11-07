@@ -539,6 +539,33 @@ def test_wrapper_imports_a_custom_agent_once(tmp_path: Path, monkeypatch: pytest
     assert import_log.read_text(encoding='utf-8') == 'imported\n'
 
 
+def test_wrapper_imports_a_target_in_an_installed_namespace_package_without_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A regular package anywhere on `sys.path` takes precedence over namespace portions, even an earlier one."""
+    installed = tmp_path / 'site-packages' / 'gh_aw_test_installed_namespace'
+    installed.mkdir(parents=True)
+    (installed / 'agents.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='installed')\n", encoding='utf-8'
+    )
+    checkout_package = tmp_path / 'workspace' / 'gh_aw_test_installed_namespace'
+    checkout_package.mkdir(parents=True)
+    (checkout_package / '__init__.py').write_text('', encoding='utf-8')
+    invocation = launch(
+        tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'gh_aw_test_installed_namespace.agents:agent'}
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed.parent), *sys.path])
+    for name in ('gh_aw_test_installed_namespace', 'gh_aw_test_installed_namespace.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    module = import_generated_agent(invocation, monkeypatch)
+
+    agent = getattr(module, 'agent')
+    assert isinstance(agent, Agent)
+    assert agent.name == 'installed'
+    assert invocation.cwd not in sys.path
+
+
 def test_wrapper_imports_a_checkout_portion_of_an_installed_namespace_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

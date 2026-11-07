@@ -64,6 +64,25 @@ def test_import_agent_leaves_sys_path_alone_for_an_importable_module(
     assert str(fixture_module) not in sys.path
 
 
+def test_import_agent_leaves_sys_path_alone_for_a_target_in_an_installed_namespace_package(
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A regular package anywhere on `sys.path` takes precedence over namespace portions, even an earlier one."""
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_installed_namespace').mkdir()
+    (installed / 'clai_agent_flag_installed_namespace' / 'agents.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    (fixture_module / 'clai_agent_flag_installed_namespace').mkdir()
+    (fixture_module / 'clai_agent_flag_installed_namespace' / '__init__.py').write_text('')
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('clai_agent_flag_installed_namespace', 'clai_agent_flag_installed_namespace.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    assert isinstance(import_agent('clai_agent_flag_installed_namespace.agents:agent'), Agent)
+    assert str(fixture_module) not in sys.path
+
+
 def test_import_agent_resolves_a_launch_directory_portion_of_an_installed_namespace_package(
     fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
