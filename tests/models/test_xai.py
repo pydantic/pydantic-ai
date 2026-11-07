@@ -58,11 +58,13 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UsageExtractionFailedWarning,
     UserError,
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
     WebSearchTool,
+    usage as usage_module,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -4215,6 +4217,33 @@ def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
         response, model='unknown-model', provider='unknown', provider_url='https://unknown.example.com'
     )
     assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
+
+
+@pytest.mark.parametrize(
+    ('prompt_tokens', 'completion_tokens', 'expected'),
+    [
+        (15, 8, RequestUsage(input_tokens=15, output_tokens=8)),
+        (0, 0, RequestUsage(unmeasured_requests=1)),
+    ],
+    ids=['raw-totals-recover-usage', 'nothing-to-recover'],
+)
+def test_xai_usage_failed_extraction_uses_raw_totals(
+    monkeypatch: pytest.MonkeyPatch, prompt_tokens: int, completion_tokens: int, expected: RequestUsage
+):
+    """Raw totals recover what a failed extraction lost, so token limits stay enforceable when there are any."""
+
+    def failing_snapshot() -> Any:
+        raise RuntimeError('snapshot failed')
+
+    monkeypatch.setattr(usage_module, 'get_snapshot', failing_snapshot)
+
+    response = create_response(
+        content='answer', usage=create_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    )
+    with pytest.warns(UsageExtractionFailedWarning):
+        result = _extract_usage(response, model='grok-4', provider='xai', provider_url='https://api.x.ai/v1')
+
+    assert result == expected
 
 
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):

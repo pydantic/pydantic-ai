@@ -19,7 +19,7 @@ Provider usage APIs aggregate usage after the fact and are read by polling, so t
 
 ## The solution
 
-`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], while responses with omitted usage contribute any known `response.usage.cost` subtotal.
+`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], while responses with omitted or unextractable usage contribute any known `response.usage.cost` subtotal.
 
 ```python
 from decimal import Decimal
@@ -269,7 +269,7 @@ Any object with `get_many` and `add_many` works, so a DynamoDB counter is a smal
 
 ## Pricing
 
-When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
+When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted or unextractable usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
 
 A model the registry does not know -- a local deployment, a negotiated rate -- is handled by `price`:
 
@@ -287,7 +287,7 @@ Under durable execution, `price` and each budget's `scope` callable must be dete
 
 `SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
 
-When a response omits usage and a token budget is configured, `SpendLimits` emits
+When a response omits usage, or its usage cannot be extracted, and a token budget is configured, `SpendLimits` emits
 `UsageLimitUnavailableWarning` if the run can continue. Known token totals are lower
 bounds, even when a custom `price` supplies the complete cost. Check the provider usage
 reporting or promote the warning to an error to stop when the token ceiling cannot be verified.

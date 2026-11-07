@@ -23,4 +23,4 @@ class CostNotFoundWarning(Warning):
 
 
 class UsageLimitUnavailableWarning(Warning):
-    """Warning raised when some responses omit usage while a token or cost limit is configured."""
+    """Warning raised when some responses have no available usage while a token or cost limit is configured."""
