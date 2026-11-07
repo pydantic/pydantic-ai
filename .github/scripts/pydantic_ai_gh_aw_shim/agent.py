@@ -90,20 +90,7 @@ class WorkflowPolicy(AbstractCapability[object]):
             timer.cancel()
             cli.run_deadline = None
             cli.wall_clock_caps.reset(cap)
-            run_attempt: int | None = None
-            try:
-                parsed_attempt = int(os.environ.get('PYDANTIC_AI_RUN_ATTEMPT', ''))
-            except ValueError:
-                pass
-            else:
-                if parsed_attempt > 0:
-                    run_attempt = parsed_attempt
-            health: dict[str, object] = {
-                'workflow': os.environ.get('GITHUB_WORKFLOW'),
-                'task_key': os.environ.get('PYDANTIC_AI_TASK_ID') or os.environ.get('PYDANTIC_AI_TASK_KEY'),
-                'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
-                'run_attempt': run_attempt,
-            }
+            health = cli.provider_health()
             if error is not None and not isinstance(error, asyncio.CancelledError):
                 health['failure'] = cli.failure_details(error)
             result_metadata['provider_health'] = health

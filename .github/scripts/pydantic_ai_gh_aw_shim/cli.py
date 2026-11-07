@@ -948,8 +948,8 @@ async def compact_history(
     # compacted history is not forgotten, or else the run's first request. The history
     # before a request has odd length, so the tail alone starts with a model response,
     # and Z.AI rejects a history that does not start with a user turn (HTTP 400, code 1214).
-    # Under `preserve_prompt` the middle starts with the response to the kept prompt, which
-    # would then sit directly before the tail's first response.
+    # Under `preserve_prompt` the middle starts with the response to the kept prompt. The
+    # fallback drops that response: kept, it would sit directly before the tail's first response.
     head = middle[:1] if isinstance(middle[0], ModelRequest) else []
 
     # Fresh `RunUsage` so `request_limit=2` bounds the summariser, not
@@ -1298,25 +1298,9 @@ def emit_result(
             'cache_creation_input_tokens': usage.cache_write_tokens,
             'cache_read_input_tokens': usage.cache_read_tokens,
         }
-    run_attempt: int | None = None
-    raw_run_attempt = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
-    if raw_run_attempt is not None:
-        try:
-            parsed_run_attempt = int(raw_run_attempt)
-        except ValueError:
-            pass
-        else:
-            if parsed_run_attempt > 0:
-                run_attempt = parsed_run_attempt
-
-    provider_health: dict[str, object] = {
-        'workflow': os.environ.get('GITHUB_WORKFLOW'),
-        'task_key': os.environ.get('PYDANTIC_AI_TASK_ID') or os.environ.get('PYDANTIC_AI_TASK_KEY'),
-        'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
-        'run_attempt': run_attempt,
-    }
+    health = provider_health()
     if is_error:
-        provider_health['failure'] = failure_details(error)
+        health['failure'] = failure_details(error)
     result: dict[str, object] = {
         'type': 'result',
         'subtype': 'error' if is_error else 'success',
@@ -1327,9 +1311,27 @@ def emit_result(
         'duration_ms': duration_ms,
         'total_cost_usd': 0,
         'usage': token_usage,
-        'provider_health': provider_health,
+        'provider_health': health,
     }
     emit(result)
+
+
+def provider_health() -> dict[str, object]:
+    """The run's identity in the record `agent_provider_health.py` reads; callers add `failure`."""
+    run_attempt: int | None = None
+    try:
+        parsed_attempt = int(os.environ.get('PYDANTIC_AI_RUN_ATTEMPT', ''))
+    except ValueError:
+        pass
+    else:
+        if parsed_attempt > 0:
+            run_attempt = parsed_attempt
+    return {
+        'workflow': os.environ.get('GITHUB_WORKFLOW'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_ID') or os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
+        'run_attempt': run_attempt,
+    }
 
 
 def failure_details(error: BaseException | None) -> dict[str, object]:
