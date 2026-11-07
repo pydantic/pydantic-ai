@@ -109,30 +109,6 @@ def engine_version() -> str:
     return _Frontmatter.model_validate(parsed).engine.version
 
 
-def _fetch(package: str, version: str, request: urllib.request.Request) -> bytes | str:
-    """Return the body PyPI serves for `request`, or why it does not show `package` `version` as published."""
-    body = b''
-    try:
-        with urllib.request.urlopen(request, timeout=PYPI_TIMEOUT_SECONDS) as response:
-            status: int = response.status
-            body = response.read()
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-        exc.close()
-    except OSError as exc:
-        # A failed request is not evidence that the version is missing, so it is reported
-        # as the network error it is rather than as an unpublished pin.
-        return f'Could not ask PyPI whether {package} {version} is published: {exc}'
-
-    if status != 200:
-        return (
-            f'{DEFINITION} pins `engine.version: {version}` for `{package}`, which PyPI does not serve '
-            f'(HTTP {status}). gh-aw installs that version at run time, so a workflow '
-            f'compiled against this definition would fail before the agent starts.'
-        )
-    return body
-
-
 def unpublished_reason(version: str) -> str | None:
     """Return why PyPI does not serve a pinned release, or `None` when both do.
 
@@ -140,16 +116,37 @@ def unpublished_reason(version: str) -> str | None:
     release is `version` at any stage (`0.67.0a0` for `0.67.0`), which `pydantic-clai2>=<version>a0,<=<version>`
     installs. PyPI's index page lists every stage, as JSON when asked for it.
     """
-    harness = _fetch(
-        'pydantic-ai-harness',
-        version,
-        urllib.request.Request(f'https://pypi.org/pypi/pydantic-ai-harness/{version}/json'),
+
+    def fetch(package: str, request: urllib.request.Request) -> bytes | str:
+        """Return the body PyPI serves for `request`, or why it does not show `package` `version` as published."""
+        body = b''
+        try:
+            with urllib.request.urlopen(request, timeout=PYPI_TIMEOUT_SECONDS) as response:
+                status: int = response.status
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+        except OSError as exc:
+            # A failed request is not evidence that the version is missing, so it is reported
+            # as the network error it is rather than as an unpublished pin.
+            return f'Could not ask PyPI whether {package} {version} is published: {exc}'
+
+        if status != 200:
+            return (
+                f'{DEFINITION} pins `engine.version: {version}` for `{package}`, which PyPI does not serve '
+                f'(HTTP {status}). gh-aw installs that version at run time, so a workflow '
+                f'compiled against this definition would fail before the agent starts.'
+            )
+        return body
+
+    harness = fetch(
+        'pydantic-ai-harness', urllib.request.Request(f'https://pypi.org/pypi/pydantic-ai-harness/{version}/json')
     )
     if isinstance(harness, str):
         return harness
-    index = _fetch(
+    index = fetch(
         'pydantic-clai2',
-        version,
         urllib.request.Request(
             'https://pypi.org/simple/pydantic-clai2/', headers={'Accept': 'application/vnd.pypi.simple.v1+json'}
         ),
