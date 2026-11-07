@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -4501,6 +4501,103 @@ async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
         result = await agent.run('kwarg override prompt', metadata={'run_only': True})
 
     assert result.metadata == {'env': 'override', 'override_only': True}
+
+
+@dataclass
+class AgentMetadataCompatibilityCase:
+    name: str
+    base: dict[str, object] | None
+    run: dict[str, object] | None
+    expected: dict[str, object] | None
+    identity: Literal['base', 'run', 'new', 'none']
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        AgentMetadataCompatibilityCase('no metadata', None, None, None, 'none'),
+        AgentMetadataCompatibilityCase('empty base', {}, None, {}, 'base'),
+        AgentMetadataCompatibilityCase('empty run', None, {}, None, 'none'),
+        AgentMetadataCompatibilityCase('truthy base and empty run', {'base': True}, {}, {'base': True}, 'base'),
+        AgentMetadataCompatibilityCase('truthy run only', None, {'run': True}, {'run': True}, 'run'),
+        AgentMetadataCompatibilityCase(
+            'two truthy dicts',
+            {'shared': 'base', 'base': True},
+            {'shared': 'run', 'run': True},
+            {'shared': 'run', 'base': True, 'run': True},
+            'new',
+        ),
+    ],
+    ids=lambda case: case.name,
+)
+async def test_agent_metadata_resolution(case: AgentMetadataCompatibilityCase) -> None:
+    agent = Agent(TestModel(), metadata=case.base)
+
+    result = await agent.run('hello', metadata=case.run)
+
+    assert result.metadata == case.expected
+    if case.identity == 'base':
+        assert result.metadata is case.base
+    elif case.identity == 'run':
+        assert result.metadata is case.run
+    elif case.identity == 'new':
+        assert result.metadata is not case.base
+        assert result.metadata is not case.run
+    else:
+        assert result.metadata is None
+
+
+async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them() -> None:
+    calls: list[str] = []
+    spec_metadata: dict[str, object] = {'shared': 'spec', 'spec': True}
+
+    def base_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('base')
+        return {'shared': 'base', 'base': True}
+
+    def run_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('run')
+        return {'shared': 'run', 'run': True}
+
+    agent = Agent(TestModel(), metadata=base_factory)
+    result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert calls[:2] == ['base', 'run']
+    assert result.metadata == {'shared': 'run', 'spec': True, 'base': True, 'run': True}
+
+    calls.clear()
+    override: dict[str, object] = {}
+    with agent.override(metadata=override):
+        result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert result.metadata is override
+    assert calls == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'legacy-run-id'
+
+    capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
+    agent = Agent(TestModel(), capabilities=capabilities)
+    history = CountingHistory(
+        [
+            ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+            ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+        ]
+    )
+    await agent.run('hello', message_history=history)
+    # Legacy IDs need a collision scan; keep each path within its established traversal budget.
+    assert history.iterations <= (4 if legacy else 3)
 
 
 def test_unknown_tool():

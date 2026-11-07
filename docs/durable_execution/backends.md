@@ -252,8 +252,9 @@ A replayed or recovered run must also get the same identity. Inside the durable 
 replay-stable ID, such as one derived from the workflow instance ID, and return
 [`conversation_id_from_run_id(run_id)`][pydantic_ai.durable_exec.conversation_id_from_run_id] from
 [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id],
-as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same workflow needs its own
-`run_id`.
+as the Temporal and DBOS capabilities do. Each agent run in the same workflow needs its own
+`run_id`, associated with the same logical run even if concurrent calls reorder on retry. See
+[Prefect run and conversation IDs](prefect.md#run-and-conversation-ids) for its cached-ID policy.
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.
