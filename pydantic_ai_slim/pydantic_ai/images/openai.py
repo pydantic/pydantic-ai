@@ -87,7 +87,7 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     """
 
     openai_quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
-    """GPT Image quality setting. `xhigh` and `max` require a GPT Image 2.6 model."""
+    """GPT Image quality setting. `gpt-image-2` and earlier models reject `xhigh` and `max`."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
     """OpenAI image background setting."""

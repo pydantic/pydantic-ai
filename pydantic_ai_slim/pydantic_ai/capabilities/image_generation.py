@@ -277,7 +277,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None
     """Quality of the generated image.
 
-    Supported by: OpenAI Responses. `xhigh` and `max` require a GPT Image 2.6 model.
+    Supported by: OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
 
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """

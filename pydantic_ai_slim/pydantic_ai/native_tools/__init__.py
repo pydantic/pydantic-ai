@@ -595,7 +595,7 @@ class ImageGenerationTool(AbstractNativeTool):
 
     Supported by:
 
-    * OpenAI Responses. `xhigh` and `max` require a GPT Image 2.6 model.
+    * OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
     """
 
     size: ImageSize | None = None
