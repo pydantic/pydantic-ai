@@ -825,7 +825,7 @@ def _host_run_result(path: Path) -> RunResult | None:
     except (json.JSONDecodeError, RecursionError, UnicodeDecodeError):
         return None
     version = data.get('version') if data is not None else None
-    if data is None or isinstance(version, bool) or version != 1:
+    if data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:
         return None
     result = _run_result_fields(data)
     confirmed = data.get('provider_confirmed')

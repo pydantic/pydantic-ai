@@ -1762,6 +1762,22 @@ def test_provider_health_host_result_accepts_the_shipped_record_steps(tmp_path: 
             [
                 *_agent_start_steps(),
                 *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(record_if=f'!{_AFTER_RECHECK}'),
+            ],
+            id='record-negates-always',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(upload_if=f'! {_AFTER_RECHECK}'),
+            ],
+            id='upload-negates-always',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
                 *_host_result_steps(upload_if="steps.agent_start_health.outputs.ready == 'true'"),
             ],
             id='upload-skipped-after-failure',

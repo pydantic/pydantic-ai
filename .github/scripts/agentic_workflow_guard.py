@@ -132,6 +132,9 @@ AGENT_START_HEALTH_CHECK = re.compile(
     r'python3\s+(?P=path)\s+check\b'
 )
 
+# `always()` as a condition term, not negated: the step runs after a failed one.
+RUNS_AFTER_FAILURE = re.compile(r'(?:^|[^!\w\s])\s*always\(\)')
+
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
@@ -1184,14 +1187,14 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
         recorded = (
             record is not None
             and fetched is not None
-            and 'always()' in str(after[record].get('if', ''))
+            and RUNS_AFTER_FAILURE.search(str(after[record].get('if', ''))) is not None
             and f'python3 -I {fetched} record ' in str(after[record].get('run', ''))
             and bool(gate_env)
             and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
         )
         uploaded = record is not None and any(
             step.get('name') == upload_name
-            and 'always()' in str(step.get('if', ''))
+            and RUNS_AFTER_FAILURE.search(str(step.get('if', ''))) is not None
             and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
             for step in after[record + 1 :]
         )

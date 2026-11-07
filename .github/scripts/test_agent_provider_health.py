@@ -2529,6 +2529,7 @@ def test_provider_incident_opens_only_from_a_host_confirmed_record(
         pytest.param({'workflow': None}, id='incomplete'),
         pytest.param({'version': 2}, id='unknown-version'),
         pytest.param({'version': True}, id='boolean-version'),
+        pytest.param({'version': 1.0}, id='float-version'),
         pytest.param({'provider_confirmed': 'true'}, id='non-boolean-confirmation'),
     ],
 )
