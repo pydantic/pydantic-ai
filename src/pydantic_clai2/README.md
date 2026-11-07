@@ -40,20 +40,25 @@ in a project you trust.
 CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install --compile-bytecode pydantic-clai2
+uv tool install --compile-bytecode 'pydantic-clai2>=0.66.1a0'
 ```
 
 This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
-`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`/update now` uses it too. To try CLAI without installing, run `uvx 'pydantic-clai2>=0.66.1a0'`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
+
+Until 1.0, every CLAI release is a pre-release, such as `0.67.0a0`. uv and pip skip pre-releases
+unless the requirement names one, and `0.66.0` is the last final release. `>=0.66.1a0` names the
+first version after it, which opts CLAI, and none of its dependencies, into pre-releases.
+`--pre` or `--prerelease allow` would also install pre-releases of every dependency.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
 installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
 models need an extra:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-clai2[typesafe]'
+uv tool install --compile-bytecode 'pydantic-clai2[typesafe]>=0.66.1a0'
 ```
 
 ## First run
@@ -127,7 +132,7 @@ It shows nothing when you are offline.
 
 There are two channels. Pick one with `/set updates.channel`:
 
-- `stable` (the default): the newest release on PyPI.
+- `stable` (the default): the newest release on PyPI, pre-releases included.
 - `main`: the newest build of the `main` branch, for trying fixes and features before
   they are released. The status row names the build by its commit.
 
@@ -386,7 +391,7 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode 'pydantic-clai2>=0.66.1a0' --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
