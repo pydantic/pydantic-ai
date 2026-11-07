@@ -3180,7 +3180,7 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'leading\n\n{lookalike_note_announcement(system_role=False)}',
+                'system': f'{lookalike_note_announcement(system_role=False)}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
