@@ -393,6 +393,12 @@ a tool call reads as secondary; keep fences unchanged. The default theme's diff 
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette.
 
+Echo the user's own text through `rendering.prompt_line`, which paints it on
+`theme.prompt_background()`. Under the default theme that tint comes from the terminal's
+background, which `chat` asks for once through `ui/prompt/terminal_background.py`. Add any
+other terminal query to that same exchange. It hands the keys it reads with the answers to
+the editor's prompt-toolkit input; a separate query would read and drop them.
+
 ## Source layout
 
 The package root composes the shell (`app.py`, `__main__.py`) and keeps the

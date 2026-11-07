@@ -10,8 +10,11 @@ from pydantic_clai2.ui.rendering import theme
 
 
 @cache
-def _translation(source: str, target: str) -> dict[str, Color]:
-    """Each hex colour `source` paints a role with, to the colour `target` paints that role with."""
+def _translation(source: str, target: str, terminal: str | None) -> dict[str, Color]:
+    """Each hex colour `source` paints a role with, to the colour `target` paints that role with.
+
+    `terminal`, the terminal's own background, keys the cache: the default theme's roles derive from it.
+    """
     painted = dict(theme.roles(target))
     table: dict[str, Color] = {}
     for role, colour in theme.roles(source):
@@ -23,7 +26,7 @@ def _translation(source: str, target: str) -> dict[str, Color]:
 
 def recolor(text: Text, *, source: str, target: str) -> Text:
     """`text`, painted in theme `source`, as theme `target` paints it; colours no role uses stay."""
-    table = _translation(source, target)
+    table = _translation(source, target, theme.terminal_background())
 
     def swap(colour: Color | None) -> Color | None:
         if colour is None or colour.triplet is None:

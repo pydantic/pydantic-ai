@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from typing import IO
 
 import anyio
 import pytest
@@ -168,6 +169,48 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert '> hello' not in printed
     assert printed.index('> saved turn') < printed.index('Resumed') < printed.index('Goodbye.')
+
+
+async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`chat` asks the terminal for its background once, and every echoed prompt is tinted from it."""
+    prior = saved_prior(tmp_path, monkeypatch)
+    await prior.prompt('saved turn')
+    surfaces: list[PromptSurface] = []
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
+            surfaces.append(self)
+            super().paint(rows, select_pinned=select_pinned)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    def dark(*, stdin: IO[str], stdout: IO[str]) -> str:
+        return '#1E1E1E'
+
+    monkeypatch.setattr('pydantic_clai2.app.detect_background', dark)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(10),
+    ):
+        pipe.send_text(f'/resume {prior.summary.id}\r/exit\r')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='fresh answer')),
+            deps=None,
+            # Truecolour, as Rich otherwise reads `COLORTERM` and may round the tint to an ANSI slot.
+            console=Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=80, height=24),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            settings=Settings(model=None, session_namer=False),
+        )
+    rows = [Text.from_ansi(row) for row in surfaces[0].transcript.frame(width=200, height=200).rows]
+    prompts = [row for row in rows if row.plain.startswith('> ')]
+    assert [row.plain for row in prompts] == ['> saved turn', '> /exit']
+    for row in prompts:
+        background = row.get_style_at_offset(Console(), 2).bgcolor
+        assert background is not None and background.triplet is not None
+        assert background.triplet.hex == '#393939'
 
 
 async def test_startup_resume_shows_history_below_the_startup_output(

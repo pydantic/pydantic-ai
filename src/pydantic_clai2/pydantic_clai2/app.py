@@ -1,13 +1,15 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
+import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, to_thread
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -48,6 +50,7 @@ from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
+from pydantic_clai2.ui.prompt.terminal_background import detect_background
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 from pydantic_clai2.ui.stderr_relay import relay_stderr
@@ -202,6 +205,8 @@ async def chat(
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
+    # Asked once, before anything is drawn; keys typed meanwhile go to the editor.
+    terminal_background = await to_thread.run_sync(partial(detect_background, stdin=sys.stdin, stdout=console.file))
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
@@ -247,9 +252,13 @@ async def chat(
                     load_plugins=load_plugins,
                     console=terminal.session_console,
                 )
-                with theme.use(
-                    lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
-                    output=console.file if console.is_terminal else None,
+                # Entered on each pass, as `/reload` replaces the theme module's variables.
+                with (
+                    theme.use(
+                        lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
+                        output=console.file if console.is_terminal else None,
+                    ),
+                    theme.on_terminal(terminal_background),
                 ):
                     try:
                         # Sessions the web UI opens run beside this one, from the start: plugins may open some.

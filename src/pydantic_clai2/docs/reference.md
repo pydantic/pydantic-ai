@@ -1126,9 +1126,11 @@ lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
-accent colour, with the prompt text in bold. This keeps your prompts apart from
-answers. Steering messages, commands entered during a turn, and prompts restored by
-`/resume` look the same.
+accent colour, with the prompt text in bold on a grey background: a little lighter
+than a dark terminal's background, a little darker than a light one's. This keeps
+your prompts apart from answers. Steering messages, commands entered during a turn,
+prompts restored by `/resume`, and answers you type to a question look the same.
+See [Themes](#themes) for where the grey comes from.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.
@@ -1651,6 +1653,14 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 status, and diff highlighting. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
+
+Your prompts' grey background follows the theme. A bundled palette moves its
+background towards its text colour. The `default` theme asks the terminal for its
+background colour once at startup (OSC 11) and waits at most a quarter of a second
+for the answer. Keys you type meanwhile still reach the prompt. If the terminal does
+not say, CLAI reads `COLORFGBG`, which tells a light terminal from a dark one. If
+neither is known, prompts keep the bold text alone. CLAI asks only when both its
+input and output are a terminal.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
