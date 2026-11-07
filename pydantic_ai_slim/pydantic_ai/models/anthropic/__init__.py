@@ -9,11 +9,13 @@ from functools import cached_property
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
+from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
 from ..._http import to_httpx2_timeout
+from ..._instrumentation import current_model_request_span
 from ..._run_context import RunContext
 from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
@@ -505,8 +507,12 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
     """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
     if model_settings.get('max_retries') is None or not isinstance(client, AsyncAnthropicBedrock):
         return with_max_retries(client, model_settings)
-    # `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign requests with
-    # the default AWS credential chain instead of the profile the client was built with.
+    copy = with_max_retries(client, model_settings)
+    if copy.aws_profile == client.aws_profile:
+        return copy
+    # Below anthropic 2.6, `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign
+    # requests with the default AWS credential chain instead of the profile the client was built with. From 2.6 it
+    # copies the profile itself, and raises a `TypeError` if `_extra_kwargs` passes it again.
     return with_max_retries(client, model_settings, carry_over={'aws_profile': client.aws_profile})
 
 
@@ -1754,8 +1760,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
         # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
         auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
+        # Only the request records its breakpoints: `count_tokens` builds the same request outside its span.
         self._limit_cache_points(
-            system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
+            system_prompt,
+            anthropic_messages,
+            tools,
+            automatic_caching=auto_cache_control is not None,
+            span=current_model_request_span(),
         )
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
@@ -3435,6 +3446,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         *,
         automatic_caching: bool = False,
+        span: Span | None = None,
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
@@ -3444,10 +3456,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
+        Given the model-request `span`, records the breakpoints the request asked for and the ones it kept on it.
+
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
+        requested = (
+            AnthropicModel._cache_breakpoints(
+                system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
+            )
+            if span is not None
+            else None
+        )
         # Anthropic enforces a maximum of 4 cache points per request.
         max_points = 4 - (1 if automatic_caching else 0)
         system_points = (
@@ -3473,6 +3494,43 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             description='Anthropic request',
         ):
             del block_dict['cache_control']
+        if span is not None and requested:
+            span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
+            span.set_attribute(
+                'pydantic_ai.cache.applied_breakpoints',
+                AnthropicModel._cache_breakpoints(
+                    system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
+                ),
+            )
+
+    @staticmethod
+    def _cache_breakpoints(
+        system_prompt: str | list[BetaTextBlockParam],
+        anthropic_messages: list[BetaMessageParam],
+        tools: list[BetaToolUnionParam],
+        *,
+        automatic_caching: bool,
+    ) -> list[str]:
+        """Where the request's cache breakpoints are, as `system[i]`, `tools[i]` and `messages[i].content[j]` paths.
+
+        The paths index the request as sent to Anthropic, after consecutive request parts are merged into one
+        message, so they don't line up with the message history; a `CachePoint` is marked on the block before it. The
+        breakpoint Anthropic places itself under automatic caching is listed as `automatic`.
+        """
+        # A plain-string system prompt can't carry a breakpoint.
+        system_blocks = system_prompt if isinstance(system_prompt, list) else []
+        breakpoints = [f'system[{index}]' for index, block in enumerate(system_blocks) if 'cache_control' in block]
+        breakpoints += [f'tools[{index}]' for index, tool in enumerate(tools) if 'cache_control' in tool]
+        breakpoints += [
+            f'messages[{message_index}].content[{block_index}]'
+            for message_index, message in enumerate(anthropic_messages)
+            if not isinstance(message['content'], str)
+            for block_index, block in enumerate(message['content'])
+            if isinstance(block, dict) and 'cache_control' in block
+        ]
+        if automatic_caching:
+            breakpoints.append('automatic')
+        return breakpoints
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
         """Build a cache control dict with the given TTL.

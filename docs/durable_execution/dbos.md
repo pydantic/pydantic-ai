@@ -192,6 +192,7 @@ If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.a
 ### Workspaces
 
 Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+A tool that runs in a [child workflow](#child-workflows) records its workspace calls as steps of the child workflow instead, after one more step that reattaches to the workspace.
 
 DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
@@ -300,7 +301,7 @@ It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mod
     DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay, causing recovery to fail.
 
     For this pattern, set `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. To run independent sequences concurrently, put each sequence in a separate [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#running-async-steps-in-parallel).
-A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
+A run with a [workspace](../workspace.md) runs its tool calls sequentially, except for tools that run in a [child workflow](#child-workflows): their workspace calls are steps of their own child workflow, so they still run in parallel, while every other tool call runs alone. Tool hooks such as `before_tool_execute` still run in the parent workflow, so they shouldn't make workspace calls.
 
 ### Toolsets at Runtime
 

@@ -117,17 +117,23 @@ def test_no_stream():
 REQUESTS = """
 import asyncio
 import random
+import time
+import uuid
 from contextlib import suppress
 
 import httpx
 import httpx2
+from anthropic import AsyncAnthropic
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -156,13 +162,35 @@ def test_sdk_mock():
 
 async def send_with_beta():
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        # Keep the captured target stable across SDK versions that add or omit this query parameter.
+        sdk_client = AsyncAnthropic(api_key='secret', http_client=client, default_query=dict(beta='true'))
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk_client))
         with override_allow_model_requests(True), suppress(ModelHTTPError):
             await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
 
 
 def test_anthropic_beta():
     asyncio.run(send_with_beta())
+
+
+def test_function_model():
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('hi')])), instructions='be brief')
+    agent.run_sync({text!r}, model_settings=dict(temperature=0.5))
+
+
+def values_that_change_between_runs():
+    return dict(
+        path='/tmp/pytest-of-ci/pytest-%d/popen-gw%d/test_x0' % (uuid.uuid4().int % 1000, uuid.uuid4().int % 8),
+        id=uuid.uuid4().hex,
+        capability='<thinking:%s>' % uuid.uuid4().hex[:6],
+        latency_ms=time.perf_counter(),
+    )
+
+
+def test_test_model():
+    agent = Agent(TestModel())
+    agent.tool_plain(values_that_change_between_runs)
+    agent.run_sync('hi')
 """
 
 
@@ -185,7 +213,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     assert json.loads((tmp_path / SOURCE_FILE).read_text()) == {'pydantic_ai': pydantic_ai.__file__}
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
@@ -255,15 +283,17 @@ def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
 
     `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture.
     """
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
-    # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`.
+    # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`, and the calls on
+    # in-process models by `test_capture_records_each_in_process_model_call`.
     records = [
         record
         for line in lines
         if (record := json.loads(line))['kind'] == 'request'
         and record['node'] != 'test_requests.py::test_anthropic_beta'
+        and 'model_request_parameters' not in record
     ]
     assert [
         (record['node'], record['target'], record.get('body'), record.get('kwargs', {}).get('messages'))
@@ -296,6 +326,71 @@ notes\r
                 [{'role': 'user', 'content': 'hello'}],
             ),
         ]
+    )
+
+
+def test_capture_records_each_in_process_model_call(run: RunCapture, tmp_path: Path):
+    """A call on `FunctionModel` or `TestModel`, streamed or not, is recorded with what the model is handed.
+
+    The values `values_that_change_between_runs` returns reach `TestModel`'s second call normalized.
+    """
+    run(tmp_path, '-k', 'test_text or function_model or test_model').assert_outcomes(passed=3, deselected=8)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    calls = [record for line in lines if 'model_request_parameters' in (record := json.loads(line))]
+    assert [
+        (
+            call['node'],
+            call['target'],
+            [part['part_kind'] for message in call['messages'] for part in message['parts']],
+            call['messages'][0]['instructions'],
+            call['model_settings'],
+            [tool['name'] for tool in call['model_request_parameters']['function_tools']],
+        )
+        for call in calls
+    ] == snapshot(
+        [
+            (
+                'test_requests.py::test_function_model',
+                'pydantic_ai.models.function.FunctionModel.request',
+                ['user-prompt'],
+                'be brief',
+                {'temperature': 0.5},
+                [],
+            ),
+            (
+                'test_requests.py::test_test_model',
+                'pydantic_ai.models.test.TestModel.request',
+                ['user-prompt'],
+                None,
+                None,
+                ['values_that_change_between_runs'],
+            ),
+            (
+                'test_requests.py::test_test_model',
+                'pydantic_ai.models.test.TestModel.request',
+                ['user-prompt', 'tool-call', 'tool-return'],
+                None,
+                None,
+                ['values_that_change_between_runs'],
+            ),
+            (
+                'test_streams.py::test_text',
+                'pydantic_ai.models.function.FunctionModel.request_stream',
+                ['user-prompt'],
+                None,
+                None,
+                [],
+            ),
+        ]
+    )
+    assert calls[2]['messages'][-1]['parts'][0]['content'] == snapshot(
+        {
+            'path': '/tmp/pytest-of-ci/pytest-N/test_x0',
+            'id': 'UUID',
+            'capability': '<thinking:ID>',
+            'latency_ms': 'LATENCY',
+        }
     )
 
 
@@ -336,6 +431,18 @@ def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
         RefactorCapture(tmp_path).check_request_hook()
 
 
+def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
+    """A canary call on an in-process model the capture doesn't see fails the run instead of recording nothing.
+
+    The capture's model wrappers aren't installed, standing in for an agent that stopped calling models through them.
+    """
+    with pytest.raises(pytest.UsageError, match='were not recorded') as error:
+        RefactorCapture(tmp_path).check_model_hook()
+    assert str(error.value) == snapshot(
+        'The calls a canary agent run made on `pydantic_ai.models.function.FunctionModel.request`, `pydantic_ai.models.function.FunctionModel.request_stream`, `pydantic_ai.models.test.TestModel.request`, `pydantic_ai.models.test.TestModel.request_stream` were not recorded, so the capture would miss what in-process models are handed. Update `tests/refactor_capture.py` to the methods an agent calls them through now.'
+    )
+
+
 def test_capture_stops_the_run_when_a_listed_mock_is_gone(
     run: RunCapture, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -362,7 +469,7 @@ def test_sdk_mocks_exist():
 def test_capture_refuses_to_append_to_an_earlier_capture(
     run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     result = run(tmp_path)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -370,15 +477,15 @@ def test_capture_refuses_to_append_to_an_earlier_capture(
 
     # `pytest-xdist` workers write alongside the controller, which made the check.
     monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
     assert sorted(path.name for path in tmp_path.glob('*.jsonl')) == ['gw0.jsonl', 'main.jsonl']
 
 
 def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     base, same, changed = tmp_path / 'base', tmp_path / 'same', tmp_path / 'changed'
-    run(base).assert_outcomes(passed=9)
-    run(same).assert_outcomes(passed=9)
-    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=8, deselected=1)
+    run(base).assert_outcomes(passed=11)
+    run(same).assert_outcomes(passed=11)
+    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=10, deselected=1)
     capsys.readouterr()
 
     assert compare(base, tmp_path / 'missing') == 2
@@ -386,7 +493,7 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
     nothing = tmp_path / 'nothing'
-    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=8)
+    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=10)
     (nothing / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{nothing}/pydantic_ai/__init__.py'}))
     assert compare(base, nothing) == 2
     assert capsys.readouterr().err.startswith('Nothing recorded in')
@@ -398,43 +505,45 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 0
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
-nodes: base 8, head 8
-records: base 8, head 8
+nodes: base 10, head 10
+records: base 14, head 14
 stream events: head 11
-requests: head 4
+requests: head 10
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   POST https://api.anthropic.com/v1/messages?beta=true: 1
+  pydantic_ai.models.function.FunctionModel.request: 1
+  pydantic_ai.models.function.FunctionModel.request_stream: 3
+  pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that recorded no request, head: 5
-  test_streams.py::test_fails_mid_stream
-  test_streams.py::test_fallback_peeks_the_first_event
+nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
-  test_streams.py::test_text
 only in base: 0, only in head: 0, differing: 0
-nodes: base 8, head 7
-records: base 8, head 7
+nodes: base 10, head 9
+records: base 14, head 12
 stream events: head 9
-requests: head 4
+requests: head 9
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   POST https://api.anthropic.com/v1/messages?beta=true: 1
+  pydantic_ai.models.function.FunctionModel.request: 1
+  pydantic_ai.models.function.FunctionModel.request_stream: 2
+  pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that recorded no request, head: 4
-  test_streams.py::test_fallback_peeks_the_first_event
+nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
-  test_streams.py::test_text
-only in base: 1, only in head: 0, differing: 5
+only in base: 1, only in head: 0, differing: 6
   only in base: test_streams.py::test_fails_mid_stream
   differing: test_requests.py::test_anthropic_beta
+  differing: test_requests.py::test_function_model
   differing: test_requests.py::test_json_over_httpx
   differing: test_requests.py::test_sdk_mock
   differing: test_streams.py::test_fallback_peeks_the_first_event
@@ -445,8 +554,8 @@ only in base: 1, only in head: 0, differing: 5
 def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     """Request headers are recorded without credentials, so a changed `anthropic-beta` header is flagged."""
     base, head = tmp_path / 'base', tmp_path / 'head'
-    run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=8)
-    run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=8)
+    run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=10)
+    run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=10)
     (record,) = [json.loads(line) for line in (base / 'main.jsonl').read_text().splitlines()]
     assert record['headers']['anthropic-beta'] == snapshot('files-api-2025-04-14')
     assert {'x-api-key', 'authorization'}.isdisjoint(record['headers'])
@@ -465,7 +574,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     """A selected node that recorded no request is listed, whether it recorded a stream or nothing, without failing."""
     base, head = tmp_path / 'base', tmp_path / 'head'
     for capture_dir in (base, head):
-        run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=6)
+        run(capture_dir, '-k', 'subclass or no_stream or json').assert_outcomes(passed=3, deselected=8)
     (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
     capsys.readouterr()
 
@@ -474,7 +583,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
         [
             'nodes that recorded no request, head: 2',
             '  test_streams.py::test_no_stream',
-            '  test_streams.py::test_text',
+            '  test_streams.py::test_subclass_defined_after_the_capture_started',
             'only in base: 0, only in head: 0, differing: 0',
         ]
     )
@@ -496,6 +605,15 @@ def test_normalized_replaces_values_that_change_between_runs():
             'url': 'http://127.0.0.1:8123/v1',
             'multipart': '--0123456789abcdef0123456789abcdef--',
             'content-type': 'multipart/form-data; boundary=0123456789abcdef0123456789abcdef',
+            'tmp_path': '/tmp/pytest-of-ci/pytest-12/test_x0/notes.txt',
+            'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-12/popen-gw3/test_x0',
+            'uuid4_hex': '12345678123441238123123456789abc',
+            'other_hex': '0123456789abcdef0123456789abcdef',
+            'capability_key': '<thinking:0a1b2c>',
+            'latency_ms': 12.5,
+            'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
+            'added_step': "Added step 'a' with id: 0a1b2c3d",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
         }
     ) == snapshot(
         {
@@ -511,5 +629,14 @@ def test_normalized_replaces_values_that_change_between_runs():
             'url': 'http://127.0.0.1:PORT/v1',
             'multipart': '--BOUNDARY--',
             'content-type': 'multipart/form-data; boundary=BOUNDARY',
+            'tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0/notes.txt',
+            'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0',
+            'uuid4_hex': 'UUID',
+            'other_hex': '0123456789abcdef0123456789abcdef',
+            'capability_key': '<thinking:ID>',
+            'latency_ms': 'LATENCY',
+            'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
+            'added_step': "Added step 'a' with id: STEP_ID",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
         }
     )

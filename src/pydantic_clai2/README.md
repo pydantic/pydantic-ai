@@ -111,9 +111,11 @@ in the reference.
 ## Updating
 
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
-`/update now` installs without asking, and `clai2 --update` does it from your shell and exits
+`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
 (on Windows, use `/update now` instead).
 CLAI installs the newest build, then restarts into it with the same conversation open.
+In the web UI, **Update…** in Settings › About installs from any session's page, and the
+restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
 While other live sessions run turns, as ones the browser opened can, `/update now`
 and `/reload` ask you to try again when they finish; bare `/update` still shows the
 menu. Installs and reloads restart CLAI in the folder it started in, so a session
