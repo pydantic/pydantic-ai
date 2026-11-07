@@ -30,6 +30,7 @@ from pydantic_ai._utils import (
     await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
+    estimate_string_tokens,
     format_inlined_text_file,
     get_first_param_type,
     group_by_temporal,
@@ -1579,3 +1580,13 @@ def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
         entry_point()
+
+
+def test_estimate_string_tokens_ignores_boundary_delimiters():
+    """Empty strings produced by a leading/trailing delimiter are not tokens."""
+    assert estimate_string_tokens('"hello"') == 1
+    assert estimate_string_tokens('.hello.') == 1
+    assert estimate_string_tokens('hello,') == 1
+    assert estimate_string_tokens('hello world') == 2
+    assert estimate_string_tokens('') == 1
+    assert estimate_string_tokens('   ') == 1
