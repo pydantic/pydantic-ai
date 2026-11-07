@@ -9,9 +9,11 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, OpenAIReasoningEffort
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -52,6 +54,8 @@ class TogetherProvider(_OpenAISDKProvider):
             'qwen': qwen_model_profile,
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
+            'moonshotai': moonshotai_model_profile,
+            'openai': harmony_model_profile,  # gpt-oss models speak OpenAI's Harmony response format
             'zai-org': _glm_5_3_schema_profile,
         }
 
@@ -69,6 +73,18 @@ class TogetherProvider(_OpenAISDKProvider):
                 # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
                 # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
                 profile = merge_profile(profile, OpenAIModelProfile(supports_forced_tool_choice=False))
+
+            if provider == 'openai' and model_name.startswith('gpt-oss'):
+                # gpt-oss models always reason with a graded `reasoning_effort`; the shared OpenAI
+                # family profile gives them none.
+                profile = merge_profile(
+                    profile,
+                    OpenAIModelProfile(
+                        supports_thinking=True,
+                        thinking_always_enabled=True,
+                        openai_reasoning_efforts=frozenset[OpenAIReasoningEffort](('low', 'medium', 'high')),
+                    ),
+                )
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly

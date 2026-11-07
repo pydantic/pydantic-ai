@@ -2575,6 +2575,33 @@ def test_together_qwen():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_together_provider_prefix_map_current_families():
+    assert _normalize(TogetherProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_reasoning_efforts': frozenset({'low', 'medium', 'high'}),
+            'supports_inline_system_prompts': True,
+            'supports_forced_tool_choice': False,
+            'supports_json_object_output': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+    assert _normalize(TogetherProvider.model_profile('moonshotai/Kimi-K3')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_sambanova_llama():
     profile = SambaNovaProvider.model_profile('Meta-Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot(
