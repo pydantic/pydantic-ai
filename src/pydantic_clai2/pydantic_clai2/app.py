@@ -4,7 +4,6 @@ import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import TypeVar
 
@@ -45,6 +44,7 @@ from pydantic_clai2.runtime.session import (
     resolve_model_name,
 )
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
@@ -120,44 +120,45 @@ async def open_stock_agent(
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     root = Path(workspace).resolve()
-    with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
-        console = Console(file=sink, force_terminal=False)
-        store = SettingsStore(Path(config) / 'config.db')
-        models = ModelResolver(console=console, store=store)
-        model_defaults = ModelDefaults[None](lambda name: default_model_settings(model=name, saved={}))
-        loader = SessionPlugins[None](
-            store=store,
-            console=console,
-            commands=Commands(workspace=lambda: root),
-            session_start=lambda: SessionStart(
-                agent=template, settings=Settings(model=model if isinstance(model, str) else None)
-            ),
-            builtin=declarations,
-            workspace=lambda: root,
-            resolve_model=models.resolve,
-            model_settings=model_defaults.defaults,
-        )
-        models.plugins = loader.model_providers
-        try:
-            for declaration in declarations:
-                await loader.load(declaration.id)
-            bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
-            if (local := local_workspace(bound, root)) is not None:
-                bound.append(local)
-            agent = template.with_plugins(
-                [
-                    *bound,
-                    SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
-                    model_defaults,
-                ],
-                model=model if isinstance(model, str) else None,
+    async with temporary_directory(prefix='clai2-') as config:
+        with open(os.devnull, 'w', encoding='utf-8') as sink:
+            console = Console(file=sink, force_terminal=False)
+            store = SettingsStore(config / 'config.db')
+            models = ModelResolver(console=console, store=store)
+            model_defaults = ModelDefaults[None](lambda name: default_model_settings(model=name, saved={}))
+            loader = SessionPlugins[None](
+                store=store,
+                console=console,
+                commands=Commands(workspace=lambda: root),
+                session_start=lambda: SessionStart(
+                    agent=template, settings=Settings(model=model if isinstance(model, str) else None)
+                ),
+                builtin=declarations,
+                workspace=lambda: root,
+                resolve_model=models.resolve,
+                model_settings=model_defaults.defaults,
             )
-            async with agent:
-                yield agent
-            reason = 'exit'
-        finally:
-            with CancelScope(shield=True):
-                await loader.close(reason)
+            models.plugins = loader.model_providers
+            try:
+                for declaration in declarations:
+                    await loader.load(declaration.id)
+                bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
+                if (local := local_workspace(bound, root)) is not None:
+                    bound.append(local)
+                agent = template.with_plugins(
+                    [
+                        *bound,
+                        SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
+                        model_defaults,
+                    ],
+                    model=model if isinstance(model, str) else None,
+                )
+                async with agent:
+                    yield agent
+                reason = 'exit'
+            finally:
+                with CancelScope(shield=True):
+                    await loader.close(reason)
 
 
 async def chat(
