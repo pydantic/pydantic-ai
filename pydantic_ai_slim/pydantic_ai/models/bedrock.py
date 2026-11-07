@@ -1770,10 +1770,6 @@ class BedrockConverseModel(Model[BaseClient]):
             colocatable_content=profile.get(
                 'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
             ),
-            document_count=count(1),
-            system_prompt=[],
-            bedrock_messages=[],
-            deferred_media_content=[],
         )
 
         for message in messages:
@@ -2398,10 +2394,10 @@ class _MapMessagesContext:
     supports_tool_result_status: bool
     tool_result_content_mode: Literal['str', 'jsonable']
     colocatable_content: frozenset[Literal['text', 'image', 'document', 'video']]
-    document_count: Iterator[int]
-    system_prompt: list[SystemContentBlockTypeDef]
-    bedrock_messages: list[MessageUnionTypeDef]
-    deferred_media_content: list[ContentBlockUnionTypeDef]
+    document_count: Iterator[int] = field(default_factory=lambda: count(1))
+    system_prompt: list[SystemContentBlockTypeDef] = field(default_factory=list['SystemContentBlockTypeDef'])
+    bedrock_messages: list[MessageUnionTypeDef] = field(default_factory=list['MessageUnionTypeDef'])
+    deferred_media_content: list[ContentBlockUnionTypeDef] = field(default_factory=list['ContentBlockUnionTypeDef'])
     """Tool-return media that can't share the `toolResult`'s turn, held for the user turn after the tool returns."""
 
 
