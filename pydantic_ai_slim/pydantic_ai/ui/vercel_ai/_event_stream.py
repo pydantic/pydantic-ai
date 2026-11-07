@@ -19,6 +19,7 @@ from ...messages import (
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -42,6 +43,7 @@ from .._adapter import (
     capability_load_delta_payload,
     compaction_payload,
     enqueued_messages_for_client,
+    model_response_rejected_payload,
     model_settings_delta_payload,
     tool_availability_delta_payload,
 )
@@ -50,6 +52,7 @@ from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_RESPONSE_REJECTED_DATA_TYPE,
     MODEL_SETTINGS_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
@@ -437,6 +440,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[BaseChunk]:
+        # In the step that streamed the rejected response, which ends here: the next response gets a step of its own.
+        yield DataChunk(type=MODEL_RESPONSE_REJECTED_DATA_TYPE, data=model_response_rejected_payload(event))
 
     async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseChunk]:
         yield DataChunk(type=CAPABILITY_LOAD_DELTA_DATA_TYPE, data=capability_load_delta_payload(event.part))

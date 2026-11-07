@@ -288,6 +288,10 @@ Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) wi
 
 An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text, except a [`StructuredContent`](#structured-content), which keeps its value.
 
+## Rejected responses
+
+When a streamed response is [rejected](../agent.md#rejected-responses) and another takes its place, such as when an output validator asks the model again, the step that streamed it ends with a `data-model-response-rejected` [data chunk](#data-chunks), and the response replacing it streams in a step of its own. The chunk's `data` holds the `run_step` and `attempt` that produced the rejected response, and its `outcome`: `'retried'` when the model was asked again, with the retry's `cause`, or `'replaced'` when a capability answered instead. The feedback the model is asked again with isn't included, as it's addressed to the model. A part the rejected response left open, because a capability cut it short, is ended first. Use the chunk to set the rejected step's text apart from the answer that follows; the AI SDK keeps it on the assistant message, and loading the messages back ignores it.
+
 ## MCP Apps
 
 After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.

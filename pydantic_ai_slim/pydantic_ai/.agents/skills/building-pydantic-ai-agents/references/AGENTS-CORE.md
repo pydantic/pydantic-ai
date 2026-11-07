@@ -275,7 +275,7 @@ Pick a run method based on the interaction pattern:
 - `run_stream_events()` when the caller needs the typed event stream directly
 - `iter()` when the caller needs step-by-step control over the agent loop
 
-Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history.
+Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history. When a streamed response is rejected (an output validator or `after_model_request` raised `ModelRetry`, the response had no usable output, or a capability replaced it mid-stream), a `ModelResponseRejectedEvent` comes right after its events and before the response replacing it, so a UI can set the rejected text apart instead of showing both as one reply.
 
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 

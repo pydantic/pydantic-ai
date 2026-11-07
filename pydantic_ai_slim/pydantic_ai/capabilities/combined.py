@@ -263,6 +263,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _has_prepare_model_request(self) -> bool:
         return any(c._has_prepare_model_request for c in self._dispatch)
 
+    @property
+    def _has_after_model_request(self) -> bool:
+        return any(c._has_after_model_request for c in self._dispatch)
+
     def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
         return any(
             capability._has_on_model_request_error
