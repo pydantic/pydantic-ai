@@ -1265,7 +1265,7 @@ class GoogleModel(Model[Client]):
             if not model_request_parameters.allow_text_output:
                 modalities.remove(Modality.TEXT.value)
 
-        headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        headers: dict[str, str] = {'Content-Type': 'application/json', 'user-agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
