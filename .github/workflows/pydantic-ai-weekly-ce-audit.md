@@ -38,11 +38,6 @@ safe-outputs:
     create-issue: false
   report-incomplete:
     create-issue: false
-  github-app:
-    client-id: ${{ vars.DOCS_CLIENT_ID }}
-    private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
-    owner: pydantic
-    repositories: [pydantic-ai]
   steps:
     - name: Require successful coverage and edit validation before publication
       env:
@@ -63,6 +58,13 @@ safe-outputs:
         python3 .github/scripts/weekly_ce_audit.py check-publication --source "$SOURCE" \
           --agent-output "$GH_AW_AGENT_OUTPUT" --directory "$RUNNER_TEMP/weekly-ce-audit-evidence"
   create-pull-request:
+    # Scoped to publication: gh-aw 1.2.1's completion job always asks a global App for `actions: read`,
+    # which the Docs App does not hold. That job uses `GITHUB_TOKEN` instead.
+    github-app:
+      client-id: ${{ vars.DOCS_CLIENT_ID }}
+      private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+      owner: pydantic
+      repositories: [pydantic-ai]
     max: 1
     draft: false
     allowed-branches: ['gh-aw/weekly-ce-audit-*']
