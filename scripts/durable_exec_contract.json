@@ -6259,6 +6259,7 @@
         "dbos",
         "durable_exec",
         "prefect",
+        "render",
         "temporal"
       ],
       "kinds": [
@@ -6273,7 +6274,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._resolve_temporal_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::AWSLambdaOperationConfig.__init__.resolve_tool",
-        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_opted_out_by_metadata"
+        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_opted_out_by_metadata",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::_opted_out_by_metadata"
       ]
     },
     "ToolDefinition.name": {
@@ -6723,6 +6725,7 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>"
       ]
     },
@@ -6789,6 +6792,7 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_opted_out_by_metadata",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::function_transport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_transports.py::mcp_transport.dump",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::_opted_out_by_metadata",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::prepare_function_call_params",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::RenderFunctionCallTransport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::RenderMCPCallTransport.dump"

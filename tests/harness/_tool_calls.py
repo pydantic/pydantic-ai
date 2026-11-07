@@ -8,23 +8,25 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import WorkspaceBackend
 
+WORKSPACE_TOOL_CALLS: list[tuple[str, dict[str, object]]] = [
+    ('write_file', {'path': 'note.txt', 'content': 'one'}),
+    ('edit_file', {'path': 'note.txt', 'old_text': 'one', 'new_text': 'two'}),
+    ('read_file', {'path': 'note.txt'}),
+    ('shell', {'command': 'echo shell-$(cat note.txt)'}),
+]
+"""FileSystem and Shell tools that emit capability events, ending with the shell printing `shell-two`."""
 
-async def call_tools(
-    capabilities: Sequence[AbstractCapability[None]],
-    calls: Sequence[tuple[str, dict[str, object]]],
-    *,
-    workspace: WorkspaceBackend | None = None,
-) -> list[str]:
-    """Make each call in turn within one run, then finish; return each tool result or retry prompt text."""
-    turn = 0
+
+def scripted_model(calls: Sequence[tuple[str, dict[str, object]]]) -> FunctionModel:
+    """Make each call in turn, then answer with every tool result."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal turn
-        turn += 1
-        if turn <= len(calls):
-            name, arguments = calls[turn - 1]
+        turn = sum(isinstance(message, ModelResponse) for message in messages)
+        if turn < len(calls):
+            name, arguments = calls[turn]
             return ModelResponse(parts=[ToolCallPart(name, arguments)])
-        return ModelResponse(parts=[TextPart('done')])
+        returns = [str(part.content) for m in messages for part in m.parts if isinstance(part, ToolReturnPart)]
+        return ModelResponse(parts=[TextPart('\n'.join(returns) or 'done')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         for part in respond(messages, info).parts:
@@ -34,7 +36,17 @@ async def call_tools(
                 assert isinstance(part, TextPart)
                 yield part.content
 
-    agent = Agent(FunctionModel(respond, stream_function=stream), deps_type=type(None), capabilities=capabilities)
+    return FunctionModel(respond, stream_function=stream)
+
+
+async def call_tools(
+    capabilities: Sequence[AbstractCapability[None]],
+    calls: Sequence[tuple[str, dict[str, object]]],
+    *,
+    workspace: WorkspaceBackend | None = None,
+) -> list[str]:
+    """Make each call in turn within one run, then finish; return each tool result or retry prompt text."""
+    agent = Agent(scripted_model(calls), deps_type=type(None), capabilities=capabilities)
     result = await agent.run('Use the tools', workspace=workspace)
     return [
         str(part.content)

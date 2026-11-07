@@ -271,7 +271,8 @@ listeners as they happen. Other tools run in activities and their events are not
 `CommandOutputEvent` and `CommandFinishedEvent` from `shell`
 ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
 results. When Temporal replays a workflow, approval listeners run again, so make their external effects
-idempotent.
+idempotent. Keep the write tools in the workflow: one moved into an activity, for example with
+`SetToolMetadata(temporal=...)`, raises `UserError` rather than writing without asking listeners.
 
 **Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
 become activities of the same agent. A `SubAgents` whose only delegate is `self` does the same, also with a

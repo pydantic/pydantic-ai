@@ -482,7 +482,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/), and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners re-run on every orchestrator replay: keep them deterministic and idempotent. On Render, events from the other tools are carried back to the run.
 
 ## Further reading
 
