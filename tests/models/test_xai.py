@@ -4499,7 +4499,6 @@ async def test_xai_grok_4_7_sends_sealed_system_blocks(allow_model_requests: Non
 
     assert get_mock_chat_create_kwargs(mock_client)[0]['messages'] == snapshot(
         [
-            {'content': [{'text': 'Be brief.'}], 'role': 'ROLE_SYSTEM'},
             {
                 'content': [
                     {
@@ -4508,6 +4507,7 @@ async def test_xai_grok_4_7_sends_sealed_system_blocks(allow_model_requests: Non
                 ],
                 'role': 'ROLE_SYSTEM',
             },
+            {'content': [{'text': 'Be brief.'}], 'role': 'ROLE_SYSTEM'},
             {'content': [{'text': 'Hi!'}], 'role': 'ROLE_USER'},
             {'content': [{'text': 'Hello.'}], 'role': 'ROLE_ASSISTANT'},
             {'content': [{'text': 'Who is on call?'}], 'role': 'ROLE_USER'},

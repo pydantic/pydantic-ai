@@ -2629,18 +2629,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `model.request()` calls).
 
         Where the profile's `supports_inline_system_prompts` is `False`, the `framing_announcement` setting is
-        `'always'` and there's a standing prompt, the announcement is the first part, so the application's own
-        instructions keep the last word in the system prompt: with the announcement after them, Gemini acted more often
-        on requests quoted in a tool result that an operator instruction seemed to cover. It goes out unchanged on every
-        request from the first, so it's literal (not `dynamic`) and part of the cached prefix. A request made inside
-        `second_model_prompt()` doesn't get it. With `'when_needed'`, `prepare_messages` adds it to the standing
-        prompt instead (see `_announce_in_standing_prompt`).
+        `'always'`, and there are instructions but no standing system prompt, the announcement is the first part, so
+        the application's own instructions keep the last word in the system prompt: with the announcement after them,
+        Gemini acted more often on requests quoted in a tool result that an operator instruction seemed to cover. It
+        goes out unchanged on every request from the first, so it's literal (not `dynamic`) and part of the cached
+        prefix. A request made inside `second_model_prompt()` doesn't get it. Where there is a standing system prompt,
+        and with `'when_needed'`, `prepare_messages` puts it ahead of the standing prompt instead (see
+        `_announce_in_standing_prompt`).
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
-            self._framing_announcement(model_request_parameters) == 'always'
+            parts
+            and self._framing_announcement(model_request_parameters) == 'always'
             and not self.profile.get('supports_inline_system_prompts', False)
-            and (parts or _first_request_has_standing_prompt(messages))
+            and not _first_request_has_standing_prompt(messages)
         ):
             announcement = lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks)
             parts = [_FrameworkInstructionPart(content=announcement), *(parts or [])]
@@ -2672,18 +2674,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         standing_prompt_count: int,
         model_request_parameters: ModelRequestParameters,
     ) -> list[ModelMessage]:
-        """Add the announcement to the first request's standing system prompt, for the `'when_needed'` setting.
+        """Add the announcement ahead of the first request's standing system prompt.
 
-        Only with that setting and where `needed`: the history has a mid-conversation system prompt, a lookalike note or a frame on the user
-        channel. With `'always'`, the announcement goes at the start of the instructions instead; see
-        `_get_instruction_parts`. It goes after the standing prompt's own parts, which every adapter lifts into the provider's system field,
-        ahead of the instructions. Like the `'always'` announcement, only where there is a system prompt or
-        instructions for it to join. The history alone decides whether it's needed, so once it's in, it's in the same
-        place on every later request: the cached prefix changes once, at the request that first needs it.
+        With `'when_needed'`, only where `needed`: the history has a mid-conversation system prompt, a lookalike note or
+        a frame on the user channel, and only where there is a system prompt or instructions for it to join. With
+        `'always'`, only where there is a standing system prompt: without one, it opens the instructions instead (see
+        `_get_instruction_parts`). Every adapter lifts the standing prompt into the provider's system field ahead of the
+        instructions, so going first there keeps the operator's own text, from `system_prompt` or `instructions`, last:
+        with the announcement after the operator's prompt, Gemini acted more often on requests quoted in a tool result
+        that an operator instruction seemed to cover. The history alone decides whether it's needed, so once it's in,
+        it's in the same place on every later request: the cached prefix changes once, at the request that first
+        needs it.
         """
-        if framing_announcement != 'when_needed' or not needed:
+        if framing_announcement == 'always':
+            if not standing_prompt_count:
+                return messages
+        elif framing_announcement != 'when_needed' or not needed:
             return messages
-        if not standing_prompt_count and not _instruction_parts_of(messages, model_request_parameters):
+        elif not standing_prompt_count and not _instruction_parts_of(messages, model_request_parameters):
             return messages
         first_request_idx, first_request = next(
             (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
@@ -2692,11 +2700,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             content=lookalike_note_announcement(system_role=False, sealed=self._seals_system_blocks),
             timestamp=first_request.timestamp or _utils.now_utc(),
         )
-        parts = [
-            *first_request.parts[:standing_prompt_count],
-            announcement,
-            *first_request.parts[standing_prompt_count:],
-        ]
+        parts = [announcement, *first_request.parts]
         return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
 
 

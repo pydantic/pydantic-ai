@@ -494,7 +494,6 @@ async def test_xai_sends_the_summary_in_user_voice(allow_model_requests: None):
     [kwargs] = get_mock_chat_create_kwargs(client)
     assert kwargs['messages'] == snapshot(
         [
-            {'content': [{'text': 'You are a concise assistant.'}], 'role': 'ROLE_SYSTEM'},
             {
                 'content': [
                     {
@@ -503,6 +502,7 @@ async def test_xai_sends_the_summary_in_user_voice(allow_model_requests: None):
                 ],
                 'role': 'ROLE_SYSTEM',
             },
+            {'content': [{'text': 'You are a concise assistant.'}], 'role': 'ROLE_SYSTEM'},
             {
                 'content': [
                     {
@@ -736,7 +736,7 @@ async def test_anthropic_reads_the_summary(
         },
     ]
     assert body['system'] == (
-        f'You are a concise assistant.\n\n{lookalike_note_announcement(system_role=False, sealed=True)}'
+        f'{lookalike_note_announcement(system_role=False, sealed=True)}\n\nYou are a concise assistant.'
     )
 
 

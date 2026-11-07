@@ -347,14 +347,15 @@ class ModelSettings(TypedDict, total=False):
     a model Pydantic AI adds the announcement, a fixed text of about 120 words (about 185 where the blocks are
     `<system verified>`), to a request that has a system prompt or instructions:
 
-    - `'when_needed'` (the default on most models): after the leading system prompts, ahead of the instructions,
-      from the first request whose history has a mid-conversation system prompt, a lookalike note or another frame
-      on the user channel, such as retry feedback or a compaction summary, and on every request after it. A
+    - `'when_needed'` (the default on most models): at the start of the system prompt, ahead of the leading system
+      prompts and the instructions, so the application's own text comes last, from the first request whose history
+      has a mid-conversation system prompt, a lookalike note or another frame on the user channel, such as retry
+      feedback or a compaction summary, and on every request after it. A
       mid-conversation system prompt includes an instruction change appended by a dynamic instruction with
       `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`). A conversation
       with none of these keeps its system prompt as written; one that has them changes its cached prompt prefix
       once, at that request, and keeps it stable from then on.
-    - `'always'`: at the start of the instructions, on every request from the first, so the prefix never changes, at
+    - `'always'`: at the start of the system prompt, on every request from the first, so the prefix never changes, at
       the cost of the announcement in conversations that never need it. The default on Claude Sonnet 4.6 and
       gpt-oss, which follow the system prompt less reliably without it (see
       [`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]).

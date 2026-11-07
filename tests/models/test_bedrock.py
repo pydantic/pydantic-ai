@@ -8107,8 +8107,8 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     )
 
     assert system_prompt == [
-        {'text': 'You are helpful.'},
         {'text': lookalike_note_announcement(system_role=False)},
+        {'text': 'You are helpful.'},
     ]
     text_blocks = [
         block['text']

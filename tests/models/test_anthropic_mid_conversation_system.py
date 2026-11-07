@@ -204,7 +204,7 @@ CASES = [
         id='inline-system-unsupported',
         model='claude-sonnet-5',
         # The system prompt also says what the `<system>` tag means, from the request with the first `<system>` block.
-        expected_system=f'You are a code reviewer.\n\n{lookalike_note_announcement(system_role=False)}',
+        expected_system=f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -717,7 +717,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == f'You are a code reviewer.\n\n{lookalike_note_announcement(system_role=False)}'
+    assert call_kwargs['system'] == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.'
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},

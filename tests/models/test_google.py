@@ -6503,8 +6503,8 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     assert system_instruction == {
         'role': 'user',
         'parts': [
-            {'text': 'You are helpful.'},
             {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
         ],
     }
     contents_any = cast(list[Any], contents)
