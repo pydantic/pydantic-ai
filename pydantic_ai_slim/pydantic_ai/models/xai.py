@@ -1,5 +1,6 @@
 """xAI model implementation using [xAI SDK](https://github.com/xai-org/xai-sdk-python)."""
 
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
@@ -409,6 +410,10 @@ class XaiModel(Model[AsyncClient]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        # Uploaded document file IDs, keyed by content hash or source URL,
+        # so the same document is uploaded only once per model instance.
+        self._uploaded_document_ids: dict[str, str] = {}
 
     @property
     def client(self) -> 'AsyncClient':
@@ -822,9 +827,14 @@ class XaiModel(Model[AsyncClient]):
         elif item.is_audio:
             raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
         elif item.is_document:
-            # Upload document to xAI files API and reference it
+            # Upload document to xAI files API and reference it, reusing a
+            # file ID uploaded earlier by this instance for the same bytes.
             filename = item.identifier or f'document.{item.format}'
-            file_id = await self._upload_file_to_xai(item.data, filename)
+            cache_key = f'bytes:{hashlib.sha256(item.data).hexdigest()}'
+            file_id = self._uploaded_document_ids.get(cache_key)
+            if file_id is None:
+                file_id = await self._upload_file_to_xai(item.data, filename)
+                self._uploaded_document_ids[cache_key] = file_id
             return file(file_id)
         elif item.is_video:
             raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
@@ -832,14 +842,17 @@ class XaiModel(Model[AsyncClient]):
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
     async def _map_document_url(self, item: DocumentUrl) -> chat_types.Content:
-        # Download and upload to xAI files API
-        downloaded = await download_item(item, data_format='bytes')
-        filename = item.identifier or 'document'
-        # Add extension if data_type is available from download
-        if 'data_type' in downloaded and downloaded['data_type']:
-            filename = f'{filename}.{downloaded["data_type"]}'
-
-        file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+        cache_key = f'url:{item.url}'
+        file_id = self._uploaded_document_ids.get(cache_key)
+        if file_id is None:
+            # Download and upload to xAI files API
+            downloaded = await download_item(item, data_format='bytes')
+            filename = item.identifier or 'document'
+            # Add extension if data_type is available from download
+            if 'data_type' in downloaded and downloaded['data_type']:
+                filename = f'{filename}.{downloaded["data_type"]}'
+            file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+            self._uploaded_document_ids[cache_key] = file_id
         return file(file_id)
 
     def _request_thinks(
