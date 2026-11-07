@@ -60,13 +60,13 @@ CASES = [
         expected_request=('gpt-5.2-proo',),
         expected_body=snapshot(
             {
-                'message': "The requested model 'gpt-5.2-proo' does not exist.",
+                'message': 'The model `gpt-5.2-proo` does not exist or you do not have access to it.',
                 'type': 'invalid_request_error',
-                'param': 'model',
+                'param': None,
                 'code': 'model_not_found',
             }
         ),
-        expected_status_code=400,
+        expected_status_code=404,
         expected_suggestion='openai:gpt-5.2-pro',
         marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
     ),
