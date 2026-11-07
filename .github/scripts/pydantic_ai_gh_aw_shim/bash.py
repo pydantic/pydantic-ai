@@ -55,7 +55,7 @@ def _simple_commands(command: str) -> list[list[str]] | None:
     """
     segments: list[str] = []
     start = index = 0
-    quote = ''
+    quote = operator = ''
     while index < len(command):
         char = command[index]
         substitution = char == '`' or command.startswith('$(', index)
@@ -75,7 +75,8 @@ def _simple_commands(command: str) -> list[list[str]] | None:
             end = index
             while end < len(command) and command[end] in '|&;':
                 end += 1
-            if command[index:end] not in _COMMAND_SEPARATORS:
+            operator = command[index:end]
+            if operator not in _COMMAND_SEPARATORS:
                 return None
             segments.append(command[start:index])
             start = index = end
@@ -83,8 +84,11 @@ def _simple_commands(command: str) -> list[list[str]] | None:
         index += 1
     if quote:
         return None
+    # A list may end with `;`, which leaves no command after it; every other operator needs one.
+    if operator != ';' or command[start:].strip():
+        segments.append(command[start:])
     try:
-        return [shlex.split(segment) for segment in [*segments, command[start:]]]
+        return [shlex.split(segment) for segment in segments]
     except ValueError:
         return None
 

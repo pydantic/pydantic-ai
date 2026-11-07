@@ -584,6 +584,8 @@ def _call_bash(
         "grep '|' AGENTS.md",
         'grep -n ";" AGENTS.md && git status',
         "git commit -m 'a && b' -m \\;",
+        'git status;',
+        'cat AGENTS.md; git status ; ',
     ],
 )
 def test_scoped_bash_runs_the_commands_its_grants_allow(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -611,6 +613,11 @@ def test_scoped_bash_runs_the_commands_its_grants_allow(command: str, monkeypatc
         "git status $'x'",
         'git commit -m "a" "b`touch marker`"',
         'git status |& cat',
+        'git status |',
+        'git status &&',
+        'git status ||',
+        '; git status',
+        'git status; ;',
     ],
 )
 def test_scoped_bash_refuses_commands_outside_its_grants(command: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
