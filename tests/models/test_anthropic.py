@@ -2940,14 +2940,14 @@ CACHE_BREAKPOINTS_CASES = [
             {
                 'chat claude-haiku-4-5': {
                     'pydantic_ai.cache.requested_breakpoints': [
-                        'system[1]',
+                        'system[0]',
                         'tools[0]',
                         'messages[0].content[0]',
                         'messages[0].content[1]',
                         'automatic',
                     ],
                     'pydantic_ai.cache.applied_breakpoints': [
-                        'system[1]',
+                        'system[0]',
                         'tools[0]',
                         'messages[0].content[1]',
                         'automatic',
@@ -2964,13 +2964,13 @@ CACHE_BREAKPOINTS_CASES = [
             {
                 'chat claude-haiku-4-5': {
                     'pydantic_ai.cache.requested_breakpoints': [
-                        'system[1]',
+                        'system[0]',
                         'tools[0]',
                         'messages[0].content[0]',
                         'automatic',
                     ],
                     'pydantic_ai.cache.applied_breakpoints': [
-                        'system[1]',
+                        'system[0]',
                         'tools[0]',
                         'messages[0].content[0]',
                         'automatic',
@@ -3086,14 +3086,14 @@ async def test_cache_breakpoints_not_recorded_by_count_tokens(allow_model_reques
         {
             'chat claude-haiku-4-5': {
                 'pydantic_ai.cache.requested_breakpoints': [
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[0].content[0]',
                     'messages[0].content[1]',
                     'automatic',
                 ],
                 'pydantic_ai.cache.applied_breakpoints': [
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[0].content[1]',
                     'automatic',
