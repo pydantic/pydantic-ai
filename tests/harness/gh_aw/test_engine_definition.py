@@ -45,6 +45,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from tests.conftest import try_import
+
+with try_import() as mcp_import_successful:
+    # The generated wrapper imports `pydantic_ai.mcp` from inside the running loop, and the first import of
+    # `jsonschema` that pulls in walks a package directory. Do it here, where collection has no loop running,
+    # so a test that runs alone doesn't trip the blocking-call detector.
+    import pydantic_ai.mcp  # noqa: F401
 
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
