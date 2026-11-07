@@ -300,8 +300,8 @@ Post your triage as a single comment on that issue.
   Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
-  when resolving an imported target, it adds the checkout to `sys.path` after loading the
-  framework packages.
+  only an imported target that is not importable without the checkout, such as `my_agent:agent`,
+  puts the checkout on `sys.path`, and then after installed packages.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue

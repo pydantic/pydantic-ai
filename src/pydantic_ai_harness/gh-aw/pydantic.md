@@ -137,6 +137,7 @@ engine:
       // The wrapper loads the gateway's MCP servers with the same public loader
       // and adds them as a dynamic toolset so agent-defined toolsets remain active.
       const AGENT_MODULE = `import importlib
+      import importlib.util
       import json
       import os
       import sys
@@ -377,7 +378,6 @@ engine:
       elif _configured_agent.lower().endswith(('.json', '.yaml', '.yml')):
           agent = Agent.from_file(_configured_agent)
       else:
-          sys.path.insert(0, os.getcwd())
           _module_name, _separator, _attribute = _configured_agent.rpartition(':')
           if not _separator:
               _module_name, _separator, _attribute = _configured_agent.rpartition('.')
@@ -385,6 +385,10 @@ engine:
               raise ValueError(
                   f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
               )
+          # The checkout joins sys.path only for a target that lives there, and after installed packages:
+          # the agent imports some dependencies after this point, and a checkout module must not replace one.
+          if importlib.util.find_spec(_module_name.partition('.')[0]) is None:
+              sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
@@ -405,9 +409,9 @@ engine:
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
-      // Preload the installed runner before an opt-in PAI_AGENT import adds the
-      // checkout to sys.path. The wrapper is cached before CLAI 2 resolves -a,
-      // so agent code imports once and import failures retain their traceback.
+      // Preload the installed runner before resolving PAI_AGENT. The wrapper is
+      // cached before CLAI 2 resolves -a, so agent code imports once, import
+      // failures retain their traceback, and CLAI 2 leaves sys.path alone.
       const LAUNCHER = `import importlib
       import json
       import os
@@ -596,8 +600,8 @@ engine:
         // path is trusted in-process configuration: Python can import from it at
         // startup, before the recorder protects its signing key.
         //
-        // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
-        // after trusted framework packages have loaded.
+        // The wrapper appends the checkout only for an imported PAI_AGENT that is
+        // not importable without it, so installed packages keep precedence.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow

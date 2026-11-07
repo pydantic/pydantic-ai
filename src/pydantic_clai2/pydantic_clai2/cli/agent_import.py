@@ -1,6 +1,7 @@
 """Resolve `--agent MODULE:ATTR` to a Pydantic AI agent instance."""
 
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -10,16 +11,21 @@ from pydantic_ai.agent import AbstractAgent
 def import_agent(path: str) -> AbstractAgent[None, object]:
     """Import `MODULE:ATTR` and return the agent instance it names.
 
-    The launch directory is appended to `sys.path`, so a module there resolves without installing it and
-    installed modules keep precedence. (`python -m pydantic_clai2` already puts it first, as for any script.)
+    When the module is not importable otherwise, the launch directory is appended to `sys.path`, so a module
+    there resolves without installing it and installed modules keep precedence. An importable module leaves
+    `sys.path` as it was, so a launch directory module cannot replace a package the agent imports later.
+    (`python -m pydantic_clai2` already puts the launch directory first, as for any script.)
     The agent runs with `deps=None`.
     """
     module_name, _, attr = path.partition(':')
     if not module_name or not attr:
         raise ValueError(f'--agent expects MODULE:ATTR, for example pydantic_ai.main:my_cool_agent; got {path!r}')
-    cwd = str(Path.cwd())
-    if cwd not in sys.path:
-        sys.path.append(cwd)
+    top_level = module_name.partition('.')[0]
+    # `find_spec` raises for an imported module without a spec, such as a script's `__main__`.
+    if top_level not in sys.modules and importlib.util.find_spec(top_level) is None:
+        cwd = str(Path.cwd())
+        if cwd not in sys.path:
+            sys.path.append(cwd)
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:

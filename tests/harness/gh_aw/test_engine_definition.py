@@ -1726,6 +1726,36 @@ os.fdopen = _fdopen
         assert results[0].data == {'status': expected_status, 'sourceType': 'pydantic-ai'}
 
 
+# Imports, at interpreter exit, a stdlib module nothing imported earlier and a module nothing installs, the way a
+# dependency imports lazily or tries an optional backend, then records the `sys.path` the run left behind.
+LAZY_IMPORT_PROBE = """import atexit
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _probe():
+    assert 'tabnanny' not in sys.modules, 'the probe needs a module nothing imports before exit'
+    import tabnanny
+    try:
+        import gh_aw_test_optional_dependency
+    except ImportError:
+        pass
+    Path(os.environ['GH_AW_TEST_SYS_PATH']).write_text(json.dumps(sys.path))
+
+
+atexit.register(_probe)
+"""
+
+CHECKOUT_MODULE = """import os
+from pathlib import Path
+
+with Path(os.environ['GH_AW_TEST_CHECKOUT_IMPORTS']).open('a') as handle:
+    handle.write(f'{__name__}\\n')
+"""
+
+
 class TestLauncherProgram:
     """The `-c` program, run by the real interpreter with the bytes the launcher sends."""
 
@@ -1787,6 +1817,70 @@ class TestLauncherProgram:
         # checkout copy.
         assert (tmp_path / 'imports.txt').read_text(encoding='utf-8') == 'module-directory\n'
         assert [event.type for event in recorded_events(completed.stderr)] == ['session.result']
+
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+    @pytest.mark.parametrize(
+        'pai_agent',
+        [
+            pytest.param(None, id='default'),
+            pytest.param('agent.yaml', id='spec'),
+            pytest.param('installed_agent:agent', id='installed-target'),
+            pytest.param('checkout_agent:agent', id='checkout-hosted-target'),
+        ],
+    )
+    @requires_clai2
+    def test_checkout_modules_do_not_shadow_installed_ones(self, tmp_path: Path, pai_agent: str | None) -> None:
+        """The checkout reaches `sys.path` only for a target that lives there, and then after installed packages."""
+        env = proxy_env('openai', 'openai/gpt-5')
+        if pai_agent is not None:
+            env['PAI_AGENT'] = pai_agent
+        invocation = launch(tmp_path, env, extra_python_path=CLAI2_SOURCE)
+        workspace = Path(invocation.cwd)
+        for name in ('tabnanny', 'gh_aw_test_optional_dependency'):
+            (workspace / f'{name}.py').write_text(CHECKOUT_MODULE, encoding='utf-8')
+        (workspace / 'agent.yaml').write_text('name: spec\ninstructions: Answer briefly.\n', encoding='utf-8')
+        (workspace / 'checkout_agent.py').write_text(
+            "from pydantic_ai import Agent\nagent = Agent(name='checkout', instructions='Answer briefly.')\n",
+            encoding='utf-8',
+        )
+        site_packages = tmp_path / 'site-packages'
+        site_packages.mkdir()
+        (site_packages / 'installed_agent.py').write_text(
+            "from pydantic_ai import Agent\nagent = Agent(name='installed', instructions='Answer briefly.')\n",
+            encoding='utf-8',
+        )
+        (site_packages / 'sitecustomize.py').write_text(LAZY_IMPORT_PROBE, encoding='utf-8')
+        checkout_imports = tmp_path / 'checkout-imports.txt'
+        runtime_path = tmp_path / 'sys-path.json'
+        arguments = invocation.argv.copy()
+        arguments[arguments.index('-m') + 1] = 'test'
+
+        completed = subprocess.run(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=workspace,
+            env={
+                **invocation.env,
+                'PYTHONPATH': f'{invocation.env["PYTHONPATH"]}:{site_packages}',
+                'GH_AW_TEST_CHECKOUT_IMPORTS': str(checkout_imports),
+                'GH_AW_TEST_SYS_PATH': str(runtime_path),
+            },
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stdout
+        assert [event.type for event in recorded_events(completed.stderr)][-1] == 'session.result'
+        sys_path: list[str] = json.loads(runtime_path.read_text(encoding='utf-8'))
+        if pai_agent == 'checkout_agent:agent':
+            # The target needs the checkout, which is trusted agent code here: it comes after installed
+            # packages, so only a module nothing installs resolves to it.
+            assert str(workspace) in sys_path
+            assert checkout_imports.read_text(encoding='utf-8') == 'gh_aw_test_optional_dependency\n'
+        else:
+            assert str(workspace) not in sys_path
+            assert not checkout_imports.exists()
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_target_that_is_not_an_agent_names_what_it_found(self, tmp_path: Path) -> None:

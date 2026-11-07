@@ -49,6 +49,21 @@ def test_import_agent_resolves_instance_from_launch_directory(fixture_module: Pa
     assert sys.path.count(str(fixture_module)) == 1
 
 
+def test_import_agent_leaves_sys_path_alone_for_an_importable_module(
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch directory module must not replace a package the agent imports after resolution."""
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_installed.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    monkeypatch.delitem(sys.modules, 'clai_agent_flag_installed', raising=False)
+
+    assert isinstance(import_agent('clai_agent_flag_installed:agent'), Agent)
+    assert str(fixture_module) not in sys.path
+
+
 @pytest.mark.parametrize(
     ('path', 'error', 'message'),
     [
