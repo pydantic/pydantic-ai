@@ -403,6 +403,7 @@ class TestStreamedResponse(StreamedResponse):
                 # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
                 # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
                 # the narrower union here.
+                self._usage += RequestUsage(output_tokens=1 + _estimate_string_tokens(part.args_as_json_str()))
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i,
                     tool_name=part.tool_name,
