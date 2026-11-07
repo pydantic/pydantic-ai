@@ -24,10 +24,19 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
+    SessionUsage,
     ToolCall,
     ToolCallCancelled,
+    ToolResult,
 )
-from pydantic_ai.realtime.lifecycle import AnswersRevised, InferredLifecycle, LifecycleEvent, RealtimeFrame
+from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
+    InferredLifecycle,
+    LifecycleEvent,
+    RealtimeFrame,
+    ResponseStarted,
+)
+from pydantic_ai.usage import RequestUsage
 
 
 def lifecycle(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[str]:
@@ -237,3 +246,20 @@ def test_a_microphone_streaming_silence_is_no_sign_the_user_spoke() -> None:
     assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
         AnswersRevised(response_id='pydantic_ai_response_1', released=(3,))
     ]
+
+
+def test_a_turn_that_ends_silently_after_a_tool_result_completes() -> None:
+    """A silent turn whose usage report precedes its terminal answers the tool result."""
+    tracker = InferredLifecycle()
+    tracker.frame_for(
+        [
+            ToolCall(tool_call_id='call-1', tool_name='save', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+    tracker.input_sent(ToolResult('call-1', output='saved'))
+    tracker.take_pending()
+    frame = tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+    assert lifecycle(frame) == snapshot(['ResponseStarted', 'ResponseEnded'])
+    started = [event for event in frame if isinstance(event, ResponseStarted)][0]
+    assert started.answers == (0,)

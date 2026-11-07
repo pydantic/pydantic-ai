@@ -456,6 +456,8 @@ class InferredLifecycle:
                 ended = self._open
                 self._end(after, status='completed', finish_reason='tool_call')
                 self._ended_by_usage = ended
+            else:
+                self._ended_by_usage = None
         elif isinstance(event, (InputTranscript, RealtimeInputTranscriptionErrorEvent)):
             self._input_transcript(event, before)
         elif isinstance(event, RealtimeResponseInterruptedEvent):
