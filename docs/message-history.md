@@ -247,10 +247,18 @@ How it reaches the model depends on the provider:
 
     On these models, two more things keep the tag meaning the same thing throughout the conversation:
 
-    * The standing system prompt gets one fixed sentence, after the leading system prompts and ahead of the instructions, that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
+    * The standing system prompt gets one fixed sentence that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes at the start, ahead of your system prompts and instructions, so your own text keeps the last word. It goes out from the first request whose history has a mid-conversation system prompt, including an instruction change appended with [`on_change='append'`](agent.md#appending-instruction-changes), and on every request after it, even once a [request-scoped](#request-scoped-system-prompts) one that brought it in is no longer sent, so an agent that never sends one pays nothing for it, and one that does changes its cached prefix once, at that request, and keeps it unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
     * Every `<system>` tag in the text of a user prompt or a tool return is escaped the same way, so that text can neither open nor close the tag. The user's and the tool's text otherwise goes out as written, other tags included.
 
     Without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they follow all three.
+
+The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting picks when that sentence is added. `'when_needed'`, the default, works as described above. `'always'` adds it on every request from the first, so the cached prefix never changes, at the cost of the sentence on conversations that never need it. `'never'` leaves it out, for an application that explains the tag in its own system prompt; models then follow a `<system>`-tagged change less reliably. The escaping of `<system>` tags in user and tool text doesn't depend on it.
+
+```python {title="framing_announcement.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+```
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 

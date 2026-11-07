@@ -3180,7 +3180,7 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
+                'system': f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3195,6 +3195,54 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
             }
         ]
     )
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_temporal_model_runtime_provider_reprepares_with_the_run_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The activity's re-preparation applies the run's `framing_announcement`, which isn't serialized with the parameters."""
+    foundry_client = anthropic.AsyncAnthropicFoundry(resource='test-resource', api_key='test-api-key')
+
+    def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
+        return AnthropicProvider(anthropic_client=foundry_client)
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__runtime_provider_reprepare_setting',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        provider_factory=provider_factory,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('answer')]),
+        ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+    ]
+    received_messages: list[list[ModelMessage]] = []
+
+    async def request(
+        _model: AnthropicModel,
+        activity_messages: list[ModelMessage],
+        _model_settings: ModelSettings | None,
+        _model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        received_messages.append(activity_messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setattr(AnthropicModel, 'request', request)
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=TestModel(), usage=RunUsage(), run_id='runtime-provider')
+    params = _RequestParams(
+        messages=messages,
+        model_settings={'framing_announcement': 'never'},
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        model_id='anthropic:claude-opus-5',
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
+
+    [[first_request, *_]] = received_messages
+    assert isinstance(first_request, ModelRequest)
+    assert [part.content for part in first_request.parts if isinstance(part, SystemPromptPart)] == ['leading']
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
