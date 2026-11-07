@@ -8,7 +8,19 @@ import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    FilePart,
+    ModelHTTPError,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolReturnPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelOverloadedError,
@@ -502,6 +514,66 @@ async def test_http_error(allow_model_requests: None):
     assert exc_info.value.status_code == 422
     assert exc_info.value.body == {'detail': "unknown model 'clm-nope'"}
     assert exc_info.value.model_name == 'clm-latest'
+
+
+_PNG = BinaryContent(b'\x89PNG', media_type='image/png')
+
+
+@pytest.mark.parametrize(
+    ('prompt', 'history', 'match'),
+    [
+        pytest.param(['look at this', _PNG], [], 'it judges text', id='prompt'),
+        pytest.param(
+            'Is it a cat?',
+            [ModelRequest(parts=[UserPromptPart('Draw a cat.')]), ModelResponse(parts=[FilePart(_PNG)])],
+            'a file in the message history',
+            id='history',
+        ),
+        pytest.param(
+            'Is it a cat?',
+            [
+                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+                ModelResponse(parts=[NativeToolReturnPart('camera', ['A cat.', _PNG], 'call-1')]),
+            ],
+            'a file in a tool result',
+            id='native_tool_return',
+        ),
+    ],
+)
+async def test_images_are_refused_before_a_request(
+    allow_model_requests: None, prompt: str | list[str | BinaryContent], history: list[ModelMessage], match: str
+):
+    """System One judges text only, so an image it would have to leave out of the state is refused rather than sent short.
+
+    Not a recording: the refusal comes before any request.
+    """
+    captured = Captured(ticket_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Is this fine?')
+    with pytest.raises(UserError, match=match):
+        await agent.run(prompt, message_history=history)
+    assert captured.requests == []
+
+
+async def test_file_in_tool_return_is_sent_as_a_note(allow_model_requests: None):
+    """System One reads no images, so one a tool returned reaches it as a note naming it, rather than failing the run."""
+    captured = Captured(lambda request: answers(response={'type': 'noul', 'noul': 0.9}))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+        ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'camera',
+                    ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png', identifier='photo')],
+                    'call-1',
+                )
+            ]
+        ),
+    ]
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Is this fine?')
+    await agent.run('Is it a cat?', message_history=history)
+
+    assert 'File photo (image/png, 4 bytes) was not sent: this model cannot read images.' in json.dumps(captured.body)
 
 
 async def test_decide_rejects_image_evidence_before_a_request(allow_model_requests: None):

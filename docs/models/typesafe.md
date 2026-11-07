@@ -4,7 +4,7 @@ description: "Run Pydantic AI agents on Jev from TypeSafe, a classifier that ans
 
 # TypeSafe (Jev)
 
-[Jev](https://typesafe.ai) is TypeSafe's model, and a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. In Pydantic AI, an agent running on a decision model can use it both to produce a structured [output](../output.md) and to call [tools](../tools.md).
+[Jev](https://typesafe.ai) is TypeSafe's model, and a [decision model](decision.md): it answers typed questions about text and images, each with a probability or a distribution over the options, rather than writing text. In Pydantic AI, an agent running on a decision model can use it both to produce a structured [output](../output.md) and to call [tools](../tools.md).
 
 [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] is the Pydantic AI model class for Jev, and a subclass of [`DecisionModel`][pydantic_ai.models.decision.DecisionModel]. This page covers what is specific to Jev and TypeSafe: setup, Jev's limits, and what it answers badly.
 
@@ -116,6 +116,14 @@ print(result.response.provider_details['confidence'])
 
 The prompt is only the ticket; the questions are on the output type: its docstring is the goal, the docstring under each field is that field's question, and the `Enum` members' docstrings and the [`BoolCriteria`][pydantic_ai.output.BoolCriteria] say what each answer means. Jev is sure of the team and the app, and much less sure the ticket is urgent, which is the answer to send to a person or to [a language model behind it](decision.md#falling-back-on-low-confidence). Every answer is a value of the type, so there is no text to parse and no answer outside the options.
 
+## Image input {#images}
+
+Jev judges images as well as text. An image in the prompt, the message history or a tool result, as a [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl] (see [image input](../input.md#image-input)), appears in the state as `<image 1>`, `<image 2>` and so on, and Jev sees the image in its place. An `ImageUrl` is downloaded and sent as bytes. The image goes wherever its label appears, so a prompt, instructions or field description that itself contains `<image 1>` gets the first image there too, once more for every question it reaches.
+
+Image input is experimental, or [dreamer-ready](https://docs.typesafe.ai/images) as TypeSafe put it: its request format, answers and limits can change between releases. The API only accepts an image on a request that opts in with the `TypeSafe-Danger-Zone-Images: true` header, which `TypeSafeModel` sends with every request that carries an image.
+
+The API takes still PNG and JPEG images of 280 to 1568 pixels a side. Each image can be up to 16 MiB, and a request up to 32 MiB, where an image counts once for every place its label appears. Anything outside these limits is refused with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which a [`FallbackModel`](overview.md#fallback-model) falls back on like any API error; no image is resized to fit. The API ignores EXIF orientation, so rotate a photo upright before sending it. Each image counts toward the [32k tokens](#limits) of every request it goes out with, and an image in the history goes out with every later request. See TypeSafe's [image guide](https://docs.typesafe.ai/images) for the exact limits.
+
 ## Costs and limits {#limits}
 
 Jev answers the questions in one request in parallel, so asking several costs little more than asking one: a field you only need on some inputs costs tokens rather than time.
@@ -181,7 +189,7 @@ These come from running Jev behind Pydantic AI, not from TypeSafe.
 
 ## Files
 
-Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+Jev reads text and [images](#images). To ask about a document, audio file or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
 
 ```python
 from enum import StrEnum
@@ -207,6 +215,8 @@ result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output.value)
 #> animals
 ```
+
+The capability leaves images as they are, since Jev reads them, so an image outside the [image limits](#images) is refused rather than described.
 
 ## `provider` argument
 
