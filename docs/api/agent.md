@@ -17,6 +17,8 @@
             - InstrumentationSettings
             - EventStreamHandler
             - AgentSpec
+            - ModelSpec
+            - OpenAICompatibleModelSpec
             - AgentModelSettings
             - AgentInstructions
             - UserPromptNode

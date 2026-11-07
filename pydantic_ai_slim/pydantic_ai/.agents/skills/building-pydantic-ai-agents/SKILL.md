@@ -235,6 +235,8 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
+For an OpenAI-compatible service without a provider of its own, `model` can be an object (`provider: openai-compatible`, `provider_name`, `model_name`, `base_url` or `base_url_env`, `api_key_env`, and optionally `api: responses`). Secrets are only referenced by environment variable name.
+
 ### Realtime (speech-to-speech) sessions
 
 For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
