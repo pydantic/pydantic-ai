@@ -569,16 +569,19 @@ def test_wrapper_imports_a_target_in_an_installed_namespace_package_without_the_
 @pytest.mark.parametrize(
     'installed_target_directory', [False, True], ids=['namespace-parent', 'namespace-parent-and-target']
 )
-def test_wrapper_imports_a_checkout_portion_of_an_installed_namespace_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed_target_directory: bool
+@pytest.mark.parametrize('checkout_package', [False, True], ids=['namespace-portion', 'regular-package'])
+def test_wrapper_imports_a_checkout_target_beside_an_installed_namespace_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed_target_directory: bool, checkout_package: bool
 ) -> None:
-    """An installed namespace package, even one named like the target itself, holds no agent."""
+    """An installed namespace package, even one named like the target, holds no agent and yields to a regular package."""
     installed = tmp_path / 'site-packages'
     (installed / 'gh_aw_test_namespace').mkdir(parents=True)
     if installed_target_directory:
         (installed / 'gh_aw_test_namespace' / 'agents').mkdir()
     checkout_portion = tmp_path / 'workspace' / 'gh_aw_test_namespace'
     checkout_portion.mkdir(parents=True)
+    if checkout_package:
+        (checkout_portion / '__init__.py').write_text('', encoding='utf-8')
     (checkout_portion / 'agents.py').write_text(
         "from pydantic_ai import Agent\nagent = Agent(name='namespace')\n", encoding='utf-8'
     )

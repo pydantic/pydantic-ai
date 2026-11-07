@@ -46,6 +46,10 @@ def _append_launch_directory_unless_importable(module_name: str) -> None:
     # spec, such as a script's `__main__`.
     if module_name in sys.modules:
         return
+    parts = module_name.split('.')
+    unimported_parents = [
+        name for name in ('.'.join(parts[:end]) for end in range(1, len(parts))) if name not in sys.modules
+    ]
     try:
         # Finding a submodule imports its parent packages, as importing it would.
         spec = importlib.util.find_spec(module_name)
@@ -54,8 +58,15 @@ def _append_launch_directory_unless_importable(module_name: str) -> None:
             raise
         spec = None
     cwd = str(Path.cwd())
-    if (spec is None or spec.origin is None) and cwd not in sys.path:
-        sys.path.append(cwd)
+    if (spec is not None and spec.origin is not None) or cwd in sys.path:
+        return
+    sys.path.append(cwd)
+    # Forget the namespace packages the lookup imported, so a regular package of the same name in the launch
+    # directory takes precedence over them, as it would have without the lookup.
+    for name in unimported_parents:
+        parent = sys.modules.get(name)
+        if parent is not None and parent.__spec__ is not None and parent.__spec__.origin is None:
+            del sys.modules[name]
 
 
 def _reports_missing(exc: ModuleNotFoundError, module_name: str) -> bool:

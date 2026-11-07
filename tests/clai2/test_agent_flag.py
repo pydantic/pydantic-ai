@@ -86,18 +86,22 @@ def test_import_agent_leaves_sys_path_alone_for_a_target_in_an_installed_namespa
 @pytest.mark.parametrize(
     'installed_target_directory', [False, True], ids=['namespace-parent', 'namespace-parent-and-target']
 )
-def test_import_agent_resolves_a_launch_directory_portion_of_an_installed_namespace_package(
+@pytest.mark.parametrize('launch_directory_package', [False, True], ids=['namespace-portion', 'regular-package'])
+def test_import_agent_resolves_a_launch_directory_target_beside_an_installed_namespace_package(
     fixture_module: Path,
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
     installed_target_directory: bool,
+    launch_directory_package: bool,
 ) -> None:
-    """An installed namespace package, even one named like the target itself, holds no agent."""
+    """An installed namespace package, even one named like the target, holds no agent and yields to a regular package."""
     installed = tmp_path_factory.mktemp('installed')
     (installed / 'clai_agent_flag_namespace').mkdir()
     if installed_target_directory:
         (installed / 'clai_agent_flag_namespace' / 'agents').mkdir()
     (fixture_module / 'clai_agent_flag_namespace').mkdir()
+    if launch_directory_package:
+        (fixture_module / 'clai_agent_flag_namespace' / '__init__.py').write_text('')
     (fixture_module / 'clai_agent_flag_namespace' / 'agents.py').write_text(
         'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
     )

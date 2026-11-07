@@ -392,6 +392,10 @@ engine:
           # no agent, so it counts as missing. find_spec raises for an imported module without a spec, such
           # as __main__, and finding a submodule imports its parent packages, as importing it would.
           if _module_name not in sys.modules:
+              _parts = _module_name.split('.')
+              _unimported_parents = [
+                  _name for _name in ('.'.join(_parts[:_end]) for _end in range(1, len(_parts))) if _name not in sys.modules
+              ]
               try:
                   _spec = importlib.util.find_spec(_module_name)
               except ModuleNotFoundError as _error:
@@ -402,6 +406,12 @@ engine:
                   _spec = None
               if _spec is None or _spec.origin is None:
                   sys.path.append(os.getcwd())
+                  # Forget the namespace packages the lookup imported, so a regular package of the same name
+                  # in the checkout takes precedence over them, as it would have without the lookup.
+                  for _name in _unimported_parents:
+                      _parent = sys.modules.get(_name)
+                      if _parent is not None and _parent.__spec__ is not None and _parent.__spec__.origin is None:
+                          del sys.modules[_name]
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
