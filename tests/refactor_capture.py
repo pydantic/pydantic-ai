@@ -21,17 +21,19 @@ When a capture starts, it runs an agent over a streamed canary response and stop
 recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
-`send`, with its method and URL as the target, its headers and its body, parsed when it's JSON. Two kinds of header are
-left out: credentials (`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `cookie`), so a
-capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose ids are random per
-run. A test that hands a model one of the SDK client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the
-model makes on a listed method is recorded instead, with the method as the target and the arguments as passed, SDK
-sentinels for an omitted argument included. When a capture starts, it runs an agent over a Groq model on `httpx` and
-over an Anthropic model on `httpx2`, and stops the run if either request wasn't recorded, so an SDK that moves to an
-HTTP client the capture doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection
-has imported the tests, a listed mock method that's gone stops the run too. Other transports, like botocore for Bedrock,
-and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client, escape
-it.
+`send`, and one a botocore client sends, like Bedrock's, from `Endpoint.make_request`, before it's signed and after a
+model's extra headers are added. Either is recorded with its method and URL as the target, its headers and its body,
+parsed when it's JSON. Two kinds of header are left out: credentials (`authorization`, `proxy-authorization`,
+`x-api-key`, `api-key`, `x-goog-api-key`, `cookie`), so a capture never writes a key to disk, and trace context
+(`traceparent`, `tracestate`, `baggage`), whose ids are random per run. A test that hands a model one of the SDK client
+mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded instead, with
+the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When a capture
+starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on botocore,
+and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture doesn't
+wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a listed
+mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's tests
+define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's client,
+escape it.
 
 A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
 call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
@@ -73,7 +75,7 @@ import sys
 import tarfile
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -81,7 +83,11 @@ from pathlib import Path
 import httpx
 import httpx2
 import pytest
+from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
+from botocore.endpoint import Endpoint
 from pydantic_core import to_json
+from typing_extensions import TypedDict
+from urllib3 import HTTPResponse
 
 import pydantic_ai
 from pydantic_ai import Agent
@@ -89,10 +95,12 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.groq import GroqModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.settings import ModelSettings
 
@@ -154,6 +162,15 @@ IN_PROCESS_MODELS: list[tuple[type[Model], tuple[str, ...]]] = [
     (FunctionModel, ('request', 'request_stream')),
     (TestModel, ('request', 'request_stream')),
 ]
+
+
+class BotocoreRequest(TypedDict):
+    """What a capture reads from the request dict botocore's `Endpoint.make_request` is handed."""
+
+    method: str
+    url: str
+    headers: Mapping[str, str]
+    body: object
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -228,7 +245,8 @@ class RefactorCapture:
     def install(self) -> None:
         """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined.
 
-        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, and each method `IN_PROCESS_MODELS` lists.
+        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, botocore's `Endpoint.make_request`, and each method
+        `IN_PROCESS_MODELS` lists.
         """
         pending: list[type[StreamedResponse]] = [StreamedResponse]
         while pending:
@@ -238,6 +256,7 @@ class RefactorCapture:
         self._monkeypatch.setattr(StreamedResponse, '__init_subclass__', classmethod(self._wrap_aiter))
         self._wrap_send(httpx.AsyncClient)
         self._wrap_send(httpx2.AsyncClient)
+        self._wrap_make_request()
         for model_class, method_names in IN_PROCESS_MODELS:
             for name in method_names:
                 self._wrap_model(model_class, name)
@@ -260,7 +279,7 @@ class RefactorCapture:
             )
 
     def check_request_hook(self) -> None:
-        """Stop the run unless the request an agent sends through each of `httpx` and `httpx2` is recorded."""
+        """Stop the run unless the request an agent sends through each of `httpx`, `httpx2` and botocore is recorded."""
 
         async def run() -> list[str]:
             missed: list[str] = []
@@ -281,6 +300,7 @@ class RefactorCapture:
                             'claude-sonnet-4-5', provider=AnthropicProvider(api_key='canary', http_client=http2_client)
                         ),
                     ),
+                    ('`BedrockConverseModel` over `botocore`', bedrock_canary_model()),
                 ]
                 for label, model in models:
                     recorded = len(self.records)
@@ -394,24 +414,42 @@ class RefactorCapture:
             client: object, request: httpx.Request | httpx2.Request, *args: object, **kwargs: object
         ) -> object:
             text = (await request.aread()).decode(errors='backslashreplace')
-            try:
-                body: object = json.loads(text)
-            except ValueError:
-                body = text
-            self.records.append(
-                {
-                    'kind': 'request',
-                    'node': self.node,
-                    'target': normalized(f'{request.method} {request.url}'),
-                    'headers': normalized(
-                        {name: value for name, value in request.headers.items() if name not in UNRECORDED_HEADERS}
-                    ),
-                    'body': normalized(body),
-                }
-            )
+            self._record_request(f'{request.method} {request.url}', request.headers.items(), text)
             return await original(client, request, *args, **kwargs)
 
         self._monkeypatch.setattr(client_class, 'send', recording_send)
+
+    def _wrap_make_request(self) -> None:
+        original: Callable[..., object] = vars(Endpoint)['make_request']
+
+        def recording_make_request(
+            endpoint: Endpoint, operation_model: object, request_dict: BotocoreRequest
+        ) -> object:
+            body = request_dict['body']
+            text = body.decode(errors='backslashreplace') if isinstance(body, bytes) else str(body)
+            self._record_request(
+                f'{request_dict["method"]} {request_dict["url"]}', request_dict['headers'].items(), text
+            )
+            return original(endpoint, operation_model, request_dict)
+
+        self._monkeypatch.setattr(Endpoint, 'make_request', recording_make_request)
+
+    def _record_request(self, target: str, headers: Iterable[tuple[str, str]], text: str) -> None:
+        try:
+            body: object = json.loads(text)
+        except ValueError:
+            body = text
+        self.records.append(
+            {
+                'kind': 'request',
+                'node': self.node,
+                'target': normalized(target),
+                'headers': normalized(
+                    {name: value for name, value in headers if name.lower() not in UNRECORDED_HEADERS}
+                ),
+                'body': normalized(body),
+            }
+        )
 
     def _wrap_mock(self, mock: type, name: str) -> None:
         original: Callable[..., object] = vars(mock)[name]
@@ -462,6 +500,20 @@ class RefactorCapture:
 
 async def stream_canary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     yield 'canary'
+
+
+def bedrock_canary_model() -> BedrockConverseModel:
+    """A Bedrock model whose client answers each request with a 400 instead of sending it."""
+    provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='canary', aws_secret_access_key='canary')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    def answer_400(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 400, HTTPHeaders(), HTTPResponse(body=io.BytesIO(b'{}'), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', answer_400)  # pyright: ignore[reportArgumentType]
+    return model
 
 
 def method_target(owner: type, name: str) -> str:

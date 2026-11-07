@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
@@ -16,21 +17,31 @@ import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai
-from pydantic_ai.models import StreamedResponse
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 
-from .conftest import try_import
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from . import refactor_capture
-    from .refactor_capture import CAPTURE_OPTION, SDK_MOCKS, SOURCE_FILE, RefactorCapture, compare, normalized
+    from .refactor_capture import (
+        CAPTURE_OPTION,
+        SDK_MOCKS,
+        SOURCE_FILE,
+        RefactorCapture,
+        bedrock_canary_model,
+        compare,
+        normalized,
+    )
 
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq` and `anthropic`; the `REQUESTS` sessions import `openai` too.
+    # The plugin imports `httpx`, `groq`, `anthropic` and `boto3`; the `REQUESTS` sessions import `openai` too.
     pytest.mark.skipif(
         not imports_successful() or importlib.util.find_spec('openai') is None,
-        reason='`httpx`, `groq`, `anthropic` or `openai` not installed',
+        reason='`httpx`, `groq`, `anthropic`, `boto3` or `openai` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -419,13 +430,43 @@ def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
 def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
     """A canary request the capture doesn't see fails the run instead of the capture recording nothing.
 
-    The capture's `send` wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
+    The capture's request wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
     """
     with pytest.raises(
         pytest.UsageError,
-        match='with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` was not recorded',
+        match=(
+            'with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` and `BedrockConverseModel` over `botocore` '
+            'was not recorded'
+        ),
     ):
         RefactorCapture(tmp_path).check_request_hook()
+
+
+async def test_capture_records_a_request_botocore_sends(tmp_path: Path):
+    """A request a botocore client sends is recorded unsigned, with the extra headers the model adds."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        with override_allow_model_requests(True), suppress(ModelHTTPError):
+            await Agent(bedrock_canary_model()).run('hello', model_settings={'extra_headers': {'x-canary': 'yes'}})
+    finally:
+        capture.pytest_unconfigure()
+
+    assert capture.records == snapshot(
+        [
+            {
+                'kind': 'request',
+                'node': None,
+                'target': 'POST https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse',
+                'headers': {'Content-Type': 'application/json', 'User-Agent': IsStr(), 'x-canary': 'yes'},
+                'body': {
+                    'messages': [{'role': 'user', 'content': [{'text': 'hello'}]}],
+                    'system': [],
+                    'inferenceConfig': {},
+                },
+            }
+        ]
+    )
 
 
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
