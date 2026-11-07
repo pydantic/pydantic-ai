@@ -54,29 +54,25 @@ class FunctionSchema:
     takes_ctx: bool
     is_async: bool
     single_arg_name: str | None = None
+    single_field_name: str | None = None
+    """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
+
+    Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
+    to normalize to `{name: value}`) and primitive single args (where the schema is a
+    one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
+
+    This is always the **Python parameter name**, which is the key the validated args dict is
+    keyed by — not the JSON schema property name, which is the alias when the parameter has
+    one (e.g. `def f(city: Annotated[str, Field(alias='cityName')])`).
+
+    The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
+    this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
+    outer `{data: ...}` envelope is the wrapper.
+    """
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
-
-    @property
-    def single_field_name(self) -> str | None:
-        """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
-
-        Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
-        to normalize to `{name: value}`) and primitive single args (where the schema is a
-        one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
-
-        The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
-        this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
-        outer `{data: ...}` envelope is the wrapper.
-        """
-        if self.single_arg_name is not None:
-            return self.single_arg_name
-        properties = self.json_schema.get('properties', {})
-        if len(properties) == 1:
-            return next(iter(properties))
-        return None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -105,6 +101,21 @@ class FunctionSchema:
             args.extend(args_dict.pop(self.var_positional_field))
 
         return args, args_dict
+
+
+def _single_field_name(
+    single_arg_name: str | None, json_schema: ObjectJsonSchema, fields: dict[str, core_schema.TypedDictField]
+) -> str | None:
+    """The Python parameter name a single value-carrying arg is wrapped under, or `None` for any other signature.
+
+    The name is read off `fields` rather than the JSON schema property, which is the alias when the parameter
+    has one, while the validated args dict is always keyed by the Python name.
+    """
+    if single_arg_name is not None:
+        return single_arg_name
+    if len(json_schema.get('properties', {})) == 1:
+        return next(iter(fields))
+    return None
 
 
 def function_schema(
@@ -208,6 +219,8 @@ def function_schema(
     name = tool_name or function.__name__
     checked_json_schema = check_object_json_schema(json_schema)
 
+    single_field_name = _single_field_name(single_arg_name, checked_json_schema, schema_context.fields)
+
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
     return_annotation = type_hints.get('return')
     return_schema_type = extract_return_schema_type(return_annotation, function)
@@ -230,6 +243,7 @@ def function_schema(
         validator=schema_validator,
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
+        single_field_name=single_field_name,
         positional_fields=schema_context.positional_fields,
         var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),
