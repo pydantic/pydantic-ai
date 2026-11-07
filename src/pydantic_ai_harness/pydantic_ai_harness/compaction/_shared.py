@@ -7,7 +7,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
@@ -566,6 +566,42 @@ _SPAN_NAME = 'compact_messages'
 """Static, low-cardinality span name emitted whenever a strategy compacts. The strategy name
 goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
 
+SpanAttributeValue: TypeAlias = str | int | float | bool
+"""A value `Span.set_attribute` accepts, for attributes recorded before their span is started."""
+
+_pending_span_attributes: ContextVar[dict[str, SpanAttributeValue] | None] = ContextVar(
+    'pydantic_ai_harness.compaction.pending_span_attributes',
+    default=None,
+)
+"""Async-context-local sink for the attributes of the `compact_messages` span.
+
+A strategy's inner work -- a summarizer call that had to trim its own input -- learns something the
+span should carry, but the span only starts once the strategy returns. It records here, and the
+enclosing `compact_with_span` drains onto the span it opens.
+"""
+
+
+def open_span_attribute_scope() -> Token[dict[str, SpanAttributeValue] | None]:
+    """Start a fresh span-attribute scope; returns the token to reset it with."""
+    return _pending_span_attributes.set({})
+
+
+def drain_span_attributes() -> dict[str, SpanAttributeValue]:
+    """Return the attributes recorded in the current scope (empty when none/no scope)."""
+    return dict(_pending_span_attributes.get() or {})
+
+
+def reset_span_attribute_scope(token: Token[dict[str, SpanAttributeValue] | None]) -> None:
+    """Reset the span-attribute scope opened by `open_span_attribute_scope`."""
+    _pending_span_attributes.reset(token)
+
+
+def record_span_attribute(key: str, value: SpanAttributeValue) -> None:
+    """Record an attribute for the enclosing `compact_messages` span; a no-op outside a scope."""
+    pending = _pending_span_attributes.get()
+    if pending is not None:
+        pending[key] = value
+
 
 def _history_changed(before: list[ModelMessage], after: list[ModelMessage]) -> bool:
     """Return True if *after* differs from *before*.
@@ -608,11 +644,14 @@ async def compact_with_span(
             when there was one.
     """
     token = open_receipt_scope()
+    attributes_token = open_span_attribute_scope()
     try:
         compacted = await compact()
         receipts = drain_receipts()
+        recorded_attributes = drain_span_attributes()
     finally:
         reset_receipt_scope(token)
+        reset_span_attribute_scope(attributes_token)
     if not _history_changed(messages, compacted):
         return messages
     with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
@@ -628,6 +667,8 @@ async def compact_with_span(
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
                 }
             )
+            if recorded_attributes:
+                span.set_attributes(recorded_attributes)
             if model_requested:
                 span.set_attribute('compaction.model_requested', True)
             if background is not None:
@@ -661,11 +702,14 @@ async def compact_if_smaller(
     or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
     """
     token = open_receipt_scope()
+    attributes_token = open_span_attribute_scope()
     try:
         compacted = await compact()
         receipts = drain_receipts()
+        recorded_attributes = drain_span_attributes()
     finally:
         reset_receipt_scope(token)
+        reset_span_attribute_scope(attributes_token)
     if _history_changed(messages, compacted):
         tokens_before = estimate_token_count(messages, tokenizer)
         tokens_after = estimate_token_count(compacted, tokenizer)
@@ -684,6 +728,8 @@ async def compact_if_smaller(
             return None
     for receipt in receipts:
         record_receipt(receipt)
+    for key, value in recorded_attributes.items():
+        record_span_attribute(key, value)
     return compacted
 
 
