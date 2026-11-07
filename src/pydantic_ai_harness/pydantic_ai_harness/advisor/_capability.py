@@ -12,12 +12,11 @@ from typing import Any, Literal, Self
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
-from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool, durable_operation
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import AbstractModel, KnownModelName, Model, ModelRequestContext, parse_model_id
-from pydantic_ai.native_tools import AdvisorTool
+from pydantic_ai.native_tools import AdvisorTool, AnthropicAdvisorToolSettings
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
@@ -364,13 +363,16 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         return self._advisor_tool(native_model_name)
 
     def _advisor_tool(self, model_name: str) -> AdvisorTool:
-        with suppress_provider_field_warnings():
-            return AdvisorTool(
-                model=model_name,
-                max_uses=self.max_uses,
-                max_tokens=self.max_tokens,
-                caching=self.caching,
-            )
+        anthropic_settings = AnthropicAdvisorToolSettings()
+        if self.max_uses is not None:
+            anthropic_settings['max_uses'] = self.max_uses
+        if self.caching is not None:
+            anthropic_settings['caching'] = self.caching
+        return AdvisorTool(
+            model=model_name,
+            max_tokens=self.max_tokens,
+            provider_settings={'anthropic': anthropic_settings} if anthropic_settings else None,
+        )
 
     @staticmethod
     def _parse_native_model(
