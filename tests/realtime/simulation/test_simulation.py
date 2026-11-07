@@ -3130,6 +3130,19 @@ def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
+def test_elevenlabs_agents_barge_in_before_the_reply() -> None:
+    """Cut in on before the agent says anything, nothing is cut: the reply that follows is whole."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.barge_in()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
 @pytest.mark.parametrize('calls_ended', [False, True], ids=['reply-under-way', 'reply-ended'])
 def test_elevenlabs_agents_raising_tool_completes_the_turn_once(calls_ended: bool) -> None:
     """A client tool that raises completes the turn once, whether or not the reply that called it had ended by then.
