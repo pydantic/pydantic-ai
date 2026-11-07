@@ -934,14 +934,16 @@ class BinaryContent:
     @property
     def format(self) -> str:
         """The file format of the binary content."""
+        # A media type may carry parameters (RFC 2045), e.g. from a data URI; look up the bare type.
+        media_type = self.media_type.split(';', 1)[0].strip()
         if self.is_audio:
-            format = _audio_format_lookup.get(self.media_type)
+            format = _audio_format_lookup.get(media_type)
         elif self.is_image:
-            format = _image_format_lookup.get(self.media_type)
+            format = _image_format_lookup.get(media_type)
         elif self.is_video:
-            format = _video_format_lookup.get(self.media_type)
+            format = _video_format_lookup.get(media_type)
         else:
-            format = _document_format(self.media_type)
+            format = _document_format(media_type)
         if format is None:
             raise ValueError(f'Unknown media type: {self.media_type}')
         return format
