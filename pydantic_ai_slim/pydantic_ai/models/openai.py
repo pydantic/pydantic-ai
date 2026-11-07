@@ -186,6 +186,7 @@ from ._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
+from ._transport_errors import transport_error_message
 
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
@@ -317,6 +318,11 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
         raise _model_errors.transport_status_error(model_name, e.response) from e
+    except httpx2.TransportError as e:
+        # The SDK maps transport errors to `APIConnectionError` only around `_send_request`; one raised while it reads
+        # an error response body surfaces as the raw `httpx2` error.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
