@@ -47,11 +47,14 @@ Each test starts with `random` seeded from its node id, so a test that draws fro
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
 test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses, timestamps within a
-day of the capture, history digests (which hash those timestamps), attempt durations, local server ports, multipart
-boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id` gets,
-`PromptInjectionDefender`'s measured `latency_ms`, and `Planning`'s step ids where its plan and its reply to an added
-step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back isn't, in a
-tool call's arguments or where `Planning` renders it from them, as a subtask's parent or a dependency.
+day of the capture (ones in the basic format of a SigV4 `x-amz-date` header too), history digests (which hash those
+timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
+random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`, and
+`Planning`'s step ids where its plan and its reply to an added step render them are normalized, so two runs of the same
+code compare equal. A step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from
+them, as a subtask's parent or a dependency. Cassette playback hands a response's headers back in a different order each
+run, so the `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message
+renders them.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -141,7 +144,11 @@ GENERATED_VALUES = [
     (re.compile(r'(\[[ ~x!-]\] \[)[0-9a-f]{8}(?=\])'), r'\1STEP_ID'),
     (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
 ]
-ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)"')
+# The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with.
+ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)"')
+# Cassette playback hands a response's headers back in a different order each run, and botocore copies them into an
+# error response's `ResponseMetadata`, which an error message renders with `repr`.
+BOTOCORE_ERROR_HEADERS = re.compile(r"'HTTPHeaders': \{([^{}]*)\}")
 # Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
 SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
     ('tests.models.test_anthropic', 'MockAnthropic', ('messages_create', 'messages_count_tokens')),
@@ -534,7 +541,12 @@ def normalized(value: object) -> object:
             timestamp = timestamp.replace(tzinfo=UTC)
         return '"NOW"' if abs(timestamp - now) < timedelta(days=1) else match[0]
 
+    # Split only between two quoted strings, so a value with a comma in it, like an HTTP date, stays whole.
+    def sorted_headers(match: re.Match[str]) -> str:
+        return "'HTTPHeaders': {" + ', '.join(sorted(re.split(r"(?<='), (?=')", match[1]))) + '}'
+
     text = ISO_DATETIME.sub(generated_timestamp, to_json(value, fallback=repr, bytes_mode='base64').decode())
+    text = BOTOCORE_ERROR_HEADERS.sub(sorted_headers, text)
     for pattern, replacement in GENERATED_VALUES:
         text = pattern.sub(replacement, text)
     return json.loads(text)

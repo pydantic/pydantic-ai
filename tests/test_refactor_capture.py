@@ -655,6 +655,13 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
             'added_step': "Added step 'a' with id: 0a1b2c3d",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
+                "'keep-alive'}, 'RetryAttempts': 0}}"
+            ),
         }
     ) == snapshot(
         {
@@ -679,5 +686,12 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
             'added_step': "Added step 'a' with id: STEP_ID",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': 'NOW',
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
+                "GMT'}, 'RetryAttempts': 0}}"
+            ),
         }
     )
