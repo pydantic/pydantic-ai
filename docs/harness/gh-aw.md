@@ -628,7 +628,9 @@ private directories, disabled console output and distributed tracing if the agen
 Set `PAI_RESULT_METADATA` to `MODULE:ATTRIBUTE` to include a trusted agent module's
 dictionary in `session.result.data.metadata`. The dictionary must have string keys
 and JSON-serializable values. Update the same dictionary during the run; the recorder
-serializes it when the process finishes, including handled failures.
+serializes it when the process finishes, including handled failures. A target that is
+not such a dictionary fails the run. Metadata that cannot be serialized is left out,
+and the result still records the run's outcome.
 
 The engine signs this metadata with the terminal result. Ordinary stdout and
 sandbox-written files cannot substitute for it. Consumers should read the verified

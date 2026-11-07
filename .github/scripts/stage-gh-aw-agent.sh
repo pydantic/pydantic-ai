@@ -2,8 +2,10 @@
 # Install policy dependencies with the same interpreter as the public engine.
 set -euo pipefail
 # The repository policy uses MCP 1's `McpError`; fastmcp 4 targets the MCP 2 API.
+# The JSON file exporter writes the spans `PAI_OTEL_EXPORT_PATH` names (`shared/engine-zai.md`).
 python3 -P -m pip install --quiet --user --disable-pip-version-check \
-  'pydantic-ai-slim[logfire,retries]>=2.64.0' 'fastmcp-slim[client]>=3.4.7,<4' 'mcp>=1.28.1,<2'
+  'pydantic-ai-slim[logfire,retries]>=2.64.0' 'fastmcp-slim[client]>=3.4.7,<4' 'mcp>=1.28.1,<2' \
+  'opentelemetry-exporter-otlp-json-file>=0.64b0'
 mkdir -p /tmp/gh-aw/workflow-python
 cp -R .github/scripts/pydantic_ai_gh_aw_shim /tmp/gh-aw/workflow-python/
 # Keep workflow preferences separate from runner and repository preferences.

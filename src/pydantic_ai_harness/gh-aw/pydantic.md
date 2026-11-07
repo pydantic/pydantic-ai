@@ -15,9 +15,9 @@ pre-agent-steps:
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
-      # when direct or local-file telemetry is configured.
-      if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}${PAI_OTEL_EXPORT_PATH:-}" ]; then
-        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0" "opentelemetry-exporter-otlp-json-file>=0.64b0"
+      # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
+      if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
+        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
       fi
       "$HOME/.local/bin/clai2" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
@@ -494,9 +494,10 @@ engine:
               metadata_module, metadata_separator, metadata_attribute = metadata_target.rpartition(':')
               if not metadata_separator:
                   raise ValueError('PAI_RESULT_METADATA expects MODULE:ATTRIBUTE')
-              metadata = getattr(importlib.import_module(metadata_module), metadata_attribute)
-              if not isinstance(metadata, dict) or not all(isinstance(key, str) for key in metadata):
+              loaded_metadata = getattr(importlib.import_module(metadata_module), metadata_attribute)
+              if not isinstance(loaded_metadata, dict) or not all(isinstance(key, str) for key in loaded_metadata):
                   raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
+              metadata = loaded_metadata
           # Read in-process: workflow context can exceed the OS argv limit.
           sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
           runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
@@ -529,7 +530,13 @@ engine:
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
                   if metadata is not None:
-                      event['data']['metadata'] = metadata
+                      # Unserializable metadata would cost the run its terminal record and usage.
+                      try:
+                          json.dumps(metadata)
+                      except (TypeError, ValueError) as exc:
+                          print(f'[pydantic-ai] Omitting result metadata that is not JSON: {exc}', file=sys.stderr)
+                      else:
+                          event['data']['metadata'] = metadata
                   try:
                       gh_aw_recording.write_event(event)
                   except Exception as exc:

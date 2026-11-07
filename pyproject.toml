@@ -340,7 +340,7 @@ clai2-browser = [
     "playwright>=1.45",
 ]
 # The real span exporter behind the gh-aw engine's `PAI_OTEL_EXPORT_PATH`, which
-# `tests/harness/gh_aw/test_protected_workflow_boundary.py` runs. It brings `opentelemetry-sdk`, so it stays out
+# `tests/harness/gh_aw/test_logfire_isolation.py` runs. It brings `opentelemetry-sdk`, so it stays out
 # of `dev`: the `pydantic-evals` CI cell covers `pydantic_evals.otel`'s fallback for installs without the SDK.
 gh-aw-tracing = [
     "opentelemetry-exporter-otlp-json-file>=0.64b0",
