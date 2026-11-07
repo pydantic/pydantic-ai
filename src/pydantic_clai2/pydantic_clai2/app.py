@@ -1,13 +1,15 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
+import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, to_thread
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -48,6 +50,7 @@ from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
+from pydantic_clai2.ui.prompt.terminal_background import detect_background
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 from pydantic_clai2.ui.stderr_relay import relay_stderr
@@ -202,6 +205,7 @@ async def chat(
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
+    terminal_background = await _terminal_background(console)
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
@@ -225,6 +229,7 @@ async def chat(
     warming: Thread | None = None
     served: WebHandoff | None = None
     with (
+        theme.on_terminal(terminal_background),
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
@@ -313,6 +318,16 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
+
+
+async def _terminal_background(console: Console) -> str | None:
+    """The terminal's background: what the CLI asked before its splash, or the terminal's answer now.
+
+    The CLI asks first so keys typed during its splash still reach the editor; a direct `chat` caller has not asked.
+    """
+    if theme.terminal_asked():
+        return theme.terminal_background()
+    return await to_thread.run_sync(partial(detect_background, stdin=sys.stdin, stdout=console.file))
 
 
 def _create_home_shell(

@@ -393,6 +393,12 @@ a tool call reads as secondary; keep fences unchanged. The default theme's diff 
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette.
 
+Echo the user's own text through `rendering.prompt_line`, which paints it on
+`theme.prompt_background()`. Under the default theme that tint comes from the terminal's
+background, asked once by `ui/prompt/terminal_background.py` before the splash. `chat` asks
+only when its caller has not. Add any other terminal query to that same exchange. A query
+after the splash reads the keys typed during it, which the editor would otherwise receive.
+
 ## Source layout
 
 The package root composes the shell (`app.py`, `__main__.py`) and keeps the

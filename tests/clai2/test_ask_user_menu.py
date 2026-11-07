@@ -677,6 +677,20 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
     assert rendered.get_style_at_offset(Console(), answer - 2).color == Style.parse(theme.color(theme.ACCENT)).color
 
 
+def test_a_typed_answer_has_the_prompt_background_and_its_header_does_not() -> None:
+    with theme.on_terminal('#FFFFFF'):
+        rendered = render_answer(
+            AskUserAnsweredEvent(
+                request_id='custom',
+                response=AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer='mine'),)),
+            )
+        )
+    assert isinstance(rendered, Text)
+    answer = rendered.get_style_at_offset(Console(), rendered.plain.index('mine')).bgcolor
+    assert answer is not None and answer.triplet is not None and answer.triplet.hex == '#f5f5f5'
+    assert rendered.get_style_at_offset(Console(), rendered.plain.index('Approach')).bgcolor is None
+
+
 async def test_bracketed_paste_is_atomic_and_does_not_answer_next_question(question_pipe: PipeInput) -> None:
     question_pipe.send_text('3\x1b[200~first\r\nsecond\t中文\x1b[201~\r2')
     response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(

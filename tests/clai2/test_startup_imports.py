@@ -42,10 +42,12 @@ finally:
 
 def test_splash_paints_before_settings_load_pydantic() -> None:
     # Building the first Pydantic model loads every installed Pydantic plugin, Logfire's among them.
+    # The terminal is asked for its background before the splash starts, with the standard library alone.
     script = """
 import sys
+import pydantic_clai2.ui.prompt.terminal_background
 import pydantic_clai2.ui.rendering.splash
-for name in ('pydantic', 'pydantic_clai2.config'):
+for name in ('pydantic', 'pydantic_clai2.config', 'termflow'):
     assert name not in sys.modules, name
 """
     result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15, check=False)
