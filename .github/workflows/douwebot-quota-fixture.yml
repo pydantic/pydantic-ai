@@ -120,14 +120,13 @@ jobs:
           exit 1
       - id: review
         continue-on-error: true
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        # The full action rejects push events. Its base-action at the same commit runs the
+        # same runner (base-action/src/run-claude-sdk.ts), SDK lock and Claude Code version.
+        uses: anthropics/claude-code-action/base-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
           ANTHROPIC_BASE_URL: http://127.0.0.1:8765
         with:
           claude_code_oauth_token: sk-ant-oat01-simulated-quota-fixture-not-a-real-token
-          github_token: ${{ github.token }}
-          allowed_non_write_users: '*'
-          display_report: 'true'
           claude_args: |
             --model claude-opus-5-5[1m]
             --json-schema '{"$defs":{"Finding":{"description":"One inline finding; GitHub validates the position against the pinned diff.","properties":{"path":{"title":"Path","type":"string"},"line":{"exclusiveMinimum":0,"title":"Line","type":"integer"},"side":{"enum":["LEFT","RIGHT"],"title":"Side","type":"string"},"body":{"minLength":1,"title":"Body","type":"string"}},"required":["path","line","side","body"],"title":"Finding","type":"object"}},"description":"Structured review judgment; source identity is supplied by the host.","properties":{"verdict":{"enum":["APPROVE","REQUEST_CHANGES","INCOMPLETE"],"title":"Verdict","type":"string"},"comments":{"items":{"$ref":"#/$defs/Finding"},"title":"Comments","type":"array"},"discussion":{"title":"Discussion","type":"string"}},"required":["verdict","comments","discussion"],"title":"ReviewResult","type":"object"}'
@@ -138,7 +137,7 @@ jobs:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$RUNNER_TEMP/fixture"
           echo "review outcome: $REVIEW_OUTCOME" | tee "$out/provenance.txt"
           echo "execution_file output: ${EXECUTION_FILE:-<unset>}" | tee -a "$out/provenance.txt"
