@@ -1158,7 +1158,11 @@ class BedrockConverseModel(Model[BaseClient]):
     def _check_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
-        """Raise if the request's output mode can't be sent to this model with the installed `botocore`."""
+        """Raise if the request's output mode can't be sent.
+
+        That's Native Output with a `botocore` that predates it, and output tools with thinking that rejects the forced
+        tool choice they rely on.
+        """
         profile = cast(BedrockModelProfile, self.profile)
         if model_request_parameters.output_mode == 'native' and not self._botocore_supports_output_config:
             raise UserError(
@@ -2494,7 +2498,9 @@ class BedrockStreamedResponse(StreamedResponse):
     _native_tool_returns: dict[int, NativeToolReturnPart] = field(
         default_factory=dict[int, NativeToolReturnPart], init=False
     )
-    _citations: dict[int, list[CitationsDeltaTypeDef]] = field(default_factory=lambda: {}, init=False)
+    _citations: dict[int, list[CitationsDeltaTypeDef]] = field(
+        default_factory=dict[int, list['CitationsDeltaTypeDef']], init=False
+    )
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
@@ -2793,10 +2799,9 @@ def _add_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, prof
                 thinking is True and profile.get('grok_default_effort_omitted', False)
             ):
                 existing['reasoning'] = {'effort': _GROK_REASONING_EFFORT_MAP[thinking]}
-        case None:
-            pass
         case _:
-            assert_never(variant)
+            # No thinking variant, or one set in `profile=` that this adapter doesn't know: no thinking fields.
+            pass
 
 
 def _openai_responses_reasoning_effort(thinking: ThinkingLevel, profile: ModelProfile) -> str:
