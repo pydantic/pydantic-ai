@@ -182,7 +182,7 @@ LatestMistralModelNames = Literal[
     'ministral-8b-latest',
     'ministral-3b-latest',
 ]
-"""Latest  Mistral models."""
+"""Latest Mistral models: `-latest` aliases are Mistral's canonical model ids."""
 
 MistralModelName = str | LatestMistralModelNames
 """Possible Mistral model names.

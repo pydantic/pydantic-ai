@@ -156,14 +156,14 @@ ProductionGroqModelNames = Literal[
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
-PreviewGroqModelNames = Literal['qwen/qwen3.8-27b',]
+PreviewGroqModelNames = Literal['qwen/qwen3.8-27b']
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
 GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames
 """Possible Groq model names.
 
-Since Groq supports a variety of models and the list changes frequently, we explicitly list the named models as of 2025-03-31
-but allow any name in the type hints.
+The `Literal` lists the latest models to pick from, for autocomplete. Any other model id the API accepts works too,
+as a `str`.
 
 See <https://console.groq.com/docs/models> for an up to date list of models and more details.
 """

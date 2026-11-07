@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 LatestBedrockMantleModelNames = Literal[
+    'openai.gpt-6.1-sol',
+    'openai.gpt-6.1-terra',
+    'openai.gpt-6-luna',
+    'openai.gpt-6-astra',
     'openai.gpt-5.6-sol',
     'openai.gpt-5.6-terra',
     'openai.gpt-5.6-luna',

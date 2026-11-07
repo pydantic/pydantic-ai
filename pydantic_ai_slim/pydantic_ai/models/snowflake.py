@@ -39,18 +39,21 @@ except ImportError as _import_error:
 __all__ = ('SnowflakeModel', 'SnowflakeModelName', 'SnowflakeModelSettings', 'SnowflakeReasoning')
 
 LatestSnowflakeModelNames = Literal[
-    'claude-fable-5',
-    'claude-opus-5',
-    'claude-sonnet-5',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
     'claude-opus-4-8',
     'claude-sonnet-4-6',
     'claude-haiku-4-5',
-    'openai-gpt-5-6-sol',
-    'openai-gpt-5-6-terra',
-    'openai-gpt-5-6-luna',
+    'openai-gpt-6-sol',
+    'openai-gpt-6.1-terra',
+    'openai-gpt-6-luna',
+    'openai-gpt-6-astra',
+    'openai-gpt-5.6-sol',
+    'openai-gpt-5.6-terra',
+    'openai-gpt-5.6-luna',
     'llama4-maverick',
-    'snowflake-llama-3.3-70b',
-    'deepseek-r1',
+    'llama3.3-70b',
+    'mistral-large3',
     'mistral-large2',
 ]
 
