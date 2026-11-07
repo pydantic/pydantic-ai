@@ -204,8 +204,8 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
 
     A safe output past its per-run limit is also returned as a result rather than a retry: the
     model cannot correct it, and with one tool retry the second such call ended the run. Later
-    requests no longer offer it: told not to call it again, UI Security Review's model kept calling
-    `noop` until the run's deadline. It leaves the request, not the run's tools, so a call from
+    requests no longer offer it: a model told not to call it again kept calling it while it stayed
+    offered, until the run's deadline. It leaves the request, not the run's tools, so a call from
     memory is still answered here instead of spending the tool retry.
     """
 
