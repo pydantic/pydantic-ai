@@ -702,11 +702,10 @@ def test_non_primitive_types():
     )
 
 
-
 def test_non_utf8_bytes_are_not_dropped():
     """Bytes that are not valid UTF-8 must still be represented, not silently discarded."""
     assert format_as_xml({'a': b'\xff\xfe'}) == '<a>\ufffd\ufffd</a>'
-    assert format_as_xml({'a': b'caf\xe9'}) == '<a>caf\ufffd</a>'
+    assert format_as_xml({'a': b'abc\xe9'}) == '<a>abc\ufffd</a>'
 
 
 def test_model_with_non_primitive_types():
