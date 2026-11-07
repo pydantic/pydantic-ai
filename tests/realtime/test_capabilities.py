@@ -1461,3 +1461,42 @@ async def test_capability_with_only_session_hooks_does_not_warn(capabilities: li
     `before_model_request`; `filterwarnings = error` turns any warning into a failure here.
     """
     await _drain(Agent[None, str](capabilities=capabilities, deps_type=type(None)), _RecordingModel())
+
+
+@pytest.mark.parametrize('configured', [False, True])
+async def test_azure_durability_outside_orchestration_does_not_warn(configured: bool) -> None:
+    pytest.importorskip('durabletask')
+    from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+    def continue_as_new(ctx: RunContext[None]) -> None:
+        pytest.fail('A realtime session called the orchestration-only continuation callback')  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        name='realtime_durability',
+        deps_type=type(None),
+        capabilities=[AzureDurableTaskDurability(continue_as_new=continue_as_new if configured else None)],
+    )
+    await _drain(agent, _RecordingModel())
+
+
+async def test_azure_durability_subclass_still_warns_for_its_own_hooks() -> None:
+    pytest.importorskip('durabletask')
+    from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+    class CustomDurability(AzureDurableTaskDurability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            return response  # pragma: no cover
+
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](
+                TestModel(), name='realtime_durability', deps_type=type(None), capabilities=[CustomDurability()]
+            ),
+            _RecordingModel(),
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`CustomDurability`', '`after_model_request`')
+    ]

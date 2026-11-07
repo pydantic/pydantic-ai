@@ -121,6 +121,188 @@ completed results from history. This shapes how you write agents for it:
 - **Activities on a worker share one event loop.** A blocking call in an async tool or event handler
   stalls every other activity on that worker.
 
+## Long-running agents
+
+Like [Temporal's continuation callback](../durable_execution/temporal.md#continuing-as-new-for-long-running-agents),
+`AzureDurableTaskDurability(continue_as_new=...)` accepts a sync or async function receiving
+the run's [`RunContext`][pydantic_ai.tools.RunContext] just before each model request.
+The preceding tool batch has settled. Returning normally defers continuation; the default,
+`None`, disables the callback. Outside an orchestration, it is not called.
+
+Unlike Temporal, this SDK exposes no server history-size/count suggestion. The callback
+chooses a deterministic threshold using the run context, not wall time or external I/O.
+It can first call a `@durable_operation`, for example to offload history.
+Raise [`ContinueAsNew`][pydantic_ai_harness.azure_durable_task.ContinueAsNew] with
+application-owned JSON input to unwind the async run. The **user orchestrator** catches it,
+calls native `ctx.continue_as_new`, then returns. The SDK method itself records an action
+and returns normally, so do not call it directly inside the async callback.
+
+```python {test="skip"}
+# generations.py
+from collections.abc import Generator
+
+from durabletask import task
+from durabletask.client import TaskHubGrpcClient
+from durabletask.worker import TaskHubGrpcWorker
+from pydantic import BaseModel, Field, JsonValue
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness.azure_durable_task import (
+    AzureDurableTaskDurability,
+    ContinueAsNew,
+    run_durable,
+)
+
+
+class GenerationInput(BaseModel):
+    prompt: str | None = None
+    messages: list[ModelMessage] | None = None
+    usage: RunUsage = Field(default_factory=RunUsage)
+    usage_limits: UsageLimits | None = Field(default_factory=UsageLimits)
+    conversation_id: str | None = None
+    run_id: str | None = None
+    generation: int = Field(default=0, ge=0)
+
+
+def continue_as_new(ctx: RunContext[None]) -> None:
+    if ctx.run_step <= 2:
+        return
+    assert ctx.metadata is not None
+    generation = ctx.metadata['generation']
+    assert isinstance(generation, int)
+    raise ContinueAsNew(
+        GenerationInput(
+            messages=ctx.messages,
+            usage=ctx.usage,
+            usage_limits=ctx.usage_limits,
+            conversation_id=ctx.conversation_id,
+            run_id=f'{ctx.run_id}:next',
+            generation=generation + 1,
+        ).model_dump(mode='json')
+    )
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='investigator',
+    capabilities=[AzureDurableTaskDurability(continue_as_new=continue_as_new)],
+)
+
+
+def investigation(
+    ctx: task.OrchestrationContext, payload: object
+) -> Generator[task.Task[object], object, JsonValue]:
+    wire = GenerationInput.model_validate(payload)
+    try:
+        result = yield from run_durable(
+            ctx,
+            lambda: agent.run(
+                wire.prompt,
+                message_history=wire.messages,
+                usage=wire.usage,
+                usage_limits=wire.usage_limits,
+                conversation_id=wire.conversation_id,
+                run_id=wire.run_id or f'{ctx.instance_id}:generation:0',
+                metadata={'generation': wire.generation},
+            ),
+        )
+    except ContinueAsNew as continuation:
+        ctx.continue_as_new(continuation.input, save_events=False)
+        return None
+    return {
+        'output': result.output,
+        'requests': result.usage.requests,
+        'generation': wire.generation,
+    }
+
+
+def main() -> None:
+    worker = TaskHubGrpcWorker(
+        host_address='localhost:8080', metadata=[('taskhub', 'default')], secure_channel=False
+    )
+    worker.add_orchestrator(investigation)
+    durability = AzureDurableTaskDurability.from_agent(agent)
+    assert durability is not None
+    with durability.register(worker):
+        worker.start()
+        try:
+            with TaskHubGrpcClient(
+                host_address='localhost:8080', metadata=[('taskhub', 'default')], secure_channel=False
+            ) as client:
+                instance_id = client.schedule_new_orchestration(
+                    investigation, input=GenerationInput(prompt='Investigate the incident.').model_dump(mode='json')
+                )
+                completed = client.wait_for_orchestration_completion(instance_id)
+                assert completed is not None
+                completed.raise_if_failed()
+                print(completed.get_output())
+        finally:
+            worker.stop()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+The example continues after two responses per generation, an application threshold.
+Carry messages, cumulative usage and `UsageLimits` in application input so the default
+`request_limit=50`, or your chosen budget, bounds the logical run. Resume without a new prompt,
+with a fresh deterministic `run_id` and the same `conversation_id`.
+
+Continuation is **not compaction or storage**: messages must still fit SDK payload limits.
+Dependencies, schema evolution and pending review state are application-owned; timeouts and
+hook/toolset-local state are not checkpointed. `save_events=True` retains buffered, undelivered
+events. Scope approval events to their reviewed pause so old events cannot authorize a later one.
+
+## SDK-native versioning
+
+Use SDK `worker.use_versioning(VersioningOptions(...))`, client `version=...` and `ctx.version`.
+Scheduler versions are numeric `Major[.Minor[.Patch]]`, such as `'1.0'` or `'2.0.1'`, not `'v1'`.
+The capability does not stamp an instance version or configure worker admission.
+
+For drain-in-place, use `CURRENT_OR_OLDER` and route your orchestrator's `ctx.version` to the
+matching old or new agent. With those agents and your SDK worker already configured, stack
+their registration contexts:
+
+```python {test="skip"}
+from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+old_durability = AzureDurableTaskDurability.from_agent(old_agent)
+new_durability = AzureDurableTaskDurability.from_agent(new_agent)
+assert old_durability is not None and new_durability is not None
+with old_durability.register(worker), new_durability.register(worker):
+    worker.start()
+    try:
+        input('Press Enter after stopping traffic and draining the worker.\n')
+    finally:
+        worker.stop()
+```
+
+Keep old agent/model/toolset identities and activity names unchanged, and give new implementations
+distinct names; the SDK rejects duplicates. Schedule new runs with `version='2.0'` and remove old
+code only after draining. For blue/green, use separate fleets with `STRICT` matching and `REJECT`.
+`REJECT` leaves mismatched work for an eligible worker; `FAIL` fails it.
+
+Replay depends on activity names and order, including orchestrator-side branches, hooks and inline
+tools. Changing a model/prompt inside an activity does not rerun recorded work, but can change future
+control flow. Retain old implementations when those changes would break replay.
+
+### Explicit migration of a paused run
+
+After an authenticated migration event bound to the paused run, validate the target version,
+migrate application state, call `ctx.continue_as_new(new_input, new_version='2.0', save_events=False)`
+and return. Carry pending `DeferredToolRequests` with messages, usage and conversation identity;
+advance the pause identity and require fresh decisions before resuming with `deferred_tool_results`.
+Migration is not approval; preserve case-sensitive call IDs and discard decisions from old pauses.
+
+Verify service support and check `ctx.version` after restart: emulator `v0.0.9` accepts `new_version`
+but keeps the old version. The newer digest
+`sha256:361323065a608d605f9d3ae56b854eb11f1c47fcc16845a37f948f03ca9c5fac` applied it.
+The release-pinned live tier proves draining, not migration. Do not replace native version routing
+with an input field.
+
 ## Dependencies
 
 Dependencies must be JSON-serializable: dataclasses, Pydantic models and JSON values. Activities rebuild
