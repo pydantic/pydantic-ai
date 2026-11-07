@@ -144,8 +144,10 @@ def _pydantic_ai_workspace(encoded):
             raise OSError(f'{path!r} is not a regular file')
 
     def open_regular(path, flags=0):
-        # Opened without waiting for a writer and checked on the descriptor itself: opening a FIFO
+        # Checked before opening, so a FIFO's writer or a device is never touched, and again on the
+        # descriptor, which no swap in between can fool. Opened without waiting for a writer: a FIFO
         # left where a file is expected would otherwise block this kernel for the rest of the session.
+        check_regular((os.lstat if flags & os.O_NOFOLLOW else os.stat)(path).st_mode, path)
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | flags)
         try:
             check_regular(os.fstat(fd).st_mode, path)
@@ -216,7 +218,7 @@ def _pydantic_ai_workspace(encoded):
                 reply['exit_code'] = rc.read().decode().strip()
             (out, out_size), (err, err_size) = head('out'), head('err')
         except OSError:
-            # The command replaced an output file with something that is not a regular file.
+            # The command replaced an output file with something that is not a regular file, or made it unreadable.
             reply['replaced'] = True
             return reply
         reply['size'] = out_size + err_size
@@ -663,8 +665,8 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
     async def _result(self, directory: str, finished: _Finished) -> CommandResult:
         if finished['replaced']:
             raise WorkspaceError(
-                'The AgentCore command replaced its output file with something other than a regular file, '
-                'so its output could not be read'
+                'The AgentCore command output could not be read: the command replaced an output file with '
+                'something other than a regular file, or made it unreadable'
             )
         exit_code = finished['exit_code']
         if exit_code is None:

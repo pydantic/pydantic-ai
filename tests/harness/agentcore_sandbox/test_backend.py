@@ -247,14 +247,62 @@ async def test_a_command_that_replaces_its_output_file_fails_without_blocking_th
     fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The command directory takes its name from this id, which the command needs to swap the file.
-    monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=1))
-    directory = f'/tmp/pydantic-ai-{uuid.UUID(int=1).hex}'
+    directory = _pin_command_directory(monkeypatch)
     backend = AgentCoreSandboxBackend()
     # Without the regular-file check, the kernel's `open` of the FIFO waits for a writer that never comes.
-    with pytest.raises(WorkspaceError, match='replaced its output file'):
+    with pytest.raises(WorkspaceError, match='replaced an output file'):
         await backend.run(['sh', '-c', 'rm -f -- "$1"; mkfifo -- "$1"; echo swapped >&2', 'sh', f'{directory}/out'])
     assert not os.path.exists(directory)
     assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+
+
+async def test_a_timed_out_command_that_replaced_its_output_file_still_reports_the_rest(
+    fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _pin_command_directory(monkeypatch)
+    backend = AgentCoreSandboxBackend()
+    await backend.working_dir()
+    ready = fake_agentcore.home / 'ready'
+    os.mkfifo(ready)
+    hold = fake_agentcore.hold('startCommandExecution')
+
+    async def release_once_written() -> None:
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await anyio.to_thread.run_sync(ready.read_text, abandon_on_cancel=True)
+        finally:
+            hold.release.set()
+
+    try:
+        async with anyio.create_task_group() as group:
+            group.start_soon(release_once_written)
+            # The partial output read on timeout meets the FIFO where stdout was; stderr still comes back.
+            with pytest.raises(WorkspaceTimeoutError) as caught:
+                await backend.run(
+                    [
+                        'sh',
+                        '-c',
+                        'rm -f -- "$1"; mkfifo -- "$1"; printf warn >&2; echo > "$2"; exec sleep 30',
+                        'sh',
+                        f'{directory}/out',
+                        str(ready),
+                    ],
+                    timeout=0.001,
+                )
+            assert (caught.value.stdout, caught.value.stderr) == ('', 'warn')
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(os.open(ready, os.O_WRONLY | os.O_NONBLOCK))
+        ready.unlink()
+    assert not os.path.exists(directory)
+    assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+
+
+def _pin_command_directory(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Fix the id the next command directories take their name from, unique to this run, and return the directory."""
+    fixed = uuid.uuid4()
+    monkeypatch.setattr(uuid, 'uuid4', lambda: fixed)
+    return f'/tmp/pydantic-ai-{fixed.hex}'
 
 
 async def test_files_and_output_travel_in_chunks(
