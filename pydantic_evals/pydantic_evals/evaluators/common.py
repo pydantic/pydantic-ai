@@ -11,7 +11,7 @@ from pydantic_ai import models
 from pydantic_ai._utils import is_model_like
 from pydantic_ai.settings import ModelSettings
 
-from ..otel.span_tree import SpanQuery
+from ..otel.span_tree import SpanQuery, _decode_duration
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
@@ -182,7 +182,7 @@ class MaxDuration(Evaluator[object, object, object]):
         duration = timedelta(seconds=ctx.duration)
         seconds = self.seconds
         if not isinstance(seconds, timedelta):
-            seconds = timedelta(seconds=seconds)
+            seconds = _decode_duration(seconds)
         return duration <= seconds
 
 
