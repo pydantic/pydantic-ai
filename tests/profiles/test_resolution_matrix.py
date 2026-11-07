@@ -221,8 +221,10 @@ def _normalize(profile: Any) -> dict[str, Any]:
     return {k: v for k, v in profile.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
 
 
-# ======================================================================# Direct labs — single-layer profile functions (no gateway merging)
-# ======================================================================
+# =============================================================================
+# Direct labs — single-layer profile functions (no gateway merging)
+# =============================================================================
+
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 def test_anthropic_claude_sonnet_4_6():
@@ -753,10 +755,8 @@ def test_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
         }
     )
 
@@ -1048,9 +1048,11 @@ def test_deepseek_provider_deepseek_reasoner():
     )
 
 
-# ======================================================================# Bedrock — cross-provider routing (Anthropic, Mistral, Amazon, Cohere, Meta,
+# =============================================================================
+# Bedrock — cross-provider routing (Anthropic, Mistral, Amazon, Cohere, Meta,
 # DeepSeek, OpenAI, Qwen). Highest-risk migration surface.
-# ======================================================================
+# =============================================================================
+
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_anthropic_claude_sonnet_4_5():
@@ -1474,9 +1476,11 @@ def test_bedrock_unknown_provider_returns_none():
     assert BedrockProvider.model_profile('unknown.foo-v1:0') is None
 
 
-# ======================================================================# OpenRouter — cross-provider routing via the OpenAI-compat surface.
+# =============================================================================
+# OpenRouter — cross-provider routing via the OpenAI-compat surface.
 # Three-layer merge: OpenAI transformer fallback / lab upstream / OpenRouter overrides.
-# ======================================================================
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_anthropic_claude_sonnet_4_6():
@@ -1583,10 +1587,8 @@ def test_openrouter_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1821,10 +1823,8 @@ def test_github_copilot_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2025,8 +2025,10 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     )
 
 
-# ======================================================================# Azure — three-layer merge, prefix-based lab dispatch
-# ======================================================================
+# =============================================================================
+# Azure — three-layer merge, prefix-based lab dispatch
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_azure_openai_gpt_5():
@@ -2149,8 +2151,10 @@ def test_azure_grok_prefix():
     )
 
 
-# ======================================================================# Groq (inference provider — runs models themselves) — three-layer merge
-# ======================================================================
+# =============================================================================
+# Groq (inference provider — runs models themselves) — three-layer merge
+# =============================================================================
+
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_moonshotai_kimi():
@@ -2241,8 +2245,10 @@ def test_groq_gpt_oss():
     )
 
 
-# ======================================================================# xAI (native, single-layer post-M4)
-# ======================================================================
+# =============================================================================
+# xAI (native, single-layer post-M4)
+# =============================================================================
+
 
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_provider_grok_4():
@@ -2271,8 +2277,10 @@ def test_xai_provider_grok_3_mini():
     )
 
 
-# ======================================================================# Ollama — three-layer merge with strict-mode override
-# ======================================================================
+# =============================================================================
+# Ollama — three-layer merge with strict-mode override
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_ollama_gpt_oss():
@@ -2310,8 +2318,10 @@ def test_ollama_unknown_falls_back_to_overlay_only():
     )
 
 
-# ======================================================================# vLLM — three-layer merge, Hugging Face repo IDs, single-system-message merge
-# ======================================================================
+# =============================================================================
+# vLLM — three-layer merge, Hugging Face repo IDs, single-system-message merge
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vllm_gpt_oss_hf_namespace():
@@ -2388,8 +2398,10 @@ def test_vllm_unknown_falls_back_to_overlay_only():
     )
 
 
-# ======================================================================# Cerebras — three-layer merge with reasoning detection
-# ======================================================================
+# =============================================================================
+# Cerebras — three-layer merge with reasoning detection
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_cerebras_qwen_reasoning():
@@ -2448,8 +2460,10 @@ def test_cerebras_llama_non_reasoning():
     )
 
 
-# ======================================================================# OpenAI-compat passthrough gateways — two-layer merge: gateway transformer fallback + upstream wins
-# ======================================================================
+# =============================================================================
+# OpenAI-compat passthrough gateways — two-layer merge: gateway transformer fallback + upstream wins
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_litellm_openai_gpt():
@@ -2602,8 +2616,10 @@ def test_alibaba_qwen_audio():
     )
 
 
-# ======================================================================# Default-only providers (no per-model variation in the profile function)
-# ======================================================================
+# =============================================================================
+# Default-only providers (no per-model variation in the profile function)
+# =============================================================================
+
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 def test_anthropic_unknown_model_returns_some_profile():
@@ -2681,8 +2697,10 @@ def test_moonshotai_kimi():
     )
 
 
-# ======================================================================# GitHub Models — multi-lab routing via OpenAIChatModel, 2-layer merge
-# ======================================================================
+# =============================================================================
+# GitHub Models — multi-lab routing via OpenAIChatModel, 2-layer merge
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_github_openai_bare_name():
@@ -2741,8 +2759,10 @@ def test_github_deepseek():
     )
 
 
-# ======================================================================# Vercel — multi-lab routing via OpenAIChatModel
-# ======================================================================
+# =============================================================================
+# Vercel — multi-lab routing via OpenAIChatModel
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vercel_unknown_bare_name():
@@ -2833,10 +2853,8 @@ def test_vercel_vertex_gemini():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -2877,8 +2895,10 @@ def test_vercel_groq_gpt_oss():
     )
 
 
-# ======================================================================# Heroku — routes model names through family profiles (issue #6022)
-# ======================================================================
+# =============================================================================
+# Heroku — routes model names through family profiles (issue #6022)
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_heroku_returns_openai_transformer():
@@ -2915,8 +2935,10 @@ def test_heroku_returns_openai_transformer():
     )
 
 
-# ======================================================================# Nebius — multi-lab routing
-# ======================================================================
+# =============================================================================
+# Nebius — multi-lab routing
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_nebius_bare_name():
@@ -2972,8 +2994,10 @@ def test_nebius_moonshotai():
     )
 
 
-# ======================================================================# Crusoe — multi-lab routing, structured output forced on for every model
-# ======================================================================
+# =============================================================================
+# Crusoe — multi-lab routing, structured output forced on for every model
+# =============================================================================
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_crusoe_bare_name():
@@ -3050,8 +3074,10 @@ def test_crusoe_harmony():
     )
 
 
-# ======================================================================# Hugging Face — multi-lab routing, no OpenAI overlay
-# ======================================================================
+# =============================================================================
+# Hugging Face — multi-lab routing, no OpenAI overlay
+# =============================================================================
+
 
 @pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
 def test_huggingface_bare_name_only_gets_the_route_flag():
