@@ -12,8 +12,6 @@ The snapshot API (rather than `feed_run`) is used deliberately: it exposes each 
 to this host-controlled loop, which owns sequential barriers, dispatch cancellation, and
 trace context. Workers come from Monty's async bindings (`MontyRunState`); inside a Temporal
 workflow each call into them goes through a blocking portal (see `call_monty`).
-`find_monty_error` classifies adapter-wrapped errors through bounded explicit cause chains.
-Pool factories satisfy the internal `MontyPool` protocol rather than inheriting a native pool class.
 """
 
 from __future__ import annotations
@@ -25,8 +23,7 @@ from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
-from types import TracebackType
-from typing import Any, Protocol, TypeVar
+from typing import Any, TypeVar
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
@@ -67,29 +64,6 @@ DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 _T = TypeVar('_T')
 _ErrorT = TypeVar('_ErrorT', bound=BaseException)
 _Args = TypeVarTuple('_Args')
-
-
-class MontyPool(Protocol):
-    """The pool ownership and session-checkout surface used by code-execution capabilities."""
-
-    async def __aenter__(self) -> MontyPool: ...
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-        /,
-    ) -> bool | None: ...
-
-    def checkout(
-        self,
-        *,
-        limits: ResourceLimits,
-        type_check: bool,
-        type_check_stubs: str | None,
-        os_policy: OSPolicy,
-    ) -> AbstractAsyncContextManager[AsyncMontySession]: ...
 
 
 def find_monty_error(error: BaseException, error_types: type[_ErrorT] | tuple[type[_ErrorT], ...]) -> _ErrorT | None:
@@ -180,9 +154,9 @@ class MontyRunState:
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
-    pool_factory: Callable[[], MontyPool | Awaitable[MontyPool]] | None = None
+    pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
     """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
-    pool: MontyPool | None = None
+    pool: AsyncMonty | AsyncMontyRemote | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
     has_executed_feed: bool = False

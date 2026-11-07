@@ -39,10 +39,11 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyRemote
+
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai_harness._monty_exec import MontyPool
 
 
 _DISCOVERY_ANNOUNCEMENT_PREFIX = (
@@ -163,13 +164,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], MontyPool | Awaitable[MontyPool]] | None = field(default=None, repr=False)
-    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async pool factory called for each run. Unset, code runs locally.
-
-    A factory returns an async context manager with `checkout` accepting `limits`, `type_check`,
-    `type_check_stubs`, and `os_policy`. Checkout returns an async context manager yielding a native
-    `pydantic_monty.AsyncMontySession`. Native pools and adapters both satisfy this contract;
-    inheritance from `pydantic_monty.AsyncMontyRemote` is not required.
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
+        default=None, repr=False
+    )
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_secs`.
     Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
@@ -265,7 +263,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         """Build from an agent spec, naming the fields a spec can express.
 
         Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
-        to the variadic base `from_spec`, because `__init__`'s pool-protocol hint is a
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyRemote` hint is a
         `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
         would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
         no JSON schema, and would drop the keyword form.

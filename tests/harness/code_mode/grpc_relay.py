@@ -46,8 +46,8 @@ class MontyRelay:
 
     refuse: bool = False
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
-    refusal_causes: tuple[str, ...] | None = None
-    """Refuse streams with these causes in order, repeating the last cause after exhaustion."""
+    refusal_causes: tuple[str, *tuple[str, ...]] | None = None
+    """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
@@ -111,11 +111,9 @@ class MontyRelay:
 
 @asynccontextmanager
 async def serve_monty_relay(
-    port: int = 0, *, refuse: bool = False, refusal_causes: tuple[str, ...] | None = None
+    port: int = 0, *, refuse: bool = False, refusal_causes: tuple[str, *tuple[str, ...]] | None = None
 ) -> AsyncGenerator[MontyRelay]:
-    """Serve a relay with its URL set; explicit causes override `refuse` and must not be empty."""
-    if refusal_causes == ():
-        raise ValueError('refusal_causes must contain at least one cause')
+    """Serve a relay with its URL set; one or more explicit causes override `refuse`."""
     relay = MontyRelay(refuse=refuse, refusal_causes=refusal_causes)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
