@@ -14065,9 +14065,17 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
         ModelRequest(parts=[UserPromptPart('Go.')]),
         ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
         ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c2', outcome='retried')]),
     ]
 
-    dumped = json.dumps([m.model_dump(mode='json') for m in VercelAIAdapter.dump_messages(messages)])
+    ui_messages = [m.model_dump(mode='json') for m in VercelAIAdapter.dump_messages(messages)]
+    # A retried return's list content rides in `call_provider_metadata`, a separate dump channel.
+    [retried] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c2']
+    assert '__pydantic_ai__' not in json.dumps(retried['call_provider_metadata'])
+    assert 'origin' in json.dumps(retried['call_provider_metadata'])
+    [first] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c1']
+    dumped = json.dumps(first)
 
     assert '__pydantic_ai__' not in dumped
     assert 'origin' in dumped
