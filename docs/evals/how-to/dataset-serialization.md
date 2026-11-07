@@ -402,7 +402,7 @@ evaluators:
 evaluators:
 - IsInstance: str
 - Contains: "required text"
-- MaxDuration: 2.0
+- MaxDuration: 2.0  # seconds, or an ISO-8601 duration string like PT5S
 ```
 
 ### 3. Multiple Parameters (Dict Form)
