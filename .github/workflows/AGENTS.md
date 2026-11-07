@@ -232,13 +232,25 @@ failure through GitHub's latest-per-context commit statuses. Rerun an existing c
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# Code owners approve dependency and CI config changes
+# Code owners approve dependency, CI config and durable runtime changes
 
-`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
-`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
-`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
-dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
-approval current.
+`.github/CODEOWNERS` owns two scopes:
+
+- **Dependency and CI config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
+  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.github/workflows/`, `.github/actions/`,
+  `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and `CODEOWNERS` itself.
+- **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
+  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
+  engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
+  `SubAgents` code that runs a delegated agent run inside a durable unit. Other capabilities that
+  use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
+  lists the exact paths.
+
+GitHub requests a review from the owners of each path a PR changes. A missing owner approval blocks
+the merge only while the `main` ruleset has a `pull_request` rule with **Require review from Code
+Owners** on; check `gh api repos/pydantic/pydantic-ai/rules/branches/main` before relying on it.
+With **Dismiss stale pull request approvals when new commits are pushed** also on in that rule,
+GitHub keeps the approval current, so no workflow has to.
 
 - A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
   to someone else's PR can still approve that push.
