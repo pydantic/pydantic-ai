@@ -426,9 +426,12 @@ SDK_MODEL_IDS: dict[str, list[str]] = {
 def _committed_lock() -> dict[str, Any]:
     # Read from git, not the working tree: the lowest-versions job and the upgrade canary rewrite `uv.lock` before
     # they install, so the working-tree file would always match what they installed.
-    lock = subprocess.run(
-        ['git', 'show', 'HEAD:uv.lock'], cwd=Path(__file__).parent, capture_output=True, text=True, check=True
-    ).stdout
+    try:
+        lock = subprocess.run(
+            ['git', 'show', 'HEAD:uv.lock'], cwd=Path(__file__).parent, capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover
+        pytest.skip('reading the committed `uv.lock` needs `git` and a git checkout')
     return tomllib.loads(lock)
 
 
