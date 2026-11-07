@@ -109,6 +109,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_max_tokens import cap_max_tokens
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
@@ -264,6 +265,7 @@ try:
 
     from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
+    from ._betas import extends_max_output, requested_betas
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
@@ -1494,6 +1496,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        if not extends_max_output(cast(AnthropicModelSettings, prepared_settings or {})):
+            prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
@@ -1903,11 +1907,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
-        if betas_from_setting := model_settings.get('anthropic_betas'):
-            betas.update(str(b) for b in betas_from_setting)
-
-        if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
+        betas.update(requested_betas(model_settings))
+        extra_headers.pop('anthropic-beta', None)
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
