@@ -97,7 +97,7 @@ Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [seeding
 
 Generated media uses inline delivery. URI-only output raises an error before fetching a provider-selected URL; video URI delivery requires server-side storage.
 
-Persisted step metadata in client-held history is replayed only into the step type its message part maps from, and replayed media is sent inline. A persisted file URI raises an error instead of being sent, so `sanitize_messages` file-reference rules cannot be bypassed through replay metadata.
+Persisted step metadata in client-held history is replayed only into the step type its message part maps from, and replayed media is sent inline. A persisted file URI raises an error instead of being sent, so `sanitize_messages` file-reference rules cannot be bypassed through replay metadata. Remote MCP results replay as the server's MCP `CallToolResult`, serialized to JSON. In a live check, Google did not fetch URIs inside a replayed result.
 
 Input `FileUrl` references are resolved by Google on both transports under its policies. Applications choosing local address and response-size checks set `force_download=True` for HTTP(S) inputs; the default follows the shared provider-native URL contract.
 

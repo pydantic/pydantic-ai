@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, patch
@@ -83,6 +84,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai n
 
 _JSON = TypeAdapter(dict[str, JsonValue])
 _STEPS = TypeAdapter(list[dict[str, JsonValue]])
+_OBJECT = TypeAdapter(dict[str, object])
 
 
 @dataclass
@@ -1636,6 +1638,120 @@ async def test_mcp_images_redact_and_replay(
         expected: list[JsonValue] = list(content)
         expected[1] = {'type': 'image', 'mime_type': 'image/jpeg', 'data': 'ZWRpdGVk', 'resolution': 'low'}
         assert sent[1]['result'] == expected
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_mcp_call_tool_result_media_redact_and_replay(
+    mock_model: GoogleInteractionsModel,
+    mock_google: MockGoogle,
+    explicit: bool,
+    streaming: bool,
+    allow_model_requests: None,
+):
+    """Inject the live `call_tool_result_json` shape with every MCP media block, including undecodable lookalikes."""
+    encoded = base64.b64encode(b'mcp-media-sentinel').decode()
+    call_result: dict[str, JsonValue] = {
+        'content': [
+            {'type': 'text', 'text': 'found'},
+            {'type': 'image', 'data': encoded, 'mimeType': 'image/png'},
+            {'type': 'audio', 'data': encoded, 'mimeType': 'audio/wav'},
+            {
+                'type': 'resource',
+                'resource': {'uri': 'file:///report.pdf', 'mimeType': 'application/pdf', 'blob': encoded},
+            },
+            {'type': 'resource', 'resource': {'uri': 'file:///notes.txt', 'text': 'notes'}},
+        ],
+        'structuredContent': {
+            'result': [{'type': 'audio', 'data': encoded, 'mimeType': 'audio/wav'}],
+            'label': {'type': 'image', 'data': 'not base64!'},
+        },
+        'isError': False,
+    }
+    call: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_call' if explicit else 'function_call',
+        'id': 'call',
+        'name': 'lookup' if explicit else 'docs:lookup',
+        'arguments': {},
+    }
+    if explicit:
+        call['server_name'] = 'docs'
+    result: dict[str, JsonValue] = {
+        'type': 'mcp_server_tool_result' if explicit else 'function_result',
+        'call_id': 'call',
+        'result': {
+            'call_tool_result_json': json.dumps(call_result),
+            'structured_content': {'result': [{'$ref': 'structured_content.result[0]'}]},
+            'result': 'found',
+            'application/pdf': encoded,
+        },
+    }
+    if not explicit:
+        result['name'] = 'docs:lookup'
+    if streaming:
+        values: list[dict[str, JsonValue]] = [
+            {'event_type': 'step.start', 'index': 0, 'step': call},
+            {'event_type': 'step.stop', 'index': 0},
+            {'event_type': 'step.start', 'index': 1, 'step': result},
+            {'event_type': 'step.stop', 'index': 1},
+            {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+        ]
+        params = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')])
+        stream = GoogleInteractionsStreamedResponse(
+            params, iter_events(values), 'gemini-test', 'google', 'https://example.com'
+        )
+        async for _ in stream:
+            pass
+        response = stream.get()
+    else:
+        mock_google.body['steps'] = [call, result]
+        response = await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))[0]
+    assert isinstance(restored, ModelResponse)
+    for value in (response, restored):
+        hidden = InstrumentationSettings(include_content=True, include_binary_content=False)
+        shown = InstrumentationSettings(include_content=True, include_binary_content=True)
+        assert encoded not in repr(value.otel_message_parts(hidden))
+        assert encoded in repr(value.otel_message_parts(shown))
+        part = value.parts[1]
+        assert isinstance(part, NativeToolReturnPart)
+        content = _OBJECT.validate_python(part.content)
+        blocks = TypeAdapter(list[object]).validate_python(content['content'])
+        assert [type(block).__name__ for block in blocks] == snapshot(
+            ['dict', 'BinaryImage', 'BinaryContent', 'dict', 'dict']
+        )
+        resource = _OBJECT.validate_python(blocks[3])['resource']
+        assert isinstance(resource, BinaryContent) and resource.media_type == 'application/pdf'
+        assert content['structuredContent'] == snapshot(
+            {
+                'result': [
+                    BinaryContent(
+                        data=b'mcp-media-sentinel',
+                        media_type='audio/wav',
+                        vendor_metadata={'google_interactions_mcp_content': {'type': 'audio', 'mimeType': 'audio/wav'}},
+                    )
+                ],
+                'label': {'type': 'image', 'data': 'not base64!'},
+            }
+        )
+        value.provider_details = None
+        await model_request(mock_model, [value, ModelRequest.user_text_prompt('continue')])
+        sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        replayed = _JSON.validate_python(sent[1]['result'])
+        assert list(replayed) == ['call_tool_result_json']
+        assert json.loads(str(replayed['call_tool_result_json'])) == call_result
+        image = blocks[1]
+        assert isinstance(image, BinaryContent)
+        image.data = b'edited'
+        image.media_type = 'image/jpeg'
+        await model_request(mock_model, [value, ModelRequest.user_text_prompt('continue')])
+        sent = TypeAdapter(list[dict[str, JsonValue]]).validate_python(mock_google.requests[-1]['input'])
+        replayed = _JSON.validate_python(sent[1]['result'])
+        assert json.loads(str(replayed['call_tool_result_json']))['content'][1] == {
+            'type': 'image',
+            'mimeType': 'image/jpeg',
+            'data': 'ZWRpdGVk',
+        }
 
 
 @pytest.mark.parametrize('thinking', [False, 'minimal'])

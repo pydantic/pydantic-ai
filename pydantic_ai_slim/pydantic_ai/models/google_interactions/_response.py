@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 from collections.abc import Iterable, Mapping
 from datetime import datetime
@@ -324,27 +325,44 @@ def map_native_result(
 
 
 def map_mcp_result(result: JsonValue) -> ToolReturnContent:
-    """Normalize inline MCP images so the shared binary telemetry control applies."""
-    if not isinstance(result, list):
-        return result
-    content: list[JsonValue | BinaryContent] = []
-    for item in result:
-        if isinstance(item, dict) and item.get('type') == 'image' and isinstance(data := item.get('data'), str):
-            metadata = dict(item)
-            metadata.pop('data')
-            media_type = item.get('mime_type')
-            content.append(
-                BinaryContent.narrow_type(
-                    BinaryContent(
-                        base64.b64decode(data),
-                        media_type=media_type if isinstance(media_type, str) else 'application/octet-stream',
-                        vendor_metadata={'google_interactions_mcp_content': metadata},
-                    )
-                )
-            )
-        else:
-            content.append(item)
-    return content
+    """Expose inline MCP media as `BinaryContent`, so the shared binary telemetry control applies."""
+    if isinstance(result, dict) and isinstance(call_result := result.get('call_tool_result_json'), str):
+        # Live results carry the server's MCP `CallToolResult` as JSON, next to copies Google derives from it.
+        # It is the complete result, and replay sends it back on its own.
+        return map_mcp_media(JSON_OBJECT.validate_json(call_result))
+    return map_mcp_media(result)
+
+
+def map_mcp_media(value: JsonValue) -> ToolReturnContent:
+    if isinstance(value, list):
+        return [map_mcp_media(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if (binary := _mcp_binary(value)) is not None:
+        return binary
+    return {name: map_mcp_media(item) for name, item in value.items()}
+
+
+def _mcp_binary(value: dict[str, JsonValue]) -> BinaryContent | None:
+    # MCP image and audio blocks carry `data`; embedded binary resources carry `blob` next to their `uri`.
+    key = 'data' if value.get('type') in ('image', 'audio') else 'blob' if 'uri' in value else None
+    encoded = value.get(key) if key else None
+    if not isinstance(encoded, str):
+        return None
+    try:
+        data = base64.b64decode(encoded)
+    except binascii.Error:
+        return None
+    media_type = value.get('mimeType', value.get('mime_type'))
+    return BinaryContent.narrow_type(
+        BinaryContent(
+            data,
+            media_type=media_type if isinstance(media_type, str) else 'application/octet-stream',
+            vendor_metadata={
+                'google_interactions_mcp_content': {name: item for name, item in value.items() if name != key}
+            },
+        )
+    )
 
 
 def map_function_call(

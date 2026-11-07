@@ -232,9 +232,10 @@ The Maps lookup appears in the response as a `google_maps`
 Grounding data includes more than citations: search queries are in `NativeToolCallPart.args`, and
 search suggestions, fetched URL status and Maps places are in `NativeToolReturnPart.content`.
 Additional raw step metadata remains in each native part's `provider_details`.
-Inline MCP result images appear as [`BinaryContent`][pydantic_ai.messages.BinaryContent] values
-inside the result content list. They respect `include_binary_content` in telemetry and retain their
-provider format when replayed from serialized message history.
+An MCP result's content is the server's MCP `CallToolResult` (`content`, `structuredContent`, `isError`).
+Inline images, audio and embedded binary resources in it appear as
+[`BinaryContent`][pydantic_ai.messages.BinaryContent] values. They respect `include_binary_content` in
+telemetry and are converted back to the MCP format when replayed from serialized message history.
 
 ### Interactions settings
 

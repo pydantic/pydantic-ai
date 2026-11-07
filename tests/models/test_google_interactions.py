@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     WebCitationSource,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -2917,7 +2918,11 @@ MCP_MESSAGES: dict[bool, list[ModelMessage]] = {
                     NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
-                            'result': """\
+                            '_meta': {'fastmcp': {'wrap_result': True}},
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': """\
 Available pages for pydantic/pydantic:
 
 - 1 Overview
@@ -2964,8 +2969,10 @@ Available pages for pydantic/pydantic:
   - 9.2 pydantic-core Rust Engine
 - 10 Glossary\
 """,
-                            'structured_content': {'result': IsStr()},
-                            'call_tool_result_json': IsStr(),
+                                }
+                            ],
+                            'structuredContent': {'result': IsStr()},
+                            'isError': False,
                         },
                         tool_call_id='call_422424',
                         timestamp=IsDatetime(),
@@ -3151,7 +3158,11 @@ Available pages for pydantic/pydantic:
                     NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
-                            'result': """\
+                            '_meta': {'fastmcp': {'wrap_result': True}},
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': """\
 Available pages for pydantic/pydantic:
 
 - 1 Overview
@@ -3198,8 +3209,10 @@ Available pages for pydantic/pydantic:
   - 9.2 pydantic-core Rust Engine
 - 10 Glossary\
 """,
-                            'structured_content': {'result': IsStr()},
-                            'call_tool_result_json': IsStr(),
+                                }
+                            ],
+                            'structuredContent': {'result': IsStr()},
+                            'isError': False,
                         },
                         tool_call_id='call_7506469182458035022',
                         timestamp=IsDatetime(),
@@ -3372,6 +3385,44 @@ async def test_mcp(interactions_model: GoogleInteractionsModel, stream: bool, al
         history = (await agent.run(prompt)).all_messages()
     final = await agent.run('Repeat that documentation topic without calling a tool.', message_history=history)
     assert final.all_messages() == MCP_MESSAGES[stream]
+
+
+# A temporary FastMCP server, reachable only while recording. Its tools return an MCP image block (with
+# `structuredContent`, which Google answers with a `$ref`), an audio block and an embedded PDF resource.
+MCP_MEDIA_SERVER_URL = 'https://fool-inline-occupational-reed.trycloudflare.com/mcp'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_mcp_media(interactions_model: GoogleInteractionsModel, stream: bool, allow_model_requests: None):
+    agent = Agent(interactions_model, capabilities=[NativeTool(MCPServerTool(id='probe', url=MCP_MEDIA_SERVER_URL))])
+    prompt = 'Call get_audio, get_pdf and get_image on the probe server, then say done.'
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+            history = result.all_messages()
+    else:
+        history = (await agent.run(prompt)).all_messages()
+    returns = [
+        part
+        for message in history
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart)
+    ]
+    objects = TypeAdapter(dict[str, object])
+    media: list[str] = []
+    for part in returns:
+        for block in TypeAdapter(list[object]).validate_python(objects.validate_python(part.content)['content']):
+            item = objects.validate_python(block).get('resource') if isinstance(block, dict) else block
+            if isinstance(item, BinaryContent):
+                media.append(item.media_type)
+    assert sorted(media) == snapshot(['application/pdf', 'audio/wav', 'image/png'])
+    hidden = InstrumentationSettings(include_content=True, include_binary_content=False)
+    telemetry = repr([message.otel_message_parts(hidden) for message in history if isinstance(message, ModelResponse)])
+    assert not any(prefix in telemetry for prefix in ('UklGR', 'JVBERi0', 'iVBORw0KGgo'))
+    # Google rejects its own `$ref` result on replay (googleapis/python-genai#3313); the rebuilt result is accepted.
+    final = await agent.run('Which tools returned media? Answer without calling a tool.', message_history=history)
+    assert final.output
 
 
 @pytest.mark.parametrize('stream', [False, True])

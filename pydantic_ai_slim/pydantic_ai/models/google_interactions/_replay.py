@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 
 from google.genai import interactions as gi
 from pydantic import JsonValue, TypeAdapter
 
+from ... import _utils
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import (
     BinaryContent,
@@ -69,23 +71,37 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
 
 
 def replay_native_result(part: NativeToolReturnPart) -> JsonValue:
-    result: object = part.content
-    if part.tool_name.partition(':')[0] != 'mcp_server' or not isinstance(result, list):
-        return _JSON_VALUE.validate_python(result)
-    content: list[JsonValue] = []
-    for item in _CONTENT_LIST.validate_python(result):
-        if isinstance(item, BinaryContent):
-            value = _JSON_OBJECT.validate_python(
-                (item.vendor_metadata or {}).get('google_interactions_mcp_content', {})
-            )
-            value.setdefault('type', 'image')
-            value['data'] = item.base64
-            if item.media_type != value.get('mime_type', 'application/octet-stream'):
-                value['mime_type'] = item.media_type
-            content.append(value)
-        else:
-            content.append(_JSON_VALUE.validate_python(item))
-    return content
+    if part.tool_name.partition(':')[0] != 'mcp_server':
+        return _JSON_VALUE.validate_python(part.content)
+    result = replay_mcp_media(part.content)
+    if isinstance(result, dict) and isinstance(result.get('content'), list):
+        # An MCP `CallToolResult`. Google rejects its own `$ref` copies of it on replay
+        # (https://github.com/googleapis/python-genai/issues/3313), so only the result itself is sent.
+        return {'call_tool_result_json': json.dumps(result)}
+    return result
+
+
+def replay_mcp_media(value: object) -> JsonValue:
+    if isinstance(value, BinaryContent):
+        return _replay_mcp_binary(value)
+    if isinstance(value, list):
+        return [replay_mcp_media(item) for item in _CONTENT_LIST.validate_python(value)]
+    if _utils.is_str_dict(value):
+        return {name: replay_mcp_media(item) for name, item in value.items()}
+    return _JSON_VALUE.validate_python(value)
+
+
+def _replay_mcp_binary(value: BinaryContent) -> dict[str, JsonValue]:
+    metadata = _JSON_OBJECT.validate_python((value.vendor_metadata or {}).get('google_interactions_mcp_content', {}))
+    if 'uri' in metadata and 'type' not in metadata:
+        metadata['blob'] = value.base64
+    else:
+        metadata.setdefault('type', 'image')
+        metadata['data'] = value.base64
+    mime_key = 'mimeType' if 'mimeType' in metadata else 'mime_type'
+    if value.media_type != metadata.get(mime_key, 'application/octet-stream'):
+        metadata[mime_key] = value.media_type
+    return metadata
 
 
 def validate_native_step(raw: dict[str, JsonValue], part: NativeToolCallPart | NativeToolReturnPart) -> None:
