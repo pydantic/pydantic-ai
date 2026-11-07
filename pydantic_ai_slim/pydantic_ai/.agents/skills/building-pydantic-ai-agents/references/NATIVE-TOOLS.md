@@ -40,6 +40,36 @@ Reach for these when the provider supports them:
 - `FileSearchTool`
 - `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
 
+## Provider-Specific Settings
+
+Put settings shared by providers directly on the native tool. For provider-only options, pass the
+provider's typed settings dictionary in `provider_settings`, keyed by the model class that reads it: `OpenRouterModel`
+reads `openrouter`, even for Claude, and `OpenAIChatModel` with an OpenRouter provider doesn't read it. Like model settings, unknown keys are
+ignored, so use the typed dictionaries to catch typos:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import OpenRouterWebSearchToolSettings, WebSearchTool
+
+agent = Agent(
+    'openrouter:openai/gpt-5.2',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                provider_settings={
+                    'openrouter': OpenRouterWebSearchToolSettings(engine='exa')
+                }
+            )
+        )
+    ],
+)
+```
+
+The outer `TypedDict` lists the known keys. Each key maps to its own
+tool-specific `TypedDict`, so autocomplete and type checking apply at both levels. A model adapter
+reads only the options it knows from its own entry, so settings for several models can coexist on one tool.
+
 ## Dynamic Native Tool Configuration
 
 Prepare native tools from `RunContext` when configuration depends on the current user or request. Wrap the prepare function in `NativeTool(...)`.

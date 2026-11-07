@@ -6,6 +6,8 @@ from pydantic import TypeAdapter
 
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -98,6 +100,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_search',
                     'optional': False,
+                    'provider_settings': None,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
@@ -190,6 +193,30 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+@pytest.mark.parametrize(
+    'tool',
+    [
+        WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
+        AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+    ],
+)
+def test_provider_settings_survive_serialization(tool: AbstractNativeTool):
+    """Durable execution sends native tools through this round trip between activities."""
+    params = ModelRequestParameters(native_tools=[tool])
+
+    assert ta.validate_json(ta.dump_json(params)) == params
+
+
+def test_provider_settings_payload_with_unknown_option_is_kept():
+    """Like model settings, an option this version doesn't know is kept for a model that reads it, not rejected."""
+    payload = {'native_tools': [{'kind': 'web_search', 'provider_settings': {'openrouter': {'future': 1}}}]}
+
+    params = ta.validate_python(payload)
+
+    assert params.native_tools == [WebSearchTool(provider_settings={'openrouter': {'future': 1}})]  # pyright: ignore[reportArgumentType]
+    assert ta.validate_json(ta.dump_json(params)) == params
 
 
 def test_model_request_parameters_cache_round_trip():

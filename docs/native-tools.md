@@ -32,6 +32,24 @@ The calls and results show up in the model's response as [`NativeToolCallPart`][
 !!! tip "Provider-adaptive capabilities"
     For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation you enable with `local=`, so your agent works across providers without code changes. Two work differently: `ImageGeneration` also enables built-in fallbacks with `fallback_image_model=` or `fallback_subagent_model=`, and `MCP` runs locally by default and opts into native MCP with `native=True`.
 
+Provider-independent options are fields on the native tool. When a provider has extra options,
+pass them to the tool's `provider_settings` field under the key for the model class. The outer dictionary
+and each provider's entry are `TypedDict`s, so type checkers and IDEs can validate and complete both
+levels. Each model reads only the options it knows from its own entry; like
+[model settings](agent.md#model-run-settings), anything else is ignored rather than rejected.
+
+The key follows the model class you use, not who makes the underlying model: Claude through
+`OpenRouterModel` reads the `openrouter` entry, not `anthropic`, and `OpenAIChatModel` pointed at OpenRouter's
+API reads neither. The provider's API judges whether a value is one it accepts. Settings that restrict what a
+tool may do, such as `allowed_domains`, stay top-level fields, because a model that can't apply them
+must not run the tool without them.
+
+To keep the local fallback of a provider-adaptive capability, pass the configured tool to its `native=` argument,
+for example `WebSearch(native=WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}))`.
+
+See the [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
+[OpenRouter advisor settings](models/openrouter.md#advisor).
+
 ### Google tool combinations
 
 [Gemini 3 models](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) support combining native tools with function tools, including [output tools](output.md#tool-output), and [`NativeOutput`][pydantic_ai.output.NativeOutput]. Earlier Gemini models cannot use these combinations; use [`PromptedOutput`][pydantic_ai.output.PromptedOutput] for structured output alongside native tools.
@@ -186,6 +204,7 @@ _(This example is complete, it can be run "as is")_
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `provider_settings.openrouter.engine`, `mode`, `max_results`, `max_total_results`, `max_characters` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
@@ -848,7 +867,7 @@ result = agent.run_sync('Design a caching strategy for our API. Consult your adv
 print(result.output)
 ```
 
-For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. Pydantic AI sends `forward_transcript=false`; `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
+For OpenRouter, use any `openrouter:` executor and pass an OpenRouter model slug to `model`, for example `anthropic/claude-opus-4.8`. By default, the advisor sees only the prompt from the tool call; use the [OpenRouter advisor settings](models/openrouter.md#advisor) to forward the full conversation. `max_uses` and `caching` are ignored. Pydantic AI surfaces aggregate consultation counts under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']`.
 
 With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in message history, and strips advisor blocks when the tool is no longer enabled. Streaming pauses while the advisor runs. Advisor usage is reported under `advisor_*` keys in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and excluded from the executor's top-level token totals.
 
@@ -860,6 +879,7 @@ With Anthropic, Pydantic AI preserves plaintext and encrypted advisor results in
 | `max_uses` | ✅ (cap on advisor consultations per request) | ❌ (fixed gateway limit; ignored) |
 | `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) | ✅ (maps to `max_completion_tokens`) |
 | `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) | ❌ (no equivalent; ignored) |
+| `provider_settings.openrouter.forward_transcript` | ❌ | ✅ (forward the parent conversation to the advisor) |
 
 ## MCP Server Tool
 
