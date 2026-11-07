@@ -23,6 +23,7 @@ from cassetter import RawRequest, RawResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelHTTPError,
@@ -204,6 +205,24 @@ async def test_agent_realtime_offer_carries_the_bound_history() -> None:
     history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
     answer = await Agent().realtime(_LegacyModel(), message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert answer.sdp == SAMPLE_SDP_OFFER
+
+
+async def test_agent_realtime_offer_carries_the_processed_history() -> None:
+    """The offer seeds the history the `before_realtime_connect` hooks leave, as a session does.
+
+    Otherwise a redaction `ProcessHistory` applies to a session's seed would be skipped for a call whose offer seeds
+    the history.
+    """
+    history = [ModelRequest(parts=[UserPromptPart(content='My code is secret-42.')])]
+    redacted: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='[redacted]')])]
+    model = _SignalingModel()
+
+    def redact(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return redacted
+
+    agent = Agent(capabilities=[ProcessHistory(redact)])
+    await agent.realtime(model, message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.message_history == redacted
 
 
 async def test_agent_realtime_signaling_resolves_bound_run_identity() -> None:

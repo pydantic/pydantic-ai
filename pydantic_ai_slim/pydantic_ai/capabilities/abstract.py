@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         ModelSelectionContext,
     )
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -1092,6 +1093,29 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
                 yield event
         finally:
             await _utils.aclose_if_supported(stream)
+
+    # --- Realtime session hooks ---
+
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        """Called once before a [realtime session](../realtime/capabilities.md) connects, the realtime counterpart of `before_model_request`.
+
+        Can change the history the session is seeded with, `connect_context.messages`: what the hooks leave there
+        is what the provider is seeded with, what the session records as its history's start, and what a reconnect
+        replays. The model, settings and request parameters are read-only.
+
+        In a session, it runs inside `wrap_run`, after `before_run` and after the seeded history's dynamic system
+        prompts are re-evaluated, in capability order, and also when there's no history to seed. An exception stops
+        the session from connecting and goes through `on_run_error`. It doesn't run on reconnect, or in a standard
+        run. WebRTC signaling resolves the configuration a session connects with, so it also runs there, outside any
+        run: there's no `wrap_run` or `on_run_error` around it then.
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] is `None`, since the session
+        doesn't exist yet.
+        """
+        return connect_context
 
     # --- Model request lifecycle hooks ---
 

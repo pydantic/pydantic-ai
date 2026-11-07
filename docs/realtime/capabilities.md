@@ -16,6 +16,7 @@ load exactly the same way as in a regular run; nothing realtime-specific is requ
 | `for_agent`, `for_run`, `get_instructions` | Runs during setup; instructions are resolved at connect and [again before each model turn](#instructions-that-change). |
 | `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contributes, wraps, and prepares local tools before connecting. |
 | `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context. |
+| `before_realtime_connect` | Runs once before connecting and can change the seeded history; see [processing seeded history](#processing-seeded-history). |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline; see [deferred and approval-required tools](tools.md#deferred-and-approval-required-tools). |
 | Graph node, model-request, `get_wrapper_model`, and output-processing hooks | Do not run; no agent graph, model request, or output-processing stage exists. |
@@ -34,7 +35,8 @@ naming the capability and its hooks, since what it does there won't happen in th
 example, [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] works through
 `before_model_request`. A [`Hooks`][pydantic_ai.capabilities.Hooks] capability warns only for the
 hooks it registers. Built-ins whose behavior the session provides another way, such as
-[`Instrumentation`][pydantic_ai.capabilities.Instrumentation], don't warn.
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] and
+[`ProcessHistory`](#processing-seeded-history), don't warn.
 
 ## Run hooks
 
@@ -146,11 +148,75 @@ differences:
 - On [ElevenLabs Agents](elevenlabs.md#elevenlabs-agents), the change is a contextual update, which the agent
   takes as background information rather than as a change to its prompt.
 
-## Seeded history is not processed
+## Processing seeded history
 
-History-processing capabilities do not transform `message_history` before it is
-[seeded into a session](history.md#seeding-a-session); preprocess the history before opening the
-session when filtering or redaction is required.
+A session has no per-request boundary, so instead of `before_model_request`, it calls
+[`before_realtime_connect`][pydantic_ai.capabilities.AbstractCapability.before_realtime_connect] once,
+before it connects. The hook receives a [`RealtimeConnectContext`][pydantic_ai.realtime.RealtimeConnectContext],
+the realtime counterpart of [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], and can change the
+`messages` the session is [seeded](history.md#seeding-a-session) with. Its `model`, `model_settings` and
+`model_request_parameters` are read-only. [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] implements
+it, so a filter or redaction that a standard run applies before each model request also applies to what the
+provider is seeded with. Register a hook of your own with
+[`hooks.on.before_realtime_connect`](../hooks.md#realtime-session-hooks) for a change that only a session needs:
+
+```python {title="realtime_seeded_history.py"}
+import re
+from dataclasses import replace
+
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart, UserPromptPart
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.realtime import RealtimeConnectContext
+
+CARD_NUMBER = re.compile(r'\b(?:\d[ -]?){13,16}\b')
+
+hooks = Hooks()
+
+
+def redact(message: ModelMessage) -> ModelMessage:
+    if not isinstance(message, ModelRequest):
+        return message
+    parts = [
+        replace(part, content=CARD_NUMBER.sub('[card number]', part.content))
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        else part
+        for part in message.parts
+    ]
+    return replace(message, parts=parts)
+
+
+@hooks.on.before_realtime_connect
+async def redact_card_numbers(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+    connect_context.messages = [redact(message) for message in connect_context.messages]
+    return connect_context
+
+
+agent = Agent(instructions='You are a helpful voice assistant.', capabilities=[hooks])
+
+
+async def main():
+    history = [
+        ModelRequest.user_text_prompt('My card number is 4242 4242 4242 4242.'),
+        ModelResponse(parts=[TextPart('Thanks, I have it.')]),
+    ]
+    async with agent.realtime('{{ openai:realtime }}', message_history=history).session() as session:
+        await session.send('Continue where we left off.')
+        await session.wait_for_reply()
+```
+
+The hooks run in capability order, inside `wrap_run`, after `before_run` and after the history's dynamic system
+prompts are re-evaluated, so they see and can redact the current content. They run even when there's no history to
+seed, but not on a [reconnect](lifecycle.md#reconnecting), which replays the history they left. If one raises, the session
+doesn't connect, and the error goes through `on_run_error`. [WebRTC signaling](deployment.md#browser-webrtc-server-sideband)
+resolves the same configuration a session connects with, so the hooks also run, outside any run, when
+[`answer_webrtc_offer()`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] seeds the call with the history
+they leave, and again when the sideband session opens. Keep them deterministic: on
+[GPT-Live](openai.md), which takes its history when the offer starts the call, a sideband whose seed differs from the
+offer's raises [`UserError`][pydantic_ai.exceptions.UserError], so a processor that summarizes with a model or depends
+on the time can't be used there. What they leave is what the session records: it's the
+start of [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages], and the instructions of the
+capabilities it [loaded](#deferred-capability-loading) are resolved from it. A session can't rewrite the provider's
+conversation before each response, so the messages it records after connecting aren't processed.
 
 ## Deferred capability loading
 

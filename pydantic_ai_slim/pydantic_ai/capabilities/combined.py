@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -735,6 +736,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 yield event
         finally:
             await aclose_all(reversed(wrapped_streams))
+
+    # --- Realtime session hooks ---
+
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        for capability in self._dispatch:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                connect_context = await capability.before_realtime_connect(cap_ctx, connect_context)
+        return connect_context
 
     # --- Model request lifecycle hooks ---
 

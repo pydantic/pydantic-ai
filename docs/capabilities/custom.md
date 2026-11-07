@@ -866,6 +866,14 @@ class RetryOnce(AbstractCapability[Any]):
 agent = Agent('{{ openai:medium }}', capabilities=[RetryOnce()])
 ```
 
+### Realtime session hooks
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`before_realtime_connect`][pydantic_ai.capabilities.AbstractCapability.before_realtime_connect] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, connect_context: `[`RealtimeConnectContext`][pydantic_ai.realtime.RealtimeConnectContext]`) -> `[`RealtimeConnectContext`][pydantic_ai.realtime.RealtimeConnectContext] | Change the history a realtime session is seeded with, once, before it connects |
+
+A [realtime session](../realtime/capabilities.md) makes no model requests, so it calls `before_realtime_connect` instead of the model request hooks. A capability that rewrites history in `before_model_request` and should also apply to a session's seed implements both, as [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] does. See [Processing seeded history](../realtime/capabilities.md#processing-seeded-history).
+
 ### Tool hooks
 
 Tool processing has two phases: **validation** (parsing and validating the model's JSON arguments against the tool's schema) and **execution** (running the tool function). Each phase has its own hooks.

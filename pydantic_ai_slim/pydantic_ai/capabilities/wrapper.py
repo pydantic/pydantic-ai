@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -439,6 +440,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
                 yield event
         finally:
             await aclose_all((wrapped_stream, stream))
+
+    # --- Realtime session hooks ---
+
+    async def before_realtime_connect(
+        self,
+        ctx: RunContext[AgentDepsT],
+        connect_context: RealtimeConnectContext,
+    ) -> RealtimeConnectContext:
+        return await self.wrapped.before_realtime_connect(ctx, connect_context)
 
     # --- Model request lifecycle hooks ---
 
