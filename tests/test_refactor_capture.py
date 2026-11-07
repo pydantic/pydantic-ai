@@ -12,6 +12,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
@@ -677,6 +678,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': f'pyd_ai_{"0" * 32}',
             'uuid': '12345678-1234-5678-1234-567812345678',
             'repr': object(),
+            'mock_repr': Mock(name='mock.service_tier'),
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
@@ -708,6 +710,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': 'pyd_ai_ID',
             'uuid': 'UUID',
             'repr': '<object object at 0x?>',
+            'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',

@@ -47,15 +47,15 @@ them fails loudly.
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
-test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses, timestamps within a
-day of the capture (ones in the basic format of a SigV4 `x-amz-date` header too), history digests (which hash those
-timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
-random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`, and
-`Planning`'s step ids where its plan and its reply to an added step render them are normalized, so two runs of the same
-code compare equal. A step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from
-them, as a subtask's parent or a dependency. Cassette playback hands a response's headers back in a different order each
-run, so the `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message
-renders them.
+test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses (the decimal one a
+`unittest.mock` repr gives too), timestamps within a day of the capture (ones in the basic format of a SigV4
+`x-amz-date` header too), history digests (which hash those timestamps), attempt durations, local server ports,
+multipart boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id`
+gets, `PromptInjectionDefender`'s measured `latency_ms`, and `Planning`'s step ids where its plan and its reply to an
+added step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back isn't,
+in a tool call's arguments or where `Planning` renders it from them, as a subtask's parent or a dependency. Cassette
+playback hands a response's headers back in a different order each run, so the `HTTPHeaders` botocore copies into an
+error response's `ResponseMetadata` are sorted where an error message renders them.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -128,6 +128,8 @@ UNRECORDED_HEADERS = frozenset(
 )
 GENERATED_VALUES = [
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
+    # A `unittest.mock` repr gives the mock's `id()` in decimal.
+    (re.compile(r"(<\w*Mock\b[^<>]* id=')\d+'"), r"\1ID'"),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
     (re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'), 'UUID'),
     (re.compile(r'"history_digest":"[0-9a-f]{64}"'), '"history_digest":"DIGEST"'),
