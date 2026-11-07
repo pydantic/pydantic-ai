@@ -391,6 +391,25 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
+As a concrete example, [Demon Route](https://api.demonroute.com) is an OpenAI-compatible gateway for open-weight models that works with no code changes beyond a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'NousResearch/Hermes-3-Llama-3.1-8B',
+    provider=OpenAIProvider(
+        base_url='https://api.demonroute.com/v1',
+        api_key='your-demonroute-key',
+    ),
+)
+agent = Agent(model)
+```
+
+You can also set `OPENAI_BASE_URL=https://api.demonroute.com/v1` and `OPENAI_API_KEY=<key>` to skip the explicit provider.
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
