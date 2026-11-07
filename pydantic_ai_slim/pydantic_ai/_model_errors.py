@@ -93,8 +93,13 @@ _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
 }
 """The HTTP status OpenAI-compatible APIs use for an error, by its `code` or `type`, for errors that come without one."""
 
-_CONTEXT_WINDOW_MESSAGES = ('maximum context length', 'reduce the length of the messages')
-"""How OpenAI-compatible APIs that send no `context_length_exceeded` code (OpenRouter, vLLM, Groq) word an overflow."""
+_CONTEXT_WINDOW_MESSAGES = (
+    'maximum context length',
+    'reduce the length of the messages',
+    'exceeded max context length',
+)
+"""How OpenAI-compatible APIs that send no `context_length_exceeded` code word an overflow
+(OpenRouter, vLLM, Groq, Ollama Cloud)."""
 
 
 def openai_compatible_status(code: str | None, error_type: str | None) -> int | None:
