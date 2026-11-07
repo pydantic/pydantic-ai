@@ -78,6 +78,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     ToolSearch,
 )
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -90,6 +91,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -132,6 +134,11 @@ from .conftest import (
     message_shape,
 )
 from .mock_async_stream import MockAsyncStream
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -2912,6 +2919,188 @@ async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None
         {'type': 'ephemeral', 'ttl': '5m'},
         None,
     ]
+
+
+@dataclass
+class CacheBreakpointsCase:
+    id: str
+    prompt: list[UserContent]
+    cache: bool
+    expected: dict[str, dict[str, list[str]]]
+
+
+CACHE_BREAKPOINTS_CASES = [
+    CacheBreakpointsCase(
+        id='dropped',
+        # The instruction, tool definition and automatic breakpoints take 3 of the 4 slots, so only the newest
+        # `CachePoint` is applied, and the span shows which one was dropped.
+        prompt=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(
+        id='all_fit',
+        prompt=['Context', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(id='none', prompt=['Question'], cache=False, expected=snapshot({})),
+]
+
+
+def _cache_breakpoint_attributes(exporter: InMemorySpanExporter) -> dict[str, dict[str, list[str]]]:
+    """The requested and applied cache breakpoints, by the name of every span that records them."""
+    return {
+        span.name: {
+            key: list(cast(Sequence[str], value)) for key, value in attributes.items() if key.endswith('_breakpoints')
+        }
+        for span in exporter.get_finished_spans()
+        if (attributes := span.attributes) and 'pydantic_ai.cache.requested_breakpoints' in attributes
+    }
+
+
+def _cache_breakpoints_agent(
+    client: AsyncAnthropic, exporter: InMemorySpanExporter, *, cache: bool
+) -> Agent[None, str]:
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=ModelSettings(cache=cache),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    return agent
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CACHE_BREAKPOINTS_CASES])
+async def test_cache_breakpoints_recorded_on_request_span(
+    allow_model_requests: None, case: CacheBreakpointsCase, stream: bool
+):
+    """The model-request span lists the cache breakpoints the request asked for and the ones that fit Anthropic's
+    limit of four, so a dropped `CachePoint` shows up in tracing."""
+    client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            messages_=completion_message(
+                [BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1)
+            ),
+            stream=[
+                BetaRawMessageStartEvent(
+                    type='message_start',
+                    message=BetaMessage(
+                        id='msg_1',
+                        model='claude-haiku-4-5',
+                        role='assistant',
+                        type='message',
+                        content=[],
+                        stop_reason=None,
+                        usage=BetaUsage(input_tokens=5, output_tokens=0),
+                    ),
+                ),
+                BetaRawContentBlockStartEvent(
+                    type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='ok')
+                ),
+                BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+                BetaRawMessageDeltaEvent(
+                    type='message_delta',
+                    delta=Delta(stop_reason='end_turn'),
+                    usage=BetaMessageDeltaUsage(output_tokens=1),
+                ),
+                BetaRawMessageStopEvent(type='message_stop'),
+            ],
+        ),
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=case.cache)
+
+    if stream:
+        async with agent.run_stream(case.prompt) as result:
+            assert await result.get_output() == 'ok'
+    else:
+        assert (await agent.run(case.prompt)).output == 'ok'
+
+    assert _cache_breakpoint_attributes(exporter) == case.expected
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_cache_breakpoints_not_recorded_by_count_tokens(allow_model_requests: None):
+    """`count_tokens` builds and trims the same request before the model-request span opens, but only the request
+    records its breakpoints, on its own span."""
+    client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=True)
+
+    await agent.run(
+        ['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    assert len(get_mock_chat_completion_kwargs(client)) == 2  # the token count, then the request
+    assert _cache_breakpoint_attributes(exporter) == snapshot(
+        {
+            'chat claude-haiku-4-5': {
+                'pydantic_ai.cache.requested_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+                'pydantic_ai.cache.applied_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+            }
+        }
+    )
 
 
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):

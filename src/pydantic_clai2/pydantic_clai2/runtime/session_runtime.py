@@ -75,6 +75,7 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.live_runtimes import Served
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
@@ -470,8 +471,9 @@ def create_shell(
             menu=lambda: update_menu(
                 context,
                 updates,
-                run=lambda text: shell.send_input(text),
-                refusal=lambda: shell.restart_refusal(),
+                # Whichever session's page asks, the install runs in the session CLAI restarts from.
+                run=lambda text: shell.restarter().send_input(text),
+                refusal=lambda: shell.restarter().restart_refusal(),
                 # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
                 raise_refusal=True,
             ),
@@ -1049,10 +1051,19 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if (refusal := self.restart_refusal()) is not None:
             raise ValueError(refusal)
 
+    def restarts_clai(self) -> bool:
+        """Whether CLAI restarts from this session: the one the terminal shows, or with no terminal, the one it started with."""
+        return self.terminal is not None or (
+            not self.served and self.process.live.focused in (None, self.live_session.id)
+        )
+
+    def restarter(self) -> Served:
+        """The live session CLAI restarts from, as the web UI's About installs in it; this one when none is."""
+        return self.process.live.restarter() or self
+
     def restart_refusal(self) -> str | None:
         """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
-        if self.terminal is None and (self.served or self.process.live.focused not in (None, self.live_session.id)):
-            # Only the session the terminal shows, or with no terminal the one CLAI started with, restarts it.
+        if not self.restarts_clai():
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:

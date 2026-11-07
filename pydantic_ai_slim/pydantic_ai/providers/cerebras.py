@@ -53,9 +53,12 @@ class CerebrasProvider(_OpenAISDKProvider):
             'zai-': lambda name: _glm_5_3_schema_profile(name.removeprefix('zai-')),
         }
 
-        # Reasoning models that support the cerebras_disable_reasoning setting.
-        # GLM's thinking is configured here rather than by Z.AI's profile.
-        reasoning_prefixes = ('zai', 'gpt-oss')
+        # Reasoning per model, from https://inference-docs.cerebras.ai/capabilities/reasoning. GLM's thinking is
+        # configured here rather than by Z.AI's profile.
+        reasoning_prefixes = ('zai', 'gpt-oss', 'qwen-3.8', 'kimi-k3')
+        # Kimi K3 and GLM-5.3 reason unconditionally and accept only `low`, `high` and `max`, so the unified
+        # levels in between resolve to the nearest of those, and `thinking=False` to `low`.
+        low_high_max_prefixes = ('kimi-k3', 'zai-glm-5.3')
 
         profile = None
         model_name_lower = model_name.lower()
@@ -65,13 +68,22 @@ class CerebrasProvider(_OpenAISDKProvider):
                 break
 
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
+        accepts_only_low_high_max = model_name_lower.startswith(low_high_max_prefixes)
         # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
-        # so `thinking=False` sends its lowest effort instead. zai-glm-4.7 can still disable.
-        is_always_on_reasoning = model_name_lower.startswith('gpt-oss')
+        # so `thinking=False` sends its lowest effort instead. zai-glm-4.7 and qwen-3.8 can still disable.
+        is_always_on_reasoning = model_name_lower.startswith('gpt-oss') or accepts_only_low_high_max
         # GLM requires prior reasoning to be replayed inside `<think>...</think>` tags in the assistant
         # message content, not in a separate `reasoning` field; gpt-oss follows Harmony rules and keeps `'auto'`.
         # https://inference-docs.cerebras.ai/capabilities/reasoning
         send_back_thinking_parts = 'tags' if model_name_lower.startswith('zai') else 'auto'
+        reasoning_efforts = (
+            OpenAIModelProfile(
+                openai_reasoning_efforts=frozenset(('low', 'high', 'max')),
+                openai_chat_supports_max_reasoning_effort=True,
+            )
+            if accepts_only_low_high_max
+            else None
+        )
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -85,6 +97,7 @@ class CerebrasProvider(_OpenAISDKProvider):
                 thinking_always_enabled=is_always_on_reasoning,
                 openai_chat_send_back_thinking_parts=send_back_thinking_parts,
             ),
+            reasoning_efforts,
             special_token_route_profile('cerebras', model_name),
         )
 
