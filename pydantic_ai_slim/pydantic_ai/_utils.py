@@ -1308,8 +1308,12 @@ def is_text_like_media_type(media_type: str) -> bool:
 
     Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
-    # Media types may carry parameters (RFC 2045); classify on the bare type.
-    media_type = media_type.split(';', 1)[0].strip()
+    # Media types may carry parameters (RFC 2045) and are case-insensitive
+    # (RFC 2045 section 5.1); classify on the bare, normalised type. Server
+    # `Content-Type` headers and hand-built `BinaryContent` both arrive in
+    # arbitrary case, and callers that remember to `.lower()` themselves
+    # would otherwise be the only ones getting text treatment.
+    media_type = media_type.split(';', 1)[0].strip().lower()
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'
