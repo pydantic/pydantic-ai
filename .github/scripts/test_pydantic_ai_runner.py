@@ -539,7 +539,7 @@ def test_plan_mode_and_allowlist_compose():
     assert names == ['Read']  # Bash dropped by plan mode
 
 
-# `Bash` entries gh-aw compiles from a scoped `bash:` source, here the Weekly Agent Instructions Audit's.
+# A subset of the `Bash` entries gh-aw compiles from the Weekly Agent Instructions Audit's scoped `bash:` source.
 SCOPED_BASH_TOOLS = (
     'Bash(cat),Bash(gh:*),Bash(git add:*),Bash(git status),Bash(git),Bash(grep),'
     'Bash(python3 .github/scripts/weekly_ce_audit.py prepare-review),Bash(safeoutputs:*),Bash(sort),BashOutput,Read'
@@ -615,6 +615,12 @@ def test_scoped_bash_refuses_commands_outside_its_grants(command: str, monkeypat
     assert isinstance(result, str) and result.startswith(
         'error: this workflow allows only Bash commands that start with'
     )
+
+
+def test_bash_scopes_skip_grants_without_a_command():
+    args = shim.parse_args(['--allowed-tools', 'Bash(git "add),Bash(),Bash(cat),Read', 'p'])
+
+    assert args.bash_scopes == (('cat',),)
 
 
 def test_plain_bash_grant_keeps_the_unrestricted_shell(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

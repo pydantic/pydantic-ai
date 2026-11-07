@@ -1121,7 +1121,7 @@ def _failure_reason(result: RunResult) -> str:
     if failure.http_status is not None:
         reason = f'{reason} (HTTP {failure.http_status})'
     if _claims_provider_scope(failure) and not result.provider_confirmed:
-        reason += '; a host-side Z.ai check did not confirm a provider-wide failure'
+        reason += '; no host-side Z.ai check confirmed a provider-wide failure'
     return reason
 
 
@@ -1344,7 +1344,7 @@ def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
     if health.run_id is not None and health.run_id != str(args.run_id):
         raise ValueError('provider-health artifact run id does not match the triggering workflow_run')
-    # Runs compiled before the host record existed fall back to the agent artifact, which never confirms a provider.
+    # Without a valid host record, fall back to the agent artifact, which never confirms a provider failure.
     result = _host_run_result(args.run_result) if args.run_result is not None and args.run_result.is_file() else None
     if result is None and args.agent_artifact is not None:
         result = parse_run_result(args.agent_artifact, run_attempt)

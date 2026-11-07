@@ -93,7 +93,6 @@ post-steps:
   - name: Record the terminal agent result on the host
     if: always() && steps.agent_start_health.outputs.ready == 'true'
     continue-on-error: true
-    timeout-minutes: 2
     env:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
       GITHUB_WORKFLOW: ${{ github.workflow }}

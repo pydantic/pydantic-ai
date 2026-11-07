@@ -1682,13 +1682,22 @@ _RECORD_RUN = (
 )
 
 
+_AFTER_RECHECK = "always() && steps.agent_start_health.outputs.ready == 'true'"
+
+
 def _host_result_steps(
-    *, run: str = _RECORD_RUN, env: dict[str, str] = _RECORD_ENV, upload: str = 'run-result.json'
+    *,
+    run: str = _RECORD_RUN,
+    env: dict[str, str] = _RECORD_ENV,
+    upload: str = 'run-result.json',
+    record_if: str = _AFTER_RECHECK,
+    upload_if: str = _AFTER_RECHECK,
 ) -> list[dict[str, object]]:
     return [
-        {'name': HOST_RESULT_STEPS[0], 'continue-on-error': True, 'env': env, 'run': run},
+        {'name': HOST_RESULT_STEPS[0], 'if': record_if, 'continue-on-error': True, 'env': env, 'run': run},
         {
             'name': HOST_RESULT_STEPS[1],
+            'if': upload_if,
             'uses': 'actions/upload-artifact',
             'with': {'name': 'provider-health', 'path': f'provider-health.json\n{upload}\n'},
         },
@@ -1740,6 +1749,22 @@ def test_provider_health_host_result_accepts_the_shipped_record_steps(tmp_path: 
         pytest.param(
             [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps(upload='agent-stdio.log')],
             id='record-not-uploaded',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(record_if="steps.agent_start_health.outputs.ready == 'true'"),
+            ],
+            id='record-skipped-after-failure',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(),
+                *_SHIPPED_AGENT_STEPS,
+                *_host_result_steps(upload_if="steps.agent_start_health.outputs.ready == 'true'"),
+            ],
+            id='upload-skipped-after-failure',
         ),
         pytest.param(
             [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps()[::-1]],

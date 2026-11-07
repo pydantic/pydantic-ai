@@ -1180,15 +1180,19 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
         record_env = _as_mapping(after[record].get('env')) if record is not None else {}
         # The record step needs the gate's identity to match the agent's result, and the key for its own check.
         identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
+        # Both steps must also run after a failed engine step, the run whose result matters most.
         recorded = (
             record is not None
             and fetched is not None
+            and 'always()' in str(after[record].get('if', ''))
             and f'python3 -I {fetched} record ' in str(after[record].get('run', ''))
             and bool(gate_env)
             and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
         )
         uploaded = record is not None and any(
-            step.get('name') == upload_name and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
+            step.get('name') == upload_name
+            and 'always()' in str(step.get('if', ''))
+            and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
             for step in after[record + 1 :]
         )
         if not recorded or not uploaded:
@@ -1196,9 +1200,9 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
                 Violation(
                     str(lock),
                     'provider-health-host-result',
-                    'After engine execution, the agent job must run `record` from the fetched controller with the '
-                    'gate identity and Z.AI key, then upload `run-result.json` with the health decision. The steps must '
-                    'keep the names in `agent_provider_health.HOST_RESULT_STEPS`.',
+                    'After engine execution, including a failed one, the agent job must run `record` from the fetched '
+                    'controller with the gate identity and Z.AI key, then upload `run-result.json` with the health '
+                    'decision. The steps must keep the names in `agent_provider_health.HOST_RESULT_STEPS`.',
                 )
             )
     return violations

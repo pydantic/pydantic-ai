@@ -340,8 +340,8 @@ controller the recheck fetched, as `record`, outside the agent container. That s
 `run-result.json` to the `provider-health` artifact. The record keeps the failure kind the
 runner reported. It marks a provider-scope kind confirmed only when the step's own Z.ai
 check observes the same condition: the credential rejected with HTTP 401 or 403, or the
-plan's quota exhausted. Runs compiled before this step fall back to the `agent` artifact,
-which never confirms a provider failure. A failed record step opens no incident.
+plan's quota exhausted. Without a valid record, because the run predates this step or the
+step failed, the monitor reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted
 completion without a concurrency group and stops before it reads incidents. The `monitor`

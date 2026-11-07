@@ -2514,16 +2514,29 @@ def test_provider_incident_opens_only_from_a_host_confirmed_record(
     assert (marker.scope, marker.key, marker.kind) == (
         ('provider', 'zai', kind) if confirmed else ('workflow', _SCHEDULED_RUN[0], kind)
     )
-    assert ('a host-side Z.ai check did not confirm a provider-wide failure' in issue.body) is not confirmed
+    assert ('no host-side Z.ai check confirmed a provider-wide failure' in issue.body) is not confirmed
     blocked = health.check_health(
         'Pydantic AI Bug Hunter', 'other-task', 'schedule', 1, health.Quota('healthy'), client.issues
     )
     assert blocked.ready is not confirmed
 
 
-@pytest.mark.parametrize('record', ['absent', 'unreadable'])
+@pytest.mark.parametrize(
+    'record',
+    [
+        pytest.param(None, id='absent'),
+        pytest.param('not json', id='not-json'),
+        pytest.param({'workflow': None}, id='incomplete'),
+        pytest.param({'version': 2}, id='unknown-version'),
+        pytest.param({'version': True}, id='boolean-version'),
+        pytest.param({'provider_confirmed': 'true'}, id='non-boolean-confirmation'),
+    ],
+)
 def test_an_agent_written_result_cannot_open_a_provider_incident_without_host_confirmation(
-    record: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    record: str | dict[str, object] | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Without a valid host record, the agent artifact still types the failure but never confirms a provider."""
     log = _agent_log(tmp_path, monkeypatch, capsys, _zai_error(401, '1000'))
@@ -2531,9 +2544,12 @@ def test_an_agent_written_result_cannot_open_a_provider_incident_without_host_co
     event['provider_health']['provider_confirmed'] = True
     log.write_text(json.dumps(event) + '\n')
     run_result = tmp_path / 'provider-health' / 'run-result.json'
-    if record == 'unreadable':
-        run_result.parent.mkdir()
-        run_result.write_text('{"version": 1, "provider_confirmed": true}\n')
+    if record is not None:
+        # Start from a record the host confirmed, then make it one the monitor cannot validate.
+        run_result, _ = _record(log, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+        confirmed = json.loads(run_result.read_text())
+        assert confirmed['provider_confirmed'] is True
+        run_result.write_text(record if isinstance(record, str) else json.dumps({**confirmed, **record}))
 
     client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_log=log, run_result=run_result)
 
