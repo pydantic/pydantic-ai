@@ -33,6 +33,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.nvidia import NvidiaProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -134,6 +135,11 @@ CASES = [
         lambda http_client: NebiusProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'nvidia',
+        lambda: NvidiaProvider(api_key='test'),
+        lambda http_client: NvidiaProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'ollama',
         lambda: OllamaProvider(base_url='http://localhost:11434/v1', api_key='test'),
         lambda http_client: OllamaProvider(
@@ -201,6 +207,7 @@ IMPORT_GUARD_CASES = [
     ('meta', 'use the Meta provider'),
     ('moonshotai', 'use the MoonshotAI provider'),
     ('nebius', 'use the Nebius provider'),
+    ('nvidia', 'use the NVIDIA provider'),
     ('ollama', 'use the Ollama provider'),
     ('openai', 'use the OpenAI provider'),
     ('openrouter', 'use the OpenRouter provider'),

@@ -126,6 +126,10 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(OpenAIEmbeddingSettings, settings)
+        extra_body = settings.get('extra_body')
+        if self.system == 'nvidia' and (extra_body is None or _utils.is_str_dict(extra_body)):
+            # NIM rejects asymmetric embedding models without `input_type`; NVIDIA's own client always sends it.
+            extra_body = {'input_type': 'passage' if input_type == 'document' else 'query', **(extra_body or {})}
 
         try:
             with map_decode_errors(self.model_name):
@@ -134,7 +138,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                     model=self.model_name,
                     dimensions=settings.get('dimensions') or OMIT,
                     extra_headers=settings.get('extra_headers'),
-                    extra_body=settings.get('extra_body'),
+                    extra_body=extra_body,
                 )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
