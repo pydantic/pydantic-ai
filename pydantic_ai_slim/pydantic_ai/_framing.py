@@ -637,7 +637,7 @@ def _lookalike_pattern(voice_tags: tuple[str, ...]) -> re.Pattern[str]:
     # An opener or closer of a system-voice tag or data frame, in any case or spacing, also cut off at the end of the
     # text. A closer counts too: inside a frame the framework wrote, a copied `</pyai:tool_result>` or `</system>` can
     # end that frame early in the model's reading, leaving the text after it outside.
-    tags = (*voice_tags, *DATA_FRAME_TAGS, ASSISTANT_THINKING_TAG)
+    tags = (*voice_tags, *_NOTED_DATA_TAGS)
     names = '|'.join(re.escape(tag).replace(':', r'\s*:\s*') for tag in sorted(tags, key=len, reverse=True))
     return re.compile(rf'<\s*(?:(?P<tag>{names})|/\s*(?P<closer>{names}))(?=[\s/>]|$)', re.IGNORECASE)
 
@@ -646,7 +646,7 @@ _lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 
 
 def add_system_voice_tag(name: str) -> None:
-    """Count text that opens the tag `name` or its diff `<{name}_diff>` as a lookalike frame, like a `<system>` opener.
+    """Count text that opens or closes the tag `name` or its diff `<{name}_diff>` as a lookalike frame, like `<system>`.
 
     The single source of the tags the lookalike check looks for: core's `system`, `pyai:context` and
     `pyai:context_diff`, plus any added here. Adding a tag twice is a no-op. Private.

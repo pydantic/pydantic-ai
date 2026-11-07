@@ -6175,8 +6175,9 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
     if context.stripped_text_metadata:
         warnings.warn(
             f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
-            f'prompt or tool return item(s). Metadata is never sent to the model, but application code and capabilities read it '
-            f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
+            f'prompt or tool return item(s). Metadata is never sent to the model, but application code and '
+            f'capabilities read it to recognize content they added themselves, so it is not accepted from untrusted '
+            f'clients. Pass '
             f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
             stacklevel=4,
