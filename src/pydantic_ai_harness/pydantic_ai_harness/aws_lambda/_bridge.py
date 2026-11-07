@@ -5,8 +5,8 @@ blocks until the step body returns. An agent run is async. The bridge connects t
 threads and a queue:
 
 - the handler thread runs `run_durable`, which drains a queue of step requests and calls
-  `context.step(...)` for each one, so every step is created on the handler's thread in one
-  continuous sequence;
+  `context.step(...)` for each one (or creates a callback and waits for it), so every durable
+  operation is created on the handler's thread in one continuous sequence;
 - a background thread runs a persistent event loop that hosts the agent run and the actual
   model and tool calls.
 
@@ -40,7 +40,7 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import StepConfig
+    from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
 
 T = TypeVar('T')
 
@@ -84,6 +84,15 @@ class AgentLoopGone(BaseException):
     """
 
 
+class DurableCallback(Protocol):
+    """The part of the SDK's `Callback` this package uses."""
+
+    callback_id: str
+
+    # Structural declaration, never executed.
+    def result(self) -> Any: ...  # pragma: no cover
+
+
 class DurableStepContext(Protocol):
     """The part of `DurableContext` this package uses.
 
@@ -97,6 +106,13 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: StepConfig | None = None,
     ) -> Any: ...
+
+    # Structural declaration, never executed.
+    def create_callback(  # pragma: no cover
+        self,
+        name: str | None = None,
+        config: CallbackConfig | None = None,
+    ) -> DurableCallback: ...
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
@@ -239,6 +255,17 @@ class _StepRequest:
 
 
 @dataclass
+class _CallbackRequest:
+    name: str
+    callback_config: CallbackConfig
+    announce: Callable[[str], Awaitable[None]]
+    announce_config: StepConfig | None
+    loop: asyncio.AbstractEventLoop
+    reply: Callable[[bool, Any], None]
+    context: contextvars.Context
+
+
+@dataclass
 class _Finished(Generic[T]):
     result: T | None
     error: BaseException | None
@@ -249,7 +276,7 @@ class StepBridge:
 
     def __init__(self, context: DurableStepContext) -> None:
         self._context = context
-        self._queue: Queue[_StepRequest | _Finished[Any]] = Queue()
+        self._queue: Queue[_StepRequest | _CallbackRequest | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
@@ -273,9 +300,47 @@ class StepBridge:
 
         loop = asyncio.get_running_loop()
         body = functools.partial(_run_step_body, loop, name, operation)
+        return await self._submit(
+            lambda reply: _StepRequest(
+                name=name, body=body, config=config, reply=reply, context=contextvars.copy_context()
+            )
+        )
 
+    async def wait_for_callback(
+        self,
+        name: str,
+        *,
+        callback_config: CallbackConfig,
+        announce: Callable[[str], Awaitable[None]],
+        announce_config: StepConfig | None,
+    ) -> Any:
+        """Create a Lambda callback, announce its ID in a step, and return its result. Runs on the agent loop.
+
+        This is what `DurableContext.wait_for_callback` does, without the child context it wraps the
+        operations in: that way `Callback.result()` raises the SDK's `CallbackError` itself for a
+        timed-out or failed callback on every supported SDK version, rather than a version-specific
+        wrapper around it. An unanswered callback raises `SuspendExecution`, which ends the invocation
+        like a step retry does. `wait_for_external_event` has already rejected a wait from inside a step,
+        which could never start while the handler thread services that step.
+        """
+        loop = asyncio.get_running_loop()
+        return await self._submit(
+            lambda reply: _CallbackRequest(
+                name=name,
+                callback_config=callback_config,
+                announce=announce,
+                announce_config=announce_config,
+                loop=loop,
+                reply=reply,
+                context=contextvars.copy_context(),
+            )
+        )
+
+    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _StepRequest | _CallbackRequest]) -> Any:
+        """Queue a request for the handler thread and wait for its reply."""
+        loop = asyncio.get_running_loop()
         async with self._order:
-            future: asyncio.Future[T] = loop.create_future()
+            future: asyncio.Future[Any] = loop.create_future()
 
             def reply(succeeded: bool, value: Any) -> None:
                 try:
@@ -288,9 +353,7 @@ class StepBridge:
                     # supplies the actionable AgentLoopGone error when no callback can be delivered.
                     pass
 
-            self._queue.put(
-                _StepRequest(name=name, body=body, config=config, reply=reply, context=contextvars.copy_context())
-            )
+            self._queue.put(request(reply))
             return await future
 
     def finish(self, result: Any = None, error: BaseException | None = None) -> None:
@@ -311,7 +374,10 @@ class StepBridge:
                     raise item.error
                 return item.result
             try:
-                value = item.context.run(self._context.step, item.body, name=item.name, config=item.config)
+                if isinstance(item, _CallbackRequest):
+                    value = item.context.run(self._wait_for_callback, item)
+                else:
+                    value = item.context.run(self._context.step, item.body, name=item.name, config=item.config)
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
@@ -323,6 +389,17 @@ class StepBridge:
                 raise
             else:
                 item.reply(True, value)
+
+    def _wait_for_callback(self, request: _CallbackRequest) -> Any:
+        callback = self._context.create_callback(name=request.name, config=request.callback_config)
+        announce_name = f'{request.name}.announce'
+        announce = functools.partial(request.announce, callback.callback_id)
+        self._context.step(
+            functools.partial(_run_step_body, request.loop, announce_name, announce),
+            name=announce_name,
+            config=request.announce_config,
+        )
+        return callback.result()
 
 
 def _run_step_body(

@@ -257,3 +257,38 @@ as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same wo
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.
+
+## Waiting for external events
+
+[`wait_for_external_event`][pydantic_ai.durable_exec.wait_for_external_event] suspends a durable run
+until something outside it resolves a token the run handed out, and returns the JSON payload it was
+resolved with. [`DurableApprovals`](../capabilities/durable-approvals.md) uses it to wait for a
+person's decision on deferred tool calls without ending the run. It only works on engines that
+implement it; anywhere else it raises a `UserError`.
+
+To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.durable_exec.ExternalEventWaiter] and
+install an instance for each durable agent run with
+[`external_event_scope`][pydantic_ai.durable_exec.external_event_scope], typically in your
+capability's `wrap_run` when it is in the durable context. Its `wait` method receives a stable
+`name`, an async `announce` callback, and an optional `timeout`, and must journal three things so a
+replay returns the recorded payload without side effects:
+
+1. Create a resume token: a callback ID, an awakeable ID, or a waitpoint token, depending on the engine.
+2. Call `announce(token)` once, inside a durable unit, so the run can hand the token to whoever
+   resolves it.
+3. Suspend until the token is resolved, then return its JSON payload. Raise
+   [`ExternalEventError`][pydantic_ai.durable_exec.ExternalEventError] when the timeout elapses or the
+   token is resolved with a failure.
+
+Engines that hand out tokens map onto this directly: AWS Lambda callbacks, Restate awakeables,
+Trigger.dev waitpoint tokens, Vercel Workflow hooks. Engines that address external events by name
+instead (Temporal signals, Azure Durable Task external events, DBOS messages) can encode the
+execution's ID and an event key in the token, and have whoever resolves it send the named event. The
+AWS Lambda implementation in Pydantic AI Harness's
+[`aws_lambda` package](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda)
+is a reference.
+
+Code inside a durable unit, such as a tool, can't wait: the wait has to be recorded in the run
+itself. `wait_for_external_event` rejects a call made inside
+[`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope] before it reaches your waiter, so
+run each unit's body in that scope.

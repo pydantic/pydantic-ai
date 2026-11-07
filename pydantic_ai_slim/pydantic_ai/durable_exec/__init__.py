@@ -22,6 +22,12 @@ if TYPE_CHECKING:
         capability_operation_result_type,
     )
     from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
+    from ._external_events import (
+        ExternalEventError,
+        ExternalEventWaiter,
+        external_event_scope,
+        wait_for_external_event,
+    )
     from ._operation import (
         CacheIdentity,
         CapabilityOperationId,
@@ -116,6 +122,10 @@ __all__ = [
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
+    'ExternalEventError',
+    'ExternalEventWaiter',
+    'external_event_scope',
+    'wait_for_external_event',
 ]
 
 _exports = {
@@ -170,6 +180,10 @@ _exports = {
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),
     'WorkspaceCallResult': ('._workspace', 'WorkspaceCallResult'),
+    'ExternalEventError': ('._external_events', 'ExternalEventError'),
+    'ExternalEventWaiter': ('._external_events', 'ExternalEventWaiter'),
+    'external_event_scope': ('._external_events', 'external_event_scope'),
+    'wait_for_external_event': ('._external_events', 'wait_for_external_event'),
 }
 
 
