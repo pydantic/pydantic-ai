@@ -468,6 +468,10 @@ async def test_deferred_run_history_not_silently_repaired():
     by a 'complete' request with the executed returns. That call may still receive its result via
     `deferred_tool_results`, so it must not be closed out at run start; only the copy sent to the
     model is repaired.
+
+    A new prompt can't keep that promise: once the conversation moves past the call,
+    `_handle_deferred_tool_results` looks at the newer response and the call can no longer be
+    answered, so it raises instead of abandoning it.
     """
     received: list[list[ModelMessage]] = []
 
@@ -499,7 +503,7 @@ async def test_deferred_run_history_not_silently_repaired():
     assert isinstance(trailing_request, ModelRequest)
     assert trailing_request.state == 'complete'
 
-    result2 = await agent.run('Never mind.', message_history=message_history)
+    result2 = await agent.run(None, message_history=message_history)
     assert result2.output == 'All done.'
 
     # The pending call stays open in the persisted history, so it can still be answered or audited...
@@ -516,6 +520,12 @@ async def test_deferred_run_history_not_silently_repaired():
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
+    # A new prompt would move the conversation past the call, which then can't be answered any more.
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls',
+    ):
+        await agent.run('Never mind.', message_history=message_history)
 
 
 async def test_result_before_call_dropped_as_orphan_and_call_synthesized():
