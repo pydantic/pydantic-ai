@@ -6,8 +6,6 @@ description: "Use Claude, GPT, Llama, Mistral and other models through Snowflake
 
 ## Install
 
-
-Snowflake Cortex rejects [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] with an error rather than ignoring it, so leave that setting unset on Snowflake models.
 To use [`SnowflakeModel`][pydantic_ai.models.snowflake.SnowflakeModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `snowflake` optional group:
 
 ```bash
@@ -15,6 +13,9 @@ pip/uv-add "pydantic-ai-slim[snowflake]"
 ```
 
 ## Configuration
+
+!!! note
+    Snowflake Cortex rejects [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] with an error rather than ignoring it, so leave that setting unset on Snowflake models.
 
 [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api) serves Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake's own models through a REST API hosted in your Snowflake account, so data never leaves the Snowflake security perimeter.
 
