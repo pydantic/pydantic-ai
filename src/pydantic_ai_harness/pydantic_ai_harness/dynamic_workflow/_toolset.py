@@ -23,6 +23,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
@@ -202,6 +203,16 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'properties': {'task': {'type': 'string'}},
     'required': ['task'],
 }
+
+
+# Engines that match a replayed step to its recording by the order the steps start.
+_START_ORDER_ENGINES = frozenset({'DBOS', 'AWS Lambda'})
+
+
+def _records_steps_in_start_order(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the agent's durable steps are matched on replay by the order they start."""
+    durability = BaseDurabilityCapability.from_agent(agent)
+    return durability is not None and durability.in_durable_context and durability.engine_name in _START_ORDER_ENGINES
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -814,11 +825,11 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
-            # the whole script. Sub-agents always run concurrently (the executor's defaults);
-            # durable ordering (global_sequential) lands with durability.
+            # the whole script.
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
+                global_sequential=any(_records_steps_in_start_order(w.agent) for w in self._by_name.values()),
                 portal=monty.portal,
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
