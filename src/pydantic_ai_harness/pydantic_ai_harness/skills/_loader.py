@@ -43,7 +43,6 @@ _BEHAVIORAL_FRONTMATTER_FIELDS = frozenset(
         'paths',
         'shell',
         'tools',
-        'when_to_use',
     }
 )
 
@@ -53,6 +52,7 @@ class _SkillFrontmatter(BaseModel):
 
     name: str | None = None
     description: str
+    when_to_use: str | None = None
     disable_model_invocation: bool = Field(default=False, alias='disable-model-invocation')
     user_invocable: bool = Field(default=True, alias='user-invocable')
 
@@ -72,6 +72,15 @@ class _SkillFrontmatter(BaseModel):
         if not stripped:
             raise ValueError('must not be empty')
         return stripped
+
+    @field_validator('when_to_use', mode='after')
+    @classmethod
+    def _strip_when_to_use(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        # An empty trigger has nothing to append to the catalog description.
+        return stripped or None
 
 
 MissingDirectories: TypeAlias = Literal['error', 'skip']
@@ -105,6 +114,9 @@ class SkillDefinition:
 
     description: str
     """The `description` frontmatter field, listed in the model's catalog."""
+
+    when_to_use: str | None = None
+    """The `when_to_use` frontmatter field, appended to the catalog description."""
 
     body: str
     """The Markdown after the frontmatter, without leading and trailing blank lines."""
@@ -393,6 +405,7 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
     return SkillDefinition(
         name=normalized_name,
         description=frontmatter.description,
+        when_to_use=frontmatter.when_to_use,
         body=body,
         ignored_behavioral_fields=ignored_fields,
         model_invocable=not frontmatter.disable_model_invocation,
