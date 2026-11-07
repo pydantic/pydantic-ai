@@ -56,6 +56,7 @@ from .history_invariants import (
     duplicate_call_id_violations,
     empty_message_violations,
     empty_text_violations,
+    google_interactions_wire,
     google_wire,
     idempotence_violations,
     openai_responses_wire,
@@ -79,6 +80,7 @@ with try_import() as cohere_imports_successful:
 
 with try_import() as google_imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports_successful:
@@ -213,6 +215,18 @@ async def _google_body(history: list[ModelMessage]) -> Body:
         messages, model_request_parameters=parameters
     )
     return _body(system, contents)
+
+
+@cache
+def _google_interactions_model() -> GoogleInteractionsModel:
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test-key'))
+
+
+async def _google_interactions_body(history: list[ModelMessage]) -> Body:
+    model = _google_interactions_model()
+    parameters, messages = _prepare(model, history)
+    system, steps = await model._map_messages(messages, parameters)  # pyright: ignore[reportPrivateUsage]
+    return _body(system, steps)
 
 
 @cache
@@ -364,6 +378,19 @@ MAPPER_CASES = [
         _google_body,
         google_wire,
         _baseline_turns(assistant='model', results='user'),
+        marks=_needs(google_imports_successful, 'google-genai'),
+    ),
+    MapperCase(
+        'google-interactions',
+        _google_interactions_body,
+        google_interactions_wire,
+        [
+            WireMessage('user_input', [WireBlock('text', 'Look it up')]),
+            WireMessage('model_output', [WireBlock('text', 'Looking')]),
+            WireMessage('function_call', [WireBlock('call', 'call_1')]),
+            WireMessage('function_result', [WireBlock('result', 'call_1')]),
+            WireMessage('model_output', [WireBlock('text', 'Found it')]),
+        ],
         marks=_needs(google_imports_successful, 'google-genai'),
     ),
     MapperCase(
@@ -614,6 +641,13 @@ KNOWN_FINDINGS = [
         frozenset({'empty_prompt', 'empty_parts'}),
         'https://github.com/pydantic/pydantic-ai/issues/11123',
         (
+            Pin(
+                'google-interactions',
+                [ModelRequest(parts=[UserPromptPart([])])],
+                'gemini-3.8-flash: 404 "Model \'gemini-3.8-flash\' not found" for input=[], probed 2026-11-06; '
+                'an explicit empty user_input instead gives 400 "GenerateContentRequest.contents: contents is not specified"',
+                label='empty-prompt',
+            ),
             Pin(
                 'anthropic',
                 [ModelRequest(parts=[UserPromptPart('')])],

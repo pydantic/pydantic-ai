@@ -1,0 +1,84 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "275"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Describe the baked goods in this picture.
+          - mime_type: image/jpeg
+            type: image
+            uri: https://storage.googleapis.com/generativeai-downloads/images/scones.jpg
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=7925
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1623
+          total_input_tokens: 1089
+          input_tokens_by_modality:
+          - modality: image
+            tokens: 1080
+          - modality: text
+            tokens: 9
+          total_cached_tokens: 0
+          total_output_tokens: 160
+          total_tool_use_tokens: 0
+          total_thought_tokens: 374
+          initial_input_tokens: 1088
+        created: 2026-11-06T01:22:29Z
+        updated: 2026-11-06T01:22:29Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            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
+          type: thought
+        - content:
+          - text: |-
+              The baked goods in the image are rustic, round **blueberry scones** (or drop biscuits/thick cookies).
+
+              Here are key details about their appearance:
+              * **Quantity and Shape:** There are five roughly circular, palm-sized pastries spread across stained parchment paper.
+              * **Texture and Color:** They feature a craggy, uneven, and crumbly crust with a pale golden-cream dough that has lightly browned edges and tops.
+              * **Fruit Inclusions:** They are generously filled with whole blueberries that burst during baking, creating vibrant, deep purple-indigo streaks and pockets throughout the dough and leaving baked fruit juices on the paper underneath.
+              * **Topping:** The surfaces are dusted with coarse, glistening sugar granules, giving them a slight sparkle and sweet, crunchy top texture.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T01:22:29.806322+00:00

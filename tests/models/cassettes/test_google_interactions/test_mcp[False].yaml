@@ -1,0 +1,394 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "362"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        tools:
+        - allowed_tools:
+          - tools:
+            - read_wiki_structure
+          name: deepwiki
+          type: mcp_server
+          url: https://mcp.deepwiki.com/mcp
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Call read_wiki_structure exactly once for pydantic/pydantic, then name one
+              documentation topic from its result.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=5373
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 2099
+          total_input_tokens: 75
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 75
+          total_cached_tokens: 0
+          total_output_tokens: 46
+          total_tool_use_tokens: 1930
+          tool_use_tokens_by_modality:
+          - modality: text
+            tokens: 1930
+          total_thought_tokens: 48
+          initial_input_tokens: 84
+        created: 2026-11-05T15:42:34Z
+        updated: 2026-11-05T15:42:34Z
+        service_tier: standard
+        steps:
+        - id: call_422424
+          signature: >-
+            Eo4DCosDCAIShgMBaRR9E0rsVgo4FVRuEBuGeCU45EUqIlRKMJqdPTO1E1ijnv2asQH0PaiMfu4CzTYZC8P8aXBXOZQCisZBpCfnKH0qKzu1gfOP3HBgEdIVXp/OenolT4C6NexmQb4RUcQ6mnAqxK9WlunTsQeaGaKk1G2BmvUujBYI7xuyyc3lFPH00+nH+aBxf8aeTHELLiouq97jL5D2YFcI+KExK5qDLGn814lAj6NF2VyNGU3x3vbK6VJaTTenNuiFPRHISKz97G+S5N5lmdY8SbI/x3n2nOHci1ovQzM4Dgo0365yOGyF3n7mnVl88sY8YjGl6rirIBkDdKW2lEtql2mL+9uEHrDJ51W1O9Zh9ZuZRAHJhwJyt87SvRrFmaH7UTpvkZSdmiksUIMN9CAK24LPuG/un6bffFDe4LrVS8LYuzCOe3LeuhhSKQvD0thMOreFG/XPqnP8jPgFNK7xd1Zw6ZRynzfraUKgSLD1nTbgE/pLbLMWhX2Vpf8Np/lyb6xWmIsQsUtVsMs=
+          type: function_call
+          name: deepwiki:read_wiki_structure
+          arguments:
+            repoName: pydantic/pydantic
+        - call_id: call_422424
+          signature: >-
+            CAIStSgBaRR9E9KMEa0gchQ8IB0kHpbMoWBbciYhM0jpX/ZRubpTmYfy/8qSv9YoVdSZ0nux8x1QcTj/CcKjCbHemrdN7esXLyh2m2eybHasoyEw+6FVH/gIcHdetrkDIJirj9wnqkk4/Cti11BT3AO+8sy1bBoQFO2nY3GrC2ug8vxiSlLC+cSABeD8y9ilDaZrJL3i2RSmxNULs0Dj3SjqlkARqGOMPqvGVZ9W2gkUoM9fJMTSvAx3J6YAb9EthS7yM6O7dtJWZu2V+yvH87xBBGh5VF8ot147SBsxcEZt2SaNz1ImOhu6lRggVa1ZUQ1IPewKPRZRZ9chXTJp0vuruuBJuWuY9w2xcqHGkDJQpESzu3sBEPOTTpgoonRUW4FtYEoMEee8buWlhk2BcmIPPmyPxWmCZORt18oSBGApPYqlEVJpcbFrf3+m1OGjWQ7BbYsIiLkBdxiE34h7zVzrw8Eme6tDYygZsPH2wt70AgUILOfJK8GV5wcxjJ5P+R++OMJ4Aw54LwEPiE9yv+45tSR2I/WyXLUuVlIAWvePUmnQzcR6Irw4Vn0W/pvuwAS5PqfHlPV5PsT6n7w3OqA1b/lDL88x3pnueGy9NZWloowKQLN2EhF7QklDGiw92kwDnYhdvPsopnMWolCpmPpQ4w3eIpCZTNMzGooiX1gZr9cNSoFGxeulTxzToE438z36sq1eqSlLEauuvxU/Ba8CNVnk9RNVLRP/vBZCqcy3yzi9Cn4f8TZgUbJmogD9ABUMRjb2dlY8gPZZu3OsSNPPvVhbmAPuQVBMbx8w/gUpGLPZkMB5dFjeWr7KO7Cn53vw9oc53Y1hUdkOHorN/sIz8sPkT1GP3JyW+HYODmhpTts8HPhqrsqpKXvyJnLk6sPU76NTvXe8fI2VB1t3DdArwsI5GsTB4KQMWPg3PTdueIHGjLUv0Pr2GuLFIq/Z0Hgq7dTokjrKmU67V/GrOfBivS9ApVJPsI/7bRgx96rqsFJHY40WrW3Jbb39ZnZsJOFXMvUp2jRBKE/PoR8aWeINCwzUxtCVjImX0rN/H3pePCA+bX9NOl+pcB2RrvLWYHH5KRyYS+wwoochHydthg8Y8h9mHp8ksX6UwTKIKkSe1GpPPG5V8ow1NfQAGZ7mYTlhxZpJbF5+Agx0D9M9wKdrNOJ7e0/Jgw2DHaQ3n9jdmlql8Lto4rJcXfmaO6iOJuYNBBZe19F+RHXvfsBAp2Za/vJSZUMSEJmUi5sNYzSDXKMhY+rNS9k9R836ROS6FUjAKtJkWMxKK+w5GeRIqLxFyDOqm08836/vFcSqiIuoUPRypvgA0k0oEYYU0JB59ZoBWfBe5Y3qOFr5Tczn419JTBcHfzfxcJVfhrOBptSL3VGQCW/VOMPNKm5vaMn5Jm7Jg4fLu1CgvDy1tJJwfTnn+AlfYBgKP01FRAR6JnhyA8hu8oJj8H+zOsLu0AdqnvcVpZMr7xvZcaX8aW/cZin4NLbpfiQPbLUGuk/2F1BdVCbzY7/lEXCV30wNEzHRQonJJekzmZkh6ahhoH8oaPBJKcgmN8+fRYMqB16ZGhY0JPm9+Wx4Z+ix54G3GgrUlQgTJ0NGkEHo4iRn3axnV9Mgl+4WO66aY89eujjsIc4hKzvp6DhqoXluf5KmCJ8PyzLTFL7ehKOe99YGfnbTsPmYw3x5P4cP9NUj0nbh+juObnnkECoqGl1F6UJA2uc/5qxU+YxhhYCNXPRj+EkmxT62xbE2zoyVPbkvORODmQinc6hl83oVxsYA9aP8iVyyymuhMAsMBbSyoTBxj6LwFNRk2hHdbx/41sN4y7TyGauffo8GG2wlRoakpayWc2gDxqk0v77C34nbsY9SNECBCO4O7MhqyhDVW1BZcriToygR4TGwSMcJbl7gyLeQ0m7ar43AwtQ13OFYWZm/40RyerQpAWcsuy2Sa//SXfFt24Swd6AUhcHoE/GUPN+u1RbOm2PV2a/WEvd2bX9S36yn0z3nXEoxtkpRVppqVBoqNWWNpV3VZwIEuqNhMNaBb/vb14zHWdSkCsQDGwir3Dlo0KpC7kzP+3jVc1jrE14IMeh9rJjyvH3sAukh1eQcAXglixF8nPdKTQhZSL2Z6Mz6rEcpZukqG9R5gC995U87pNO/d46aaQTG01/tHBzYjrVQzhYp6veYIzgxj+/QBWj9B73y2TXhbqPjmeixWJOUCJRL+nOO+QL00l1hSav4f1NiEZqXWZG7BG1MyXMn5/kD9+VQJbiQHaYoTJKgJdptgcUQFMGhdXBMpa7kwtKdKnPgahhgdb9EAj5EMKRcde02+MZ5pQ80AfEVT/TFIrsp+u4EO/23zyfIJ5G81BVxWyMPDfxrffmTVaAPB8xY4vwHz1OuKnsl8KAOmMX+SmOFwvJh3oMo++pOUFJgKs5LHzgerW6r5p5dvnDcgN9/ijyEKcBtH0AFuSqMgymgsbSe/UXlybztANO8Lm+Xx+O0jJremBcmGHBUnpoImFn2W9i5Li+JYRBsrtUQJzcCzmY7HV2RUTmJlzveoBkIv0t8Ms1qpvj8EQDYmd5JelRsllyjzwOj6d4JWHgFj6jLM6O3pYfH8kMT7V0hUTtaaepxa9Ws4+gSWC/s/kCwGHrUoqTNJiR5C8Dd6sXGcIJ458j1p/PwXikFimC2uzjXvp9wYMm9TG63y1jRM6blW0x7l9cxYYL2Scr+KY4kFM2HsfXA4FwbO+P46Uql3lo38CqyvzrOkRF2zExxq2pUjLEpw2iyJI5vlxlTGvPFqa5pSL0p0732BbLR8prQYCHXDgmhQIPYF/ubNW3wIViifOgXfqj8Uef5cS0MGgpDnXukcvwLb7f12j6rfp7oe0UzwioUX022BHwcMHMh/T2N4L5K/pWjVd2ZKWuMOUFZ6vG+13AgmgBuobo76YSuGTndB7/+kS1s4SUJy/8P4oBq+foKu1eCwhCLYGkuLsL5K3wBegD/3FZKIEgyinhUIDsaCIt1cYzHfu5uCgMvrsSwgGqqc/XTm53SSci5GqaWzkgTKJiDNgpMc3I+sSrUlwK5hLXIKVVoBUw/zjzFIwmqOlREzfu3iqFOScrm4fbwL6naECG4PmZJADtCHU8y+o5DkPb5E9tsW6yhHvzbceh/PPLOMLkJ2+GHDGBuj2P8RwenZVuPNQBf+qH5lgZpcF40XFxBS5HE57TONCSCKNV2vD3rApCaWtAh84jzKChE3ZunOP8qFXzHoqy1F/cVkmz8n/e5zG5Y0g0acB++omxV5yjjpz4u3PBvDVhlTXBRgkrWk0Z74BB6HAYquijFnYX0aPd0TSW8922dIwib/7yExEXp+iygqf1I4hPmm4mOP7PcMI3lGoGGT2LjJ4oDKz/xUvCJ28xNCXl053z2aeAL+MIcPEkm2pBgwMPm+3VKYYawae8UeCak7ZCRv73pmWSBFnf8bSSjnP+AT0Okl7tFw3Lj/E/wBNxfqljL0WUjeCi5lRfmRRPhUMh5LDy8XlmCZGrGsNxa8AQQ4i1r6cnmSilmbmB5kx8Io3J7k1yhAtxaNT5/o7yhezhfJTlxqBlJa9JKkFnX2iyqiyMFyzzQ/vGPmjZek7OMbq7VE6IUPYGjPFBxzh8+wCRQ9Bm8iaQfbCtUSwaSZ347qxfkYoUtHxo1Id3zfxb8EFd+Yha2SM5qsb1G6+t27A10gpt2dDI5tWKaXoqcFx1qjQyeHO0HVnQrEKu6qTXqW0OZ08s56cN5QvdPkSJIS05Mpa7Evc/19L08/m3ZFkCc9glg0305CWDDiM5U3xGL5+0rLcmmanbr+crcYpRGLo5Pm/U0+++X43TfYTHAZUOd709I2p/qu9QkUFpryJMEvAcfT2kOVH3TNxXY/7utFZIVQnTXl8Sd5s6ivqa5s2AmOseYfL/YVHX2KinuRfY2mY524hWcILufNaQXjvbQOmll7mYou/jDFOq8aSRPisvBPXksR5K7pjZ+YO+ujxM8lBN7Fx39JyEWW4thM0LQc65B1m2cG7SrwNungwRRpLHUGw+bt2IZBNLTvnPToJ2ulKCV2rpj3XMjUQwiwbdRailrQU6X6YDcQKXZayFeBYNjpwAfev7+uj6yy0hMEhdMsPTKaXqaTmSvQFHDX1bAReAPFBgOcNzgfE3DR4qBfR4th3kjKFUnkgOQGH1cGUvJ6+GABwPlPyY1Qq45DWqd9wzTwV2qSUa9D7hs1hOXC7PrB9/yCRisyNhWc0gqjvFiyJagiCEjWX3eeT3/yu/zGTWzS/YD3DivGgEP7UpC334C2e81udlJ22BYIrtNzIILXd2McN7CU7rrYHAj67wiOilhFng6tyg2dWwc4Ml6jXrI+qPr/LDRopaLYKb/F2DrZzxFWozPL2UtySzxY/CwUBRmnIMEVtY/dXlhGTsw96g80NY5SeLEWHPLqDmqSXfVaWWDqS0yVsfcYYL2/QoDYpCXjap3JeqIHjzfqmbvZA9CwFvI6XLhUvQEfQK3JrWZWb//7dYshBlvlEyK1ZEJgrfTDkrGTem0FLxcs54MphLvzXiw0mbovWrvKaUBox0qHVC/2qg2fwu2Os9fR1j+tAgUUacC9GrKzzUqRxb/j0HYrQcikgIS/NI7dN6stBe/UBGfnnm58XEdAYEJDJhl7oZZctoa5H92Lc1TS5MrEy8Afsq1QY+Lpet4cIoxOA5L7EpIZzZibMa2Icr2VqZ6BeC1vXh8fpUmiYe8olbZfOchQSVL4nu1eKmCz23fe+6zirXCv/3yUF9U+qlrk6q/J8eCulDtMy+MAyzBX9wWDYmgMoFE4llDuWpHXethJc5AthTiEitWhzRfWqINr438uTc17aLb1UpbYCjB6OTSAN0AatBjiF2Uf1ni8N9SjOKhXNlCbOeEzTL9akEprdnx+DpAAMyb65Q/vpRN1ocn44/kPCOqp/BQTO9ZDPmTBPRZ75utKIm9ebnL6wAfZaJZzkvGGXZzgo2mutLigXCT8jFZQ76bZV2yyUx1HuaKrFbEgdX26BLpXYgrJ+B+LeK7RgkqwMUCxpROKEA5FORda8/CP7Prw0XHfYeg8FfP0+qKP48Hr8ZeMg5FvOizO9gbMdDbYurSp/4vnYP1YXH8YFHz0zWr76ejchOfE6uHfGxFj4x/LzjGS+BpiEFUqY92U9qQi3beD8TpCkOEZ6yYhQqjtOwqu3ZYUc2JGxc/S7KvT/GN0xwumSWfnZbXdxknBZuAf7uo7ZpqjJrtuJBhdqJrKPS2yNb6A7+eQf14yRBqVA3FDWW8nIHZ8m072wCjimc8RbMBpUogTTybBzMWli8nJyMP3tP2R2SuAuZ6T00Lc0Ela91nhTWxkQovDxA2dfY3ahmn/ZcNZMxo8u2X7YHmDhcDGBMUr3t079Ix2BfeLUXpJxDA7bNb2itzobOZl9x5IrtuqnIxX7Sl89Ejx4EClACks2XCC+iO/X1BID66V3Aj/vrwYHJqcbODFEcRgHh7D8era/A5kRiH8dCmlAxWC4zW7SjuuZM6s3z2HzSzQQ3rjC8QD5zDYSbCvLcggl1nAxq3QikT1eeS1ofADWUKuTVqpZUpzQFssvrcnDbGeMwpT1GzH21Op3aVhr51zg0jU4RRaVA9XqI8TnzNvTz6B59EyH2Gx5krMrnJNAFOCj2gXKRAF1yzUPO3ohseSKshhOP+rCEmaIAt98YL3P31jD3wn+6h1KoORnNWgjetvQlqWGTeImVjAYJJRSfPg5Z3EUtwkVxJbJQxX7J9gD6R+kCqYp00n0xfhid60zObYEqMLchTPa6chrRTdurJ6C6G48x/i9jEZ24p9PDtmM8nEyMbEGItRqgrm54GYwskbh5FAA/KbSX36ZwnYuVb1J5XqZdi1Honht/9SO5olA2QMwmmXBYN0OKMnICwVyETh7fVk6mD2dg6/lEpjIU7kELuQ7Q8zGy6Y4/r/6UB2SesKLX71NxdaoqynEhCIa9Uxf2TITe/FkfOrWHeYWQ/6KDX8tDa/KFjr54GPOTuteZ509FEyorg7ptHYY1Qb6Wq357PWIc9T4Io7A1tOX6qE1j92Ic4wm/iSP3K40NxRxZo+8pq3rzcfhBftq6N3ld8JDcFEud34HT3N3nr74RUQNWwaUpodbN+352GwS7sNz1niGGCBUaNakWBC/xA1zbBBFpV/TOU6Htaq8LQP0hp0FJYJvNhon68GhfkX3s0p9Hu3DbDGXo4TPESumj7XEoA912DrVj1k5bAC9M1q7C6pEkhsHZhTuQJlAlKZ1+FIx4TS1UjAZGsDMmYpdCpoO5K2e/iHMm+3oTSzCQhWsYVGVnctNhmLtwvPFXRppMyEOtE1STYqjJ5mvQjg6qJBmEoo0mM3G80I/8x7zlX/bvwpdmzloPtJqNqHrxJWdWPVXmWRZRj8NZfQ68pwJuvuOesmkkzoWv13pqj0wHEr1EW8LxHPYDfHkHOVlXQ28sQkFx+PLDdVIUT/ejGPaqODJFqkno+dJLdmc/acDj9hOH+e8iSvCPP6EdqwO18Ae4+Qu6oX2aUbN55+ndjnfSdUgVNyEioZY40rvDf5oyolGtqh4aTmYkv4e4WAjKwzFU2E00cUab34tfC4olLpqClBieGD8VBw/26NfYEKoIr+H9DbW3JR68nn24FuLRA9TBbceN8a9rWIiCBf3E6Cfgh5mms6dc2iPhMCaZxTg6RdDQ4u1OEoCOB64nY5mdZTW2Y6xDy/A0KZTuFYdu8EwCokdoObjsVNScF+NhEd5H5X1eImS5Al6YLix0L1ifndI/kOuUfoBtxEXZxR0YcBBrKbdJv2YviZswtR8IV1lUWgc66SLBiFGC2s7r/GFlefz2peOxo1CGW7Hma36s9AQQ1c8sk7ynpUSSLcukPC5MT6ePyTufkBDCTQkEl
+          type: function_result
+          name: deepwiki:read_wiki_structure
+          is_error: false
+          result:
+            result: |-
+              Available pages for pydantic/pydantic:
+
+              - 1 Overview
+                - 1.1 Getting Started
+                - 1.2 Why Pydantic
+              - 2 Core Model System
+                - 2.1 BaseModel
+                - 2.2 Field System
+                - 2.3 Model Configuration
+                - 2.4 Internal Architecture
+              - 3 Type System
+                - 3.1 Built-in and Constrained Types
+                - 3.2 Network Types
+                - 3.3 TypeAdapter
+                - 3.4 Generics and Forward References
+                - 3.5 Annotated Metadata and Custom Types
+              - 4 Validation and Serialization
+                - 4.1 Validators
+                - 4.2 Serializers
+                - 4.3 JSON Conversion
+                - 4.4 Error Handling
+              - 5 Schema Generation
+                - 5.1 Core Schema Generation
+                - 5.2 JSON Schema Generation
+                - 5.3 Discriminated Unions
+              - 6 Advanced Features
+                - 6.1 Dataclass Support
+                - 6.2 Function Validation
+                - 6.3 RootModel and Computed Fields
+                - 6.4 Plugin System
+                - 6.5 Mypy Integration
+                - 6.6 Experimental Features
+              - 7 Development and Deployment
+                - 7.1 Testing Framework
+                - 7.2 CI/CD Pipeline
+                - 7.3 Documentation System
+                - 7.4 Versioning and Dependencies
+                - 7.5 Release Process
+              - 8 Migration and Compatibility
+                - 8.1 V1 to V2 Migration
+                - 8.2 Backported Modules
+              - 9 Type System Internals
+                - 9.1 Typing Utilities
+                - 9.2 pydantic-core Rust Engine
+              - 10 Glossary
+            structured_content:
+              result: |-
+                Available pages for pydantic/pydantic:
+
+                - 1 Overview
+                  - 1.1 Getting Started
+                  - 1.2 Why Pydantic
+                - 2 Core Model System
+                  - 2.1 BaseModel
+                  - 2.2 Field System
+                  - 2.3 Model Configuration
+                  - 2.4 Internal Architecture
+                - 3 Type System
+                  - 3.1 Built-in and Constrained Types
+                  - 3.2 Network Types
+                  - 3.3 TypeAdapter
+                  - 3.4 Generics and Forward References
+                  - 3.5 Annotated Metadata and Custom Types
+                - 4 Validation and Serialization
+                  - 4.1 Validators
+                  - 4.2 Serializers
+                  - 4.3 JSON Conversion
+                  - 4.4 Error Handling
+                - 5 Schema Generation
+                  - 5.1 Core Schema Generation
+                  - 5.2 JSON Schema Generation
+                  - 5.3 Discriminated Unions
+                - 6 Advanced Features
+                  - 6.1 Dataclass Support
+                  - 6.2 Function Validation
+                  - 6.3 RootModel and Computed Fields
+                  - 6.4 Plugin System
+                  - 6.5 Mypy Integration
+                  - 6.6 Experimental Features
+                - 7 Development and Deployment
+                  - 7.1 Testing Framework
+                  - 7.2 CI/CD Pipeline
+                  - 7.3 Documentation System
+                  - 7.4 Versioning and Dependencies
+                  - 7.5 Release Process
+                - 8 Migration and Compatibility
+                  - 8.1 V1 to V2 Migration
+                  - 8.2 Backported Modules
+                - 9 Type System Internals
+                  - 9.1 Typing Utilities
+                  - 9.2 pydantic-core Rust Engine
+                - 10 Glossary
+            call_tool_result_json: "{\"_meta\":{\"fastmcp\":{\"wrap_result\":true}},\"content\":[{\"type\":\"text\",\"text\":\"Available pages for pydantic/pydantic:\\n\\n- 1 Overview\\n  - 1.1 Getting Started\\n  - 1.2 Why Pydantic\\n- 2 Core Model System\\n  - 2.1 BaseModel\\n  - 2.2 Field System\\n  - 2.3 Model Configuration\\n  - 2.4 Internal Architecture\\n- 3 Type System\\n  - 3.1 Built-in and Constrained Types\\n  - 3.2 Network Types\\n  - 3.3 TypeAdapter\\n  - 3.4 Generics and Forward References\\n  - 3.5 Annotated Metadata and Custom Types\\n- 4 Validation and Serialization\\n  - 4.1 Validators\\n  - 4.2 Serializers\\n  - 4.3 JSON Conversion\\n  - 4.4 Error Handling\\n- 5 Schema Generation\\n  - 5.1 Core Schema Generation\\n  - 5.2 JSON Schema Generation\\n  - 5.3 Discriminated Unions\\n- 6 Advanced Features\\n  - 6.1 Dataclass Support\\n  - 6.2 Function Validation\\n  - 6.3 RootModel and Computed Fields\\n  - 6.4 Plugin System\\n  - 6.5 Mypy Integration\\n  - 6.6 Experimental Features\\n- 7 Development and Deployment\\n  - 7.1 Testing Framework\\n  - 7.2 CI/CD Pipeline\\n  - 7.3 Documentation System\\n  - 7.4 Versioning and Dependencies\\n  - 7.5 Release Process\\n- 8 Migration and Compatibility\\n  - 8.1 V1 to V2 Migration\\n  - 8.2 Backported Modules\\n- 9 Type System Internals\\n  - 9.1 Typing Utilities\\n  - 9.2 pydantic-core Rust Engine\\n- 10 Glossary\"}],\"structuredContent\":{\"result\":\"Available pages for pydantic/pydantic:\\n\\n- 1 Overview\\n  - 1.1 Getting Started\\n  - 1.2 Why Pydantic\\n- 2 Core Model System\\n  - 2.1 BaseModel\\n  - 2.2 Field System\\n  - 2.3 Model Configuration\\n  - 2.4 Internal Architecture\\n- 3 Type System\\n  - 3.1 Built-in and Constrained Types\\n  - 3.2 Network Types\\n  - 3.3 TypeAdapter\\n  - 3.4 Generics and Forward References\\n  - 3.5 Annotated Metadata and Custom Types\\n- 4 Validation and Serialization\\n  - 4.1 Validators\\n  - 4.2 Serializers\\n  - 4.3 JSON Conversion\\n  - 4.4 Error Handling\\n- 5 Schema Generation\\n  - 5.1 Core Schema Generation\\n  - 5.2 JSON Schema Generation\\n  - 5.3 Discriminated Unions\\n- 6 Advanced Features\\n  - 6.1 Dataclass Support\\n  - 6.2 Function Validation\\n  - 6.3 RootModel and Computed Fields\\n  - 6.4 Plugin System\\n  - 6.5 Mypy Integration\\n  - 6.6 Experimental Features\\n- 7 Development and Deployment\\n  - 7.1 Testing Framework\\n  - 7.2 CI/CD Pipeline\\n  - 7.3 Documentation System\\n  - 7.4 Versioning and Dependencies\\n  - 7.5 Release Process\\n- 8 Migration and Compatibility\\n  - 8.1 V1 to V2 Migration\\n  - 8.2 Backported Modules\\n- 9 Type System Internals\\n  - 9.1 Typing Utilities\\n  - 9.2 pydantic-core Rust Engine\\n- 10 Glossary\"},\"isError\":false}"
+        - signature: >-
+            EmkKZwFpFH0TNCAlHvhGAsEFpU66/TU4qBrw1qY3oLUsa7mdPQqgoxhX8X8eDzyQubhhvvmeeL0onbO7205s8sol06qUHESrDjiW+pWQkKriUx5JmWC6xTVxQ9EHxj0t0fva88cMJItOpWE=
+          type: thought
+        - content:
+          - text: >-
+              One documentation topic from the result is **Core Model System** (or
+              specifically **2.1 BaseModel**).
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:42:34.897691+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "13720"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        tools:
+        - allowed_tools:
+          - tools:
+            - read_wiki_structure
+          name: deepwiki
+          type: mcp_server
+          url: https://mcp.deepwiki.com/mcp
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Call read_wiki_structure exactly once for pydantic/pydantic, then name one
+              documentation topic from its result.
+        - arguments:
+            repoName: pydantic/pydantic
+          id: call_422424
+          name: deepwiki:read_wiki_structure
+          type: function_call
+          signature: >-
+            Eo4DCosDCAIShgMBaRR9E0rsVgo4FVRuEBuGeCU45EUqIlRKMJqdPTO1E1ijnv2asQH0PaiMfu4CzTYZC8P8aXBXOZQCisZBpCfnKH0qKzu1gfOP3HBgEdIVXp/OenolT4C6NexmQb4RUcQ6mnAqxK9WlunTsQeaGaKk1G2BmvUujBYI7xuyyc3lFPH00+nH+aBxf8aeTHELLiouq97jL5D2YFcI+KExK5qDLGn814lAj6NF2VyNGU3x3vbK6VJaTTenNuiFPRHISKz97G+S5N5lmdY8SbI/x3n2nOHci1ovQzM4Dgo0365yOGyF3n7mnVl88sY8YjGl6rirIBkDdKW2lEtql2mL+9uEHrDJ51W1O9Zh9ZuZRAHJhwJyt87SvRrFmaH7UTpvkZSdmiksUIMN9CAK24LPuG/un6bffFDe4LrVS8LYuzCOe3LeuhhSKQvD0thMOreFG/XPqnP8jPgFNK7xd1Zw6ZRynzfraUKgSLD1nTbgE/pLbLMWhX2Vpf8Np/lyb6xWmIsQsUtVsMs=
+        - call_id: call_422424
+          result:
+            result: |-
+              Available pages for pydantic/pydantic:
+
+              - 1 Overview
+                - 1.1 Getting Started
+                - 1.2 Why Pydantic
+              - 2 Core Model System
+                - 2.1 BaseModel
+                - 2.2 Field System
+                - 2.3 Model Configuration
+                - 2.4 Internal Architecture
+              - 3 Type System
+                - 3.1 Built-in and Constrained Types
+                - 3.2 Network Types
+                - 3.3 TypeAdapter
+                - 3.4 Generics and Forward References
+                - 3.5 Annotated Metadata and Custom Types
+              - 4 Validation and Serialization
+                - 4.1 Validators
+                - 4.2 Serializers
+                - 4.3 JSON Conversion
+                - 4.4 Error Handling
+              - 5 Schema Generation
+                - 5.1 Core Schema Generation
+                - 5.2 JSON Schema Generation
+                - 5.3 Discriminated Unions
+              - 6 Advanced Features
+                - 6.1 Dataclass Support
+                - 6.2 Function Validation
+                - 6.3 RootModel and Computed Fields
+                - 6.4 Plugin System
+                - 6.5 Mypy Integration
+                - 6.6 Experimental Features
+              - 7 Development and Deployment
+                - 7.1 Testing Framework
+                - 7.2 CI/CD Pipeline
+                - 7.3 Documentation System
+                - 7.4 Versioning and Dependencies
+                - 7.5 Release Process
+              - 8 Migration and Compatibility
+                - 8.1 V1 to V2 Migration
+                - 8.2 Backported Modules
+              - 9 Type System Internals
+                - 9.1 Typing Utilities
+                - 9.2 pydantic-core Rust Engine
+              - 10 Glossary
+            structured_content:
+              result: |-
+                Available pages for pydantic/pydantic:
+
+                - 1 Overview
+                  - 1.1 Getting Started
+                  - 1.2 Why Pydantic
+                - 2 Core Model System
+                  - 2.1 BaseModel
+                  - 2.2 Field System
+                  - 2.3 Model Configuration
+                  - 2.4 Internal Architecture
+                - 3 Type System
+                  - 3.1 Built-in and Constrained Types
+                  - 3.2 Network Types
+                  - 3.3 TypeAdapter
+                  - 3.4 Generics and Forward References
+                  - 3.5 Annotated Metadata and Custom Types
+                - 4 Validation and Serialization
+                  - 4.1 Validators
+                  - 4.2 Serializers
+                  - 4.3 JSON Conversion
+                  - 4.4 Error Handling
+                - 5 Schema Generation
+                  - 5.1 Core Schema Generation
+                  - 5.2 JSON Schema Generation
+                  - 5.3 Discriminated Unions
+                - 6 Advanced Features
+                  - 6.1 Dataclass Support
+                  - 6.2 Function Validation
+                  - 6.3 RootModel and Computed Fields
+                  - 6.4 Plugin System
+                  - 6.5 Mypy Integration
+                  - 6.6 Experimental Features
+                - 7 Development and Deployment
+                  - 7.1 Testing Framework
+                  - 7.2 CI/CD Pipeline
+                  - 7.3 Documentation System
+                  - 7.4 Versioning and Dependencies
+                  - 7.5 Release Process
+                - 8 Migration and Compatibility
+                  - 8.1 V1 to V2 Migration
+                  - 8.2 Backported Modules
+                - 9 Type System Internals
+                  - 9.1 Typing Utilities
+                  - 9.2 pydantic-core Rust Engine
+                - 10 Glossary
+            call_tool_result_json: "{\"_meta\":{\"fastmcp\":{\"wrap_result\":true}},\"content\":[{\"type\":\"text\",\"text\":\"Available pages for pydantic/pydantic:\\n\\n- 1 Overview\\n  - 1.1 Getting Started\\n  - 1.2 Why Pydantic\\n- 2 Core Model System\\n  - 2.1 BaseModel\\n  - 2.2 Field System\\n  - 2.3 Model Configuration\\n  - 2.4 Internal Architecture\\n- 3 Type System\\n  - 3.1 Built-in and Constrained Types\\n  - 3.2 Network Types\\n  - 3.3 TypeAdapter\\n  - 3.4 Generics and Forward References\\n  - 3.5 Annotated Metadata and Custom Types\\n- 4 Validation and Serialization\\n  - 4.1 Validators\\n  - 4.2 Serializers\\n  - 4.3 JSON Conversion\\n  - 4.4 Error Handling\\n- 5 Schema Generation\\n  - 5.1 Core Schema Generation\\n  - 5.2 JSON Schema Generation\\n  - 5.3 Discriminated Unions\\n- 6 Advanced Features\\n  - 6.1 Dataclass Support\\n  - 6.2 Function Validation\\n  - 6.3 RootModel and Computed Fields\\n  - 6.4 Plugin System\\n  - 6.5 Mypy Integration\\n  - 6.6 Experimental Features\\n- 7 Development and Deployment\\n  - 7.1 Testing Framework\\n  - 7.2 CI/CD Pipeline\\n  - 7.3 Documentation System\\n  - 7.4 Versioning and Dependencies\\n  - 7.5 Release Process\\n- 8 Migration and Compatibility\\n  - 8.1 V1 to V2 Migration\\n  - 8.2 Backported Modules\\n- 9 Type System Internals\\n  - 9.1 Typing Utilities\\n  - 9.2 pydantic-core Rust Engine\\n- 10 Glossary\"}],\"structuredContent\":{\"result\":\"Available pages for pydantic/pydantic:\\n\\n- 1 Overview\\n  - 1.1 Getting Started\\n  - 1.2 Why Pydantic\\n- 2 Core Model System\\n  - 2.1 BaseModel\\n  - 2.2 Field System\\n  - 2.3 Model Configuration\\n  - 2.4 Internal Architecture\\n- 3 Type System\\n  - 3.1 Built-in and Constrained Types\\n  - 3.2 Network Types\\n  - 3.3 TypeAdapter\\n  - 3.4 Generics and Forward References\\n  - 3.5 Annotated Metadata and Custom Types\\n- 4 Validation and Serialization\\n  - 4.1 Validators\\n  - 4.2 Serializers\\n  - 4.3 JSON Conversion\\n  - 4.4 Error Handling\\n- 5 Schema Generation\\n  - 5.1 Core Schema Generation\\n  - 5.2 JSON Schema Generation\\n  - 5.3 Discriminated Unions\\n- 6 Advanced Features\\n  - 6.1 Dataclass Support\\n  - 6.2 Function Validation\\n  - 6.3 RootModel and Computed Fields\\n  - 6.4 Plugin System\\n  - 6.5 Mypy Integration\\n  - 6.6 Experimental Features\\n- 7 Development and Deployment\\n  - 7.1 Testing Framework\\n  - 7.2 CI/CD Pipeline\\n  - 7.3 Documentation System\\n  - 7.4 Versioning and Dependencies\\n  - 7.5 Release Process\\n- 8 Migration and Compatibility\\n  - 8.1 V1 to V2 Migration\\n  - 8.2 Backported Modules\\n- 9 Type System Internals\\n  - 9.1 Typing Utilities\\n  - 9.2 pydantic-core Rust Engine\\n- 10 Glossary\"},\"isError\":false}"
+          is_error: false
+          name: deepwiki:read_wiki_structure
+          type: function_result
+          signature: >-
+            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
+        - signature: >-
+            EmkKZwFpFH0TNCAlHvhGAsEFpU66/TU4qBrw1qY3oLUsa7mdPQqgoxhX8X8eDzyQubhhvvmeeL0onbO7205s8sol06qUHESrDjiW+pWQkKriUx5JmWC6xTVxQ9EHxj0t0fva88cMJItOpWE=
+          type: thought
+        - content:
+          - text: >-
+              One documentation topic from the result is **Core Model System** (or
+              specifically **2.1 BaseModel**).
+            type: text
+          type: model_output
+        - type: user_input
+          content:
+          - type: text
+            text: Repeat that documentation topic without calling a tool.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1888
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 160
+          total_input_tokens: 149
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 149
+          total_cached_tokens: 0
+          total_output_tokens: 11
+          total_tool_use_tokens: 0
+          total_thought_tokens: 0
+          initial_input_tokens: 1961
+        created: 2026-11-05T15:42:37Z
+        updated: 2026-11-05T15:42:37Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EmkKZwFpFH0TK3klGkOrfhKp4wqN6HsaOrhOwtjK/Rfj8yktn8eVBLxmYrNMIEMwQOitBw4vopGnGmzeWcHtv9XppmEOPZ/+BeRQiODQseizZnuiym0CkBCIop9lipQTJr6DFACjb2MbZE8=
+          type: thought
+        - content:
+          - text: "**BaseModel** (under **Core Model System**)"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:42:37.030792+00:00

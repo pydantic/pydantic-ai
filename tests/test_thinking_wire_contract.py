@@ -33,6 +33,7 @@ with try_import() as cerebras_imports:
 
 with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as mistral_imports:
@@ -54,6 +55,7 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'groq': pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
     'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
     'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
+    'google-interactions': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
     'mistral': pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
 }
 
@@ -93,6 +95,45 @@ class WireCase:
 
 
 CASES = [
+    WireCase(
+        id='google-interactions-unset',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        absent=('generation_config',),
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-enabled',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking=True,
+        present={'generation_config': {'thinking_summaries': 'auto'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-disabled',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking=False,
+        present={'generation_config': {'thinking_summaries': 'none', 'thinking_level': 'low'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-high',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking='high',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'high'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-prefixed-minimal',
+        provider='google-interactions',
+        model_name='models/gemini-3.8-flash',
+        thinking='minimal',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'low'}},
+        match_body=True,
+    ),
     WireCase(
         id='groq-qwen3-disable',
         provider='groq',
@@ -357,6 +398,8 @@ def _build_model(
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
     if case.provider == 'google':
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
+    if case.provider == 'google-interactions':
+        return GoogleInteractionsModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     if case.provider == 'mistral':
         return MistralModel(case.model_name, provider=MistralProvider(api_key=mistral_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover

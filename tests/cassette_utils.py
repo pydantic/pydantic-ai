@@ -133,6 +133,11 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         input_ = body.get('input')
         add('messages', input_ if isinstance(input_, list) else [input_] if input_ is not None else None)
         return 'openai-responses', blocks
+    if path.endswith('/interactions'):
+        add('tools', body.get('tools'))
+        add('system', body.get('system_instruction'))
+        add('messages', body.get('input'))
+        return 'google-interactions', blocks
     if 'generativelanguage' in host or ':generateContent' in path or ':streamGenerateContent' in path:
         add('tools', body.get('tools'))
         add('system', body.get('systemInstruction') or body.get('system_instruction'))
@@ -175,6 +180,8 @@ def is_new_user_turn(block: str) -> bool:
         message = json.loads(block)
     except json.JSONDecodeError:
         return False
+    if is_str_dict(message) and message.get('type') == 'user_input':
+        return True
     if not is_str_dict(message) or message.get('role') != 'user':
         return False
     content = message.get('content')

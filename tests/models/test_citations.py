@@ -37,6 +37,7 @@ with try_import() as bedrock_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as openai_available:
@@ -74,6 +75,7 @@ class WebCitationCase:
         'anthropic',
         'anthropic-web-fetch',
         'google-gemini',
+        'google-interactions',
         'google-vertex',
         'openai',
         'openai-chat',
@@ -88,6 +90,178 @@ class WebCitationCase:
 
 
 WEB_CASES = [
+    WebCitationCase(
+        'google-interactions',
+        'google-interactions',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['medium.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=64, end=152),
+                    anchor_text='**Official Documentation Portal**: [Pydantic AI Documentation](https://ai.pydantic.dev/)',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=64, end=223),
+                    anchor_text='**Official Documentation Portal**: [Pydantic AI Documentation](https://ai.pydantic.dev/) (also available through [Pydantic Docs](https://pydantic.dev/docs/ai/)',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=64, end=223),
+                    anchor_text='**Official Documentation Portal**: [Pydantic AI Documentation](https://ai.pydantic.dev/) (also available through [Pydantic Docs](https://pydantic.dev/docs/ai/)',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=227, end=331),
+                    anchor_text="""\
+**Source Code & Repository**: [GitHub - pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai)
+
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['medium.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=227, end=331),
+                    anchor_text="""\
+**Source Code & Repository**: [GitHub - pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai)
+
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=372, end=522),
+                    anchor_text="""\
+Overview & Quickstart**: [ai.pydantic.dev](https://ai.pydantic.dev/) -- Introduction to building type-safe, production-ready AI agents using Python.
+*\
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['developersdigest.tech'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=372, end=522),
+                    anchor_text="""\
+Overview & Quickstart**: [ai.pydantic.dev](https://ai.pydantic.dev/) -- Introduction to building type-safe, production-ready AI agents using Python.
+*\
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=526, end=709),
+                    anchor_text="""\
+gents**: [Agents Documentation](https://ai.pydantic.dev/agent/) -- How to configure agent loops, manage system prompts, inject runtime dependencies, and enforce structured outputs.
+* \
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=713, end=912),
+                    anchor_text="""\
+dels & Providers**: [Models and Providers Guide](https://ai.pydantic.dev/models/) -- Instructions on swapping and configuring model backends (OpenAI, Anthropic, Gemini, Groq, local models, etc.).
+* *\
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['medium.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=713, end=912),
+                    anchor_text="""\
+dels & Providers**: [Models and Providers Guide](https://ai.pydantic.dev/models/) -- Instructions on swapping and configuring model backends (OpenAI, Anthropic, Gemini, Groq, local models, etc.).
+* *\
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=916, end=1102),
+                    anchor_text="""\
+ls & Toolsets**: [Tools & Common Tools](https://ai.pydantic.dev/tools/) -- Defining custom Python functions as tools, using the Model Context Protocol (MCP), and standard utilities.
+* **\
+""",
+                ),
+                ExpectedWebCitation(
+                    source_labels=['medium.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=916, end=1102),
+                    anchor_text="""\
+ls & Toolsets**: [Tools & Common Tools](https://ai.pydantic.dev/tools/) -- Defining custom Python functions as tools, using the Model Context Protocol (MCP), and standard utilities.
+* **\
+""",
+                ),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'google-interactions-stream',
+        'google-interactions',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=67, end=295),
+                    anchor_text='**[Pydantic AI Documentation](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1g0Tv5ZvugSSSZ-VYw2DaxIRNxVrFKLjqr0W3Wxm1mbyaaWhUpjfXedouGeVHTUkgJFwf39F6llSekwXyuzi7v0AEkBAZU-7QG15A1HEsJ6QvZgkZ1pLsqlSQ-Q==)**',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=67, end=563),
+                    anchor_text='**[Pydantic AI Documentation](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1g0Tv5ZvugSSSZ-VYw2DaxIRNxVrFKLjqr0W3Wxm1mbyaaWhUpjfXedouGeVHTUkgJFwf39F6llSekwXyuzi7v0AEkBAZU-7QG15A1HEsJ6QvZgkZ1pLsqlSQ-Q==)** (also reachable via [ai.pydantic.dev](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFz8xOz4A-MaTEBl0Rfgi7YzYUBf00ROqE3FaRXUpZMMX-4dHNfCskSetIXexu5HMDDfWAihAuQnp13tIxwjXp7bSGoN9qphjdZn6FfAztKtqI0OYldahJJIcCYygm4XkDgtxkwt95m_sXYXP9SoZ5sq441Jg==))',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=599, end=725),
+                    anchor_text='**Overview & Getting Started:** Covers installation (`pip install pydantic-ai`), core philosophy, and introductory agent loops',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=729, end=1064),
+                    anchor_text='**[Agents & Core Concepts](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEKIXxYYmXQziomVaMC77q0sCVUSvFxqA6cQHP-fZxvG5IBnC6iLe7E2DUB7ffAyOSLb7W-5XnSi_s-F9WLEbCOa2_QB5efQQzrd-pWDetvdts8HoYn_ByfbbVaqSLSer_GMnQnmfDR):** Details on configuring `Agent` instances, system instructions, usage limits, and model providers',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=729, end=1064),
+                    anchor_text='**[Agents & Core Concepts](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEKIXxYYmXQziomVaMC77q0sCVUSvFxqA6cQHP-fZxvG5IBnC6iLe7E2DUB7ffAyOSLb7W-5XnSi_s-F9WLEbCOa2_QB5efQQzrd-pWDetvdts8HoYn_ByfbbVaqSLSer_GMnQnmfDR):** Details on configuring `Agent` instances, system instructions, usage limits, and model providers',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=1068, end=1398),
+                    anchor_text='**[Dependencies](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEMmKCvrFm5uzULt0-mLMPcJVJAC6YppjO4i4G7Y1GhpOjuFw8gV_Dv4hDpjI1r2CrE-EGReFFQSEgk3fgbaGupzoW5tGZTIbSZ88MKEfQ1sjyxIKrwRoMxwSYNddDmFikDCtXRfxE5SWHYya15Ew):** Guides on using type-safe dependency injection for dynamic instructions, tools, and testing',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=1402, end=1729),
+                    anchor_text='**[Output Validation](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbDFifgaNVr-whMrrHgVmCOYxYSVFpHnbGbZEptKNW-HjaK8asg5UJlu4w0mH68RRO-n-r2B6hqBfKNeFqn8zyvm1Igh78uGLVWqmXc3KQkZNH_N9SIu_KIWxi-Pnm4vy0sLi0tNMYw):** Instructions for receiving validated structured outputs using Pydantic models or plain text',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=1733, end=2076),
+                    anchor_text='**[API Reference](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGeoUHv_G03XJTwSz63Jd_TkZpVDs5veFTn3LLjK44QMm46zi8RK3rrk146VgyRVXEBjjqrKeNEMPlIgaoExCKxMafyUNWezRXA_QUqiqiOg8M7iwYzz0ObUzK_BoU2wa_5gAAXTSd9V-0):** Full API specifications for modules such as `pydantic_ai.agent`, `pydantic_ai.models`, and `pydantic_ai.usage`',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[0],
+                    anchor=ContentCitationAnchor(start=1733, end=2076),
+                    anchor_text='**[API Reference](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGeoUHv_G03XJTwSz63Jd_TkZpVDs5veFTn3LLjK44QMm46zi8RK3rrk146VgyRVXEBjjqrKeNEMPlIgaoExCKxMafyUNWezRXA_QUqiqiOg8M7iwYzz0ObUzK_BoU2wa_5gAAXTSd9V-0):** Full API specifications for modules such as `pydantic_ai.agent`, `pydantic_ai.models`, and `pydantic_ai.usage`',
+                ),
+            ]
+        ),
+    ),
     WebCitationCase(
         'anthropic-web-fetch',
         'anthropic-web-fetch',
@@ -532,6 +706,7 @@ WEB_PROVIDER_AVAILABLE = {
     'anthropic': anthropic_available,
     'anthropic-web-fetch': anthropic_available,
     'google-gemini': google_available,
+    'google-interactions': google_available,
     'google-vertex': google_available,
     'openai': openai_available,
     'openai-chat': openai_available,
@@ -576,6 +751,9 @@ def _web_citation_agent(
         )
     elif case.provider == 'google-gemini':
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+        tool = WebSearchTool()
+    elif case.provider == 'google-interactions':
+        model = GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
         tool = WebSearchTool()
     elif case.provider == 'google-vertex':
         model = GoogleModel('gemini-2.5-flash', provider=request.getfixturevalue('vertex_provider'))

@@ -1,0 +1,72 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "152"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2064
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 80
+          total_input_tokens: 14
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 14
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 65
+          initial_input_tokens: 13
+        created: 2026-11-06T02:43:56Z
+        updated: 2026-11-06T02:43:56Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErUCCrICAWkUfRPS9vaPScoLQ7/FjmwRrIeGyhCcqO3MTgzoFe7DI4c2PFGMbxjO3wfojPD8OtPf129jyoo/Yq94M77Kk5OH41gTUmtAASbNzeBwNNeHVKilhbpAtg42uUDDwrE5ATT7684fa9bntTda5dlZYQjvfY+nCluvIXC8FoUyrdt2ph3FIxZbrEpRusIRRH09abeqZ6w44vIkQR5+g3DeVz93RZaKj6kcpXul8InAyOWnQNCY+/q5yleLytfwS084wc+63eWfhfLAnKCsnWmtyM5feKvMRd4pkhVUhaoZ2iUErFWzbt5fOSrkk9RuNQUoO94BYs/FFQm6YCP7lfhfRkGPXjM18bSGlnsvA+PyyQe7bcahxS4RRyQV3EcIQoFMeodmv9+tdjE98IjyXuxDcKe/
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:43:56.741001+00:00

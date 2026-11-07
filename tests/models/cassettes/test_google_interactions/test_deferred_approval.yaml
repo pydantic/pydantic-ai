@@ -1,0 +1,185 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "440"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Send the invoice to Alice using send_invoice.
+            type: text
+          type: user_input
+        store: false
+        tools:
+        - description: Send the customer's invoice after approval.
+          name: send_invoice
+          parameters:
+            additionalProperties: false
+            properties:
+              customer:
+                type: string
+            required:
+            - customer
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3553
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 125
+          total_input_tokens: 57
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 57
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 52
+          initial_input_tokens: 36
+        created: 2026-11-05T15:13:16Z
+        updated: 2026-11-05T15:13:16Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EsACCr0CAWkUfRNHPfkPiKV7jTyGQzNtDTserbkj3RBcwXItvcUGKoHpQLRsElhKSA61sHDi+yrWqyBiXFnTVqrQSbNEXept8lCg/uL72a1dsb4hUrtrfVbtjknfPXW14rInJzUwz0u4KW6DMl6LYHparMjtVuElouP+UgeA/ukVHSotqTJ7v6wDIcHAn0pNwf93gu6ln3XJO5kjx0ktRu1Fh+o4los5RYAq3MK1qyO9uDccQqvGvU2wsh6XTeZnZXDr4m9yM6R+6c0zyRAU6ys67qdKWVaW+TJ4fwE2RmWKukMhdn9XZDaeALRKo1JoC3W1bLZxAcaBDA2ouXeys4anSx3aTRVzUojQ7ZRvtylPUoh2j5pc+Xt7LSLpiUCOo6gWf8MFArKiwDmYQ/XD2SgUOEr99pD7IvKjRkZmZ1ZSjzI=
+          type: thought
+        - id: call_383271
+          type: function_call
+          name: send_invoice
+          arguments:
+            customer: Alice
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:13:16.558628+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1145"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Send the invoice to Alice using send_invoice.
+            type: text
+          type: user_input
+        - signature: >-
+            EsACCr0CAWkUfRNHPfkPiKV7jTyGQzNtDTserbkj3RBcwXItvcUGKoHpQLRsElhKSA61sHDi+yrWqyBiXFnTVqrQSbNEXept8lCg/uL72a1dsb4hUrtrfVbtjknfPXW14rInJzUwz0u4KW6DMl6LYHparMjtVuElouP+UgeA/ukVHSotqTJ7v6wDIcHAn0pNwf93gu6ln3XJO5kjx0ktRu1Fh+o4los5RYAq3MK1qyO9uDccQqvGvU2wsh6XTeZnZXDr4m9yM6R+6c0zyRAU6ys67qdKWVaW+TJ4fwE2RmWKukMhdn9XZDaeALRKo1JoC3W1bLZxAcaBDA2ouXeys4anSx3aTRVzUojQ7ZRvtylPUoh2j5pc+Xt7LSLpiUCOo6gWf8MFArKiwDmYQ/XD2SgUOEr99pD7IvKjRkZmZ1ZSjzI=
+          type: thought
+        - arguments:
+            customer: Alice
+          id: call_383271
+          name: send_invoice
+          type: function_call
+        - call_id: call_383271
+          result:
+          - text: Invoice INV-123 sent to Alice.
+            type: text
+          name: send_invoice
+          type: function_result
+        store: false
+        tools:
+        - description: Send the customer's invoice after approval.
+          name: send_invoice
+          parameters:
+            additionalProperties: false
+            properties:
+              customer:
+                type: string
+            required:
+            - customer
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2299
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 160
+          total_input_tokens: 133
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 133
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 11
+          initial_input_tokens: 117
+        created: 2026-11-05T15:13:18Z
+        updated: 2026-11-05T15:13:18Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EpkBCpYBAWkUfRPt+j1ID9Pq0RHc58aibUreP6pM09zY02RufDG/EqvIqjpg5sBdsELr6UPVUkPzowzpEO7byfgvRE3yY59v10oG//+MkrqeMzlX2tHAjzM5oKF/9A2+colS/SzS1wQL9B+af/SojU9IB0Qn24J1qy5GJSnFMdKufJVdKphfzsSj6R2Aje01UgcK6ZeYA6O5tZ86
+          type: thought
+        - content:
+          - text: The invoice (INV-123) has been successfully sent to Alice.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:13:18.935059+00:00

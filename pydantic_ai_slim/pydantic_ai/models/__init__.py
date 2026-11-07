@@ -191,6 +191,7 @@ from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -2997,10 +2998,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3049,6 +3048,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:

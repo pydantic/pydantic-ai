@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
@@ -56,6 +56,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
@@ -92,6 +93,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model provider SDKs not installed')
 
 SIGNATURE = base64.b64encode(b'signature').decode()
+SKIP_THOUGHT_SIGNATURE = base64.b64encode(b'skip_thought_signature_validator').decode()
 GEMINI_API_URL = 'https://generativelanguage.googleapis.com/'
 VERTEX_URL = 'https://us-central1-aiplatform.googleapis.com/'
 
@@ -160,6 +162,13 @@ RECEIVERS: dict[str, Callable[[], Model]] = {
     'gemini-api': gemini_api_model,
     'google+vertex-client': vertex_client_google_model,
     'google-cloud': google_cloud_model,
+    'google-interactions': lambda: GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test')),
+    'google-interactions+vertex-client': lambda: GoogleInteractionsModel(
+        'gemini-3.8-flash', provider=GoogleProvider(client=Client(vertexai=True, api_key='test'))
+    ),
+    'google-cloud-interactions': lambda: GoogleInteractionsModel(
+        'gemini-3.8-flash', provider=GoogleCloudProvider(api_key='test')
+    ),
     'xai': lambda: XaiModel('grok-4', provider=XaiProvider(api_key='test-key')),
     'compatible-default': lambda: OpenAIChatModel(
         'qwen/qwen3', provider=OpenAICompatibleProvider('my-service', base_url='https://example.com/v1')
@@ -344,15 +353,28 @@ ACCEPT_CASES = [
 ]
 
 
+_GOOGLE_INTERACTIONS_RECEIVERS = {
+    'gemini-api': 'google-interactions',
+    'google+vertex-client': 'google-interactions+vertex-client',
+    'google-cloud': 'google-cloud-interactions',
+}
+ACCEPT_CASES.extend(
+    replace(case, id=f'interactions {case.id}', receiver=_GOOGLE_INTERACTIONS_RECEIVERS[case.receiver])
+    for case in list(ACCEPT_CASES)
+    if case.receiver in _GOOGLE_INTERACTIONS_RECEIVERS
+)
+
+
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in ACCEPT_CASES])
 def test_accepts_stateless_artifacts(case: AcceptCase):
     model = RECEIVERS[case.receiver]()
     assert model.accepts_stateless_artifacts(case.response, case.response.parts[0]) is case.accepted
 
 
-def test_response_level_data_is_judged_by_the_response_provider():
+@pytest.mark.parametrize('receiver', ['gemini-api', 'google-interactions'])
+def test_response_level_data_is_judged_by_the_response_provider(receiver: str):
     """Without a part, the response's own `provider_name` decides, as for Gemini signatures on unnamed parts."""
-    model = gemini_api_model()
+    model = RECEIVERS[receiver]()
     assert model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name='google'))
     assert not model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name='openai'))
     assert not model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name=None))
@@ -517,6 +539,12 @@ def test_canonical_system_stamp_round_trips():
     assert RECEIVERS['openai-codex']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['claude-code']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
     assert vertex_client_google_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
+    for receiver, stamp in (
+        ('google-interactions', 'google'),
+        ('google-interactions+vertex-client', 'google-cloud'),
+        ('google-cloud-interactions', 'google-cloud'),
+    ):
+        assert RECEIVERS[receiver]()._canonical_system_stamp == stamp  # pyright: ignore[reportPrivateUsage]
     response = thinking_response('openai-codex', canonical_system='openai')
     dumped = ModelMessagesTypeAdapter.dump_python([response], mode='json')
     assert dumped[0]['canonical_system'] == 'openai'
@@ -632,6 +660,12 @@ def test_post_compaction_window_follows_the_serving_model():
             ModelResponse(parts=[], provider_name='bedrock', canonical_system='anthropic'),
             False,
             id='bedrock-claude',
+        ),
+        pytest.param(
+            RECEIVERS['google-interactions'],
+            ModelResponse(parts=[], provider_name='google', canonical_system='google'),
+            False,
+            id='google-interactions-has-no-native-compaction',
         ),
     ],
 )
@@ -1190,6 +1224,39 @@ async def test_google_replays_thought_signatures_to_their_own_transport(
         if 'function_call' in part
     )
     assert function_call['thought_signature'] == expected_signature
+
+
+@pytest.mark.parametrize('receiver', list(_GOOGLE_INTERACTIONS_RECEIVERS.values()))
+@pytest.mark.parametrize('source', ['google', 'google-cloud'])
+@pytest.mark.parametrize('signature_part', ['thinking', 'tool-call'])
+async def test_google_interactions_replays_signatures_to_their_own_transport(
+    receiver: str, source: str, signature_part: str
+):
+    model = RECEIVERS[receiver]()
+    assert isinstance(model, GoogleInteractionsModel)
+    part = (
+        ThinkingPart('thought', signature=SIGNATURE, provider_name='google')
+        if signature_part == 'thinking'
+        else ToolCallPart(
+            'get', {}, tool_call_id='1', provider_name='google', provider_details={'thought_signature': SIGNATURE}
+        )
+    )
+    response = ModelResponse(
+        parts=[part], provider_name='google', canonical_system=source, provider_url='https://proxy.example.com/google'
+    )
+    params = ModelRequestParameters()
+    _, steps = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages([ModelRequest.user_text_prompt('hi'), response], params), params
+    )
+    own_transport = model.canonical_system == source
+    signatures = [step.get('signature') for step in steps if step.get('type') == 'thought']
+    assert signatures == ([SIGNATURE] if own_transport else [])
+    calls = [step for step in steps if step.get('type') == 'function_call']
+    if signature_part == 'tool-call':
+        # Another transport's signature is rejected, and an unsigned first call is too, so it gets the placeholder.
+        assert [call.get('signature') for call in calls] == [None if own_transport else SKIP_THOUGHT_SIGNATURE]
+    else:
+        assert calls == [] and (any(step.get('type') == 'model_output' for step in steps) or signatures)
 
 
 async def test_xai_replays_by_canonical_system():
