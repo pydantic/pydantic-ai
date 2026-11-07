@@ -66,7 +66,6 @@ from .._file_input import (
 from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
-    SYSTEM_TAG as SYSTEM_TAG,
     LookalikeSource,
     frame,
     in_second_model_prompt,
