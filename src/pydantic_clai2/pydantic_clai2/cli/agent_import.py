@@ -41,7 +41,8 @@ def import_agent(path: str) -> AbstractAgent[None, object]:
 def _append_launch_directory_unless_importable(module_name: str) -> None:
     # Only the whole module name tells: a regular package anywhere on `sys.path` takes precedence over namespace
     # package portions, so appending the launch directory for a target in an installed namespace package would
-    # let a package there replace it. An imported module is skipped, since `find_spec` raises for one without a
+    # let a package there replace it. A target that is itself only a namespace package (no `origin`) holds no
+    # agent, so it counts as missing. An imported module is skipped, since `find_spec` raises for one without a
     # spec, such as a script's `__main__`.
     if module_name in sys.modules:
         return
@@ -53,7 +54,7 @@ def _append_launch_directory_unless_importable(module_name: str) -> None:
             raise
         spec = None
     cwd = str(Path.cwd())
-    if spec is None and cwd not in sys.path:
+    if (spec is None or spec.origin is None) and cwd not in sys.path:
         sys.path.append(cwd)
 
 

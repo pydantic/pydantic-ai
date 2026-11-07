@@ -83,11 +83,20 @@ def test_import_agent_leaves_sys_path_alone_for_a_target_in_an_installed_namespa
     assert str(fixture_module) not in sys.path
 
 
+@pytest.mark.parametrize(
+    'installed_target_directory', [False, True], ids=['namespace-parent', 'namespace-parent-and-target']
+)
 def test_import_agent_resolves_a_launch_directory_portion_of_an_installed_namespace_package(
-    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    fixture_module: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_target_directory: bool,
 ) -> None:
+    """An installed namespace package, even one named like the target itself, holds no agent."""
     installed = tmp_path_factory.mktemp('installed')
     (installed / 'clai_agent_flag_namespace').mkdir()
+    if installed_target_directory:
+        (installed / 'clai_agent_flag_namespace' / 'agents').mkdir()
     (fixture_module / 'clai_agent_flag_namespace').mkdir()
     (fixture_module / 'clai_agent_flag_namespace' / 'agents.py').write_text(
         'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'

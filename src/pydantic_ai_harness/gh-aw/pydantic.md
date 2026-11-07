@@ -388,8 +388,9 @@ engine:
           # The checkout joins sys.path only for a target that lives there, and after installed packages:
           # the agent imports some dependencies after this point, and a checkout module must not replace one.
           # Only the whole module name tells: a regular package anywhere on sys.path takes precedence over
-          # namespace package portions. find_spec raises for an imported module without a spec, such as
-          # __main__, and finding a submodule imports its parent packages, as importing it would.
+          # namespace package portions. A target that is itself only a namespace package (no origin) holds
+          # no agent, so it counts as missing. find_spec raises for an imported module without a spec, such
+          # as __main__, and finding a submodule imports its parent packages, as importing it would.
           if _module_name not in sys.modules:
               try:
                   _spec = importlib.util.find_spec(_module_name)
@@ -399,7 +400,7 @@ engine:
                   ):
                       raise
                   _spec = None
-              if _spec is None:
+              if _spec is None or _spec.origin is None:
                   sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):

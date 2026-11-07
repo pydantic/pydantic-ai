@@ -566,11 +566,17 @@ def test_wrapper_imports_a_target_in_an_installed_namespace_package_without_the_
     assert invocation.cwd not in sys.path
 
 
+@pytest.mark.parametrize(
+    'installed_target_directory', [False, True], ids=['namespace-parent', 'namespace-parent-and-target']
+)
 def test_wrapper_imports_a_checkout_portion_of_an_installed_namespace_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed_target_directory: bool
 ) -> None:
+    """An installed namespace package, even one named like the target itself, holds no agent."""
     installed = tmp_path / 'site-packages'
     (installed / 'gh_aw_test_namespace').mkdir(parents=True)
+    if installed_target_directory:
+        (installed / 'gh_aw_test_namespace' / 'agents').mkdir()
     checkout_portion = tmp_path / 'workspace' / 'gh_aw_test_namespace'
     checkout_portion.mkdir(parents=True)
     (checkout_portion / 'agents.py').write_text(
