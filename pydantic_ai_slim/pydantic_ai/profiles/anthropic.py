@@ -20,6 +20,35 @@ _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetch
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
+
+It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
+SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
+Bedrock Converse API and other OpenAI-compatible gateways share that profile.
+"""
+
 ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 """The unified sampling settings gated by `anthropic_disallows_sampling_settings`.
 
@@ -246,6 +275,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     and Foundry clients, whose count endpoints haven't been verified to accept them. Of the endpoints an
     `AsyncAnthropic` client reaches, the Anthropic API's and Pydantic AI Gateway's are verified: set it to `False` if
     your client's `base_url` points at a proxy whose count endpoint rejects server tools.
+    """
+
+    anthropic_calls_cited_web_tools_directly: bool
+    """Whether a request that asks for citations sends the `20260209` web tools it cites with
+    `allowed_callers=['direct']`, so their results are cited. Default: `False`.
+
+    See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
+    When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
+    it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
+    send those versions, but haven't been verified to accept `allowed_callers` with citations.
     """
 
     anthropic_supports_inference_geo: bool

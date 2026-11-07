@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -55,7 +55,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, Thinking, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
@@ -70,6 +70,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -105,7 +106,7 @@ from .mock_openai import (
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
-    from openai.types.chat.chat_completion import ChoiceLogprobs
+    from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
@@ -670,27 +671,56 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
-async def test_stream_text_from_list_content(allow_model_requests: None):
-    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only their text is kept."""
+_LIST_CONTENT_STREAM_UNMAPPED = {
+    'chunks': [
+        {'delta': {'vendor_score': 0.5}, 'content_parts': [{'type': 'reference', 'reference_ids': [1]}]},
+        {'content_parts': [{'type': 'reference', 'reference_ids': [2]}]},
+    ]
+}
 
-    def list_chunk(content: list[Any]) -> chat.ChatCompletionChunk:
-        return chunk([ChoiceDelta.model_construct(content=content, role='assistant')])
+
+@pytest.mark.parametrize(
+    'include_unmapped, expected_unmapped',
+    [pytest.param(False, None, id='off'), pytest.param(True, _LIST_CONTENT_STREAM_UNMAPPED, id='on')],
+)
+async def test_stream_text_from_list_content(
+    allow_model_requests: None, include_unmapped: bool, expected_unmapped: dict[str, Any] | None
+):
+    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only the text parts are mapped.
+
+    With `openai_include_unmapped_response_data`, the rest is kept per chunk, leaving out the fields that are mapped:
+    `reasoning_content`, `annotations`, and the profile's custom thinking field.
+    """
+
+    def list_chunk(content: list[Any], **extra: Any) -> chat.ChatCompletionChunk:
+        return chunk([ChoiceDelta.model_construct(content=content, role='assistant', **extra)])
 
     stream = [
         list_chunk(['hello ']),
-        list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}]),
-        list_chunk([{'type': 'reference', 'reference_ids': [2]}]),
+        list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}], vendor_score=0.5),
+        list_chunk(
+            [{'type': 'reference', 'reference_ids': [2]}], reasoning_content='', annotations=[], reasoning_text=''
+        ),
         chunk([]),
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_thinking_field='reasoning_text'),
+    )
+    settings = OpenAIChatModelSettings(openai_include_unmapped_response_data=include_unmapped)
 
-    async with agent.run_stream('') as result:
+    async with Agent(model).run_stream('', model_settings=settings) as result:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_details or {}).get('unmapped') == expected_unmapped
 
 
 async def test_request_list_content(allow_model_requests: None):
-    """Some OpenAI-compatible servers return `message.content` as a list of parts; only their text is kept."""
+    """Some OpenAI-compatible servers return `message.content` as a list of parts; only the text parts are mapped."""
     message = ChatCompletionMessage.model_construct(
         content=[{'type': 'text', 'text': 'hello '}, {'type': 'reference', 'reference_ids': [1]}, 'world'],
         role='assistant',
@@ -700,6 +730,83 @@ async def test_request_list_content(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'hello world'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details == snapshot({'finish_reason': 'stop', 'timestamp': IsDatetime()})
+
+
+async def test_request_unmapped_response_data(allow_model_requests: None):
+    """With `openai_include_unmapped_response_data`, vendor fields and non-text content parts are kept as received."""
+    message = ChatCompletionMessage.model_construct(
+        content=[{'type': 'text', 'text': 'hello'}, {'type': 'reference', 'reference_ids': [1]}],
+        role='assistant',
+        citations=[{'id': 1, 'url': 'https://example.com'}],
+        reasoning_content='thinking',
+        reasoning_text='thinking',
+    )
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', stop_reason='eos')
+    completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[choice],
+        created=1704067200,
+        model='gpt-4o-123',
+        object='chat.completion',
+        prompt_filter='none',
+        tool_usage={},
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_thinking_field='reasoning_text'),
+    )
+
+    result = await Agent(model).run(
+        'hello', model_settings=OpenAIChatModelSettings(openai_include_unmapped_response_data=True)
+    )
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    # `reasoning_content` and the profile's `reasoning_text` are thinking fields, so they aren't repeated here.
+    assert (response.provider_details or {})['unmapped'] == snapshot(
+        {
+            'response': {'prompt_filter': 'none', 'tool_usage': {}},
+            'choice': {'stop_reason': 'eos'},
+            'message': {'citations': [{'id': 1, 'url': 'https://example.com'}]},
+            'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
+        }
+    )
+
+
+async def test_request_choice_without_message_is_invalid_response(allow_model_requests: None):
+    """Reading list content before validation doesn't preempt the error for a choice with no message."""
+    completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[Choice.model_construct(index=0, message=None, finish_reason='stop')],
+        created=1704067200,
+        model='gpt-4o-123',
+        object='chat.completion',
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from openai chat completions endpoint'):
+        await agent.run('hello')
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_fast(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='fast'))
+    assert (result.response.provider_details or {}).get('service_tier') == 'fast'
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_ultrafast_rejected_on_chat(allow_model_requests: None, openai_api_key: str) -> None:
+    """The setting's type allows `ultrafast` here because the Responses settings inherit it; OpenAI rejects it."""
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    with pytest.raises(ModelHTTPError, match='Invalid service_tier argument'):
+        await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='ultrafast'))
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
@@ -2668,7 +2775,11 @@ async def test_openai_moderation(allow_model_requests: None, openai_api_key: str
 async def test_openai_moderation_stream(allow_model_requests: None, openai_api_key: str):
     """The streaming moderation chunk carries no choices, so it's read before the choice guard."""
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIChatModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    # With `openai_include_unmapped_response_data` on, a real OpenAI stream adds nothing: every field it sends, including
+    # the per-chunk `obfuscation` padding, is one the SDK declares, so `provider_details` has no `unmapped` key.
+    settings = OpenAIChatModelSettings(
+        openai_moderation={'model': 'omni-moderation-latest'}, openai_include_unmapped_response_data=True
+    )
     agent = Agent(model=model, model_settings=settings)
 
     async with agent.run_stream('What is the capital of France?') as result:
@@ -5214,6 +5325,35 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_native_output_cut_off_by_max_tokens(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """JSON the token limit cut off raises right away instead of re-prompting the model with the same limit."""
+    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(m, output_type=NativeOutput(Cities), model_settings=ModelSettings(max_tokens=20))
+    prompt = 'List the 20 largest cities in the world.'
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(20\) exceeded while generating structured output, resulting in incomplete JSON\.',
+    ) as exc_info:
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()
+        else:
+            await agent.run(prompt)
+    assert isinstance(exc_info.value.__cause__, ValidationError)
 
 
 async def test_openai_native_output(allow_model_requests: None, openai_api_key: str):
@@ -7805,6 +7945,40 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when the model refuses, and records the refused attempt."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, refusal="I'm sorry, I can't help with that.", role='assistant'),
+    )
+    c.model = 'gpt-4o'
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('harmful prompt')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
+
+
+async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
+    """A streamed refusal is only known once it has been streamed, so it's accepted, without a warning."""
+    stream = [
+        chunk([ChoiceDelta(refusal="I'm sorry, ", role='assistant')]),
+        chunk([ChoiceDelta(refusal="I can't help with that.")]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(ContentFilterError, match='Content filter triggered'):
+            async with agent.run_stream('harmful prompt'):
+                pass
 
 
 async def test_stream_cancel(allow_model_requests: None):

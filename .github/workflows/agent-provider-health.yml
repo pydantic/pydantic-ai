@@ -19,6 +19,7 @@ on:
       - Pydantic AI Stale Issues Finder
       - Pydantic AI Streaming Resilience Sweep
       - Pydantic AI UI Security Review
+      - Pydantic AI Weekly Agent Instructions Audit
     types: [completed]
   schedule:
     - cron: '13 * * * *'
@@ -134,6 +135,8 @@ jobs:
       actions: read
       contents: read
       issues: write
+      # Hourly task-incident retirement reads each incident's PR.
+      pull-requests: read
     steps:
       - name: Check out trusted provider-health controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -199,7 +202,7 @@ jobs:
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
           --agent-artifact agent
-      - name: Check quota and recover elapsed provider incidents
+      - name: Retire stale task incidents, check quota and recover elapsed provider incidents
         if: github.event_name == 'schedule'
         env:
           GITHUB_TOKEN: ${{ github.token }}

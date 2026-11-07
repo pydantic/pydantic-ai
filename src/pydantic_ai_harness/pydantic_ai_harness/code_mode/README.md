@@ -65,7 +65,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 
 <!-- Trace screenshot removed until it is Tinified: https://github.com/pydantic/pydantic-ai/issues/8824 -->
 
-**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox -- the easiest way to understand what code mode actually did. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
+**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
 
 ## Code Mode or IPython Code Mode
 
@@ -80,7 +80,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 | State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
 
 > [!WARNING]
-> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
+> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent.
 
 ## Installation
 
@@ -108,7 +108,10 @@ surfaces count as code-execution tools: `Shell`'s `run_command` and `start_comma
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
-any other tool. You can control which eligible tools go through the sandbox:
+any other tool. A host that wants a code-execution tool folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from
+`pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps
+its `code_arg_name`, so instrumentation and other capabilities still see it as code. You can control which
+eligible tools go through the sandbox:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -256,9 +259,8 @@ denied. Calls that did not finish are included rather than filtered out, since a
 before it stops. That detail is bounded -- arguments and results are previewed, and the list stops
 at a size cap and says how many entries it left out -- so a large payload cannot inflate the
 retry. The reported total stays exact whether or not the list was cut, which is what tells the
-model some calls are missing from what it can see. The list is context for the model, not a guard:
-nothing stops it from calling those tools again, so treat it as informing the next attempt rather
-than preventing a repeat.
+model some calls are missing from what it can see. Nothing stops the model from calling those
+tools again.
 
 Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
@@ -579,9 +581,9 @@ If these checks pass, inspect the generated code and launch events. Oversized st
 and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
 not a guarantee that every eligible call starts early.
 
-## Remote workers over WebSockets
+## Remote workers
 
-Set `monty_sandbox` to a `ws://` or `wss://` URL to run sandboxed code on a remote Monty worker
+Set `monty_sandbox` to the root URL of a Monty server to run sandboxed code on a remote worker
 instead of a local subprocess:
 
 ```python
@@ -590,23 +592,47 @@ from pydantic_ai_harness import CodeMode
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty')],
+    capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com')],
 )
 ```
 
-A URL connects without a key. To send headers or set other pool options, pass a sync or async
-function that returns a `pydantic_monty.AsyncMontyWebsocket` instead; Code Mode builds a pool from
-it for each run. That pool's `request_timeout`, 10 seconds by default, limits how long code runs
-between tool calls, in place of `max_duration_secs`.
+Each worker is a gRPC stream to the server. The client always calls the same method at the server
+root, so a URL with a path, query, or fragment raises a `UserError` when the run starts.
+`ws://` and `wss://` URLs from earlier releases still work at the server root, because Monty reads
+them as `http://` and `https://`. Remove any path they carry, such as `/monty`.
 
-Use `wss://` unless the server is on a network you trust: the connection carries your agent's tool
+A URL connects without a key. To send metadata such as an `authorization` header, or to set other
+pool options, pass a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`
+instead; Code Mode builds a pool from it for each run:
+
+```python {test="skip"}
+from pydantic_monty import AsyncMontyRemote
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+def sandbox_pool() -> AsyncMontyRemote:
+    return AsyncMontyRemote(
+        'https://sandbox.example.com',
+        metadata=lambda: {'authorization': 'Bearer my-key'},
+    )
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
+```
+
+That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
+in place of `max_duration_secs`.
+
+Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
-The `run_code` description lists the standard library modules Monty 1.4 can import, so run the
-worker on `pydantic-monty>=1.4.0`.
+Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
+client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
 
 ## Temporal durability
 
@@ -787,7 +813,7 @@ CodeMode(os_access=my_os)
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
 still works but is deprecated and will be removed in the next breaking release.
 
-Your callback's return value decides the call's fate, and the two outcomes are easy to confuse:
+Your callback's return value decides the call's fate:
 
 - **Return any value** -- including `None`, `''`, or `0` -- and that becomes the result the sandbox
   sees. `os.getenv` returning `None` looks exactly like a normal unset variable, so the agent's code
@@ -814,8 +840,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
-  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`,
-  `os.path`, `tomllib`)
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
+  `hashlib`, `os.path`, `tomllib`, `annotationlib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
@@ -823,6 +849,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema: `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them
+- A sandboxed tool can't take the name of a Python builtin such as `list`, `open` or `print`: code would call the builtin instead. `CodeMode` raises `UserError` for such a name. Rename the tool, or give a toolset whose names you don't control a prefix with `toolset.prefixed(...)`
 - A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`
 
 ## API
@@ -842,7 +869,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
+    monty_sandbox=None,   # an http(s):// server root URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=True,
 )

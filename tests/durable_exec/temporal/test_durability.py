@@ -2,19 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import re
 import sys
+import time
 import uuid
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import NoneType, SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -82,13 +94,16 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelNotFoundError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
     ModelTimeoutError,
@@ -117,7 +132,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -143,11 +158,21 @@ from ...realtime_connections import InferredConnection
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
-    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-    from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+    from temporalio.worker import (
+        Interceptor,
+        Replayer,
+        StartActivityInput,
+        UnsandboxedWorkflowRunner,
+        Worker,
+        WorkflowInboundInterceptor,
+        WorkflowInterceptorClassInput,
+        WorkflowOutboundInterceptor,
+    )
+    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
@@ -880,6 +905,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'quota':
+        raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
+    if prompt.content == 'request_timeout':
+        raise ModelRequestTimeout('test-model', 1.0, setting='first_event_timeout')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -902,12 +931,27 @@ non_retryable_agent = Agent(
 )
 
 
+default_non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_default_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
 @workflow.defn
 class NonRetryableModelErrorWorkflow:
     @workflow.run
-    async def run(self, error_kind: str) -> str:
+    async def run(self, error_kind: str, default: bool = False) -> str:
+        agent = default_non_retryable_agent if default else non_retryable_agent
         try:
-            return (await non_retryable_agent.run(error_kind)).output
+            return (await agent.run(error_kind)).output
         except ModelAPIError as error:
             activity_error = error.__cause__
             assert isinstance(activity_error, ActivityError)
@@ -965,6 +1009,48 @@ async def test_durability_non_retryable_model_errors(client: Client, error_kind:
     assert _non_retryable_attempts == [error_kind] * attempts
 
 
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='context-window',
+        ),
+        pytest.param(
+            'authentication', 1, 'ModelAuthenticationError ModelHTTPError non_retryable=True', id='authentication'
+        ),
+        pytest.param('not_found', 1, 'ModelNotFoundError ModelHTTPError non_retryable=True', id='not-found'),
+        pytest.param('quota', 1, 'ModelQuotaExceededError ModelHTTPError non_retryable=True', id='quota'),
+        pytest.param('request_timeout', 1, 'ModelRequestTimeout ModelRequestTimeout non_retryable=True', id='timeout'),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='rate-limit'),
+        pytest.param('overloaded', 3, 'ModelOverloadedError ModelAPIError non_retryable=False', id='overloaded'),
+    ],
+)
+async def test_durability_default_non_retryable_model_errors(
+    client: Client, error_kind: str, attempts: int, expected: str
+):
+    """By default, a model error another attempt can't fix (a rejected request, an exhausted quota, or a request that
+    ran out of its deadline) fails the activity on its first attempt, while a transient one is retried as the retry
+    policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(default_non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind, True],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_default_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
+
+
 async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):
     async with Worker(
         client,
@@ -979,6 +1065,194 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- A model error's `retry_after` is the delay before Temporal's next attempt ---
+
+_retry_after_attempts: list[float] = []
+
+
+def _retry_after_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    _retry_after_attempts.append(time.monotonic())
+    raise ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='test-model', retry_after=float(prompt.content)
+    )
+
+
+def _retry_after_agent(name: str, retry_policy: RetryPolicy) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_retry_after_model_fn),
+        name=name,
+        capabilities=[
+            TemporalDurability(
+                activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60), retry_policy=retry_policy)
+            )
+        ],
+    )
+
+
+# The retry policy's own backoff would wait 30 seconds before the second attempt.
+retry_after_agent = _retry_after_agent(
+    'durability_retry_after', RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=30))
+)
+# `maximum_interval` caps the delay a provider asks for.
+capped_retry_after_agent = _retry_after_agent(
+    'durability_capped_retry_after',
+    RetryPolicy(
+        maximum_attempts=2, initial_interval=timedelta(milliseconds=10), maximum_interval=timedelta(milliseconds=100)
+    ),
+)
+
+
+@workflow.defn
+class RetryAfterWorkflow:
+    @workflow.run
+    async def run(self, capped: bool, retry_after: str) -> str:
+        agent = capped_retry_after_agent if capped else retry_after_agent
+        try:
+            return (await agent.run(retry_after)).output
+        except ModelRateLimitError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{error.retry_after} {application_error.next_retry_delay}'
+
+
+@pytest.mark.parametrize(
+    ('capped', 'retry_after', 'expected'),
+    [
+        pytest.param(False, '0.05', '0.05 0:00:00.050000', id='retry-after'),
+        # Too large for a `timedelta`, which the cap keeps from failing the conversion.
+        pytest.param(True, '1e15', '1000000000000000.0 0:00:00.100000', id='capped-at-maximum-interval'),
+    ],
+)
+async def test_durability_model_error_retry_after_delays_next_attempt(
+    client: Client, capped: bool, retry_after: str, expected: str
+):
+    """Temporal waits a model error's `retry_after`, up to the retry policy's `maximum_interval`, before attempting
+    the model request again, rather than the retry policy's backoff, and the workflow still receives the error as its
+    own class."""
+    _retry_after_attempts.clear()
+    agent = capped_retry_after_agent if capped else retry_after_agent
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[RetryAfterWorkflow], plugins=[AgentPlugin(agent)]):
+        output = await client.execute_workflow(
+            RetryAfterWorkflow.run,
+            args=[capped, retry_after],
+            id=f'{RetryAfterWorkflow.__name__}_{capped}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert len(_retry_after_attempts) == 2
+    # Well before the 30-second backoff of the uncapped policy, and well before the requested delay of the capped one.
+    assert _retry_after_attempts[1] - _retry_after_attempts[0] < 10
+
+
+# --- Subclasses of the framework's non-retryable errors aren't retried either ---
+
+
+class _AppConfigError(UserError):
+    """An application's own `UserError`, which a retry policy can't name in advance."""
+
+
+_subclass_attempts: list[str] = []
+
+
+def _raise_framework_error(kind: str) -> None:
+    _subclass_attempts.append(kind)
+    if kind == 'unexpected_model_behavior':
+        raise UnexpectedModelBehavior('Unexpected response.')
+    if kind == 'content_filter':
+        raise ContentFilterError('Content filter triggered.')
+    if kind == 'incomplete_tool_call':
+        raise IncompleteToolCall('Token limit exceeded while generating a tool call.')
+    raise _AppConfigError('The app is misconfigured.')
+
+
+def _subclass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    kind, _, where = prompt.content.partition(':')
+    if where == 'model':
+        _raise_framework_error(kind)
+    return ModelResponse(parts=[ToolCallPart('raise_framework_error', {'kind': kind})])
+
+
+def raise_framework_error(kind: str) -> str:
+    _raise_framework_error(kind)
+    return 'unreachable'  # pragma: no cover
+
+
+subclass_error_agent = Agent(
+    FunctionModel(_subclass_model_fn),
+    name='durability_non_retryable_subclasses',
+    toolsets=[FunctionToolset(tools=[raise_framework_error], id='subclass_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableSubclassWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            return (await subclass_error_agent.run(prompt)).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{application_error.type}: {application_error.message}'
+
+
+@pytest.mark.parametrize('where', ['model', 'tool'])
+@pytest.mark.parametrize(
+    ('kind', 'error_type', 'message'),
+    [
+        pytest.param('unexpected_model_behavior', 'UnexpectedModelBehavior', 'Unexpected response.', id='listed-class'),
+        pytest.param(
+            'content_filter', 'ContentFilterError', 'Content filter triggered.', id='unexpected-model-behavior-subclass'
+        ),
+        pytest.param(
+            'incomplete_tool_call',
+            'IncompleteToolCall',
+            'Token limit exceeded while generating a tool call.',
+            id='incomplete-tool-call',
+        ),
+        pytest.param('app_config', '_AppConfigError', 'The app is misconfigured.', id='user-error-subclass'),
+    ],
+)
+async def test_durability_non_retryable_error_subclasses(
+    client: Client, where: str, kind: str, error_type: str, message: str
+):
+    """An activity that raises a subclass of an error the retry policy lists as non-retryable, like a
+    `ContentFilterError` or an application's own `UserError`, fails on its first attempt, as the listed class does.
+
+    Temporal's `non_retryable_error_types` matches the error's exact type name, which a subclass doesn't have. The
+    error keeps its own type name and message.
+    """
+    _subclass_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableSubclassWorkflow],
+        plugins=[AgentPlugin(subclass_error_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableSubclassWorkflow.run,
+            args=[f'{kind}:{where}'],
+            id=f'{NonRetryableSubclassWorkflow.__name__}_{kind}_{where}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == f'{error_type}: {message}'
+    assert _subclass_attempts == [kind]
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
@@ -3548,6 +3822,224 @@ async def test_durability_unserializable_event_payload_names_events(client: Clie
                 id=UnserializableEventWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+# --- Tool results completed in one workflow task replay in recorded order ---
+#
+# Both tool tasks come back from one `asyncio.wait` call, whose `done` set iterates in an order that
+# follows task identity, so a worker replaying the history can iterate it differently than the
+# worker that recorded it. Each `FunctionToolResultEvent` is one event-handler activity, and Temporal
+# matches activities on replay by type and sequence, not by input: a replay that reorders the result
+# events hands each handler activity the other tool's result without a nondeterminism error.
+# https://github.com/pydantic/pydantic-ai/issues/11182
+
+_COMPLETION_ORDER_TOOLS = ('completion_order_tool_a', 'completion_order_tool_b')
+
+
+@dataclass
+class _CompletionOrderGate:
+    """Holds both tool activities until the test releases them, so they complete together."""
+
+    arrived: set[str] = field(default_factory=set[str])
+    both_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_completion_order_gate = _CompletionOrderGate()
+
+
+async def _completion_order_gated(name: str) -> str:
+    _completion_order_gate.arrived.add(name)
+    if _completion_order_gate.arrived == set(_COMPLETION_ORDER_TOOLS):
+        _completion_order_gate.both_arrived.set()
+    await _completion_order_gate.release.wait()
+    return f'{name} done'
+
+
+async def completion_order_tool_a() -> str:
+    return await _completion_order_gated('completion_order_tool_a')
+
+
+async def completion_order_tool_b() -> str:
+    return await _completion_order_gated('completion_order_tool_b')
+
+
+async def _completion_order_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        yield {
+            0: DeltaToolCall(name='completion_order_tool_a', json_args='{}', tool_call_id='call_a'),
+            1: DeltaToolCall(name='completion_order_tool_b', json_args='{}', tool_call_id='call_b'),
+        }
+    else:
+        yield 'done'
+
+
+async def _completion_order_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_completion_order_agent = Agent(
+    FunctionModel(stream_function=_completion_order_model),
+    name='durability_completion_order',
+    tools=[completion_order_tool_a, completion_order_tool_b],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_completion_order_event_handler)
+    ],
+)
+
+
+@workflow.defn
+class CompletionOrderWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _completion_order_agent.run(prompt)).output
+
+
+def _completion_order_event_key(data: bytes) -> tuple[str, str]:
+    event = json.loads(data)['event']
+    return event['event_kind'], event['part']['tool_call_id']
+
+
+_completion_order_replayed_inputs: list[tuple[str, str]] = []
+
+
+class _CompletionOrderInterceptor(Interceptor):
+    """Records the input of each event-handler activity the replayed workflow schedules."""
+
+    def workflow_interceptor_class(self, input: WorkflowInterceptorClassInput) -> type[WorkflowInboundInterceptor]:
+        return _CompletionOrderInboundInterceptor
+
+
+class _CompletionOrderInboundInterceptor(WorkflowInboundInterceptor):
+    def init(self, outbound: WorkflowOutboundInterceptor) -> None:
+        super().init(_CompletionOrderOutboundInterceptor(outbound))
+
+
+class _CompletionOrderOutboundInterceptor(WorkflowOutboundInterceptor):
+    def start_activity(self, input: StartActivityInput) -> ActivityHandle[object]:
+        if input.activity.endswith('__event_stream_handler'):
+            payload = workflow.payload_converter().to_payloads([input.args[0]])[0]
+            _completion_order_replayed_inputs.append(_completion_order_event_key(payload.data))
+        return super().start_activity(input)
+
+
+def _completion_order_workflow_worker(client: Client, task_queue: str, *, max_cached_workflows: int) -> Worker:
+    return Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[CompletionOrderWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        max_cached_workflows=max_cached_workflows,
+    )
+
+
+@dataclass
+class _CompletionOrderWait:
+    """How an `asyncio.wait` that returns both tool tasks iterates its `done` set: by task name, either way round."""
+
+    reverse: bool = False
+    tools_done_together: bool = False
+
+
+def _completion_order_task_name(future: asyncio.Future[object]) -> str:
+    # Temporal's workflow loop appends ` (workflow: ..., id: ..., run: ...)` to every task name.
+    return future.get_name().partition(' (')[0] if isinstance(future, asyncio.Task) else ''
+
+
+class _CompletionOrderDoneSet(set[asyncio.Future[object]]):
+    """A `done` set that iterates by task name, one of the orders a plain set can produce."""
+
+    def __init__(self, done: Iterable[asyncio.Future[object]], *, reverse: bool):
+        super().__init__(done)
+        self.reverse = reverse
+
+    def __iter__(self) -> Iterator[asyncio.Future[object]]:
+        return iter(sorted(super().__iter__(), key=_completion_order_task_name, reverse=self.reverse))
+
+
+@pytest.fixture
+def completion_order_wait(monkeypatch: pytest.MonkeyPatch) -> _CompletionOrderWait:
+    order = _CompletionOrderWait()
+    real_wait = asyncio.wait
+
+    async def wait(
+        fs: Iterable[asyncio.Future[object]], *, timeout: float | None = None, return_when: str = asyncio.ALL_COMPLETED
+    ) -> tuple[set[asyncio.Future[object]], set[asyncio.Future[object]]]:
+        done, pending = await real_wait(fs, timeout=timeout, return_when=return_when)
+        if not set(_COMPLETION_ORDER_TOOLS) <= {_completion_order_task_name(future) for future in done}:
+            return done, pending
+        order.tools_done_together = True
+        return _CompletionOrderDoneSet(done, reverse=order.reverse), pending
+
+    monkeypatch.setattr(asyncio, 'wait', wait)
+    return order
+
+
+async def test_tool_results_completed_together_replay_in_recorded_order(
+    client: Client, completion_order_wait: _CompletionOrderWait
+):
+    """A replay that iterates the `done` set the other way round schedules the event-handler inputs it recorded.
+
+    Both tool completions land in one workflow task by construction: the workflow worker stops while the tools are
+    held, the tools are released, and a fresh workflow worker starts once history holds both completions. The
+    recording iterates `done` in call order and the replay in reverse; the replay must still send each handler
+    activity the result the history holds for it. The workers and the replayer run unsandboxed so the patched
+    `asyncio.wait` and the gate are the module state the workflow and the tools see.
+    """
+    global _completion_order_gate
+    _completion_order_gate = _CompletionOrderGate()
+    task_queue = f'completion-order-{uuid.uuid4()}'
+    with anyio.fail_after(30):
+        # Activities only: this worker has no workflows, so it never polls workflow tasks.
+        async with Worker(client, task_queue=task_queue, plugins=[AgentPlugin(_completion_order_agent)]):
+            # No cache, so no sticky queue holds the next workflow task for the stopped worker.
+            async with _completion_order_workflow_worker(client, task_queue, max_cached_workflows=0):
+                handle = await client.start_workflow(
+                    CompletionOrderWorkflow.run, args=['go'], id=task_queue, task_queue=task_queue
+                )
+                await _completion_order_gate.both_arrived.wait()
+            _completion_order_gate.release.set()
+            # The next workflow task only starts once history holds both tool completions.
+            events = handle.fetch_history_events(wait_new_event=True)
+            tool_activities: set[int] = set()
+            completed = 0
+            while completed < len(_COMPLETION_ORDER_TOOLS):
+                event = await anext(events)
+                if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
+                    if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool'):
+                        tool_activities.add(event.event_id)
+                elif event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+                    completed += event.activity_task_completed_event_attributes.scheduled_event_id in tool_activities
+            async with _completion_order_workflow_worker(client, task_queue, max_cached_workflows=100):
+                assert await handle.result() == 'done'
+        history = await handle.fetch_history()
+
+    recorded = [
+        _completion_order_event_key(event.activity_task_scheduled_event_attributes.input.payloads[0].data)
+        for event in history.events
+        if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__event_stream_handler')
+    ]
+    assert recorded == [
+        ('function_tool_call', 'call_a'),
+        ('function_tool_call', 'call_b'),
+        ('function_tool_result', 'call_a'),
+        ('function_tool_result', 'call_b'),
+    ]
+
+    completion_order_wait.reverse = True
+    completion_order_wait.tools_done_together = False
+    _completion_order_replayed_inputs.clear()
+    await Replayer(
+        workflows=[CompletionOrderWorkflow],
+        plugins=[AgentPlugin(_completion_order_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=client.data_converter,
+        interceptors=[_CompletionOrderInterceptor()],
+    ).replay_workflow(history)
+    assert completion_order_wait.tools_done_together
+    assert _completion_order_replayed_inputs == recorded
 
 
 # ==========================================

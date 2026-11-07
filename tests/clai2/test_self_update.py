@@ -8,6 +8,7 @@ import shlex
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
@@ -16,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import httpx
 import pytest
 from packaging.requirements import Requirement
@@ -30,6 +32,7 @@ from pydantic_clai2.cli import cli as cli_module, self_update
 from pydantic_clai2.cli.cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
     BLEEDING_URL,
+    CHECK_MAX_AGE,
     PACKAGES,
     PYPI_URL,
     Installed,
@@ -61,7 +64,7 @@ from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus import dialogs, update_menu as update_menu_module
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
-from pydantic_clai2.ui.menus.update_menu import VERSION, AboutSource, update_menu
+from pydantic_clai2.ui.menus.update_menu import ABOUT_MAX_AGE, VERSION, AboutSource, update_menu
 from tests.clai2.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.clai2.menu_script import Script, make_context, pick
 from tests.clai2.test_app_edges import inputs
@@ -292,7 +295,8 @@ def _updates(
             await output(line)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
-            text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
+            overrides = Path(command[command.index('--overrides') + 1])
+            text = await anyio.to_thread.run_sync(partial(overrides.read_text, encoding='utf-8'))
             assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
@@ -897,11 +901,11 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
         raise httpx.ConnectError('offline')
 
     newest, _ = _updates(['stable'], current=Installed(version='0.53.0', tool=True))
-    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel.'
+    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked just now).'
     newer, _ = _updates(['main'])
-    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel.'
+    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel (checked just now).'
     source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
-    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
     assert source.segment() == '', 'the footer still checks only `uv tool` installs'
     failing, _ = _updates(['stable'], fetch=offline)
     assert note(failing) == 'Could not check for a newer CLAI: offline'
@@ -913,7 +917,45 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
     assert note(pending) == 'Checking for a newer CLAI…'
     assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
     checks[0]()
-    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
+
+
+def test_a_stale_check_runs_again_and_the_about_note_says_when_it_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(update_menu_module, 'CHECK_WAIT', 0.0)
+    context, _ = make_context(tmp_path)
+    now = [0.0]
+    builds = ['0.53.0']
+    checks: list[Callable[[], None]] = []
+    updates = Updates(
+        channel=lambda: 'stable',
+        current=Installed(version='0.53.0', tool=True),
+        fetch=lambda channel: builds[-1],
+        spawn=checks.append,
+        clock=lambda: now[0],
+    )
+
+    def note() -> str:
+        return AboutSource(context, updates).status()
+
+    updates.check()
+    checks.pop()()
+    now[0] = 170.0
+    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 2 min ago).'
+    assert not checks, 'a recent answer is not checked again'
+    builds.append('0.54.0')
+    now[0] = ABOUT_MAX_AGE + 1
+    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 5 min ago).'
+    assert updates.segment() == '' and len(checks) == 1, 'About checks again; the footer keeps the old answer meanwhile'
+    checks.pop()()
+    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked just now).'
+    now[0] += 2 * ABOUT_MAX_AGE
+    assert updates.segment() == 'update 0.54.0: /update' and not checks, 'the footer checks again only after an hour'
+    now[0] += CHECK_MAX_AGE
+    assert updates.segment() == 'update 0.54.0: /update' and len(checks) == 1, 'the old answer stays while it re-checks'
+    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked 1 h ago).'
+    assert len(checks) == 1, 'one check at a time'
 
 
 def test_check_waits_for_the_answer_until_its_deadline() -> None:
@@ -982,6 +1024,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
         assert ran == []
 
 
+@pytest.mark.parametrize('update', ['--update', 'update'])
 @pytest.mark.parametrize(
     ('code', 'exit_code', 'printed'),
     [
@@ -990,6 +1033,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     ],
 )
 def test_update_flag_installs_and_exits_without_restarting(
+    update: str,
     code: int,
     exit_code: int,
     printed: str,
@@ -997,7 +1041,10 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch."""
+    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch.
+
+    `clai2 update` is the same command, and takes `--database` after it.
+    """
     context, _ = make_context(tmp_path)
     context.set_setting(['updates.channel', 'main'])
     ran: list[list[Sequence[str]]] = []
@@ -1012,7 +1059,7 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch.setattr(self_update, 'Updates', build)
 
     monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == exit_code
@@ -1075,12 +1122,18 @@ def test_update_flag_reports_a_failed_check(
         (['--fork-session'], '`fork_session` (`--fork-session`) requires `resume` (`--resume`)'),
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_session_options_before_installing(
-    argv: list[str], error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str,
+    argv: list[str],
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     install = AsyncMock(return_value=0)
     monkeypatch.setattr(cli_module, '_update', install)
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db'), *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(tmp_path / 'c.db'), *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1103,11 +1156,34 @@ def test_update_flag_rejects_session_options_before_installing(
         ['plugins'],
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_other_modes(
-    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
     assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('argv', [['-m', 'test', 'update'], ['update', 'update', '-m', 'test']])
+def test_update_command_rejects_options_given_before_it(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Options before `update`, and after a repeated `update`, are checked as they are with `--update`."""
+    monkeypatch.setattr('sys.argv', ['clai2', *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert '--update cannot be combined' in capsys.readouterr().err
+
+
+def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr('sys.argv', ['clai2', '--help'])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 0
+    text = capsys.readouterr().out
+    assert '{config,plugins,update}' in text
+    assert '--update' in text

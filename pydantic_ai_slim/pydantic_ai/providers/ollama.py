@@ -5,6 +5,7 @@ import os
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -13,6 +14,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -54,6 +56,7 @@ class OllamaProvider(_OpenAISDKProvider):
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'glm': _glm_5_3_schema_profile,
         }
 
         model_name = model_name.lower()
@@ -74,6 +77,7 @@ class OllamaProvider(_OpenAISDKProvider):
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
             ),
+            special_token_route_profile('ollama', model_name),
         )
 
     def __init__(

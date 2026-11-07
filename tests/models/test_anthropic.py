@@ -69,7 +69,16 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, Hooks, NativeTool, ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Citations,
+    Hooks,
+    ModelFallback,
+    NativeTool,
+    ToolSearch,
+)
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -81,6 +90,8 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -123,6 +134,11 @@ from .conftest import (
     message_shape,
 )
 from .mock_async_stream import MockAsyncStream
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -2936,6 +2952,188 @@ async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None
     ]
 
 
+@dataclass
+class CacheBreakpointsCase:
+    id: str
+    prompt: list[UserContent]
+    cache: bool
+    expected: dict[str, dict[str, list[str]]]
+
+
+CACHE_BREAKPOINTS_CASES = [
+    CacheBreakpointsCase(
+        id='dropped',
+        # The instruction, tool definition and automatic breakpoints take 3 of the 4 slots, so only the newest
+        # `CachePoint` is applied, and the span shows which one was dropped.
+        prompt=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(
+        id='all_fit',
+        prompt=['Context', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(id='none', prompt=['Question'], cache=False, expected=snapshot({})),
+]
+
+
+def _cache_breakpoint_attributes(exporter: InMemorySpanExporter) -> dict[str, dict[str, list[str]]]:
+    """The requested and applied cache breakpoints, by the name of every span that records them."""
+    return {
+        span.name: {
+            key: list(cast(Sequence[str], value)) for key, value in attributes.items() if key.endswith('_breakpoints')
+        }
+        for span in exporter.get_finished_spans()
+        if (attributes := span.attributes) and 'pydantic_ai.cache.requested_breakpoints' in attributes
+    }
+
+
+def _cache_breakpoints_agent(
+    client: AsyncAnthropic, exporter: InMemorySpanExporter, *, cache: bool
+) -> Agent[None, str]:
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=ModelSettings(cache=cache),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    return agent
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CACHE_BREAKPOINTS_CASES])
+async def test_cache_breakpoints_recorded_on_request_span(
+    allow_model_requests: None, case: CacheBreakpointsCase, stream: bool
+):
+    """The model-request span lists the cache breakpoints the request asked for and the ones that fit Anthropic's
+    limit of four, so a dropped `CachePoint` shows up in tracing."""
+    client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            messages_=completion_message(
+                [BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1)
+            ),
+            stream=[
+                BetaRawMessageStartEvent(
+                    type='message_start',
+                    message=BetaMessage(
+                        id='msg_1',
+                        model='claude-haiku-4-5',
+                        role='assistant',
+                        type='message',
+                        content=[],
+                        stop_reason=None,
+                        usage=BetaUsage(input_tokens=5, output_tokens=0),
+                    ),
+                ),
+                BetaRawContentBlockStartEvent(
+                    type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='ok')
+                ),
+                BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+                BetaRawMessageDeltaEvent(
+                    type='message_delta',
+                    delta=Delta(stop_reason='end_turn'),
+                    usage=BetaMessageDeltaUsage(output_tokens=1),
+                ),
+                BetaRawMessageStopEvent(type='message_stop'),
+            ],
+        ),
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=case.cache)
+
+    if stream:
+        async with agent.run_stream(case.prompt) as result:
+            assert await result.get_output() == 'ok'
+    else:
+        assert (await agent.run(case.prompt)).output == 'ok'
+
+    assert _cache_breakpoint_attributes(exporter) == case.expected
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_cache_breakpoints_not_recorded_by_count_tokens(allow_model_requests: None):
+    """`count_tokens` builds and trims the same request before the model-request span opens, but only the request
+    records its breakpoints, on its own span."""
+    client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=True)
+
+    await agent.run(
+        ['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    assert len(get_mock_chat_completion_kwargs(client)) == 2  # the token count, then the request
+    assert _cache_breakpoint_attributes(exporter) == snapshot(
+        {
+            'chat claude-haiku-4-5': {
+                'pydantic_ai.cache.requested_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+                'pydantic_ai.cache.applied_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+            }
+        }
+    )
+
+
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
     """Test combining automatic caching with explicit cache breakpoints."""
     c = completion_message(
@@ -4441,10 +4639,15 @@ async def test_anthropic_citations_with_forced_tool_raises(
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
-async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
-    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
+@pytest.mark.parametrize('web_search', [pytest.param(False, id='nothing'), pytest.param(True, id='web-search')])
+async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetch(
+    allow_model_requests: None, web_search: bool
+) -> None:
+    """With no document or Web Fetch tool, a forced tool call is allowed.
 
-    Unit test: it pins that the run goes ahead.
+    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools.
+
+    Unit test: it pins that the run goes ahead, and the callers sent.
     """
     mock_client = MockAnthropic.create_mock(
         [
@@ -4456,8 +4659,12 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
         ]
     )
     agent = Agent(
-        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
-        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[
+            Citations(),
+            _ForceToolOnFirstStep('required'),
+            *([NativeTool(WebSearchTool())] if web_search else []),
+        ],
     )
 
     @agent.tool_plain
@@ -4467,6 +4674,11 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
     result = await agent.run('Save a summary of the returns policy.')
 
     assert result.output == 'Saved.'
+    assert [
+        tool.get('allowed_callers')
+        for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools']
+        if tool.get('name') == 'web_search'
+    ] == ([['direct']] if web_search else [])
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
@@ -6527,6 +6739,32 @@ async def test_anthropic_refusal_stop_details(
 
     assert response.finish_reason == 'content_filter'
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+async def test_anthropic_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when Claude refuses, and records the refused attempt."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category='cyber', explanation=None),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('write me an exploit')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+        ('claude-opus-4-8', 'rejected')
+    ]
 
 
 @pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
@@ -15784,11 +16022,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15827,7 +16065,10 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     cast(MockAnthropic, mock_client).base_url = base_url
-    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
     await agent.run('follow up', message_history=history)
 
     container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
@@ -15839,7 +16080,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [

@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -61,7 +62,11 @@ class OVHcloudProvider(_OpenAISDKProvider):
                 profile = profile_func(model_name)
 
         # As the OVHcloud AI Endpoints API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            special_token_route_profile('ovhcloud', model_name),
+        )
 
     @overload
     def __init__(self) -> None: ...

@@ -154,14 +154,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                         ):
                             yield event_
                     elif isinstance(current_block, BetaToolUseBlock):
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event_ in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=event.index,
                             tool_name=current_block.name,
                             args=cast(dict[str, Any], current_block.input) or None,
                             tool_call_id=current_block.id,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event_
                     elif isinstance(current_block, BetaServerToolUseBlock):
                         if current_block.name not in self._enabled_server_tool_names:
                             # Unlike non-streaming, this cannot pre-scan later result blocks, so a gap in the
@@ -237,12 +236,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index, part=replace(call_part, args=None)
                         )
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event_ in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=event.index,
                             args=args_json_delta,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event_
                     elif isinstance(current_block, BetaMCPToolResultBlock):
                         call_part = builtin_tool_calls.get(current_block.tool_use_id)
                         yield self._parts_manager.handle_part(
@@ -284,12 +282,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                         ):
                             yield event_
                     elif isinstance(event.delta, BetaInputJSONDelta):
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event_ in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=event.index,
                             args=event.delta.partial_json,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event_
                     elif isinstance(event.delta, BetaCompactionContentBlockDelta):
                         if event.delta.content:  # pragma: no branch
                             # Re-emit part with updated content; replaces the initial block start part
@@ -350,12 +347,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event_ in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=event.index,
                             args='}',
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event_
                     elif isinstance(current_block, BetaServerToolUseBlock) and current_block.name in (
                         'tool_search_tool_regex',
                         'tool_search_tool_bm25',
