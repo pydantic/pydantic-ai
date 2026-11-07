@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import math
 import re
 import warnings
@@ -133,6 +134,7 @@ try:
         ModelArmorConfigDict,
         Part,
         PartDict,
+        PartialArg,
         SafetySettingDict,
         Segment,
         ServiceTier as _GoogleSDKServiceTier,
@@ -718,6 +720,9 @@ class GoogleModel(Model[Client]):
         if not profile.get('supports_image_output', False):
             native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
             profile = {**profile, 'supported_native_tools': native_tools}
+        if profile.get('google_stream_function_call_arguments') and not self._is_google_cloud:
+            # Vertex-only; the Gemini API rejects the option.
+            profile = {**profile, 'google_stream_function_call_arguments': False}
         # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
         # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
         # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
@@ -1022,6 +1027,7 @@ class GoogleModel(Model[Client]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: GoogleModelSettings,
+        stream: bool = False,
     ) -> tuple[list[ToolDict] | None, ToolConfigDict | None, ImageConfigDict | None]:
         """Determine which tools to send and the API tool config.
 
@@ -1071,6 +1077,9 @@ class GoogleModel(Model[Client]):
             ):
                 mode = FunctionCallingConfigMode.VALIDATED
             function_calling_config: FunctionCallingConfigDict = {'mode': mode}
+            if stream and self.profile.get('google_stream_function_call_arguments', False):
+                # Vertex-only and streaming-only: emit function-call arguments as `partial_args` fragments.
+                function_calling_config['stream_function_call_arguments'] = True
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
@@ -1132,6 +1141,7 @@ class GoogleModel(Model[Client]):
             messages,
             model_settings,
             model_request_parameters,
+            stream,
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
@@ -1229,8 +1239,9 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
+        stream: bool = False,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
+        tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings, stream)
         if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
             raise UserError('Tools are not supported by this model.')
 
@@ -1704,6 +1715,174 @@ class _GoogleStreamTextRun:
 
 
 @dataclass
+class _GoogleStreamedFunctionCall:
+    """One streamed function call and its decoded Vertex `partial_args` fragments.
+
+    Each fragment carries a JSONPath (RFC 9535, e.g. `$.meta.author` or `$.tags[0]`) plus one typed value:
+    `string_value` slices of the decoded string, `number_value`, `bool_value` or `null_value`. Paths arrive
+    in order and each completes before the next; a bare `$.tags[]` path closes the array. Fragments are
+    decoded to incremental JSON text, and the accumulated tree is serialized at call completion so
+    out-of-order paths and float-typed integers cannot corrupt the final arguments.
+    """
+
+    tool_name: str
+    tool_call_id: str | None
+    provider_details: dict[str, Any] | None
+    vendor_part_id: UUID = field(default_factory=uuid4)
+
+    _tree: dict[str, Any] = field(default_factory=dict[str, Any], init=False)
+    # Containers currently open in the emitted JSON text, plus per level whether an entry was already
+    # emitted (length always len(_open) + 1: level 0 is the root object).
+    _open: list[str | int] = field(default_factory=list[str | int], init=False)
+    _need_comma: list[bool] = field(default_factory=lambda: [False], init=False)
+    _started: bool = field(default=False, init=False)
+    _open_string_path: tuple[str | int, ...] | None = field(default=None, init=False)
+
+    def add_partial_args(self, partial_args: list[PartialArg]) -> Iterator[str]:
+        """Decode one chunk's fragments, yielding the JSON text to append to the streamed arguments."""
+        for partial_arg in partial_args:
+            if partial_arg.json_path is None:  # pragma: no cover
+                continue
+            segments, closes_array = _parse_google_json_path(partial_arg.json_path)
+            if closes_array:
+                # A bare `$.tags[]` path closes the array at `$.tags`.
+                yield from self._close_array(segments)
+            else:
+                yield from self._emit_value(segments, partial_arg)
+
+    def build_args(self) -> dict[str, Any]:
+        """The arguments reconciled from all received fragments."""
+        return self._tree
+
+    def _close_array(self, prefix: list[str | int]) -> Iterator[str]:
+        if self._open == prefix:
+            # The array is open because it received elements.
+            yield ']'
+            self._open.pop()
+            self._need_comma.pop()
+        else:
+            # Empty array: emit it as the value at the path.
+            yield from self._emit_value(prefix, raw_json='[]')
+
+    def _emit_value(
+        self,
+        segments: list[str | int],
+        partial_arg: PartialArg | None = None,
+        *,
+        raw_json: str | None = None,
+    ) -> Iterator[str]:
+        if (
+            partial_arg is not None
+            and partial_arg.string_value is not None
+            and self._open_string_path == tuple(segments)
+        ):
+            # A continuation slice of the string opened at this path carries no JSON structure of
+            # its own: emit only its text, not the surrounding containers, commas, or keys.
+            yield self._fragment_value(segments, partial_arg)
+            return
+        if not self._started:
+            self._started = True
+            yield '{'
+        # Containers stay open across fragments; close the ones the new path descends past.
+        depth = 0
+        while depth < len(self._open) and depth < len(segments) - 1 and self._open[depth] == segments[depth]:
+            depth += 1
+        for seg in reversed(self._open[depth:]):
+            yield '}' if isinstance(seg, str) else ']'
+        del self._open[depth:]
+        del self._need_comma[depth + 1 :]
+        for level, seg in enumerate(segments[:-1]):
+            if level >= len(self._open):
+                if self._need_comma[level]:
+                    yield ','
+                self._need_comma[level] = True
+                if isinstance(seg, str):
+                    yield f'"{seg}":' + ('{' if isinstance(segments[level + 1], str) else '[')
+                else:
+                    yield '['
+                self._open.append(seg)
+                self._need_comma.append(False)
+        level = len(segments) - 1
+        if self._need_comma[level]:
+            yield ','
+        self._need_comma[level] = True
+        if isinstance(segments[level], str):
+            yield f'"{segments[level]}":'
+        if raw_json is not None:
+            yield raw_json
+        else:
+            assert partial_arg is not None  # raw fragments always carry a typed value
+            yield self._fragment_value(segments, partial_arg)
+
+    def _fragment_value(self, segments: list[str | int], partial_arg: PartialArg) -> str:
+        """The JSON text for one typed fragment, updating the accumulated tree."""
+        path_key = tuple(segments)
+        if partial_arg.string_value is not None:
+            continuing = self._open_string_path == path_key
+            self._set_tree_value(segments, partial_arg.string_value, append_string=continuing)
+            escaped = json.dumps(partial_arg.string_value)[1:-1]
+            if continuing:
+                self._open_string_path = path_key if partial_arg.will_continue else None
+                return escaped if partial_arg.will_continue else f'{escaped}"'
+            if partial_arg.will_continue:
+                self._open_string_path = path_key
+                return f'"{escaped}'
+            return f'"{escaped}"'
+        if partial_arg.bool_value is not None:
+            self._set_tree_value(segments, partial_arg.bool_value)
+            return json.dumps(partial_arg.bool_value)
+        if partial_arg.null_value is not None:
+            self._set_tree_value(segments, None)
+            return 'null'
+        if partial_arg.number_value is not None:
+            self._set_tree_value(segments, partial_arg.number_value)
+            return json.dumps(partial_arg.number_value)
+        # Defensive: the provider always sends exactly one typed value.
+        return 'null'  # pragma: no cover
+
+    def _set_tree_value(self, segments: list[str | int], value: Any, *, append_string: bool = False) -> None:
+        # The tree interleaves dicts and lists following the path shape; a single precise type cannot express it.
+        node: dict[str, Any] | list[Any] = self._tree
+        for level, seg in enumerate(segments[:-1]):
+            child: dict[str, Any] | list[Any] = {} if isinstance(segments[level + 1], str) else []
+            if isinstance(node, dict) and isinstance(seg, str):
+                node = node.setdefault(seg, child)
+            elif isinstance(node, list):
+                index = seg if isinstance(seg, int) else len(node)
+                if index == len(node):
+                    node.append(child)
+                node = node[index]
+        last = segments[-1]
+        if isinstance(node, dict) and isinstance(last, str):
+            existing: Any = node.get(last)
+            node[last] = existing + value if append_string and isinstance(existing, str) else value
+        elif isinstance(node, list):
+            index = last if isinstance(last, int) else len(node)
+            if index == len(node):
+                node.append(value)
+            else:
+                node[index] = node[index] + value if append_string else value
+
+
+def _parse_google_json_path(json_path: str) -> tuple[list[str | int], bool]:
+    """Parse a Vertex `partial_args` JSONPath (RFC 9535): `$.meta.author`, `$.tags[0]`, or a bare `$.tags[]`."""
+    segments: list[str | int] = []
+    closes_array = False
+    for raw in json_path.removeprefix('$').lstrip('.').split('.'):
+        if raw.endswith(']') and '[' in raw:
+            key, _, bracket = raw[:-1].rpartition('[')
+            if key:
+                segments.append(key)
+            if bracket:
+                segments.append(int(bracket))
+            else:
+                closes_array = True
+        else:
+            segments.append(raw)
+    return segments, closes_array
+
+
+@dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
@@ -1726,6 +1905,7 @@ class GeminiStreamedResponse(StreamedResponse):
     # Each run of text that becomes one `TextPart` is kept so the grounding citations can be placed on it.
     _text_runs: list[_GoogleStreamTextRun] = field(default_factory=list[_GoogleStreamTextRun], init=False)
     _continue_text_run: bool = field(default=False, init=False)
+    _streamed_call_state: _GoogleStreamedFunctionCall | None = field(default=None, init=False)
     # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
     # `_fill_empty_file_search_return_content`) and the last web_search return so far (see
     # `_fill_web_search_return_sources`). Each is reserved by `_reserve_part`.
@@ -1908,15 +2088,68 @@ class GeminiStreamedResponse(StreamedResponse):
                                 yield event
                         new_request_vendor_part_id = None
                     elif part.function_call:
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=uuid4(),
-                            tool_name=part.function_call.name,
-                            args=part.function_call.args,
-                            tool_call_id=part.function_call.id,
-                            provider_name=self.provider_name if provider_details else None,
-                            provider_details=provider_details,
-                        ):
-                            yield event
+                        function_call = part.function_call
+                        opens_streamed_call = (
+                            function_call.name is not None
+                            and function_call.will_continue
+                            and function_call.args is None
+                            and function_call.partial_args is None
+                        )
+                        ends_streamed_call = self._streamed_call_state is not None and (
+                            opens_streamed_call
+                            or not (function_call.name or function_call.args or function_call.partial_args)
+                        )
+                        if ends_streamed_call and self._streamed_call_state is not None:
+                            # Replace the streamed argument text with the arguments reconciled from the received
+                            # fragments, so provider ordering and float-typed integers cannot corrupt the final
+                            # tool arguments. An empty function-call part closes a streamed call; a new opening
+                            # chunk reconciles the previous call defensively so two calls never share identity.
+                            yield self._parts_manager.handle_tool_call_part(
+                                vendor_part_id=self._streamed_call_state.vendor_part_id,
+                                tool_name=self._streamed_call_state.tool_name,
+                                args=self._streamed_call_state.build_args(),
+                                tool_call_id=self._streamed_call_state.tool_call_id,
+                                provider_name=self.provider_name
+                                if self._streamed_call_state.provider_details
+                                else None,
+                                provider_details=self._streamed_call_state.provider_details,
+                            )
+                            self._streamed_call_state = None
+                        if opens_streamed_call:
+                            # With `stream_function_call_arguments` on Vertex, the opening chunk carries only
+                            # the tool name; argument chunks follow as `partial_args` fragments, and an empty
+                            # function-call part closes the call.
+                            assert function_call.name is not None  # an opening chunk always carries the tool name
+                            self._streamed_call_state = _GoogleStreamedFunctionCall(
+                                tool_name=function_call.name,
+                                tool_call_id=function_call.id,
+                                provider_details=provider_details,
+                            )
+                            for event in self._parts_manager.handle_tool_call_delta_events(
+                                vendor_part_id=self._streamed_call_state.vendor_part_id,
+                                tool_name=function_call.name,
+                                tool_call_id=function_call.id,
+                                provider_name=self.provider_name if provider_details else None,
+                                provider_details=provider_details,
+                            ):
+                                yield event
+                        elif function_call.partial_args and self._streamed_call_state is not None:
+                            for args_delta in self._streamed_call_state.add_partial_args(function_call.partial_args):
+                                for event in self._parts_manager.handle_tool_call_delta_events(
+                                    vendor_part_id=self._streamed_call_state.vendor_part_id,
+                                    args=args_delta,
+                                ):
+                                    yield event
+                        elif not ends_streamed_call:
+                            for event in self._parts_manager.handle_tool_call_delta_events(
+                                vendor_part_id=uuid4(),
+                                tool_name=part.function_call.name,
+                                args=part.function_call.args,
+                                tool_call_id=part.function_call.id,
+                                provider_name=self.provider_name if provider_details else None,
+                                provider_details=provider_details,
+                            ):
+                                yield event
                     elif part.inline_data is not None:
                         if part.thought:  # pragma: no cover
                             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
