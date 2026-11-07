@@ -1,6 +1,6 @@
 # Changes to these paths need an approving review from a code owner who is not the PR's author.
-# Enforced only while the `main` ruleset requires code-owner review, which also dismisses the approval when a later push changes the diff.
-# `.github/workflows/AGENTS.md` ("Code owners") explains the scopes.
+# That holds only while the `main` ruleset's `pull_request` rule requires code-owner review.
+# `.github/workflows/AGENTS.md` ("Code owners") explains the scopes and how to check the rule.
 # `@pydantic/pydantic-ai-admin` is not an owner: it also holds repo admins outside the Pydantic AI team, so its admins are named instead.
 
 # Dependencies, at any depth
