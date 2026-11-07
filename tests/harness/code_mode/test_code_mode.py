@@ -87,7 +87,7 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
-from pydantic_ai_harness._code_tools import sanitize_tool_name
+from pydantic_ai_harness._code_tools import partition_callable_tools, sanitize_tool_name
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import (
     FOLD_INTO_CODE_MODE,
@@ -1803,6 +1803,23 @@ class TestCodeMode:
 
         with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
             await wrapper.get_tools(build_run_context(None))
+
+    async def test_both_sandboxes_refuse_a_tool_named_after_a_builtin(self) -> None:
+        """`IPythonCodeMode` puts the tool in the kernel namespace ahead of the builtin, so it must refuse too.
+
+        Both sandboxes share `partition_callable_tools`, so the refusal lives there rather than in
+        `CodeMode` alone: in Monty the builtin wins and the tool never runs, in the kernel the tool
+        wins and every `open(...)` in the model's code calls it.
+        """
+
+        def open(path: str) -> str:
+            """A tool that would stand in for the builtin."""
+            return path  # pragma: no cover
+
+        tools = await _build_function_toolset(open, add).get_tools(build_run_context(None))
+
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
+            partition_callable_tools(tools, owner='IPythonCodeMode', reserved_name='run_code')
 
     async def test_filter_excluding_everything_yields_run_code_with_no_functions(self) -> None:
         """A filter that rejects every tool produces a `run_code` with no functions block."""
