@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeAlias, cast
+from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, cast
 
 from pydantic import JsonValue
 
@@ -76,6 +76,103 @@ class InlinedValues:
             raise InlinedSchemaTooLargeError(self.subject)
 
 
+def _is_type_value(value: Any) -> bool:
+    return isinstance(value, str) or (
+        isinstance(value, list | tuple) and all(isinstance(t, str) for t in cast(Sequence[Any], value))
+    )
+
+
+def _is_integer(value: Any) -> bool:
+    # Since draft 6, a number with a zero fractional part is an integer, as JSON text like `2.0` parses to a float.
+    return (isinstance(value, int) and not isinstance(value, bool)) or (isinstance(value, float) and value.is_integer())
+
+
+def _is_sequence(value: Any) -> bool:
+    # A tuple serializes as a JSON array, and every reader treats these as sequences.
+    return isinstance(value, list | tuple)
+
+
+# The keywords the walker and the provider `transform()`s read, grouped by the shape they expect.
+# Tool schemas that come from outside Pydantic AI (`Tool.from_schema`, `ExternalToolset`, MCP `inputSchema`,
+# AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. `_check_schema_shape`
+# checks these keywords and nothing more: keywords not listed here are passed through to the provider untouched,
+# so provider extensions are unaffected. If a transformer starts reading a new keyword, add it here.
+_SCHEMA_KEYWORDS = ('additionalProperties', 'items', 'propertyNames', 'contains')
+"""Keywords whose value is a schema (or, for `items` in older drafts, a list of schemas)."""
+_SCHEMA_CONTAINER_KEYWORDS: dict[str, type[dict[str, Any]] | type[list[Any]]] = {
+    'properties': dict,
+    'patternProperties': dict,
+    '$defs': dict,
+    'prefixItems': list,
+    'allOf': list,
+    'anyOf': list,
+    'oneOf': list,
+}
+"""Keywords whose value is an object or a list of schemas."""
+_VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
+    # keyword: (is the value well-formed, what a well-formed value is)
+    '$ref': (lambda value: isinstance(value, str), 'must be a string'),
+    'type': (_is_type_value, 'must be a string or a list of strings'),
+    'required': (_is_sequence, 'must be a list'),
+    'enum': (_is_sequence, 'must be a list'),
+    'minItems': (_is_integer, 'must be an integer'),
+}
+"""Keywords whose value the transformers interpret."""
+
+
+def _invalid_schema(path: str, what: str, value: Any) -> NoReturn:
+    raise UserError(f'Invalid JSON Schema at `{path or "<root>"}`: {what}, got {value!r}')
+
+
+def _check_schema_shape(node: Any, path: str = '') -> None:
+    """Raise `UserError` naming the offending node if `node` is not shaped like the JSON Schema the transformers read."""
+    # Draft 2020-12, section 4.3: "A JSON Schema MUST be an object or a boolean."
+    if isinstance(node, bool):
+        return
+    if not isinstance(node, dict):
+        _invalid_schema(path, 'a schema must be an object or a boolean', node)
+    schema = cast(dict[str, Any], node)
+    prefix = f'{path}.' if path else ''
+
+    for key in _SCHEMA_KEYWORDS:
+        # `None` is skipped like an absent key, as the walker and OpenAI's `transform()` do.
+        if (value := schema.get(key)) is not None:
+            _check_subschema(value, f'{prefix}{key}', allow_list=key == 'items')
+    for key, container in _SCHEMA_CONTAINER_KEYWORDS.items():
+        if (value := schema.get(key)) is not None:
+            _check_schema_container(key, container, value, f'{prefix}{key}')
+    for key, (is_well_formed, what) in _VALUE_KEYWORDS.items():
+        if (value := schema.get(key)) is not None and not is_well_formed(value):
+            _invalid_schema(f'{prefix}{key}', f'`{key}` {what}', value)
+
+
+def _check_subschema(value: Any, path: str, *, allow_list: bool) -> None:
+    """Check a keyword whose value is a schema; `items` may also be a list of schemas (draft 4 to 2019-09 tuples)."""
+    if allow_list and isinstance(value, list):
+        for index, member in enumerate(cast(list[Any], value)):
+            _check_schema_shape(member, f'{path}.{index}')
+    else:
+        _check_schema_shape(value, path)
+
+
+def _check_schema_container(key: str, container: type[dict[str, Any]] | type[list[Any]], value: Any, path: str) -> None:
+    """Check a keyword whose value is an object or a list of schemas."""
+    # A tuple of schemas worked before this check existed: the walker iterates it like a list.
+    if not (isinstance(value, container) or (container is list and isinstance(value, tuple))):
+        kind = 'an object' if container is dict else 'a list'
+        _invalid_schema(path, f'`{key}` must be {kind} of schemas', value)
+    members: Iterable[tuple[str | int, Any]] = (
+        cast(dict[str, Any], value).items() if isinstance(value, dict) else enumerate(cast(Sequence[Any], value))
+    )
+    for name, member in members:
+        _check_schema_shape(member, f'{path}.{name}')
+
+
+def _json_pointer_path(ref: str) -> str:
+    """The dotted path an error names for a local JSON pointer, with its `~1` and `~0` escapes decoded."""
+    return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
+
+
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
@@ -135,6 +232,7 @@ class JsonSchemaTransformer(ABC):
         prefer_inlined_defs: bool = False,
         simplify_nullable_unions: bool = False,
     ):
+        _check_schema_shape(schema)
         self.schema = schema
 
         self.strict = strict
@@ -200,28 +298,12 @@ class JsonSchemaTransformer(ABC):
         if isinstance(schema, bool):
             return schema
 
-        if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
-            key = (
-                ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
-                if ref.startswith('#/$defs/')
-                else ref
-            )
-            if key in self.refs_stack:
-                if key not in self.defs:
-                    # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
-                    raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
-                # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
-                self.recursive_refs.add(key)
-            elif key not in self.recursive_refs:
-                # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
-                # or `default`) are part of the field's own schema and must survive
-                # inlining, so merge them over the referenced definition.
-                if siblings := {k: v for k, v in schema.items() if k != '$ref'}:
-                    # `transform()` sees the merged schema, so the result is specific to this reference
-                    # site and can't come from (or go into) the shared walked-definition cache.
-                    return self._walk_def(key, siblings)
-                return self._copy_walked_def(key)
+        if (
+            self.prefer_inlined_defs
+            and (ref := schema.get('$ref'))
+            and (inlined := self._inlined_ref(schema, ref)) is not None
+        ):
+            return inlined
 
         # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
@@ -229,14 +311,17 @@ class JsonSchemaTransformer(ABC):
         # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
         # on a `$ref` it can't resolve.
         type_ = schema.get('type')
-        if type_ == 'object':
-            schema = self._handle_object(schema)
-        elif type_ == 'array':
-            schema = self._handle_array(schema)
-        elif type_ is None:
-            schema = self._handle_union(schema, 'allOf')
-            schema = self._handle_union(schema, 'anyOf')
-            schema = self._handle_union(schema, 'oneOf')
+        match type_:
+            case 'object':
+                schema = self._handle_object(schema)
+            case 'array':
+                schema = self._handle_array(schema)
+            case None:
+                schema = self._handle_union(schema, 'allOf')
+                schema = self._handle_union(schema, 'anyOf')
+                schema = self._handle_union(schema, 'oneOf')
+            case _:
+                pass
 
         if type_ is not None:
             for union_kind in ('allOf', 'anyOf', 'oneOf'):
@@ -244,6 +329,30 @@ class JsonSchemaTransformer(ABC):
                     schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         return self.transform(schema)
+
+    def _inlined_ref(self, schema: JsonSchema, ref: str) -> JsonSchema | None:
+        """The walked definition `ref` points at, with the other keywords of `schema` merged over it.
+
+        `None` when the `$ref` stays, as a recursive one does.
+        """
+        # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
+        key = ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~') if ref.startswith('#/$defs/') else ref
+        if key in self.refs_stack:
+            if key not in self.defs:
+                # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
+                raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
+            # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
+            self.recursive_refs.add(key)
+        elif key not in self.recursive_refs:
+            # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
+            # or `default`) are part of the field's own schema and must survive
+            # inlining, so merge them over the referenced definition.
+            if siblings := {k: v for k, v in schema.items() if k != '$ref'}:
+                # `transform()` sees the merged schema, so the result is specific to this reference
+                # site and can't come from (or go into) the shared walked-definition cache.
+                return self._walk_def(key, siblings)
+            return self._copy_walked_def(key)
+        return None
 
     def _copy_walked_def(self, key: str) -> JsonSchema:
         """A copy of the definition `key` refers to, walked once per transformer and cached.
@@ -274,6 +383,9 @@ class JsonSchemaTransformer(ABC):
         def_schema = self.defs.get(key)
         if def_schema is None:
             def_schema = resolve_json_pointer(self.schema, key)
+            # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
+            if def_schema is not None:
+                _check_schema_shape(def_schema, _json_pointer_path(key))
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
