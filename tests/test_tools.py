@@ -267,6 +267,31 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
     )
 
 
+def sphinx_style_docstring_closing_on_last_line(foo: int) -> str:  # pragma: no cover
+    """Sphinx style docstring.
+
+    :param foo: The foo thing."""
+    return str(foo)
+
+
+def test_docstring_sphinx_auto_closing_on_last_line():
+    """A Sphinx field on the docstring's last line, with the closing quotes right after it, is still inferred as Sphinx."""
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(sphinx_style_docstring_closing_on_last_line)
+
+    result = agent.run_sync('')
+    json_schema = json.loads(result.output)
+    assert json_schema['description'] == 'Sphinx style docstring.'
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'foo': {'description': 'The foo thing.', 'type': 'integer'}},
+            'required': ['foo'],
+            'type': 'object',
+        }
+    )
+
+
 def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     """Numpy style docstring.
 
