@@ -67,8 +67,8 @@ def test_unpublished_reason_checks_both_packages(
     def urlopen(request: urllib.request.Request, *, timeout: float) -> _Response:
         url = request.full_url
         urls.append(url)
-        # The index's JSON form; its HTML form is the default.
-        assert request.get_header('Accept') == 'application/vnd.pypi.simple.v1+json'
+        # The index's JSON form; its HTML form is the default. The harness JSON API takes no header.
+        assert request.get_header('Accept') == ('application/vnd.pypi.simple.v1+json' if url == CLAI2_INDEX else None)
         return _Response(200, ALPHA if url == CLAI2_INDEX else b'{}')
 
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
