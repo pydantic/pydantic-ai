@@ -3131,7 +3131,7 @@ def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
 
 
 def test_elevenlabs_agents_barge_in_before_the_reply() -> None:
-    """Cut in on before the agent says anything, nothing is cut: the reply that follows is whole."""
+    """A barge-in before the agent says anything cuts nothing: the reply that follows is whole."""
 
     def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
