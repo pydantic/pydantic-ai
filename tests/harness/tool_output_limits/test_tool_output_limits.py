@@ -18,6 +18,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     LoadCapabilityReturnPart,
     ModelMessage,
     ModelResponse,
@@ -33,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_RESULT_KIND,
     Band,
@@ -78,7 +80,13 @@ if TYPE_CHECKING:
 
 
 def _make_ctx(
-    *, run_id: str | None = 'run-1', retry: int = 0, model: Any = None, usage_limits: UsageLimits | None = None
+    *,
+    run_id: str | None = 'run-1',
+    retry: int = 0,
+    model: Any = None,
+    usage_limits: UsageLimits | None = None,
+    messages: list[Any] | None = None,
+    run_step: int = 0,
 ) -> Any:
     """Build a minimal RunContext-like object for testing the hook directly."""
 
@@ -96,11 +104,20 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+        messages: list[Any] = dataclasses.field(default_factory=list[Any])
+        run_step: int = 0
 
         def tool_name_for_kind(self, kind: object) -> str | None:
             return None
 
-    ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
+    ctx = _FakeCtx(
+        usage=RunUsage(),
+        run_id=run_id,
+        retry=retry,
+        usage_limits=usage_limits,
+        messages=[] if messages is None else messages,
+        run_step=run_step,
+    )
     if model is not None:
         ctx.model = model
     return ctx
@@ -665,7 +682,7 @@ class TestSpill:
         assert isinstance(out, ToolReturn)
         assert isinstance(out.return_value, str) and 'too large' in out.return_value
         handle = out.metadata['overflow_handle']
-        assert handle == 'run-1/call-1.0'
+        assert handle == 'run-1/0/call-1.0'
         assert await store.read(handle) == text.encode('utf-8')
 
     async def test_spill_binary_verbatim(self, tmp_path: Path):
@@ -1118,11 +1135,30 @@ class TestInternals:
         ctx = _make_ctx(run_id=None, retry=2)
         ctx.tool_call_id = None
         key = _handle_key(ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id=''))
-        assert key == 'run/call.2'
+        assert key == 'run/0/call.2'
 
     def test_handle_key_suffix(self):
         key = _handle_key(_make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
         assert key.endswith('.content')
+
+    def test_handle_key_keeps_a_reused_call_id_apart(self):
+        """A `tool_call_id` is only unique within a response, so a later call reusing one gets its own key."""
+        first = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        second = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        last = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_1')
+        messages = [ModelResponse(parts=[first]), ModelResponse(parts=[second, last])]
+        assert _handle_key(_make_ctx(messages=messages, run_step=1), first) == 'run-1/1/call_0.0'
+        # The second response is a later step, so the repeated id lands on its own handle.
+        assert _handle_key(_make_ctx(messages=messages, run_step=2), second) == 'run-1/2/call_0.0'
+        assert _handle_key(_make_ctx(messages=messages, run_step=2), last) == 'run-1/2/call_1.0'
+
+    def test_handle_key_does_not_read_the_history(self):
+        """A capability may rewrite `ctx.messages` mid-run, so the key must not be derived from it."""
+        call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        with_history = _make_ctx(messages=[ModelResponse(parts=[call])], run_step=3)
+        # A compaction replaced every earlier message between the two responses.
+        compacted = _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=3)
+        assert _handle_key(with_history, call) == _handle_key(compacted, call) == 'run-1/3/call_0.0'
 
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
@@ -1350,3 +1386,75 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
+
+    async def test_a_reused_tool_call_id_spills_each_call_separately(self, tmp_path: Path, anyio_backend: str):
+        """A provider that numbers calls per response (`call_0`, `call_0`) must not overwrite the first spill."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'first'}, tool_call_id='call_0')])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'second'}, tool_call_id='call_0')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
+        )
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def dump(tag: str) -> str:
+            return f'{tag} payload\n' * 100
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        handles = [p.metadata['overflow_handle'] for p in returns if p.metadata is not None]
+        assert len(handles) == 2
+        assert len(set(handles)) == 2
+        assert await store.read(handles[0]) == b'first payload\n' * 100
+        assert await store.read(handles[1]) == b'second payload\n' * 100
+
+    async def test_a_reused_tool_call_id_survives_a_compaction_between_the_responses(
+        self, tmp_path: Path, anyio_backend: str
+    ):
+        """A compaction rewrites `ctx.messages`, so a later call reusing an id must not reuse the first handle."""
+        issued: list[int] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            issued.append(1)
+            if len(issued) == 1:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'first'}, tool_call_id='call_0')])
+            # An unrelated call in between gives the compaction a boundary to cut at, so the first
+            # response and its return leave the history before the second `call_0` is issued.
+            if len(issued) == 2:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'middle'}, tool_call_id='call_9')])
+            if len(issued) == 3:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'second'}, tool_call_id='call_0')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
+        )
+        compaction: SummarizingCompaction[object] = SummarizingCompaction(
+            model=FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('earlier turns')])),
+            max_messages=4,
+            keep_messages=2,
+        )
+        agent = Agent(FunctionModel(respond), capabilities=[cap, compaction])
+
+        @agent.tool_plain
+        def dump(tag: str) -> str:
+            return f'{tag} payload\n' * 100
+
+        result = await agent.run('go')
+        messages = result.all_messages()
+        assert any(isinstance(part, CompactionPart) for message in messages for part in message.parts), (
+            'the test must compact between the two responses'
+        )
+        # The first return left the history with its response, so the spills are read off the store.
+        # Deriving the key from the retained history would reuse `call_0`'s handle here and leave two
+        # files, the first payload overwritten by the second.
+        spilled = sorted(path.read_bytes() for path in tmp_path.rglob('*') if path.is_file())
+        assert spilled == [b'first payload\n' * 100, b'middle payload\n' * 100, b'second payload\n' * 100]

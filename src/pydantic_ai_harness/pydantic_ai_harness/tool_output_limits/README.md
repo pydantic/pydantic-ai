@@ -377,7 +377,11 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider
+  that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the run:
+  the handle carries the run step that produced the call, so each call gets its own spill. The
+  step comes from the run context rather than the history, so a compaction rewriting
+  `ctx.messages` between the two responses cannot make them collide.
 
 ## Relationship to other capabilities
 

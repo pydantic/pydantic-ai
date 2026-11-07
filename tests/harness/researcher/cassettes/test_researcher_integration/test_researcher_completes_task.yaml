@@ -876,8 +876,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -984,7 +984,7 @@ interactions:
         Python is officially supported\",\n        \"url\": \"https://docs.python.org/3.14/whatsnew/3.14.html\"\n
         \     }\n    },\n    {\n      \"id\": \"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\",\n
         \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
-        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\n
+        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\n
         \     \"call_id\": \"call_H7yjfeTQBnxFNmNbiZimBniZ\",\n      \"name\": \"read_tool_result\"\n
         \   }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n
         \ \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_retention\":
@@ -1109,8 +1109,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -1129,8 +1129,8 @@ interactions:
       779 free-threading 3.14 supported\",\"site:docs.python.org/3.14 C API extension
       modules free threading\"],\"query\":\"site:docs.python.org/3.14 free-threading
       Python HOWTO limitations\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8453f2e48196b0e4c47fc64f90be\",\"action\":{\"type\":\"open_page\",\"url\":\"https://docs.python.org/3.14/howto/free-threading-python.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8457a21c8196ae93b0db202d8a91\",\"action\":{\"pattern\":\"Free-threaded
-      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 120]\\n# Free-threaded CPython 3.13\\n\\n## Executive
       summary\\n\\nCPython 3.13 introduced a **separate, experimental free-threaded
       build** in which the GIL is normally disabled. It is not the default CPython
@@ -1290,7 +1290,7 @@ interactions:
         null,\n  \"model\": \"gpt-5.6-sol\",\n  \"moderation\": null,\n  \"output\":
         [\n    {\n      \"id\": \"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\",\n
         \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
-        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\n
+        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\n
         \     \"call_id\": \"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\n      \"name\": \"read_tool_result\"\n
         \   }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n
         \ \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_retention\":
@@ -1415,8 +1415,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -1435,8 +1435,8 @@ interactions:
       779 free-threading 3.14 supported\",\"site:docs.python.org/3.14 C API extension
       modules free threading\"],\"query\":\"site:docs.python.org/3.14 free-threading
       Python HOWTO limitations\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8453f2e48196b0e4c47fc64f90be\",\"action\":{\"type\":\"open_page\",\"url\":\"https://docs.python.org/3.14/howto/free-threading-python.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8457a21c8196ae93b0db202d8a91\",\"action\":{\"pattern\":\"Free-threaded
-      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 120]\\n# Free-threaded CPython 3.13\\n\\n## Executive
       summary\\n\\nCPython 3.13 introduced a **separate, experimental free-threaded
       build** in which the GIL is normally disabled. It is not the default CPython
@@ -1517,8 +1517,8 @@ interactions:
       Unix/configure builds, `sys.abiflags` includes `t`.  \\nSources:  \\n<https://docs.python.org/3.13/using/configure.html#cmdoption-disable-gil>
       \ \\n<https://docs.python.org/3.13/library/sys.html#sys.abiflags> ([docs.python.org](https://docs.python.org/3.13/using/configure.html?utm_source=openai))\\n\\n---\\n\\n##
       4. Runtime GIL toggling and extension fallback\\n\\nA free-threaded executable
-      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 140]\\nPYTHON_GIL=1 python3.13t program.py\\n```\\n\\nIt
       can be explicitly forced off with:\\n\\n```sh\\npython3.13t -X gil=0 program.py\\nPYTHON_GIL=0
       python3.13t program.py\\n```\\n\\n`-X gil=0,1` forces the corresponding state.
@@ -1678,7 +1678,7 @@ interactions:
         null,\n  \"model\": \"gpt-5.6-sol\",\n  \"moderation\": null,\n  \"output\":
         [\n    {\n      \"id\": \"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\",\n
         \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
-        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\n
+        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\n
         \     \"call_id\": \"call_WGPuExRtAPl7o0U4ZQnJiya0\",\n      \"name\": \"read_tool_result\"\n
         \   }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n
         \ \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_retention\":
@@ -1803,8 +1803,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -1823,8 +1823,8 @@ interactions:
       779 free-threading 3.14 supported\",\"site:docs.python.org/3.14 C API extension
       modules free threading\"],\"query\":\"site:docs.python.org/3.14 free-threading
       Python HOWTO limitations\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8453f2e48196b0e4c47fc64f90be\",\"action\":{\"type\":\"open_page\",\"url\":\"https://docs.python.org/3.14/howto/free-threading-python.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8457a21c8196ae93b0db202d8a91\",\"action\":{\"pattern\":\"Free-threaded
-      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 120]\\n# Free-threaded CPython 3.13\\n\\n## Executive
       summary\\n\\nCPython 3.13 introduced a **separate, experimental free-threaded
       build** in which the GIL is normally disabled. It is not the default CPython
@@ -1905,8 +1905,8 @@ interactions:
       Unix/configure builds, `sys.abiflags` includes `t`.  \\nSources:  \\n<https://docs.python.org/3.13/using/configure.html#cmdoption-disable-gil>
       \ \\n<https://docs.python.org/3.13/library/sys.html#sys.abiflags> ([docs.python.org](https://docs.python.org/3.13/using/configure.html?utm_source=openai))\\n\\n---\\n\\n##
       4. Runtime GIL toggling and extension fallback\\n\\nA free-threaded executable
-      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 140]\\nPYTHON_GIL=1 python3.13t program.py\\n```\\n\\nIt
       can be explicitly forced off with:\\n\\n```sh\\npython3.13t -X gil=0 program.py\\nPYTHON_GIL=0
       python3.13t program.py\\n```\\n\\n`-X gil=0,1` forces the corresponding state.
@@ -1987,8 +1987,8 @@ interactions:
       ABI split; the separate-build requirement specifically concerns C-API/native
       extensions.  \\nSources:  \\n<https://peps.python.org/pep-0425/#abi-tag>  \\n<https://docs.python.org/3.13/howto/free-threading-extensions.html#building-extensions-for-the-free-threaded-build>
       ([peps.python.org](https://peps.python.org/pep-0425/))\\n\\n---\\n\\n## 7. Important
-      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 71]\\n\\n### Single-threaded performance\\n\\nCPython
       3.13\u2019s free-threaded build has approximately **40% overhead on `pyperformance`**
       versus the normal GIL build. Programs dominated by I/O or C-extension work may
@@ -2538,8 +2538,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -2558,8 +2558,8 @@ interactions:
       779 free-threading 3.14 supported\",\"site:docs.python.org/3.14 C API extension
       modules free threading\"],\"query\":\"site:docs.python.org/3.14 free-threading
       Python HOWTO limitations\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8453f2e48196b0e4c47fc64f90be\",\"action\":{\"type\":\"open_page\",\"url\":\"https://docs.python.org/3.14/howto/free-threading-python.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8457a21c8196ae93b0db202d8a91\",\"action\":{\"pattern\":\"Free-threaded
-      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 120]\\n# Free-threaded CPython 3.13\\n\\n## Executive
       summary\\n\\nCPython 3.13 introduced a **separate, experimental free-threaded
       build** in which the GIL is normally disabled. It is not the default CPython
@@ -2640,8 +2640,8 @@ interactions:
       Unix/configure builds, `sys.abiflags` includes `t`.  \\nSources:  \\n<https://docs.python.org/3.13/using/configure.html#cmdoption-disable-gil>
       \ \\n<https://docs.python.org/3.13/library/sys.html#sys.abiflags> ([docs.python.org](https://docs.python.org/3.13/using/configure.html?utm_source=openai))\\n\\n---\\n\\n##
       4. Runtime GIL toggling and extension fallback\\n\\nA free-threaded executable
-      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 140]\\nPYTHON_GIL=1 python3.13t program.py\\n```\\n\\nIt
       can be explicitly forced off with:\\n\\n```sh\\npython3.13t -X gil=0 program.py\\nPYTHON_GIL=0
       python3.13t program.py\\n```\\n\\n`-X gil=0,1` forces the corresponding state.
@@ -2722,8 +2722,8 @@ interactions:
       ABI split; the separate-build requirement specifically concerns C-API/native
       extensions.  \\nSources:  \\n<https://peps.python.org/pep-0425/#abi-tag>  \\n<https://docs.python.org/3.13/howto/free-threading-extensions.html#building-extensions-for-the-free-threaded-build>
       ([peps.python.org](https://peps.python.org/pep-0425/))\\n\\n---\\n\\n## 7. Important
-      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 71]\\n\\n### Single-threaded performance\\n\\nCPython
       3.13\u2019s free-threaded build has approximately **40% overhead on `pyperformance`**
       versus the normal GIL build. Programs dominated by I/O or C-extension work may
@@ -2793,8 +2793,8 @@ interactions:
       documentation does not present it as a drop-in production replacement for ordinary
       CPython 3.13.\"},{\"id\":\"ws_0e58f8341a296874006a7f846a28a48196a9f3353186566c64\",\"action\":{\"pattern\":\"Limited
       C API and Stable ABI\",\"type\":\"find_in_page\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"web_fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\"}\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846cb90881969b89b1d5de82c56f\"},{\"type\":\"function_call_output\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"output\":\"[Tool
-      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
+      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\nshape: {'url': str, 'title':
       str, 'content': str}\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
@@ -2887,7 +2887,7 @@ interactions:
         null,\n  \"model\": \"gpt-5.6-sol\",\n  \"moderation\": null,\n  \"output\":
         [\n    {\n      \"id\": \"fc_0e58f8341a296874006a7f846fa6188196bd76e08b904579c3\",\n
         \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
-        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
+        \"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
         ABI\\\",\\\"limit\\\":50}\",\n      \"call_id\": \"call_9QGqlCO9vWmh9yKF1C730LaP\",\n
         \     \"name\": \"read_tool_result\"\n    }\n  ],\n  \"parallel_tool_calls\":
         true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\":
@@ -3013,8 +3013,8 @@ interactions:
       behavior, extension compatibility requirements and GIL fallback, ABI/wheel tagging,
       important limitations/performance caveats, and any guarantees or lack thereof.
       Include direct source URLs for every factual claim, and distinguish any inference.\\\"}\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f83c2c3dc819699d5d5c3b5a14098\"},{\"type\":\"function_call_output\",\"call_id\":\"call_ThjTLUpjfRlxSV43zSkDc4qF\",\"output\":\"[Tool
-      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
+      output too large (20,719 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\n# Free-threaded CPython
       3.13\\n\\n## Executive summary\\n\\nCPython 3.13 introduced a **separate, experimental
       free-threaded build** in which the GIL is normally disabled. It is not the default
@@ -3033,8 +3033,8 @@ interactions:
       779 free-threading 3.14 supported\",\"site:docs.python.org/3.14 C API extension
       modules free threading\"],\"query\":\"site:docs.python.org/3.14 free-threading
       Python HOWTO limitations\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8453f2e48196b0e4c47fc64f90be\",\"action\":{\"type\":\"open_page\",\"url\":\"https://docs.python.org/3.14/howto/free-threading-python.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"id\":\"ws_0e58f8341a296874006a7f8457a21c8196ae93b0db202d8a91\",\"action\":{\"pattern\":\"Free-threaded
-      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      Python is officially supported\",\"type\":\"find_in_page\",\"url\":\"https://docs.python.org/3.14/whatsnew/3.14.html\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":0,\\\"limit\\\":120}\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa\"},{\"type\":\"function_call_output\",\"call_id\":\"call_H7yjfeTQBnxFNmNbiZimBniZ\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 120]\\n# Free-threaded CPython 3.13\\n\\n## Executive
       summary\\n\\nCPython 3.13 introduced a **separate, experimental free-threaded
       build** in which the GIL is normally disabled. It is not the default CPython
@@ -3115,8 +3115,8 @@ interactions:
       Unix/configure builds, `sys.abiflags` includes `t`.  \\nSources:  \\n<https://docs.python.org/3.13/using/configure.html#cmdoption-disable-gil>
       \ \\n<https://docs.python.org/3.13/library/sys.html#sys.abiflags> ([docs.python.org](https://docs.python.org/3.13/using/configure.html?utm_source=openai))\\n\\n---\\n\\n##
       4. Runtime GIL toggling and extension fallback\\n\\nA free-threaded executable
-      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      can still run with the GIL enabled:\\n\\n```sh\\npython3.13t -X gil=1 program.py\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":120,\\\"limit\\\":140}\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e\"},{\"type\":\"function_call_output\",\"call_id\":\"call_Uc4auU7ikVIFweZ0PbbYlD4w\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 140]\\nPYTHON_GIL=1 python3.13t program.py\\n```\\n\\nIt
       can be explicitly forced off with:\\n\\n```sh\\npython3.13t -X gil=0 program.py\\nPYTHON_GIL=0
       python3.13t program.py\\n```\\n\\n`-X gil=0,1` forces the corresponding state.
@@ -3197,8 +3197,8 @@ interactions:
       ABI split; the separate-build requirement specifically concerns C-API/native
       extensions.  \\nSources:  \\n<https://peps.python.org/pep-0425/#abi-tag>  \\n<https://docs.python.org/3.13/howto/free-threading-extensions.html#building-extensions-for-the-free-threaded-build>
       ([peps.python.org](https://peps.python.org/pep-0425/))\\n\\n---\\n\\n## 7. Important
-      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
+      limitations and performance caveats\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0\\\",\\\"offset\\\":260,\\\"limit\\\":71}\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99\"},{\"type\":\"function_call_output\",\"call_id\":\"call_WGPuExRtAPl7o0U4ZQnJiya0\",\"output\":\"[handle
+      '01a0021a-aa83-7252-8a64-d7108e706f29/1/call_ThjTLUpjfRlxSV43zSkDc4qF.0': 331
       matching line(s); showing 71]\\n\\n### Single-threaded performance\\n\\nCPython
       3.13\u2019s free-threaded build has approximately **40% overhead on `pyperformance`**
       versus the normal GIL build. Programs dominated by I/O or C-extension work may
@@ -3268,8 +3268,8 @@ interactions:
       documentation does not present it as a drop-in production replacement for ordinary
       CPython 3.13.\"},{\"id\":\"ws_0e58f8341a296874006a7f846a28a48196a9f3353186566c64\",\"action\":{\"pattern\":\"Limited
       C API and Stable ABI\",\"type\":\"find_in_page\"},\"status\":\"completed\",\"type\":\"web_search_call\"},{\"name\":\"web_fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\"}\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846cb90881969b89b1d5de82c56f\"},{\"type\":\"function_call_output\",\"call_id\":\"call_dmEMWZ9DEj1LpBAv20CBRl4f\",\"output\":\"[Tool
-      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
-      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
+      output too large (28,078 chars); stored to handle '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0'.
+      Read it with read_tool_result(handle='01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0',
       offset=0, limit=200, from_end=False, pattern=None).]\\nshape: {'url': str, 'title':
       str, 'content': str}\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
@@ -3283,9 +3283,9 @@ interactions:
       for more information.  \\\\n  \\\\nThe Python Software Foundation is a non-profit
       corporation.\\\\n[Please donate.](https://www.python.org/psf/donations/)\\\\n
       \ \\\\n  \\\\nLast updated on Aug 14, 2026 (13:12 UTC).\\\\n[Found a bug](/bugs.html)?\\\\n
-      \ \\\\nCreated using [Sphinx](https://www.sphinx-doc.org/) 8.2.3.\\\"}\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
+      \ \\\\nCreated using [Sphinx](https://www.sphinx-doc.org/) 8.2.3.\\\"}\"},{\"name\":\"read_tool_result\",\"arguments\":\"{\\\"handle\\\":\\\"01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0\\\",\\\"pattern\\\":\\\"Stable
       ABI\\\",\\\"limit\\\":50}\",\"call_id\":\"call_9QGqlCO9vWmh9yKF1C730LaP\",\"type\":\"function_call\",\"id\":\"fc_0e58f8341a296874006a7f846fa6188196bd76e08b904579c3\"},{\"type\":\"function_call_output\",\"call_id\":\"call_9QGqlCO9vWmh9yKF1C730LaP\",\"output\":\"[handle
-      '01a0021a-aa83-7252-8a64-d7108e706f29/call_dmEMWZ9DEj1LpBAv20CBRl4f.0': 1 matching
+      '01a0021a-aa83-7252-8a64-d7108e706f29/5/call_dmEMWZ9DEj1LpBAv20CBRl4f.0': 1 matching
       line(s); showing 1]\\n{\\\"url\\\":\\\"https://docs.python.org/3.14/howto/free-threading-extensions.html\\\",\\\"title\\\":\\\"C
       API Extension Support for Free Threading &#8212; Python 3.14.7 documentation\\\",\\\"content\\\":\\\"C
       API Extension Support for Free Threading \u2014 Python 3.14.7 documentation\\\\n\\\\n@media
