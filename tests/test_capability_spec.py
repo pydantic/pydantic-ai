@@ -741,7 +741,10 @@ def test_model_json_schema_with_capabilities():
             '$defs': {
                 'AdvisorProviderSettings': {
                     'additionalProperties': True,
-                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'}},
+                    'properties': {
+                        'anthropic': {'$ref': '#/$defs/AnthropicAdvisorToolSettings'},
+                        'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'},
+                    },
                     'title': 'AdvisorProviderSettings',
                     'type': 'object',
                 },
@@ -779,6 +782,7 @@ def test_model_json_schema_with_capabilities():
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
+                            'deprecated': True,
                             'title': 'Max Uses',
                         },
                         'max_tokens': {
@@ -787,6 +791,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Tokens',
                         },
                         'caching': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['5m', '1h'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Caching',
@@ -805,9 +810,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'AgentRetries',
                     'type': 'object',
                 },
+                'AnthropicAdvisorToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'caching': {'enum': ['5m', '1h'], 'title': 'Caching', 'type': 'string'},
+                        'max_uses': {'title': 'Max Uses', 'type': 'integer'},
+                    },
+                    'title': 'AnthropicAdvisorToolSettings',
+                    'type': 'object',
+                },
                 'AnthropicWebFetchToolSettings': {
                     'additionalProperties': True,
                     'properties': {
+                        'enable_citations': {'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {'title': 'Max Content Tokens', 'type': 'integer'},
                         'use_cache': {'title': 'Use Cache', 'type': 'boolean'},
                         'response_inclusion': {
                             'enum': ['full', 'excluded'],
@@ -852,10 +868,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'FileSearchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
+                    'title': 'FileSearchProviderSettings',
+                    'type': 'object',
+                },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/FileSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                         'max_num_results': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -863,11 +889,13 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Max Num Results',
                         },
                         'instructions': {
+                            'deprecated': True,
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Instructions',
                         },
                         'retrieval_mode': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['hybrid', 'semantic', 'keyword'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Retrieval Mode',
@@ -877,34 +905,49 @@ def test_model_json_schema_with_capabilities():
                     'title': 'FileSearchTool',
                     'type': 'object',
                 },
+                'ImageGenerationProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'openai': {'$ref': '#/$defs/OpenAIImageGenerationToolSettings'}},
+                    'title': 'ImageGenerationProviderSettings',
+                    'type': 'object',
+                },
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/ImageGenerationProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'action': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['generate', 'edit', 'auto'],
                             'title': 'Action',
                             'type': 'string',
                         },
                         'background': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
                             'title': 'Background',
                             'type': 'string',
                         },
                         'input_fidelity': {
+                            'deprecated': True,
                             'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Input Fidelity',
                         },
                         'moderation': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
                         },
                         'model': {
+                            'deprecated': True,
                             'anyOf': [
                                 {
                                     'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
@@ -926,8 +969,14 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Output Format',
                         },
-                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'partial_images': {
+                            'deprecated': True,
+                            'default': 0,
+                            'title': 'Partial Images',
+                            'type': 'integer',
+                        },
                         'quality': {
+                            'deprecated': True,
                             'default': 'auto',
                             'enum': ['low', 'medium', 'high', 'auto'],
                             'title': 'Quality',
@@ -1843,6 +1892,33 @@ def test_model_json_schema_with_capabilities():
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'OpenAIImageGenerationToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'action': {'enum': ['generate', 'edit', 'auto'], 'title': 'Action', 'type': 'string'},
+                        'background': {
+                            'enum': ['transparent', 'opaque', 'auto'],
+                            'title': 'Background',
+                            'type': 'string',
+                        },
+                        'input_fidelity': {'enum': ['high', 'low'], 'title': 'Input Fidelity', 'type': 'string'},
+                        'moderation': {'enum': ['auto', 'low'], 'title': 'Moderation', 'type': 'string'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Model',
+                        },
+                        'partial_images': {'title': 'Partial Images', 'type': 'integer'},
+                        'quality': {'enum': ['low', 'medium', 'high', 'auto'], 'title': 'Quality', 'type': 'string'},
+                    },
+                    'title': 'OpenAIImageGenerationToolSettings',
+                    'type': 'object',
+                },
                 'OpenRouterAdvisorToolSettings': {
                     'additionalProperties': True,
                     'properties': {'forward_transcript': {'title': 'Forward Transcript', 'type': 'boolean'}},
@@ -1982,10 +2058,16 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Blocked Domains',
                         },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'enable_citations': {
+                            'default': False,
+                            'deprecated': True,
+                            'title': 'Enable Citations',
+                            'type': 'boolean',
+                        },
                         'max_content_tokens': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
+                            'deprecated': True,
                             'title': 'Max Content Tokens',
                         },
                     },
@@ -2095,6 +2177,19 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'XSearchTool',
+                    'type': 'object',
+                },
+                'XaiFileSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'instructions': {'title': 'Instructions', 'type': 'string'},
+                        'retrieval_mode': {
+                            'enum': ['hybrid', 'semantic', 'keyword'],
+                            'title': 'Retrieval Mode',
+                            'type': 'string',
+                        },
+                    },
+                    'title': 'XaiFileSearchToolSettings',
                     'type': 'object',
                 },
                 'short_spec_FileUnderstanding': {

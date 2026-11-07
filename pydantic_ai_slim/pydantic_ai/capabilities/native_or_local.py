@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, TypeVar, cast
 
 from pydantic_ai._utils import replace_no_init
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -280,6 +281,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         merged.__post_init__()
         return merged
 
+    def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
+        """Return `tool` with capability-level overrides applied."""
+        if not overrides:
+            return tool
+        with suppress_provider_field_warnings():
+            return replace(tool, **overrides)
+
     def _resolve_native_with_overrides(
         self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]
     ) -> _NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT] | _NativeToolT]:
@@ -297,10 +305,11 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         today for users who never opted into a fallback subagent.
         """
         if isinstance(self.native, tool_cls):
-            return replace(self.native, **overrides) if overrides else self.native
+            return self._apply_native_overrides(self.native, overrides)
 
         if self.native is False:
-            return tool_cls(**overrides)
+            with suppress_provider_field_warnings():
+                return tool_cls(**overrides)
 
         native_factory = self.native
         if not callable(native_factory):
@@ -311,6 +320,6 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
             native_tool = await resolve_native_tool(tool_cls, native_factory, ctx)
-            return replace(native_tool, **overrides) if overrides else native_tool
+            return self._apply_native_overrides(native_tool, overrides)
 
         return resolve_native

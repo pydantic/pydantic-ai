@@ -1317,9 +1317,13 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
                 )
@@ -1369,12 +1373,16 @@ async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_m
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                            'input_fidelity': 'high',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
-                    input_fidelity='high',
                 )
             )
         ],
@@ -3631,7 +3639,10 @@ async def test_openai_responses_model_web_search_tool_without_external_access(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(external_web_access=False))])
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool(external_web_access=False))],
+    )
 
     result = await agent.run('Search the web for the year the Eiffel Tower opened to the public. Reply with the year.')
 
@@ -11627,7 +11638,12 @@ async def test_openai_responses_image_generation_stream_empty_final_answer(
         model,
         capabilities=[
             NativeTool(
-                ImageGenerationTool(quality='low', size='1024x1024', output_format='jpeg', output_compression=50)
+                ImageGenerationTool(
+                    provider_settings={'openai': {'quality': 'low'}},
+                    size='1024x1024',
+                    output_format='jpeg',
+                    output_compression=50,
+                )
             )
         ],
         output_type=BinaryImage,
@@ -12499,7 +12515,9 @@ async def test_openai_responses_image_generation_store_false(
     agent = Agent(
         model,
         output_type=BinaryImage,
-        capabilities=[NativeTool(ImageGenerationTool(quality='low', size='1024x1024'))],
+        capabilities=[
+            NativeTool(ImageGenerationTool(provider_settings={'openai': {'quality': 'low'}}, size='1024x1024'))
+        ],
         model_settings=OpenAIResponsesModelSettings(openai_store=False),
     )
 

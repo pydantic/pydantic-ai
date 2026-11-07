@@ -15,13 +15,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from pydantic import TypeAdapter
 from typing_extensions import get_type_hints
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import ImageGeneration, NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, resolve_request_tools
 from pydantic_ai.native_tools import (
@@ -29,6 +31,10 @@ from pydantic_ai.native_tools import (
     AdvisorProviderSettings,
     AdvisorTool,
     CodeExecutionTool,
+    FileSearchProviderSettings,
+    FileSearchTool,
+    ImageGenerationProviderSettings,
+    ImageGenerationTool,
     MemoryTool,
     WebFetchProviderSettings,
     WebFetchTool,
@@ -42,6 +48,7 @@ from ..conftest import try_import
 
 with try_import() as openai_available:
     from openai.types.chat import ChatCompletionMessage
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
@@ -50,8 +57,11 @@ with try_import() as openai_available:
 
     from .mock_openai import (
         MockOpenAI,
+        MockOpenAIResponses,
         completion_message as openai_completion,
         get_mock_chat_completion_kwargs as openai_request_kwargs,
+        get_mock_responses_kwargs,
+        response_message,
     )
 
 with try_import() as anthropic_available:
@@ -77,6 +87,8 @@ with try_import() as groq_available:
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
+
+    from .mock_xai import MockXai, create_response, create_usage, get_mock_chat_create_kwargs
 
 
 ALL_WEB_SEARCH_RESTRICTIONS = WebSearchTool(
@@ -177,7 +189,7 @@ CASES = [
     pytest.param(
         Case(
             lambda: OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(api_key='test-key')),
-            AdvisorTool(model='claude-opus-4-8', max_uses=1),
+            AdvisorTool(model='claude-opus-4-8', provider_settings={'anthropic': {'max_uses': 1}}),
             frozenset(),
         ),
         id='openrouter-advisor',
@@ -231,7 +243,9 @@ def test_restricting_settings():
     assert ALL_WEB_SEARCH_RESTRICTIONS.restricting_settings == snapshot(
         frozenset({'allowed_domains', 'blocked_domains', 'max_uses', 'external_web_access'})
     )
-    assert WebFetchTool(max_content_tokens=1000).restricting_settings == frozenset()
+    assert (
+        WebFetchTool(provider_settings={'anthropic': {'max_content_tokens': 1000}}).restricting_settings == frozenset()
+    )
     assert ALL_WEB_FETCH_RESTRICTIONS.restricting_settings == snapshot(
         frozenset({'allowed_domains', 'blocked_domains', 'max_uses'})
     )
@@ -330,7 +344,8 @@ def test_openrouter_web_search_without_external_web_access_raises():
         model.prepare_request(None, params)
 
 
-# `provider_settings`: each option reaches its own model's request, and unknown ones are ignored.
+# `provider_settings`: each option reaches its own model's request, unknown ones are ignored, and the fields that
+# moved into it warn.
 
 
 def _anthropic_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
@@ -350,6 +365,26 @@ def _openrouter_request_parameters(tool: AbstractNativeTool) -> dict[str, Any]:
     return openai_request_kwargs(client)[0]['tools'][0]['parameters']
 
 
+def _openai_request_tool(tool: AbstractNativeTool) -> dict[str, Any]:
+    text = ResponseOutputText(text='ok', type='output_text', annotations=[])
+    message = ResponseOutputMessage(id='msg', content=[text], role='assistant', status='completed', type='message')
+    client = MockOpenAIResponses.create_mock(response_message([message]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    return get_mock_responses_kwargs(client)[0]['tools'][0]
+
+
+def _xai_request_search(tool: AbstractNativeTool) -> dict[str, Any]:
+    client = MockXai.create_mock(
+        [create_response(content='ok', usage=create_usage(prompt_tokens=1, completion_tokens=1))]
+    )
+    model = XaiModel('grok-4-fast-non-reasoning', provider=XaiProvider(xai_client=client))
+    Agent(model, capabilities=[NativeTool(tool)]).run_sync('hi')
+    return get_mock_chat_create_kwargs(client)[0]['tools'][0]['collections_search']
+
+
+QUALITY_DEPRECATED = r'`quality` is deprecated .*provider_settings=\{"openai"'
+
 ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
     (
         WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
@@ -362,6 +397,14 @@ ANTHROPIC_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
         'excluded',
     ),
     (WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}), 'use_cache', False),
+    (WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}}), 'citations', {'enabled': True}),
+    (WebFetchTool(provider_settings={'anthropic': {'max_content_tokens': 1000}}), 'max_content_tokens', 1000),
+    (
+        AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
+        'caching',
+        {'type': 'ephemeral', 'ttl': '5m'},
+    ),
+    (AdvisorTool(model='advisor', provider_settings={'anthropic': {'max_uses': 2}}), 'max_uses', 2),
 ]
 OPENROUTER_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
     (WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}), 'engine', 'exa'),
@@ -375,29 +418,64 @@ OPENROUTER_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
         True,
     ),
 ]
+OPENAI_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
+    (ImageGenerationTool(provider_settings={'openai': {'action': 'generate'}}), 'action', 'generate'),
+    (ImageGenerationTool(provider_settings={'openai': {'background': 'opaque'}}), 'background', 'opaque'),
+    (ImageGenerationTool(provider_settings={'openai': {'input_fidelity': 'high'}}), 'input_fidelity', 'high'),
+    (ImageGenerationTool(provider_settings={'openai': {'moderation': 'low'}}), 'moderation', 'low'),
+    (ImageGenerationTool(provider_settings={'openai': {'model': 'gpt-image-2'}}), 'model', 'gpt-image-2'),
+    (ImageGenerationTool(provider_settings={'openai': {'partial_images': 2}}), 'partial_images', 2),
+    (ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}), 'quality', 'high'),
+]
+XAI_OPTIONS: list[tuple[AbstractNativeTool, str, Any]] = [
+    (
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search these'}}),
+        'instructions',
+        'search these',
+    ),
+    (
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'retrieval_mode': 'keyword'}}),
+        'keyword_retrieval',
+        {},
+    ),
+]
 
 
 UNKNOWN_SETTINGS: Any = {
     'madeup': {},
     'anthropic': {'typo': 1},
     'openrouter': {'typo': 1, 'allowed_domains': ['example.com']},
+    'openai': {'typo': 1},
+    'xai': {'typo': 1},
 }
 
 
 _needs_anthropic = pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+_needs_xai = pytest.mark.skipif(not xai_available(), reason='xai not installed')
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 @pytest.mark.usefixtures('allow_model_requests')
 class TestProviderSettings:
     @_needs_anthropic
-    @pytest.mark.parametrize(('tool', 'option', 'value'), ANTHROPIC_OPTIONS)
-    def test_anthropic_option_reaches_the_request(self, tool: AbstractNativeTool, option: str, value: Any) -> None:
-        assert _anthropic_request_tool(tool)[option] == value
+    @pytest.mark.parametrize(('tool', 'request_key', 'value'), ANTHROPIC_OPTIONS)
+    def test_anthropic_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
+        assert _anthropic_request_tool(tool)[request_key] == value
 
-    @pytest.mark.parametrize(('tool', 'option', 'value'), OPENROUTER_OPTIONS)
-    def test_openrouter_option_reaches_the_request(self, tool: AbstractNativeTool, option: str, value: Any) -> None:
-        assert _openrouter_request_parameters(tool)[option] == value
+    @pytest.mark.parametrize(('tool', 'request_key', 'value'), OPENROUTER_OPTIONS)
+    def test_openrouter_option_reaches_the_request(
+        self, tool: AbstractNativeTool, request_key: str, value: Any
+    ) -> None:
+        assert _openrouter_request_parameters(tool)[request_key] == value
+
+    @pytest.mark.parametrize(('tool', 'request_key', 'value'), OPENAI_OPTIONS)
+    def test_openai_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
+        assert _openai_request_tool(tool)[request_key] == value
+
+    @_needs_xai
+    @pytest.mark.parametrize(('tool', 'request_key', 'value'), XAI_OPTIONS)
+    def test_xai_option_reaches_the_request(self, tool: AbstractNativeTool, request_key: str, value: Any) -> None:
+        assert _xai_request_search(tool)[request_key] == value
 
     def test_every_declared_option_is_covered(self) -> None:
         """Adding an option without covering it above fails here, rather than silently doing nothing for users."""
@@ -405,17 +483,156 @@ class TestProviderSettings:
             WebSearchTool: WebSearchProviderSettings,
             WebFetchTool: WebFetchProviderSettings,
             AdvisorTool: AdvisorProviderSettings,
+            ImageGenerationTool: ImageGenerationProviderSettings,
+            FileSearchTool: FileSearchProviderSettings,
         }
         declared = {
-            (tool_type, provider, option)
+            (tool_type, system, option)
             for tool_type, settings_type in settings_types.items()
-            for provider, options in get_type_hints(settings_type).items()
+            for system, options in get_type_hints(settings_type).items()
             for option in get_type_hints(options)
         }
-        covered = {(type(tool), 'anthropic', option) for tool, option, _ in ANTHROPIC_OPTIONS} | {
-            (type(tool), 'openrouter', option) for tool, option, _ in OPENROUTER_OPTIONS
+        covered = {
+            (type(tool), system, option)
+            for tool, _, _ in [*ANTHROPIC_OPTIONS, *OPENROUTER_OPTIONS, *OPENAI_OPTIONS, *XAI_OPTIONS]
+            for system, options in cast(Any, tool).provider_settings.items()
+            for option in options
         }
         assert declared == covered
+
+    @pytest.mark.parametrize(
+        ('request_tool', 'tool_type', 'required', 'system', 'option', 'value'),
+        [
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'action', 'generate'),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'background', 'opaque'),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'input_fidelity', 'high'),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'moderation', 'low'),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'model', 'gpt-image-2'),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'partial_images', 2),
+            (_openai_request_tool, ImageGenerationTool, {}, 'openai', 'quality', 'high'),
+            pytest.param(
+                _anthropic_request_tool,
+                AdvisorTool,
+                {'model': 'advisor'},
+                'anthropic',
+                'caching',
+                '5m',
+                marks=_needs_anthropic,
+            ),
+            pytest.param(
+                _anthropic_request_tool,
+                AdvisorTool,
+                {'model': 'advisor'},
+                'anthropic',
+                'max_uses',
+                2,
+                marks=_needs_anthropic,
+            ),
+            pytest.param(
+                _anthropic_request_tool, WebFetchTool, {}, 'anthropic', 'enable_citations', True, marks=_needs_anthropic
+            ),
+            pytest.param(
+                _anthropic_request_tool,
+                WebFetchTool,
+                {},
+                'anthropic',
+                'max_content_tokens',
+                1000,
+                marks=_needs_anthropic,
+            ),
+            pytest.param(
+                _xai_request_search,
+                FileSearchTool,
+                {'file_store_ids': ['store']},
+                'xai',
+                'instructions',
+                'search these',
+                marks=_needs_xai,
+            ),
+            pytest.param(
+                _xai_request_search,
+                FileSearchTool,
+                {'file_store_ids': ['store']},
+                'xai',
+                'retrieval_mode',
+                'keyword',
+                marks=_needs_xai,
+            ),
+        ],
+    )
+    def test_moved_field_warns_and_sends_the_same_request_as_nested(
+        self, request_tool: Any, tool_type: Any, required: dict[str, Any], system: str, option: str, value: Any
+    ) -> None:
+        with pytest.warns(
+            PydanticAIDeprecationWarning, match=rf'`{option}` is deprecated .*provider_settings=\{{"{system}"'
+        ) as warnings:
+            legacy = tool_type(**required, **{option: value})
+        nested = tool_type(**required, provider_settings={system: {option: value}})
+
+        assert warnings[0].filename == __file__
+        assert request_tool(legacy) == request_tool(nested)
+
+    @pytest.mark.parametrize(
+        ('tool_type', 'kwargs'),
+        [
+            (ImageGenerationTool, {'quality': 'high', 'provider_settings': {'openai': {'quality': 'low'}}}),
+            (AdvisorTool, {'model': 'advisor', 'caching': '5m', 'provider_settings': {'anthropic': {'caching': '1h'}}}),
+            (AdvisorTool, {'model': 'advisor', 'max_uses': 1, 'provider_settings': {'anthropic': {'max_uses': 2}}}),
+            (
+                WebFetchTool,
+                {'max_content_tokens': 1000, 'provider_settings': {'anthropic': {'max_content_tokens': 2000}}},
+            ),
+            (
+                FileSearchTool,
+                {
+                    'file_store_ids': ['store'],
+                    'retrieval_mode': 'keyword',
+                    'provider_settings': {'xai': {'retrieval_mode': 'semantic'}},
+                },
+            ),
+        ],
+    )
+    def test_moved_field_conflicting_with_nested_value_is_rejected(
+        self, tool_type: Any, kwargs: dict[str, Any]
+    ) -> None:
+        with pytest.raises(UserError, match='conflicts with `provider_settings'):
+            tool_type(**kwargs)
+
+    def test_moved_field_matching_nested_value_only_warns(self) -> None:
+        with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED):
+            tool = ImageGenerationTool(quality='high', provider_settings={'openai': {'quality': 'high'}})
+
+        assert _openai_request_tool(tool)['quality'] == 'high'
+
+    def test_rebuilding_a_capability_tool_from_data_does_not_warn(self) -> None:
+        """Durable execution validates tools between activities, and a capability user has nothing to change."""
+        tool = ImageGeneration(quality='high').get_native_tools()[0]
+        assert isinstance(tool, ImageGenerationTool)
+        adapter = TypeAdapter(ModelRequestParameters)
+        parameters = ModelRequestParameters(native_tools=[tool])
+
+        assert adapter.validate_python(adapter.dump_python(parameters)).native_tools == [tool]
+        assert adapter.validate_json(adapter.dump_json(parameters)).native_tools == [tool]
+
+    @pytest.mark.parametrize(
+        'spec',
+        [
+            pytest.param({'kind': 'image_generation', 'quality': 'high'}, id='flat'),
+            pytest.param({'tool': {'kind': 'image_generation', 'quality': 'high'}}, id='explicit'),
+        ],
+    )
+    def test_moved_field_in_a_spec_warns(self, spec: dict[str, Any]) -> None:
+        with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED):
+            capability = NativeTool.from_spec(**spec)
+
+        assert isinstance(capability.tool, ImageGenerationTool)
+        assert capability.tool.quality == 'high'
+
+    def test_moved_field_on_a_tool_passed_to_a_spec_warns_once(self) -> None:
+        with pytest.warns(PydanticAIDeprecationWarning, match=QUALITY_DEPRECATED) as warnings:
+            NativeTool.from_spec(tool=ImageGenerationTool(quality='high'))
+
+        assert len(warnings) == 1
 
     @_needs_anthropic
     def test_each_model_reads_only_its_own_settings(self) -> None:
@@ -443,6 +660,8 @@ class TestProviderSettings:
             pytest.param(_anthropic_request_tool, WebFetchTool, marks=_needs_anthropic),
             (_openrouter_request_parameters, WebSearchTool),
             (_openrouter_request_parameters, partial(AdvisorTool, model='advisor')),
+            (_openai_request_tool, ImageGenerationTool),
+            pytest.param(_xai_request_search, partial(FileSearchTool, file_store_ids=['store']), marks=_needs_xai),
         ],
     )
     def test_unknown_settings_are_ignored(self, read_request: Any, make_tool: Any) -> None:

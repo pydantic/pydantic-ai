@@ -9,6 +9,7 @@ from pydantic_ai.native_tools import (
     AbstractNativeTool,
     AdvisorTool,
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -122,6 +123,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'image_generation',
                     'optional': False,
+                    'provider_settings': None,
                     'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
@@ -203,6 +205,9 @@ def test_model_request_parameters_are_serializable():
         WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
         WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}),
         AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+        AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
+        ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}),
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'retrieval_mode': 'keyword'}}),
     ],
 )
 def test_provider_settings_survive_serialization(tool: AbstractNativeTool):

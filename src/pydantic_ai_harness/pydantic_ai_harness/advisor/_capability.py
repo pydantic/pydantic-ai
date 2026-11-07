@@ -12,6 +12,7 @@ from typing import Any, Literal, Self
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool, durable_operation
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -363,12 +364,13 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         return self._advisor_tool(native_model_name)
 
     def _advisor_tool(self, model_name: str) -> AdvisorTool:
-        return AdvisorTool(
-            model=model_name,
-            max_uses=self.max_uses,
-            max_tokens=self.max_tokens,
-            caching=self.caching,
-        )
+        with suppress_provider_field_warnings():
+            return AdvisorTool(
+                model=model_name,
+                max_uses=self.max_uses,
+                max_tokens=self.max_tokens,
+                caching=self.caching,
+            )
 
     @staticmethod
     def _parse_native_model(

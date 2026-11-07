@@ -57,10 +57,10 @@ def _xsearch_pass_through(ctx: RunContext[str]) -> XSearchTool:
 
 
 async def _image_generation_from_deps(ctx: RunContext[str]) -> ImageGenerationTool:
-    return ImageGenerationTool(model=ctx.deps, quality='high')
+    return ImageGenerationTool(provider_settings={'openai': {'model': ctx.deps, 'quality': 'high'}})
 
 
-_IMAGE_GENERATION_PASS_THROUGH = ImageGenerationTool(quality='high')
+_IMAGE_GENERATION_PASS_THROUGH = ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}})
 
 
 def _image_generation_pass_through(ctx: RunContext[str]) -> ImageGenerationTool:
@@ -159,7 +159,11 @@ IMAGE_GENERATION_CASE = Case(
         native=_image_generation_from_deps, fallback_subagent_model=fallback_subagent_model, output_format='jpeg'
     ),
     expected_fallback_native_tools=snapshot(
-        [ImageGenerationTool(model='gpt-image-2', quality='high', output_format='jpeg')]
+        [
+            ImageGenerationTool(
+                provider_settings={'openai': {'model': 'gpt-image-2', 'quality': 'high'}}, output_format='jpeg'
+            )
+        ]
     ),
     with_pass_through_factory=lambda fallback_subagent_model: ImageGeneration[str](
         native=_image_generation_pass_through, fallback_subagent_model=fallback_subagent_model
@@ -173,12 +177,12 @@ IMAGE_GENERATION_CASE = Case(
     ),
     expected_override_only_native_tools=snapshot([ImageGenerationTool(output_format='jpeg')]),
     with_instance_and_overrides=lambda fallback_subagent_model: ImageGeneration[str](
-        native=ImageGenerationTool(quality='high', size='1024x1024'),
+        native=ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}, size='1024x1024'),
         fallback_subagent_model=fallback_subagent_model,
         output_format='jpeg',
     ),
     expected_instance_native_tools=snapshot(
-        [ImageGenerationTool(quality='high', size='1024x1024', output_format='jpeg')]
+        [ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}, size='1024x1024', output_format='jpeg')]
     ),
     native_tool_type=ImageGenerationTool,
     # The narrowed `native_tool` type rejects a `None`-returning factory; this case exists to

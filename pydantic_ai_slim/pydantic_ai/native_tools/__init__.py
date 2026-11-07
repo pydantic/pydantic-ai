@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
@@ -10,6 +11,12 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai._warnings import (
+    PydanticAIDeprecationWarning,
+    provider_field_warnings_suppressed,
+    suppress_provider_field_warnings,
+)
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -25,13 +32,18 @@ __all__ = (
     'WebFetchProviderSettings',
     'WebFetchTool',
     'ImageGenerationModelName',
+    'OpenAIImageGenerationToolSettings',
+    'ImageGenerationProviderSettings',
     'ImageGenerationTool',
     'ImageAspectRatio',
     'ImageSize',
     'MemoryTool',
     'MCPServerTool',
+    'XaiFileSearchToolSettings',
+    'FileSearchProviderSettings',
     'FileSearchTool',
     'AdvisorModelName',
+    'AnthropicAdvisorToolSettings',
     'OpenRouterAdvisorToolSettings',
     'AdvisorProviderSettings',
     'AdvisorTool',
@@ -45,6 +57,52 @@ NATIVE_TOOL_TYPES: dict[str, type[AbstractNativeTool]] = {}
 
 This dict is populated automatically via `__init_subclass__` when tool classes are defined.
 """
+
+
+def _validate_without_provider_field_warnings(value: Any, handler: core_schema.ValidatorFunctionWrapHandler) -> Any:
+    """Stay quiet when a tool is rebuilt from data, as durable execution does between activities.
+
+    The tool may come from a capability, whose user has nothing to change, and the warning would point into pydantic.
+    """
+    with suppress_provider_field_warnings():
+        return handler(value)
+
+
+def _moved_to_provider_settings(system: str, name: str) -> Any:
+    """Mark a field moved into `provider_settings` as deprecated in the JSON schema, for spec authors' editors."""
+    return pydantic.Field(deprecated=f'Use `provider_settings={{"{system}": {{"{name}": ...}}}}` instead.')
+
+
+def _check_moved_fields(
+    tool: AbstractNativeTool,
+    system: str,
+    nested: Mapping[str, object],
+    moved_fields: Mapping[str, tuple[object, object]],
+) -> None:
+    """Reject moved fields that disagree with `provider_settings`, and warn about the ones that are set.
+
+    `moved_fields` maps each deprecated field to its value and its default. The warning's `stacklevel` points at
+    whoever constructs the tool, through `__init__` and `__post_init__`.
+    """
+    set_fields = {name: value for name, (value, default) in moved_fields.items() if value != default}
+    for name, value in set_fields.items():
+        if name in nested and nested[name] != value:
+            raise UserError(
+                f'`{type(tool).__name__}` field `{name}` conflicts with `provider_settings["{system}"]["{name}"]`; '
+                'set only `provider_settings`.'
+            )
+    if not set_fields or provider_field_warnings_suppressed.get():
+        return
+
+    formatted_fields = ', '.join(f'`{name}`' for name in set_fields)
+    label, verb = ('field', 'is') if len(set_fields) == 1 else ('fields', 'are')
+    warnings.warn(
+        f'`{type(tool).__name__}` {label} {formatted_fields} {verb} deprecated and will be removed in v3; '
+        f'use `provider_settings={{"{system}": {{...}}}}` instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=4,
+    )
+
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools.
@@ -149,7 +207,7 @@ class AbstractNativeTool(ABC):
         cls, _source_type: Any, handler: pydantic.GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         if cls is not AbstractNativeTool:
-            return handler(cls)
+            return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
         tools = NATIVE_TOOL_TYPES.values()
         if len(tools) == 1:  # pragma: no cover
@@ -479,6 +537,15 @@ class CodeExecutionTool(AbstractNativeTool):
 class AnthropicWebFetchToolSettings(TypedDict, total=False):
     """Anthropic-specific settings for [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]."""
 
+    enable_citations: bool
+    """Whether fetched content is cited. Maps to `citations={'enabled': True}`.
+
+    The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
+    """
+
+    max_content_tokens: int
+    """Maximum length, in tokens, of the fetched content that Anthropic adds to the context."""
+
     use_cache: bool
     """Whether Anthropic may return cached web content.
 
@@ -545,8 +612,10 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
     """
 
-    enable_citations: bool = False
+    enable_citations: Annotated[bool, _moved_to_provider_settings('anthropic', 'enable_citations')] = False
     """If True, enables citations for fetched content.
+
+    Deprecated: use `provider_settings.anthropic.enable_citations` instead.
 
     The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
 
@@ -555,8 +624,10 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic
     """
 
-    max_content_tokens: int | None = None
+    max_content_tokens: Annotated[int | None, _moved_to_provider_settings('anthropic', 'max_content_tokens')] = None
     """Maximum content length in tokens for fetched content.
+
+    Deprecated: use `provider_settings.anthropic.max_content_tokens` instead.
 
     Supported by:
 
@@ -568,6 +639,14 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _check_moved_fields(
+            self,
+            'anthropic',
+            (self.provider_settings or {}).get('anthropic', {}),
+            {'enable_citations': (self.enable_citations, False), 'max_content_tokens': (self.max_content_tokens, None)},
+        )
 
     @property
     def restricting_settings(self) -> frozenset[str]:
@@ -582,6 +661,39 @@ class WebFetchTool(AbstractNativeTool):
         return frozenset(settings)
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class OpenAIImageGenerationToolSettings(TypedDict, total=False):
+    """OpenAI-specific settings for [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]."""
+
+    action: Literal['generate', 'edit', 'auto']
+    """Whether to generate a new image, edit an input image, or let OpenAI choose. Defaults to `'auto'`."""
+
+    background: Literal['transparent', 'opaque', 'auto']
+    """The image background. `'transparent'` requires PNG or WebP output. Defaults to `'auto'`."""
+
+    input_fidelity: Literal['high', 'low']
+    """How closely edits should preserve features from input images. Defaults to `'low'`."""
+
+    moderation: Literal['auto', 'low']
+    """The OpenAI image moderation level. Defaults to `'auto'`."""
+
+    model: ImageGenerationModelName
+    """The OpenAI image generation model. By default, OpenAI selects the model."""
+
+    partial_images: int
+    """The number of partial images to stream, from 0 to 3. Defaults to 0."""
+
+    quality: Literal['low', 'medium', 'high', 'auto']
+    """The OpenAI image quality level. Defaults to `'auto'`."""
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class ImageGenerationProviderSettings(TypedDict, total=False):
+    """Provider-specific image generation settings, keyed by the model class that reads them."""
+
+    openai: OpenAIImageGenerationToolSettings
+
+
 @dataclass(kw_only=True)
 class ImageGenerationTool(AbstractNativeTool):
     """A native tool that allows your agent to generate images.
@@ -592,42 +704,56 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google
     """
 
-    action: Literal['generate', 'edit', 'auto'] = 'auto'
+    action: Annotated[Literal['generate', 'edit', 'auto'], _moved_to_provider_settings('openai', 'action')] = 'auto'
     """Whether to generate a new image or edit an existing image.
+
+    Deprecated: use `provider_settings.openai.action` instead.
 
     Supported by:
 
     * OpenAI Responses. Default: 'auto'.
     """
 
-    background: Literal['transparent', 'opaque', 'auto'] = 'auto'
+    background: Annotated[
+        Literal['transparent', 'opaque', 'auto'], _moved_to_provider_settings('openai', 'background')
+    ] = 'auto'
     """Background type for the generated image.
+
+    Deprecated: use `provider_settings.openai.background` instead.
 
     Supported by:
 
     * OpenAI Responses. 'transparent' is only supported for 'png' and 'webp' output formats.
     """
 
-    input_fidelity: Literal['high', 'low'] | None = None
+    input_fidelity: Annotated[
+        Literal['high', 'low'] | None, _moved_to_provider_settings('openai', 'input_fidelity')
+    ] = None
     """
     Control how much effort the model will exert to match the style and features,
     especially facial features, of input images.
+
+    Deprecated: use `provider_settings.openai.input_fidelity` instead.
 
     Supported by:
 
     * OpenAI Responses. Default: 'low'.
     """
 
-    moderation: Literal['auto', 'low'] = 'auto'
+    moderation: Annotated[Literal['auto', 'low'], _moved_to_provider_settings('openai', 'moderation')] = 'auto'
     """Moderation level for the generated image.
+
+    Deprecated: use `provider_settings.openai.moderation` instead.
 
     Supported by:
 
     * OpenAI Responses
     """
 
-    model: ImageGenerationModelName | None = None
+    model: Annotated[ImageGenerationModelName | None, _moved_to_provider_settings('openai', 'model')] = None
     """The image generation model to use.
+
+    Deprecated: use `provider_settings.openai.model` instead.
 
     Supported by:
 
@@ -658,17 +784,23 @@ class ImageGenerationTool(AbstractNativeTool):
     * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
     """
 
-    partial_images: int = 0
+    partial_images: Annotated[int, _moved_to_provider_settings('openai', 'partial_images')] = 0
     """
     Number of partial images to generate in streaming mode.
+
+    Deprecated: use `provider_settings.openai.partial_images` instead.
 
     Supported by:
 
     * OpenAI Responses. Supports 0 to 3.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] = 'auto'
+    quality: Annotated[Literal['low', 'medium', 'high', 'auto'], _moved_to_provider_settings('openai', 'quality')] = (
+        'auto'
+    )
     """The quality of the generated image.
+
+    Deprecated: use `provider_settings.openai.quality` instead.
 
     Supported by:
 
@@ -691,8 +823,27 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
+    provider_settings: ImageGenerationProviderSettings | None = None
+    """Provider-specific image generation settings, keyed by the model class that reads them."""
+
     kind: str = 'image_generation'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _check_moved_fields(
+            self,
+            'openai',
+            (self.provider_settings or {}).get('openai', {}),
+            {
+                'action': (self.action, 'auto'),
+                'background': (self.background, 'auto'),
+                'input_fidelity': (self.input_fidelity, None),
+                'moderation': (self.moderation, 'auto'),
+                'model': (self.model, None),
+                'partial_images': (self.partial_images, 0),
+                'quality': (self.quality, 'auto'),
+            },
+        )
 
 
 @dataclass(kw_only=True)
@@ -788,6 +939,24 @@ class MCPServerTool(AbstractNativeTool):
         return f'MCP: {self.id}'
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class XaiFileSearchToolSettings(TypedDict, total=False):
+    """xAI-specific settings for [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]."""
+
+    instructions: str
+    """Instructions for interpreting and ranking xAI collections search results."""
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword']
+    """The xAI collections search retrieval strategy. xAI defaults to `'hybrid'` server-side."""
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class FileSearchProviderSettings(TypedDict, total=False):
+    """Provider-specific file search settings, keyed by the model class that reads them."""
+
+    xai: XaiFileSearchToolSettings
+
+
 @dataclass(kw_only=True)
 class FileSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search through uploaded files using vector search.
@@ -818,24 +987,56 @@ class FileSearchTool(AbstractNativeTool):
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """
 
-    instructions: str | None = None
+    instructions: Annotated[str | None, _moved_to_provider_settings('xai', 'instructions')] = None
     """Optional instructions that guide how the collections search results are interpreted and ranked.
+
+    Deprecated: use `provider_settings.xai.instructions` instead.
 
     Supported by:
 
     * xAI
     """
 
-    retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
+    retrieval_mode: Annotated[
+        Literal['hybrid', 'semantic', 'keyword'] | None, _moved_to_provider_settings('xai', 'retrieval_mode')
+    ] = None
     """The retrieval strategy for the search.
+
+    Deprecated: use `provider_settings.xai.retrieval_mode` instead.
 
     Supported by:
 
     * xAI (defaults to `hybrid` server-side)
     """
 
+    provider_settings: FileSearchProviderSettings | None = None
+    """Provider-specific file search settings, keyed by the model class that reads them."""
+
     kind: str = 'file_search'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        _check_moved_fields(
+            self,
+            'xai',
+            (self.provider_settings or {}).get('xai', {}),
+            {'instructions': (self.instructions, None), 'retrieval_mode': (self.retrieval_mode, None)},
+        )
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class AnthropicAdvisorToolSettings(TypedDict, total=False):
+    """Anthropic-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    caching: Literal['5m', '1h']
+    """The ephemeral cache TTL for the Anthropic advisor context. Maps to `caching={'type': 'ephemeral', 'ttl': ...}`."""
+
+    max_uses: int
+    """The most times the advisor can be consulted in one request. Maps to `max_uses`.
+
+    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
+    count each request. Enforce a conversation-wide ceiling yourself if you need one.
+    """
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
@@ -850,6 +1051,7 @@ class OpenRouterAdvisorToolSettings(TypedDict, total=False):
 class AdvisorProviderSettings(TypedDict, total=False):
     """Provider-specific advisor settings, keyed by the model class that reads them."""
 
+    anthropic: AnthropicAdvisorToolSettings
     openrouter: OpenRouterAdvisorToolSettings
 
 
@@ -857,9 +1059,8 @@ class AdvisorProviderSettings(TypedDict, total=False):
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
 
-    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
-    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
-    the unsupported fields; see the per-field docstrings for which provider supports each.
+    The first-class fields describe behavior shared by the supported systems; system-specific options
+    live in `provider_settings`. See the per-field docstrings for which provider supports each option.
 
     Supported by:
 
@@ -880,11 +1081,10 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    max_uses: int | None = None
+    max_uses: Annotated[int | None, _moved_to_provider_settings('anthropic', 'max_uses')] = None
     """If provided, the advisor can be consulted at most this many times per request. Maps to `max_uses`.
 
-    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
-    count each request. Enforce a conversation-wide ceiling yourself if you need one.
+    Deprecated: use `provider_settings.anthropic.max_uses` instead.
 
     Supported by:
 
@@ -906,9 +1106,11 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    caching: Literal['5m', '1h'] | None = None
+    caching: Annotated[Literal['5m', '1h'] | None, _moved_to_provider_settings('anthropic', 'caching')] = None
     """If provided, caches the advisor context ephemerally with the given TTL. Maps to
     `caching={'type': 'ephemeral', 'ttl': ...}`.
+
+    Deprecated: use `provider_settings.anthropic.caching` instead.
 
     Supported by:
 
@@ -924,6 +1126,12 @@ class AdvisorTool(AbstractNativeTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
+        _check_moved_fields(
+            self,
+            'anthropic',
+            (self.provider_settings or {}).get('anthropic', {}),
+            {'max_uses': (self.max_uses, None), 'caching': (self.caching, None)},
+        )
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 

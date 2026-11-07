@@ -721,7 +721,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
     enabled. Results the model reads from code execution come back without citations, so when a request
     asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and text output or, for
-    web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
+    web fetch, [`enable_citations`][pydantic_ai.native_tools.AnthropicWebFetchToolSettings.enable_citations],
     Pydantic AI sends `['direct']` on those versions of the cited tools on the Anthropic API, unless the
     request needs code execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
 
@@ -2532,9 +2532,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         BetaWebFetchTool20260318Param | BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param,
         str | None,
     ]:
-        enable_citations = tool.enable_citations or include_citations
-        citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
         settings = (tool.provider_settings or {}).get('anthropic', {})
+        enable_citations = settings.get('enable_citations', tool.enable_citations) or include_citations
+        citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
+        max_content_tokens = settings.get('max_content_tokens', tool.max_content_tokens)
         # `use_cache` affects every call, but `response_inclusion` only matters when code execution may call the tool.
         if 'use_cache' in settings or ('response_inclusion' in settings and code_execution_may_call):
             web_fetch_tool = BetaWebFetchTool20260318Param(
@@ -2544,7 +2545,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 citations=citations,
-                max_content_tokens=tool.max_content_tokens,
+                max_content_tokens=max_content_tokens,
             )
             if 'use_cache' in settings:
                 web_fetch_tool['use_cache'] = settings['use_cache']
@@ -2562,7 +2563,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     allowed_domains=tool.allowed_domains,
                     blocked_domains=tool.blocked_domains,
                     citations=citations,
-                    max_content_tokens=tool.max_content_tokens,
+                    max_content_tokens=max_content_tokens,
                 ),
                 None,
             )
@@ -2574,7 +2575,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 allowed_domains=tool.allowed_domains,
                 blocked_domains=tool.blocked_domains,
                 citations=citations,
-                max_content_tokens=tool.max_content_tokens,
+                max_content_tokens=max_content_tokens,
             ),
             'web-fetch-2025-09-10',
         )
