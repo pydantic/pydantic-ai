@@ -818,8 +818,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """Whether `prepare_messages` adds the `<system>` tag announcement to the standing prompt where the profile's `supports_inline_system_prompts` is `False`.
 
     `False` for a model with no provider system field the sentence reliably reaches a model in: the test doubles,
-    which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system prompt parts joined
-    into one string with no separator.
+    which have no wire.
     """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.

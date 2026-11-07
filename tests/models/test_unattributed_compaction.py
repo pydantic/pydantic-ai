@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, sanitize_messages
 from pydantic_ai.models import Model
@@ -501,7 +502,8 @@ async def test_mcp_sampling_sends_the_summary_in_user_voice(allow_model_requests
         ('user', McpTextContent(type='text', text=FRAMED)),
         ('user', McpTextContent(type='text', text=QUESTION)),
     ]
-    assert create_message.call_args.kwargs['system_prompt'] == 'You are a concise assistant.'
+    system_prompt = create_message.call_args.kwargs['system_prompt']
+    assert system_prompt == f'You are a concise assistant.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
