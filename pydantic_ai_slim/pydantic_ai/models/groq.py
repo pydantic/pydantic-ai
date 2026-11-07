@@ -151,20 +151,12 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
 
 
 ProductionGroqModelNames = Literal[
-    'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'whisper-large-v3',
-    'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
-PreviewGroqModelNames = Literal[
-    'meta-llama/llama-prompt-guard-2-22m',
-    'meta-llama/llama-prompt-guard-2-86m',
-    'openai/gpt-oss-safeguard-20b',
-]
+PreviewGroqModelNames = Literal['qwen/qwen3.8-27b',]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
 GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames

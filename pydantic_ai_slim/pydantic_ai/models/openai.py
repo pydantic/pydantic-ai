@@ -219,7 +219,7 @@ try:
         OpenAIError,
         omit,
     )
-    from openai.types import AllModels, chat, responses
+    from openai.types import chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -461,22 +461,25 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
-"""
-Possible OpenAI model names.
+OpenAIModelName = (
+    str
+    | Literal[
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+    ]
+)
+"""Possible OpenAI model names.
 
-Since OpenAI supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The `Literal` lists the models to pick from, for autocomplete: per line, the newest model of the newest
+generation and of the previous one. Any other model id the API accepts works too, as a `str`.
 See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
-Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
-`openai` extra declares; it arrived in `openai` 3.21.0
-(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
-`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
-Drop its bridge once the SDK floor includes the release that adds it.
+This is used for the OpenAI-compatible models of other providers too (ie, Ollama, Deepseek).
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'

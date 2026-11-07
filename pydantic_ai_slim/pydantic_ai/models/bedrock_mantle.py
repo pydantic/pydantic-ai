@@ -18,17 +18,11 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 LatestBedrockMantleModelNames = Literal[
-    'openai.gpt-5.4',
-    'openai.gpt-5.4-2026-03-05',
-    'openai.gpt-5.5',
-    'openai.gpt-5.5-2026-04-23',
-    'openai.gpt-5.6-luna',
     'openai.gpt-5.6-sol',
     'openai.gpt-5.6-terra',
-    'openai.gpt-oss-20b',
+    'openai.gpt-5.6-luna',
     'openai.gpt-oss-120b',
-    'openai.gpt-oss-safeguard-20b',
-    'openai.gpt-oss-safeguard-120b',
+    'openai.gpt-oss-20b',
 ]
 """Latest OpenAI models served through Amazon Bedrock Mantle."""
 
