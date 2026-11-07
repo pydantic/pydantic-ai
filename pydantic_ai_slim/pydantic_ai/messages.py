@@ -6175,10 +6175,10 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
     if context.stripped_text_metadata:
         warnings.warn(
             f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
-            f'prompt or tool return item(s). Metadata is never sent to the model, but application code and '
-            f'capabilities read it to recognize content they added themselves, so it is not accepted from untrusted '
-            f'clients. Pass '
-            f'history that carries your own metadata as trusted server-side `message_history` instead.',
+            f'prompt or tool return item(s) (on tool return content, only its reserved `__pydantic_ai__` key). '
+            f'Metadata is never sent to the model, but application code and capabilities read it to recognize '
+            f'content they added themselves, so it is not accepted from untrusted clients. Pass history that '
+            f'carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
             stacklevel=4,
         )
@@ -6308,8 +6308,9 @@ def _sanitize_request_parts(
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
-    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt and tool
-    return [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
+    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped and the tool
+    return ones whose reserved `__pydantic_ai__` metadata key was dropped.
     Returns the kept parts and whether any part carrying the system voice
     ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
     stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
@@ -6403,6 +6404,18 @@ def _text_without_metadata(item: TextContent, stripped: list[TextContent]) -> Te
     return replace(item, metadata=None)
 
 
+def _text_without_internal_metadata(item: TextContent, stripped: list[TextContent]) -> TextContent:
+    """An untrusted tool return `item` without the reserved `__pydantic_ai__` metadata namespace.
+
+    The application's own keys are kept. `stripped` is updated in place with `item` when it had the namespace.
+    """
+    if item.metadata is None or _PYDANTIC_AI_METADATA_KEY not in item.metadata:
+        return item
+    stripped.append(item)
+    metadata = {key: value for key, value in item.metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
+    return replace(item, metadata=metadata or None)
+
+
 def _sanitize_file_url(
     file_url: _FileUrlT,
     allowed_file_url_force_download: set[ForceDownloadMode],
@@ -6472,14 +6485,14 @@ def _sanitize_tool_return_content(
     schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
     is set.
 
-    The metadata of any [`TextContent`][pydantic_ai.messages.TextContent] is dropped too, as it is
-    from user prompts: it carries the mark of a frame the framework wrote (see `framework_frame_text`),
-    which a client must not be able to claim.
+    The reserved `__pydantic_ai__` key of any [`TextContent`][pydantic_ai.messages.TextContent]'s metadata
+    is dropped too, keeping the application's own keys: it carries the mark of a frame the framework wrote
+    (see `framework_frame_text`), which a client must not be able to claim.
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
     file providers encountered, and `stripped_text_metadata` with the `TextContent` items whose
-    metadata was dropped.
+    reserved `__pydantic_ai__` metadata key was dropped.
     """
     if isinstance(content, FileUrl | UploadedFile | TextContent):
         return _sanitize_tool_return_item(
@@ -6543,7 +6556,7 @@ def _sanitize_tool_return_item(
 ) -> tuple[bool, FileUrl | UploadedFile | TextContent]:
     """Sanitize a file reference or text item in tool return content, as `_sanitize_tool_return_content` describes."""
     if isinstance(item, TextContent):
-        return True, _text_without_metadata(item, stripped_text_metadata)
+        return True, _text_without_internal_metadata(item, stripped_text_metadata)
     if isinstance(item, FileUrl):
         scheme = urlparse(item.url).scheme.lower()
         if scheme and scheme not in allowed_file_url_schemes:
@@ -6579,7 +6592,8 @@ def _sanitize_response_parts(
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
     file providers encountered, and `stripped_text_metadata` with the tool return
-    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose reserved `__pydantic_ai__` metadata
+    key was dropped.
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
