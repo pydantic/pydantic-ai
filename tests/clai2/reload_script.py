@@ -40,6 +40,8 @@ def start_warming_and_wait(modules: Sequence[str] = warm_imports.FIRST_USE_MODUL
     # before Python 3.14 `tuple()` then fails to resize it with `SystemError`, failing that thread's import. A module
     # it finished first, such as `openai.types.responses.response_output_text`, stays cached but missing from its
     # re-imported parent package, so `/set model` fails for the rest of the process. Finish warming before prompting.
+    # `/reload` re-executes `warm_imports` and drops this wrapper, which holds only because CLAI2 starts warming once
+    # per process, before any reload.
     thread = start_warming(modules)
     thread.join()
     return thread
