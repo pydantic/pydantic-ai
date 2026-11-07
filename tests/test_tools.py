@@ -2167,6 +2167,37 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
     }
 
 
+def test_add_tool_leaves_a_shared_tool_untouched():
+    """A `Tool` added to one toolset keeps its own defaults in every other toolset it is added to."""
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'my_tool'
+
+    tool = Tool(my_tool)
+    plain = FunctionToolset([tool])
+    guarded = FunctionToolset([tool], requires_approval=True, max_retries=3, metadata={'k': 'v'})
+
+    def defaults(toolset: FunctionToolset[None]) -> tuple[bool, int | None, dict[str, Any] | None]:
+        stored = toolset.tools['my_tool']
+        return stored.requires_approval, stored.max_retries, stored.metadata
+
+    assert defaults(plain) == (False, None, None)
+    assert defaults(guarded) == (True, 3, {'k': 'v'})
+    assert (tool.requires_approval, tool.max_retries, tool.metadata) == (False, None, None)
+
+
+def test_add_tool_returns_the_toolset_copy_from_add_function():
+    """The tool a function is added as keeps the toolset's defaults even when the function passes one."""
+    toolset = FunctionToolset[None](max_retries=4)
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'my_tool'
+
+    added = toolset.add_function(my_tool)
+    assert added is toolset.tools['my_tool']
+    assert added.max_retries == 4
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
