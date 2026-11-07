@@ -121,9 +121,9 @@ async def spinner_command(
     if len(args) > 2:
         raise ValueError(USAGE)
     if args:
-        name, interval = _named(spinners, args)
+        name, interval = await to_thread.run_sync(_named, spinners, args)
     else:
-        picker = SpinnerPicker(spinners)
+        picker = await to_thread.run_sync(SpinnerPicker, spinners)
         result = await run_worker(lambda: runners.run_list(picker.build()))
         if result.cancelled or result.item is None or not isinstance(result.item.value, str):
             return ''
@@ -131,14 +131,14 @@ async def spinner_command(
         interval = picker.speeds.get(name)
     if interval is not None:
         try:
-            spinners.save_interval(name, interval)
+            await to_thread.run_sync(spinners.save_interval, name, interval)
         except ValidationError as exc:
             raise ValueError(f'{spinners.path} is not a JSON object; speed not saved.') from exc
     context.set_setting(['display.spinner', name])
-    spinner = spinners.active()
+    spinner, problems = await to_thread.run_sync(lambda: (spinners.active(), spinners.problems()))
     saved = f' Speed saved to {spinners.path}.' if interval is not None else ''
     lines = (f'Spinner set to {spinner.name} ({len(spinner.frames)} frames at {spinner.interval:.2f}s).{saved}',)
-    return '\n'.join((*lines, *spinners.problems()))
+    return '\n'.join((*lines, *problems))
 
 
 def spinner_completions(spinners: Spinners, args: list[str]) -> Iterable[str]:

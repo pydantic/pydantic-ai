@@ -655,8 +655,9 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 # Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
 # database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
 # the event loop: offload that call instead. Most listed here have synchronous callers, such as menus that run in a
-# thread and tests that set up state. The deliberate exception is shell construction and plugin loading, which startup
-# and `/plugins` run on the event loop: making them async is the same separate redesign as for the stores.
+# thread and tests that set up state. The deliberate exceptions, which async code still calls on the event loop, are
+# shell construction and plugin loading at startup and in `/plugins`, with the welcome banner and version they show,
+# since making them async is the same separate redesign as for the stores, and the status row's `spinners.json` read.
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
@@ -665,7 +666,8 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
     ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
-    ('pydantic_clai2/ui/rendering/spinners.py', ('_locked', '_replace', '_user_text')),
+    # The status row reads `spinners.json` on each repaint, so an edit shows on the next frame.
+    ('pydantic_clai2/ui/rendering/spinners.py', '_user_text'),
     # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
     ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
     # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
@@ -675,7 +677,8 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     ),
     ('pydantic_clai2/plugins/factories.py', 'import_file'),
     ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
-    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session.
+    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session,
+    # and logfire records a plugin that fails to load with its traceback, which reads the source files it quotes.
     ('pydantic_clai2/cli/self_update.py', 'installed'),
     ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
     ('pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
