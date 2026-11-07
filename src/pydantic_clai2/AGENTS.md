@@ -395,9 +395,7 @@ from the palette.
 
 Echo the user's own text through `rendering.prompt_line`, which paints it on
 `theme.prompt_background()`. Under the default theme that tint comes from the terminal's
-background, which `chat` asks for once through `ui/prompt/terminal_background.py`. Add any
-other terminal query to that same exchange. It hands the keys it reads with the answers to
-the editor's prompt-toolkit input; a separate query would read and drop them.
+background, which `chat` reads once from `COLORFGBG` through `ui/prompt/terminal_background.py`.
 
 ## Source layout
 

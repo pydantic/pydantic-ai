@@ -101,7 +101,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and left-button drag selection over painted transcript and question-widget cells: highlight and text |
-| `ui/prompt/terminal_background.py` | `detect_background`: the terminal's own background from an OSC 11 query (only on a terminal, at most `TIMEOUT`), else `COLORFGBG`; keys read with the answer go to the editor's prompt-toolkit input |
+| `ui/prompt/terminal_background.py` | `detect_background`: whether the terminal's own background is light or dark, from `COLORFGBG`, when the output is a terminal |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |

@@ -1,15 +1,13 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
-import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
-from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group, to_thread
+from anyio import CancelScope, create_task_group
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -205,8 +203,7 @@ async def chat(
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
-    # Asked once, before anything is drawn; keys typed meanwhile go to the editor.
-    terminal_background = await to_thread.run_sync(partial(detect_background, stdin=sys.stdin, stdout=console.file))
+    terminal_background = detect_background(stdout=console.file)
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS

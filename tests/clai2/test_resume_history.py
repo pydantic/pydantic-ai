@@ -174,7 +174,7 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
 async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`chat` asks the terminal for its background once, and every echoed prompt is tinted from it."""
+    """`chat` learns the terminal's background once, and every echoed prompt is tinted from it."""
     prior = saved_prior(tmp_path, monkeypatch)
     await prior.prompt('saved turn')
     surfaces: list[PromptSurface] = []
@@ -186,7 +186,7 @@ async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
-    def dark(*, stdin: IO[str], stdout: IO[str]) -> str:
+    def dark(*, stdout: IO[str]) -> str:
         return '#1E1E1E'
 
     monkeypatch.setattr('pydantic_clai2.app.detect_background', dark)

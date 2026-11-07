@@ -1655,12 +1655,9 @@ terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 Your prompts' grey background follows the theme. A bundled palette moves its
-background towards its text colour. The `default` theme asks the terminal for its
-background colour once at startup (OSC 11) and waits at most a quarter of a second
-for the answer. Keys you type meanwhile still reach the prompt. If the terminal does
-not say, CLAI reads `COLORFGBG`, which tells a light terminal from a dark one. If
-neither is known, prompts keep the bold text alone. CLAI asks only when both its
-input and output are a terminal.
+background towards its text colour. The `default` theme reads `COLORFGBG`, which
+some terminals set to tell a light terminal from a dark one. When it is unset, or
+CLAI's output is not a terminal, prompts keep the bold text alone.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
