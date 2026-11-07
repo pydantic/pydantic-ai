@@ -12,6 +12,7 @@ import anyio
 import httpx
 import pytest
 from cassetter import Cassette
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -24,6 +25,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     ModelTimeoutError,
+    NativeOutput,
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
@@ -86,7 +88,7 @@ with try_import() as imports_successful:
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.cohere import CohereModel, _CohereJsonSchemaTransformer
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
@@ -1551,3 +1553,79 @@ Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one le
             finish_reason='stop',
         )
     )
+
+
+class SimpleOutput(BaseModel):
+    name: str
+
+
+async def test_native_output_sends_response_format(allow_model_requests: None):
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='{"name": "Sam"}')],
+            role='assistant',
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-a-03-2025', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m, output_type=NativeOutput(SimpleOutput))
+    result = await agent.run('Hello')
+    assert result.output == SimpleOutput(name='Sam')
+    chat_kwargs = mock_client.chat_kwargs[0]
+    assert chat_kwargs['response_format']['type'] == 'json_object'
+    assert chat_kwargs['response_format']['json_schema']['type'] == 'object'
+
+
+async def test_native_output_with_tools_sends_response_format(allow_model_requests: None):
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='{"name": "Sam"}')],
+            role='assistant',
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-a-03-2025', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m, output_type=NativeOutput(SimpleOutput))
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        return json.dumps({'lat': 51, 'lng': 0})
+
+    await agent.run('Hello')
+    chat_kwargs = mock_client.chat_kwargs[0]
+    assert chat_kwargs['response_format']['type'] == 'json_object'
+    assert len(chat_kwargs['tools']) == 1
+
+
+def test_native_output_transformer_rewrites_rejected_keywords():
+    schema = {
+        'type': 'object',
+        'properties': {
+            'value': {'oneOf': [{'type': 'string'}, {'type': 'integer', 'minimum': 0}]},
+            'nested': {'allOf': [{'type': 'object', 'properties': {'x': {'type': 'string'}}}]},
+        },
+        'required': ['value', 'nested'],
+    }
+    result = _CohereJsonSchemaTransformer(schema, prefer_inlined_defs=True).walk()
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'value': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer', 'description': 'Enforced client-side, not by the API: `minimum`: 0'},
+                    ]
+                },
+                'nested': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            },
+            'required': ['value', 'nested'],
+        }
+    )
+
+
+async def test_native_output_unsupported_model_id_raises_user_error(allow_model_requests: None):
+    m = CohereModel('command-r-08-2024', provider=CohereProvider(api_key='foobar'))
+    agent = Agent(m, output_type=NativeOutput(SimpleOutput))
+    with pytest.raises(UserError, match='Native structured output is not supported'):
+        await agent.run('Hello')
