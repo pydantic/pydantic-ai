@@ -387,7 +387,11 @@ engine:
               )
           # The checkout joins sys.path only for a target that lives there, and after installed packages:
           # the agent imports some dependencies after this point, and a checkout module must not replace one.
-          if importlib.util.find_spec(_module_name.partition('.')[0]) is None:
+          # A namespace package, which has no origin, can have a portion in the checkout.
+          _top_level = _module_name.partition('.')[0]
+          _imported = sys.modules.get(_top_level)
+          _spec = importlib.util.find_spec(_top_level) if _imported is None else _imported.__spec__
+          if _spec is None or _spec.origin is None:
               sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
@@ -409,9 +413,10 @@ engine:
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
-      // Preload the installed runner before resolving PAI_AGENT. The wrapper is
-      // cached before CLAI 2 resolves -a, so agent code imports once, import
-      // failures retain their traceback, and CLAI 2 leaves sys.path alone.
+      // Preload the installed runner before the wrapper resolves PAI_AGENT, which
+      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // resolves -a, so agent code imports once and import failures retain their
+      // traceback.
       const LAUNCHER = `import importlib
       import json
       import os

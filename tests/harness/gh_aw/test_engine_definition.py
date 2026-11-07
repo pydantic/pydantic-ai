@@ -539,6 +539,30 @@ def test_wrapper_imports_a_custom_agent_once(tmp_path: Path, monkeypatch: pytest
     assert import_log.read_text(encoding='utf-8') == 'imported\n'
 
 
+def test_wrapper_imports_a_checkout_portion_of_an_installed_namespace_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = tmp_path / 'site-packages'
+    (installed / 'gh_aw_test_namespace').mkdir(parents=True)
+    checkout_portion = tmp_path / 'workspace' / 'gh_aw_test_namespace'
+    checkout_portion.mkdir(parents=True)
+    (checkout_portion / 'agents.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='namespace')\n", encoding='utf-8'
+    )
+    invocation = launch(
+        tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'gh_aw_test_namespace.agents:agent'}
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('gh_aw_test_namespace', 'gh_aw_test_namespace.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    module = import_generated_agent(invocation, monkeypatch)
+
+    agent = getattr(module, 'agent')
+    assert isinstance(agent, Agent)
+    assert agent.name == 'namespace'
+
+
 @pytest.mark.parametrize(
     ('suffix', 'contents', 'name'),
     [

@@ -299,9 +299,9 @@ Post your triage as a single comment on that issue.
   adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
   Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
-  only an imported target that is not importable without the checkout, such as `my_agent:agent`,
-  puts the checkout on `sys.path`, and then after installed packages.
+  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode.
+  It appends the checkout to `sys.path`, after installed packages, only for an imported target
+  that is not importable without it, such as `my_agent:agent`.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue

@@ -21,8 +21,11 @@ def import_agent(path: str) -> AbstractAgent[None, object]:
     if not module_name or not attr:
         raise ValueError(f'--agent expects MODULE:ATTR, for example pydantic_ai.main:my_cool_agent; got {path!r}')
     top_level = module_name.partition('.')[0]
+    imported = sys.modules.get(top_level)
     # `find_spec` raises for an imported module without a spec, such as a script's `__main__`.
-    if top_level not in sys.modules and importlib.util.find_spec(top_level) is None:
+    spec = importlib.util.find_spec(top_level) if imported is None else imported.__spec__
+    # A namespace package, which has no `origin`, can have a portion in the launch directory.
+    if spec is None or spec.origin is None:
         cwd = str(Path.cwd())
         if cwd not in sys.path:
             sys.path.append(cwd)

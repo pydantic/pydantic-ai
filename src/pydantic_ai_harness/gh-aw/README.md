@@ -154,9 +154,9 @@ agent = Agent(name='triage', instructions='Answer briefly.')
 Some details to know.
 
 - **A private wrapper module resolves the agent.** The engine writes it in every mode: the
-  default composition, an imported `PAI_AGENT`, or a spec. Only an imported target that
-  is not importable without the checkout, such as `my_agent:agent` above, puts the
-  checkout on `sys.path`, and then after installed packages. Gateway tools and recording
+  default composition, an imported `PAI_AGENT`, or a spec. The wrapper appends the
+  checkout to `sys.path`, after installed packages, only for an imported target that is
+  not importable without it, such as `my_agent:agent` above. Gateway tools and recording
   apply in every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install

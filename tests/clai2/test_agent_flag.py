@@ -64,6 +64,23 @@ def test_import_agent_leaves_sys_path_alone_for_an_importable_module(
     assert str(fixture_module) not in sys.path
 
 
+def test_import_agent_resolves_a_launch_directory_portion_of_an_installed_namespace_package(
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_namespace').mkdir()
+    (fixture_module / 'clai_agent_flag_namespace').mkdir()
+    (fixture_module / 'clai_agent_flag_namespace' / 'agents.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('clai_agent_flag_namespace', 'clai_agent_flag_namespace.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    assert isinstance(import_agent('clai_agent_flag_namespace.agents:agent'), Agent)
+    assert sys.path[-1] == str(fixture_module)
+
+
 @pytest.mark.parametrize(
     ('path', 'error', 'message'),
     [
