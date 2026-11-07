@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "226"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          thinking_level: high
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2674
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 94
+          total_input_tokens: 14
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 14
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 79
+          initial_input_tokens: 13
+        created: 2026-11-06T02:44:04Z
+        updated: 2026-11-06T02:44:04Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvMCCvACAWkUfRMjw2AIzJvnHmJer/rlGDJoafEOOkI2tWzu+vTEhgYOSn/tCRIfTdW+YzHAtoNp/fhRBclj3/LyWiIpVeB3Q3/BEUkV9fKonnBAxr5aU+jgD+PnyiHrX9bC1VHwVcyIVHEJRpwcldVEQOTMdyhx5L8y4bIwPVImKFYFLg/8+0nmFrjwd5peTfI839plg9BLZFb8VFNXJLXKNldEv/zP7LNuj1m4/aeB3dITbBqyaRwPWqSyhSc8Pa4kP+7AfLb0JLFpvmW9EwhD3bjNxFhROeO/NEUHFW9UHL7fhOPvm4/kENRjz8oir32S9HIYr8T24knG9efCFMduz5PVYtdnr2gu8U2wxZdXCL7fR8Tm6pgBb/iCRhATyaojhTcrXQAwz79yjxQHCr8qr3HYz4/Im7gF+di+VqQPfi1+dFlKPr8U0VXMtF9t93k0i9Lwh7XU8rzgHjCOig3zWR3/ZZVrdOmhmPhuq4UiF/asv6U=
+          summary:
+          - text: |+
+              Okay, here's my breakdown of this very straightforward request.
+
+              **My Analysis of the "2+2" Inquiry**
+
+              Alright, a simple calculation presented: "What is 2+2?". My mind immediately jumps to the arithmetic. The fundamental core is a basic addition problem.
+
+              First, I calculate the sum. 2 + 2... that equals 4. No complex math required here. Then I'm presented with a constraint: "Reply with just the number." The instruction is clear; output formatting is key here. I need to avoid any extra text.
+
+              Therefore, the final output needs to be a solitary "4". Simple and direct.
+
+
+            type: text
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:44:05.027683+00:00

@@ -1,0 +1,165 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 130
+          total_input_tokens: 29
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 29
+          total_output_tokens: 10
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 91
+          initial_input_tokens: 29
+        role: model
+        created: 2026-11-06T02:58:19Z
+        updated: 2026-11-06T02:58:19Z
+        steps:
+        - signature: >-
+            AY89a1/O+RUVJdMjeL2xStyuQCkG4XvSBov5UtdSntsf/zMQTIqfrXOiYaai0ckQCuAyuvJczAU5bfxGdnfOZvEQv+/re144V/mdMjEPGda3BwPoNLMF1wBaE5NPSr5Vna2whDW6CYcHM9Shm+oNdhhrqICaJSb7fA1VFWW9X6tsTbkgdp/hxYRJDPSfSRpeSaWdISxxFi03oH8g+K4cLiZVH5H570WXvgFSDlhtVAOzdN8A3Wc8acpEHaV/38B89z4hipFdok/WUW3T1sPQC+JmagbUGZ6NhL+htfCAhY8HmyiFdkZorzhKU47BpuZlMh3ImaIw6cidpcfynMzBnWXrSByLjegt7eGGn7cxJpqDHnv89jFytI0ylmfkwI4e0GScpc79mPTOruYfBHirlEPSgGtoCMMMHkoCWcDSIKD2nqAthq7YkxFP/SOHbwDVa16PohCIxp5ut7XDqQqlJjZ4zRjblCV5v0Tmy1oROQQ4jR1mzWzDZWfhMeMfdNl1Y8BXcnMfql8q82VMDZT65JKuVHJTkc6ddqyUpWpk/TI3q06fPniTru1RivnzId4zz0SO5A==
+          type: thought
+        - id: call_538764
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:58:19.126111+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1343"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        - signature: >-
+            AY89a1/O+RUVJdMjeL2xStyuQCkG4XvSBov5UtdSntsf/zMQTIqfrXOiYaai0ckQCuAyuvJczAU5bfxGdnfOZvEQv+/re144V/mdMjEPGda3BwPoNLMF1wBaE5NPSr5Vna2whDW6CYcHM9Shm+oNdhhrqICaJSb7fA1VFWW9X6tsTbkgdp/hxYRJDPSfSRpeSaWdISxxFi03oH8g+K4cLiZVH5H570WXvgFSDlhtVAOzdN8A3Wc8acpEHaV/38B89z4hipFdok/WUW3T1sPQC+JmagbUGZ6NhL+htfCAhY8HmyiFdkZorzhKU47BpuZlMh3ImaIw6cidpcfynMzBnWXrSByLjegt7eGGn7cxJpqDHnv89jFytI0ylmfkwI4e0GScpc79mPTOruYfBHirlEPSgGtoCMMMHkoCWcDSIKD2nqAthq7YkxFP/SOHbwDVa16PohCIxp5ut7XDqQqlJjZ4zRjblCV5v0Tmy1oROQQ4jR1mzWzDZWfhMeMfdNl1Y8BXcnMfql8q82VMDZT65JKuVHJTkc6ddqyUpWpk/TI3q06fPniTru1RivnzId4zz0SO5A==
+          type: thought
+        - id: call_538764
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_538764
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: image/png
+            type: image
+            uri: https://www.gstatic.com/webp/gallery3/1.png
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "185"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          message: >-
+            Cannot fetch content from the provided URL. The URL is blocked by robots.txt
+            rules. Please confirm the URL is allowed to be crawled.
+          code: invalid_request
+  recorded_at: 2026-11-06T02:58:19.484181+00:00

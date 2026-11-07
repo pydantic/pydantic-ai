@@ -1,0 +1,273 @@
+version: 1
+interactions:
+- request:
+    method: DELETE
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/fileSearchStores/interactionstest-smz0lvj321g5?force=True
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=339
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content: {}
+  recorded_at: 2026-11-05T15:14:27.915750+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-smz0lvj321g5:uploadToFileSearchStore
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "55"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        mimeType: text/plain
+        displayName: secret.txt
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "0"
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - >-
+        https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-smz0lvj321g5:uploadToFileSearchStore?upload_id=AFy3sg0dbmLb12dGiccVINpmfDFr9mdULBdTCDPiSbqz8vhR0Hgopr2hILL4FxwwRPKyeUl5wMzKVR2bJTg0IiLxkm02doKSHdRE7ZbK-tz5GQ&upload_protocol=resumable
+    body:
+      type: none
+  recorded_at: 2026-11-05T15:14:13.993271+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-smz0lvj321g5:uploadToFileSearchStore?upload_id=AFy3sg0dbmLb12dGiccVINpmfDFr9mdULBdTCDPiSbqz8vhR0Hgopr2hILL4FxwwRPKyeUl5wMzKVR2bJTg0IiLxkm02doKSHdRE7ZbK-tz5GQ&upload_protocol=resumable
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "41"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: text
+      content: The secret project code is emerald tiger.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "417"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    body:
+      type: json
+      content:
+        name: >-
+          fileSearchStores/interactionstest-smz0lvj321g5/upload/operations/secrettxt-vqiuklv3v4nv
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+          parent: fileSearchStores/interactionstest-smz0lvj321g5
+          documentName: fileSearchStores/interactionstest-smz0lvj321g5/documents/secrettxt-vqiuklv3v4nv
+          mimeType: text/plain
+          sizeBytes: "41"
+  recorded_at: 2026-11-05T15:14:15.898613+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "36"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        displayName: interactions-test
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=414
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: fileSearchStores/interactionstest-smz0lvj321g5
+        displayName: interactions-test
+        createTime: 2026-11-05T15:14:13.622977Z
+        updateTime: 2026-11-05T15:14:13.622977Z
+        embeddingModel: models/gemini-embedding-001
+  recorded_at: 2026-11-05T15:14:13.665013+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "284"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: Use file_search to find the secret project code.
+            type: text
+          type: user_input
+        store: false
+        stream: true
+        tools:
+        - file_search_store_names:
+          - fileSearchStores/interactionstest-smz0lvj321g5
+          type: file_search
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=8774
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"id":"call_300918","signature":"","type":"file_search_call"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"CAISzwMBaRR9E2cmdktDc6qS8kzjMeu3F1AXy4ue76XOVHdq9eoWFmom+zHVFev3ZzpWmvxLL8lVRpuc8SOtU6IeNFb2umObmp49biEoIAOi6MrRQl+2Ynm/ww9ERN7K7geBcn84IONmbs9PRH7IEL+k2NPsuSRfzeGcDNjObAI+EaPxWStTOZqcRaKi+vPbKzamv5oGEO4C4gacBU1nZtbPEsNrpQv1Zi0IimMwqnn+JVk5StCV1HOzIxOozpBeRyp2Oye9OyJtmTrbfNgKm3OZ2k0HqXfvCZNb5zXRMHQBK2SbjPrPBvH4sgbAOvNr5ttGSkKI40g36P/s1MNzY1hDRpEsbSW/DXmQUAesL5V396lyEde045feDOv3Vl9cphNxuOxkeC1LUxGt59I+/613Qiw6IlWpvZNpEA8OmUfs+8PmVQI6P6IM4JHhrN5mCbXsGDX3+KFKD/JEFJvwvsJvOf9SR0fEcm61Npq5GgZy5icW4lL74GLPB2BA+64B2RxgOqTeRcgz6C1d93J2yVpIUflrsN3i478yfrZuxHD2a2bgmAmJDhw+XGbacijZQzCuKOEskNYI1J2UqPkNu61m72UruDLAx5lDjhGJhUWHr0aS","type":"file_search_call"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"call_id":"call_300918","signature":"","type":"file_search_result"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"signature":"CAIS7gMBaRR9E8uGQAD4b4ZgmiWPtw7Pai8NHcvDTNqubztXzsn1kTifNj3R1aIjinttru2vvnPpf8Dthn3Xr9Rgl1WvZs53K0D4Yz0+wuR1KPWtxLF9bGuvKhwg00a7i+xt9MSyiYQbvbF/I3Pzlh58xM35JP6a5fTPwGfgYUHqJOpV8eaaNCmGoyPbbMs5CHvEyMV40rkY2pgUZ4qWfOB7VBRcbFOM224fEyiGV7Xt+RfIcwtaBmo4ETtpBs3EECdAjoOFiqFARUAY+5SV3iHcDTDvwkXzwu2hJKfxXNin8sYYK3UasGJFXypL6P/IDwpG/bYORq+IOE8BrbZrOHzj+w9TdBOp2L8REI0GWV+Nd+7pZOXlySzWvCBa59BVGpuuziJ8SRJ/AcbdqrpqKOMxeNC0KWG8mIKMSyOkAzahzLr4APHvqAoDHeoPmIYZdLTsKofAt1FEUhCwAG1QdUCA/lSBGfNvsS5JmMjAlRW3egeCco83Eo+rP7ADlzpDStDM6nQMdeLMq7tflpmU32RN2GHF8acaiVSWwonUBkhqt33zSFhg40TwNsythvS5XQZNUflLJKeoQ137u7+R61mHjh6t6a4ofO2FjcyVxFyYTcfSUA3awjKDfmmgdc+Ug9NTBQOJfvCBAGV0hq/Y93deKg==","type":"file_search_result"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":2,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":2,"delta":{"signature":"ErICCq8CAWkUfRPGFWfViHmSabntn3Yu4QpLRqyRGqzY0cEz3p3YNT4VAOcolO9E/KXJion7Kv2FZ28aVdsnJN4Mh0EqX/gblTNxphLQq44IVUgNC0ZA8UoHkCLgELS7zZ3SsAsWXGZZdsaMJtB682wZqj5E7pDGb6i53foTYL68ajT42SomySgQl/yTkFedqg0NIhbXNatWFiv0kjDyej1KYVv5J9nQdOwb7AUuPHA2aLAtlTzfqKalR8uMKeXlAM5alA1bDkBKY5ikKTU8t2T1vVuW7VRe0Zmi0awu71ZXVghmTuCLspR7CrtslzKTuBpfSakSkQi51sHHlILKDzKykFKIvYWvOzIUisdHQBwmieDe5mIyI9kNQVQ6dgfY1GfZLOP1Bd6XyhjdqJa7xC8JQYjQ","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":2,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":3,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":3,"delta":{"text":"The secret project code","type":"text"},"event_type":"step.delta"}
+
+        event: step.delta
+        data: {"index":3,"delta":{"text":" is **emerald tiger**.","type":"text"},"event_type":"step.delta"}
+
+        event: step.delta
+        data: {"index":3,"delta":{"annotations":[{"start_index":0,"end_index":44,"document_uri":"fileSearchStores/interactionstest-smz0lvj321g5","file_name":"secret.txt","source":"The secret project code is emerald tiger.\n","type":"file_citation"}],"type":"text_annotation_delta"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":3,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":615,"total_input_tokens":62,"input_tokens_by_modality":[{"modality":"text","tokens":62}],"total_cached_tokens":0,"total_output_tokens":30,"total_tool_use_tokens":426,"tool_use_tokens_by_modality":[{"modality":"text","tokens":426}],"total_thought_tokens":97,"initial_input_tokens":319},"created":"2026-11-05T15:14:27Z","updated":"2026-11-05T15:14:27Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:14:27.551529+00:00

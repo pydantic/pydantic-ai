@@ -41,6 +41,7 @@ with try_import() as anthropic_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_available:
@@ -66,6 +67,24 @@ class Case:
 
 
 CASES = [
+    pytest.param(
+        Case(
+            lambda: GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test-key')),
+            ALL_WEB_SEARCH_RESTRICTIONS,
+            frozenset({'allowed_domains', 'blocked_domains', 'max_uses', 'external_web_access'}),
+        ),
+        id='google-interactions-web-search',
+        marks=pytest.mark.skipif(not google_available(), reason='google not installed'),
+    ),
+    pytest.param(
+        Case(
+            lambda: GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test-key')),
+            ALL_WEB_FETCH_RESTRICTIONS,
+            frozenset({'allowed_domains', 'blocked_domains', 'max_uses'}),
+        ),
+        id='google-interactions-web-fetch',
+        marks=pytest.mark.skipif(not google_available(), reason='google not installed'),
+    ),
     pytest.param(
         Case(
             lambda: GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key')),

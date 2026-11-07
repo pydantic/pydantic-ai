@@ -134,6 +134,160 @@ After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse]
 
 See [Google Cloud Model Garden](google-cloud.md#model-garden).
 
+## Interactions API
+
+Choose Google's [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview) when you need
+remote MCP servers through [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool], Google Maps,
+or music and video generation. It also exposes remote execution environments through `extra_body`
+when the chosen model supports them. For ordinary text, function tools and structured output,
+use `google:` and [`GoogleModel`][pydantic_ai.models.google.GoogleModel]. Interactions adds no caching or
+conversation-history benefit, and lacks explicit caching, token counting and batch requests.
+
+Select [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel]
+explicitly with `google-interactions:<model>`:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('google-interactions:{{ google:medium.name }}')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+It uses the same credentials as `GoogleModel`. To use Google Cloud or a configured proxy, pass
+an existing provider:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+model = GoogleInteractionsModel(
+    '{{ google:medium.name }}',
+    provider=GoogleCloudProvider(project='your-project', location='global'),
+)
+```
+
+!!! note "Gateway support"
+    The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured
+    Google provider on the Gateway may expose it. Use a direct Gemini API or Google Cloud provider
+    unless your Gateway configuration supports this endpoint.
+
+The adapter always sends `store=False` and the full conversation. It preserves separate thought
+steps, their signatures, native-tool calls and results, and provider-generated function-call IDs.
+Persist and restore the [complete message history](../message-history.md#storing-and-loading-messages-to-json)
+when continuing a conversation or resuming a deferred tool call. Removing signed steps can make
+Google reject later requests.
+
+Function tools, tool retries, deferred approvals, native and prompted structured output, multimodal
+inputs, and streaming use the ordinary Pydantic AI APIs.
+
+### Interactions native tools
+
+Supported native tools include Google Search, URL context, code execution, file search, and remote MCP
+servers; availability depends on the model and endpoint. Image-capable models support `BinaryImage` output
+and `ImageGenerationTool`. [Native tools](../native-tools.md) lists the parameters each tool supports on
+Interactions.
+
+Connect a remote MCP server with [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]. Google calls the server
+directly, so it must be reachable at a public URL:
+
+```python {title="google_interactions_mcp.py" gateway_toggle="skip"}
+from pydantic_ai import Agent, MCPServerTool
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    'google-interactions:{{ google:medium.name }}',
+    capabilities=[
+        NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))
+    ],
+)
+result = agent.run_sync('Tell me about the pydantic/pydantic-ai repo.')
+print(result.output)
+"""
+The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.
+"""
+```
+
+[`google_interactions_native_tools`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings.google_interactions_native_tools]
+exposes additional native tools, such as Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type.
+Each entry is a tool dictionary in the Interactions SDK's shape. Google Maps needs only its type:
+
+```python {title="google_interactions_maps.py" test="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
+
+settings = GoogleInteractionsModelSettings(
+    google_interactions_native_tools=[{'type': 'google_maps'}],
+)
+agent = Agent('google-interactions:{{ google:medium.name }}', model_settings=settings)
+result = agent.run_sync('Use Google Maps to find the address of the Eiffel Tower.')
+print(result.output)
+```
+
+The Maps lookup appears in the response as a `google_maps`
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
+
+Grounding data includes more than citations: search queries are in `NativeToolCallPart.args`, and
+search suggestions, fetched URL status and Maps places are in `NativeToolReturnPart.content`.
+Additional raw step metadata remains in each native part's `provider_details`.
+An MCP result's content is the server's MCP `CallToolResult` (`content`, `structuredContent`, `isError`).
+Inline images, audio and embedded binary resources in it appear as
+[`BinaryContent`][pydantic_ai.messages.BinaryContent] values. They respect `include_binary_content` in
+telemetry and are converted back to the MCP format when replayed from serialized message history.
+
+### Interactions settings
+
+[`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
+provides typed Interactions settings. Use the shared `thinking`, `tool_choice`, and `service_tier`
+settings for portable configuration. On Google Cloud, the shared `service_tier` is ignored so Provisioned
+Throughput is never skipped silently; set `google_interactions_service_tier` to choose a tier there. `google_labels` and `google_video_resolution` use the same types
+as `GoogleModelSettings`. Safety settings have a different API shape: use
+`google_interactions_safety_settings` for Interactions and `google_safety_settings` for GenerateContent.
+For native audio or video output, configure
+`google_interactions_response_format` and, when needed, `google_interactions_generation_config`, and read the returned
+[`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
+The typed generation configuration also exposes voice selection, transcription and video task controls.
+
+### Interactions file inputs and outputs
+
+Video inputs support YouTube URLs, `vendor_metadata` keys `start_offset`, `end_offset` and `fps`, and
+the shared `google_video_resolution` setting. Per-file `vendor_metadata['media_resolution']` takes
+precedence over that default. It uses the same `{'level': 'MEDIA_RESOLUTION_HIGH'}` shape as
+`GoogleModel`, including `MEDIA_RESOLUTION_ULTRA_HIGH` where supported by the chosen model.
+Explicit `vendor_metadata['media_processing']` replaces the static processing inferred from
+`start_offset`, `end_offset` and `fps`.
+
+Input file URLs are resolved by Google on both transports. Set `force_download=True` on an HTTP(S)
+file URL to download it locally with the library's address and response-size checks instead.
+Google Cloud can reject URLs blocked by the host's `robots.txt`; local downloading also handles that case.
+
+Native tool results accept PDF, MP3 audio and MP4 video for the Gemini 3.8 Flash and Gemini 4 Argon
+families, as defined by [`google_interactions_model_profile`][pydantic_ai.profiles.google.google_interactions_model_profile].
+This support has expanded since the [initial PDF/audio probes](https://github.com/pydantic/pydantic-ai/issues/6192).
+Other models retain the conservative GenerateContent MIME profile; unsupported result files are
+sent in a framed user turn that identifies their originating tool call.
+
+Use inline delivery for generated media. Video URI delivery requires `store=True`, so it is outside
+this stateless adapter's scope. URI-only output raises an error.
+
+### Unsupported Interactions features
+
+Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
+caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
+describes them. Finish reasons are derived from interaction status, which has less detail than
+GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
+
+The public Interactions contract has no equivalent for `google_logprobs`, `google_top_logprobs`,
+or Google Cloud's `google_model_armor_config`; use `GoogleModel` when you need those features.
+Native provider compaction is unavailable. Application-written `CompactionPart` summaries are
+sent as portable user text; another provider's opaque response compaction is omitted.
+The SDK has no per-request `max_retries` option. Use a [retrying HTTP transport](../retries.md#transport-retries)
+to configure retries for this adapter. Empty prompts need sendable content, as tracked in
+[#11123](https://github.com/pydantic/pydantic-ai/issues/11123).
+
+
 ## Custom HTTP Client
 
 Google providers use `httpx2` by default. You can pass a custom `httpx2.AsyncClient` to control transport settings:

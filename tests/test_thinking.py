@@ -93,6 +93,7 @@ with try_import() as openai_imports:
 
 with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports:
@@ -2576,6 +2577,22 @@ EFFORT_MAPPINGS = [
         ),
         id='bedrock-anthropic-without-max',
         marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GoogleInteractionsModel(
+                'gemini-3.8-flash', provider=GoogleProvider(api_key=PROBE_KEY)
+            )._generation_config({}, ModelRequestParameters(thinking=level)),
+            {
+                level: {
+                    'thinking_level': 'high' if level in ('xhigh', 'max') else 'low' if level == 'minimal' else level,
+                    'thinking_summaries': 'auto',
+                }
+                for level in get_args(ThinkingEffort)
+            },
+        ),
+        id='google-interactions',
+        marks=_SKIP_WITHOUT_GOOGLE,
     ),
 ]
 

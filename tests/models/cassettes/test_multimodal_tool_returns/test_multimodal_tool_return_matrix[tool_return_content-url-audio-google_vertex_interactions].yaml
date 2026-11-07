@@ -1,0 +1,193 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 113
+          total_input_tokens: 29
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 29
+          total_output_tokens: 10
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 74
+          initial_input_tokens: 29
+        role: model
+        created: 2026-11-06T12:37:19Z
+        updated: 2026-11-06T12:37:19Z
+        steps:
+        - signature: >-
+            AY89a1+M59EZApR8mFbGewNnTcN26XUcZ5tx4lZ1Xss09JzePX1vh778VL+/PbSujsFmrTkmsOpA4qbCmd2ga13uluexyCrJ16UqYC8BF8TUQ4HNiIqeGhUn7sT/CZ1JdhH+KU7f0qxGU5gnURq9IlL+OR/gTqOINs2NspL6rtDsbxG/nRruxkUugjhi1VWFh4YVnFGx90Pxyk4MK3xlizQEcI5CZEZzBTB6OqaeVJ0OFbJLnrOl9VXkn7aEKbkBo1kgL9aN6H9qDuUsiFsBLJQrc+dtVPjpZC5ZH4/3fxeJT3QItOS3wPtK1dyK4yC7Ms0sAvHhnH0PlcrY+1ks22VCUZa4dHYldUWfw43dFplz37j4e36i1FU8m+zQ1yR/pKZR4rFdGzqfTo0t2oxifuFe7FG1anbBTGZtxAibPFYObxIJ75PrVNqbdVo1cC9+o6FE8XdhKcdQFUKSZcNFblqvECj/hqgYDBCL7nkUMINC
+          type: thought
+        - id: call_14310646833576607092
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:37:19.023094+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1285"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+        - signature: >-
+            AY89a1+M59EZApR8mFbGewNnTcN26XUcZ5tx4lZ1Xss09JzePX1vh778VL+/PbSujsFmrTkmsOpA4qbCmd2ga13uluexyCrJ16UqYC8BF8TUQ4HNiIqeGhUn7sT/CZ1JdhH+KU7f0qxGU5gnURq9IlL+OR/gTqOINs2NspL6rtDsbxG/nRruxkUugjhi1VWFh4YVnFGx90Pxyk4MK3xlizQEcI5CZEZzBTB6OqaeVJ0OFbJLnrOl9VXkn7aEKbkBo1kgL9aN6H9qDuUsiFsBLJQrc+dtVPjpZC5ZH4/3fxeJT3QItOS3wPtK1dyK4yC7Ms0sAvHhnH0PlcrY+1ks22VCUZa4dHYldUWfw43dFplz37j4e36i1FU8m+zQ1yR/pKZR4rFdGzqfTo0t2oxifuFe7FG1anbBTGZtxAibPFYObxIJ75PrVNqbdVo1cC9+o6FE8XdhKcdQFUKSZcNFblqvECj/hqgYDBCL7nkUMINC
+          type: thought
+        - id: call_14310646833576607092
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_14310646833576607092
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: audio/mpeg
+            type: audio
+            uri: https://download.samplelib.com/mp3/sample-3s.mp3
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 330
+          total_input_tokens: 200
+          input_tokens_by_modality:
+          - modality: audio
+            tokens: 80
+          - modality: text
+            tokens: 120
+          total_output_tokens: 56
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 56
+          total_tool_use_tokens: 0
+          total_thought_tokens: 74
+          initial_input_tokens: 200
+        role: model
+        created: 2026-11-06T12:37:29Z
+        updated: 2026-11-06T12:37:29Z
+        steps:
+        - signature: >-
+            AY89a1/aYCycPntkkk6zJza8B4JlGLIxrbxWNhqfnmH4CtkPwrU0I0S1o9KZrHyIqgmSN6n1e82Kinq1cDn4EEWrx59CpFIgFW+ErWVIHGjvlZ/j3I5vpFH+IgExpDkuXyCnbziuB/TofJ6YfG4yUYnnWO4cTltEPKRP9V8K3sVTby9tNJwpzw8LVomV5r6HESel7wr3x3fS18O8eJVZOZu+e6NgKioEKXcENMWYdoiVTCFt8ey0xotugVtbfokudcV4+9uW49YRrsKW7RxTPB5h7hrt0ZDe9e3qlF2TsKExP8KGGUOinLEc4kPteRz0xn1apccJkjzpLP83KUOkhcmNoa1rhkazteVtQPDGrVvIbVplfLqenAGlYTNGZ9Fg1AHYAZ6vL6CLPCaD+APHf+4auIZD6nETktH1meqC+O5jVe9gqfj1XRPKoGSDrW/YmfqIdd0NgG7b45NjsH9bu5RAImzLXTqeXkG6/fA2zV+Ht1iKHO2Sr4ThUW5hZ33wPsARbXn3ubFholiZvH76lCaX1c+v08C08FQ=
+          type: thought
+        - content:
+          - text: >-
+              The audio file is a short (approximately 1.5-second) electronic sound effect or
+              transition jingle. It features a bright, upbeat digital synth melody accompanied
+              by light rhythmic percussion/beats, reminiscent of a user interface sound, logo
+              sting, or intro/outro sound bite.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:37:29.548791+00:00

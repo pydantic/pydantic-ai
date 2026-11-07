@@ -22,7 +22,7 @@ Pydantic AI supports the following native tools:
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
-The calls and results show up in the model's response as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Text the model writes before a native tool call is treated as commentary rather than output, unless no text follows the last native tool call: some providers, like Google with Gemini 2.5, report the searches that grounded a response after its text.
+The calls and results show up in the model's response as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Text the model writes before a native tool call is treated as commentary rather than output, unless no text follows the last native tool call: some providers, like Google GenerateContent with Gemini 2.5, report the searches that grounded a response after its text.
 
 !!! warning "Provider Support"
     Not all model providers support native tools. If you use a native tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
@@ -97,7 +97,8 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
-| Google | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
+| Google GenerateContent | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
+| Google Interactions | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. Each search is its own call and return, in the order the model ran it: the call's `args` hold its `queries`, the return's content holds Google's `search_suggestions`, and the sources are [citations](citations.md) on the text. |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
@@ -124,7 +125,9 @@ _(This example is complete, it can be run "as is")_
 
 With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
 
-With Google, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
+With Google GenerateContent, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
+
+With Google Interactions, Google's grounding tool counts are reported in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] as `<tool>_count`, such as `google_search_count`.
 
 With OpenAI, you must use their Responses API to access the web search tool. The number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]. Pages the model opens or searches within don't count as searches.
 
@@ -189,7 +192,7 @@ _(This example is complete, it can be run "as is")_
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
-Google supports none of these parameters.
+Google GenerateContent and Google Interactions support none of these parameters.
 
 #### Restricting parameters {#restricting-parameters}
 
@@ -294,7 +297,8 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
-| Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
+| Google GenerateContent | ✅ | See [Google tool combinations](#google-tool-combinations). |
+| Google Interactions | ✅ | The call's `args` hold the `code` and its `language`, and the return's content is the code's output. |
 | Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. Not available on the [Amazon Bedrock](models/anthropic.md#aws-bedrock) clients (`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), where using it raises a [`UserError`][pydantic_ai.exceptions.UserError]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
@@ -440,9 +444,9 @@ For details on file management, container lifecycle, and persistence behavior, s
 
 #### Provider Support
 
-| Parameter | Anthropic | OpenAI | Google | xAI |
-|-----------|-----------|--------|--------|-----|
-| `files` | ✅ | ✅ | ❌ | ❌ |
+| Parameter | Anthropic | OpenAI | Google GenerateContent | Google Interactions | xAI |
+|-----------|-----------|--------|------------------------|---------------------|-----|
+| `files` | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 ## Image Generation Tool
 
@@ -459,7 +463,8 @@ The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enable
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than GPT-5.2. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. |
-| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `{{ google:image.name }}`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
+| Google GenerateContent | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `{{ google:image.name }}`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this native tool is not explicitly specified. |
+| Google Interactions | ✅ | Limited parameter support. Only supported by models with image output. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
@@ -604,23 +609,23 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 
 #### Provider Support
 
-| Parameter | OpenAI | Google |
-|-----------|--------|--------|
-| `action` | ✅ (auto (default), generate, edit) | ❌ |
-| `background` | ✅ | ❌ |
-| `input_fidelity` | ✅ | ❌ |
-| `moderation` | ✅ | ❌ |
-| `model` | ✅ (an OpenAI image model ID, such as `{{ openai:image.name }}`) | ❌ |
-| `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) |
-| `output_format` | ✅ | ✅ (Google Cloud only) |
-| `partial_images` | ✅ | ❌ |
-| `quality` | ✅ | ❌ |
-| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
-| `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
+| Parameter | OpenAI | Google GenerateContent | Google Interactions |
+|-----------|--------|------------------------|---------------------|
+| `action` | ✅ (auto (default), generate, edit) | ❌ | ❌ |
+| `background` | ✅ | ❌ | ❌ |
+| `input_fidelity` | ✅ | ❌ | ❌ |
+| `moderation` | ✅ | ❌ | ❌ |
+| `model` | ✅ (an OpenAI image model ID, such as `{{ openai:image.name }}`) | ❌ | ❌ |
+| `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Google Cloud only) | ❌ |
+| `output_format` | ✅ | ✅ (Google Cloud only) | ✅ (png (default), jpeg) |
+| `partial_images` | ✅ | ❌ | ❌ |
+| `quality` | ✅ | ❌ | ❌ |
+| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) | ✅ (512, 1K, 2K, 4K) |
+| `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
 !!! note "Notes"
     - **OpenAI**: `auto` lets the model select the value.
-    - **Google Cloud**: Setting `output_compression` will default `output_format` to `jpeg` if not specified.
+    - **Google GenerateContent on Google Cloud**: Setting `output_compression` will default `output_format` to `jpeg` if not specified.
 
 ## Web Fetch Tool
 
@@ -635,7 +640,8 @@ allowing it to pull up-to-date information from the web.
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
-| Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. See [Google tool combinations](#google-tool-combinations). |
+| Google GenerateContent | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. See [Google tool combinations](#google-tool-combinations). |
+| Google Interactions | ✅ | No parameter support. The call's `args` hold the `urls`, and the return's content lists each URL with its fetch `status`. |
 | xAI | ❌ | Web browsing is implemented as part of [`WebSearchTool`](#web-search-tool) with xAI. |
 | OpenAI | ❌ | |
 | Groq | ❌ | |
@@ -694,13 +700,13 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | Anthropic | Google |
-|-----------|-----------|--------|
-| `max_uses` | ✅ | ❌ |
-| `allowed_domains` | ✅ | ❌ |
-| `blocked_domains` | ✅ | ❌ |
-| `enable_citations` | ✅ | ❌ |
-| `max_content_tokens` | ✅ | ❌ |
+| Parameter | Anthropic | Google GenerateContent | Google Interactions |
+|-----------|-----------|------------------------|---------------------|
+| `max_uses` | ✅ | ❌ | ❌ |
+| `allowed_domains` | ✅ | ❌ | ❌ |
+| `blocked_domains` | ✅ | ❌ | ❌ |
+| `enable_citations` | ✅ | ❌ | ❌ |
+| `max_content_tokens` | ✅ | ❌ | ❌ |
 
 As with [web search](#restricting-parameters), `max_uses`, `allowed_domains`, and `blocked_domains` restrict what the
 tool may do: on a model that can't apply one that is set, the tool is treated as unsupported, so a local fallback runs
@@ -878,7 +884,8 @@ but can result in optimized context use and caching, and faster performance due 
 | OpenAI Responses | ✅ | Full feature support. [Connectors](https://platform.openai.com/docs/guides/tools-connectors-mcp#connectors) can be used by specifying a special `x-openai-connector:<connector_id>` URL.  |
 | Anthropic | ✅ | Full feature support |
 | xAI | ✅ | Full feature support |
-| Google  | ❌ | Not supported |
+| Google Interactions | ✅ | Limited parameter support: headers, authorization and allowed tools. Server descriptions are ignored. |
+| Google GenerateContent | ❌ | Not supported |
 | Groq  | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
@@ -1013,12 +1020,12 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter             | OpenAI | Anthropic | xAI |
-|-----------------------|--------|-----------|-----|
-| `authorization_token` | ✅ | ✅ | ✅ |
-| `allowed_tools`       | ✅ | ✅ | ✅ |
-| `description`         | ✅ | ❌ | ✅ |
-| `headers`             | ✅ | ❌ | ✅ |
+| Parameter             | OpenAI | Anthropic | xAI | Google Interactions |
+|-----------------------|--------|-----------|-----|---------------------|
+| `authorization_token` | ✅ | ✅ | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ | ✅ | ✅ |
+| `description`         | ✅ | ❌ | ✅ | ❌ |
+| `headers`             | ✅ | ❌ | ✅ | ✅ |
 
 ## File Search Tool
 
@@ -1029,9 +1036,10 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
-| Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. See [Google tool combinations](#google-tool-combinations). |
+| Google GenerateContent (Gemini API) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. See [Google tool combinations](#google-tool-combinations). |
+| Google Interactions | ✅ | Limited parameter support. Takes the same file search store names as Google GenerateContent. `max_num_results` maps to Google's `top_k`; `instructions` and `retrieval_mode` are ignored. |
 | xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
-| Google Cloud | ❌ | Not supported; the same limitation applies to Google routes through the [Pydantic AI Gateway](gateway.md). |
+| Google GenerateContent (Google Cloud) | ❌ | Not supported; the same limitation applies to Google routes through the [Pydantic AI Gateway](gateway.md). |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |

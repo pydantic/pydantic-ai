@@ -93,6 +93,7 @@ from ..models import (
     _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
+from ..models._google_common import snap_thinking_level, thinking_effort_to_level
 from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
@@ -105,8 +106,6 @@ from ..models.google import (
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
-    _snap_thinking_level,  # pyright: ignore[reportPrivateUsage]
-    _thinking_effort_to_level,  # pyright: ignore[reportPrivateUsage]
     _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
@@ -569,7 +568,7 @@ def _thinking_to_config(thinking: ThinkingLevel, profile: GoogleRealtimeModelPro
     effort: ThinkingEffort = (
         _IMPLIED_THINKING_EFFORT if thinking is False else 'medium' if thinking is True else thinking
     )
-    level = _snap_thinking_level(_thinking_effort_to_level(effort), profile.get('google_thinking_levels'))
+    level = snap_thinking_level(thinking_effort_to_level(effort), profile.get('google_thinking_levels'))
     return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel(level))
 
 

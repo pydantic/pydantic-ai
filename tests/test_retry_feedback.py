@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent, BinaryImage, ModelRequestContext, RunContext, capture_run_messages
@@ -91,6 +91,7 @@ with try_import() as anthropic_imports_successful:
 
 with try_import() as google_imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as bedrock_imports_successful:
@@ -366,7 +367,8 @@ Your previous response failed the application's validation (this is automated fe
 
 
 @google_installed
-async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key: str):
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'], ids=['google', 'google-interactions'])
+async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key: str, api_family: str):
     """Google folds every `SystemPromptPart` it sees into the top-level `system_instruction`.
 
     It draws no line between the run's standing prompt and a mid-conversation one, the way
@@ -376,7 +378,8 @@ async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key:
     `contents`, and `system_instruction` stays empty. Flipping the flag without teaching the mapper
     that line turns this red.
     """
-    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    model_class = GoogleInteractionsModel if api_family == 'interactions' else GoogleModel
+    model = model_class('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='How many continents are there?')]),
         ModelResponse(parts=[TextPart('7')]),
@@ -387,6 +390,29 @@ async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key:
         model.prepare_messages(history, ModelRequestParameters()), ModelRequestParameters()
     )
 
+    if isinstance(model, GoogleInteractionsModel):
+        assert system_instruction == []
+        assert contents == snapshot(
+            [
+                {'type': 'user_input', 'content': [{'type': 'text', 'text': 'How many continents are there?'}]},
+                {'type': 'model_output', 'content': [{'type': 'text', 'text': '7'}]},
+                {
+                    'type': 'user_input',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer with a word
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            ]
+        )
+        return
     assert system_instruction is None
     assert contents == snapshot(
         [
@@ -896,6 +922,13 @@ def _google_tool_result(body: Any) -> Any:
     return body['contents'][-1]['parts'][0]['functionResponse']
 
 
+def _google_interactions_tool_result(body: object) -> JsonValue:
+    """Interactions marks the function-result step itself as an error."""
+    parsed = TypeAdapter(dict[str, JsonValue]).validate_python(body)
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(parsed['input'])
+    return steps[-1]
+
+
 def _bedrock_tool_result(body: Any) -> Any:
     """Bedrock's Converse API puts a `status` on the `toolResult` block."""
     return body['messages'][-1]['content'][0]['toolResult']
@@ -904,10 +937,20 @@ def _bedrock_tool_result(body: Any) -> Any:
 NATIVE_ERROR_CHANNELS: dict[str, Callable[[Any], Any]] = {
     'anthropic': _anthropic_tool_result,
     'google': _google_tool_result,
+    'google-interactions': _google_interactions_tool_result,
     'bedrock': _bedrock_tool_result,
 }
 
 NATIVE_ERROR_CHANNEL_EXPECTATIONS: dict[str, Any] = {
+    'google-interactions': snapshot(
+        {
+            'type': 'function_result',
+            'name': 'get_capital',
+            'call_id': IsStr(),
+            'is_error': True,
+            'result': [{'type': 'text', 'text': 'The country is not supported. Use "France" instead.'}],
+        }
+    ),
     'anthropic': snapshot(
         {
             'tool_use_id': IsStr(),
@@ -942,6 +985,8 @@ def _error_channel_model(
         return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     elif provider == 'google':
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    elif provider == 'google-interactions':
+        return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     else:
         return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
@@ -957,6 +1002,7 @@ def _model_call_bodies(vcr: Cassette) -> list[Any]:
     [
         pytest.param('anthropic', marks=anthropic_installed),
         pytest.param('google', marks=google_installed),
+        pytest.param('google-interactions', marks=google_installed),
         pytest.param('bedrock', marks=bedrock_installed),
     ],
 )

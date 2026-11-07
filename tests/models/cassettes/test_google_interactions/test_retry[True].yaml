@@ -1,0 +1,293 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "421"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use get_password to tell me the password.
+            type: text
+          type: user_input
+        store: false
+        stream: true
+        tools:
+        - description: Get the password. Retry if the service is temporarily unavailable.
+          name: get_password
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=8744
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EqUICqIIAWkUfRN3spAOh0QYirj5EMZxIOmoswS6ZPvnINWs3Hr3yTCcWCYFcaOjFnrjUYHCShYX/2CTdE1OWYGRNgiD2kaaRIYEl6v0Kzr95M07ysgZYBhC2vuQ5lXeDaowa0wA6iKwSXcH8R8Wyud0EXgDLddt/y8Ht3b4Rl/b9/6FZzT9+bC2cSuceEqJlT6bvhJGiwLn6Lu7IL91dPxIZQnv67fT0f+EHjFhZkCHVawFyTd9N09tyiOCSUtWsUSbHw0+szDYr2ByA6P86V0BCV6keKn0o+cRYVKtygceun8WwdlpwvWfYoqePnoUeOpDosRh1xjaSlTWcw1GpaZvERF1ZQ9zqvI3obHxwL9zXaA+LZl+U+GXv4Gtu5h2mGbBRD9cHJXSITpOOZwkuYNpgdvG1KslCDxOiMyYmQE87eDvpCXmQJYpbXlISAXfj64T6gRJ0NbsAIRehP+O2Jc6bH1GN5Q5kJaFDswBi7OUmY0QSaxKRrJbW1tLkK2/ZRCZ6u4ODZsrnpziGoeTiC1scc0DAQj4/w+F/AyCPq6nm+VmzQlXKYRhgVvQZM/s6SV81UAoyNRmyW658h/G1p607C3oTlT0jmWSPltrXkIOFWAWA8N4P1PuwWpOepFBXrxuMIaEgjiHib0AW5wBW6ZuA9EG2zweMdjTNu8pqlVVDfWnV96WqLatfBSjD3HOeWeB7FjnzVZTCOqtal+jT6tGt9hMjyBOmjoNjaLOz2dEEIp3PH0GenfHL9v9eJgKayF+LorLqRKtWGDNNEBkUAMm5Oz9zkFsSP446qwSrYw7gCnVTXMBmXyNrdcbKWZvU8Tp4K2DzpDG1kkHvpNWkXZ30n5tMVTza2fHFAW57SL5F+Op/wwEhVdstz7v7LLa1wEuEZIeE5UB8ydrx8wRPsLnyfh4XeJC8QFPc79ZX0xLiGZkVwCUQzgM7i0NlHA1EaZUAeriEmGBLvi0NZ2eDQDWotsVJXSFkepvFqoc0FMp3wBl8zgTdxF72iDXPn6lBdy98KsvPNQWpF+0LoCu2MYlSgkm5J9KeD4a63ML54aRZC2qpALaeZK6k4d0VIvKr1WAQtCbWgoRjUq96CMMO/aLVLM++/ef/eS4B8njukvlWxNeKVrENotfMOZcY7ORWt0U6r0p5EoWeQlMC5jgNm269wmNeExwlqClOxYdVyjMKzbDM3Qa5EuED3Vb2r7L/HU6GzkkujVEEb7OTngjXxDewndpAl/KzqpWaQe4T6wOHNYEzC+GDZrLS7ngTyj7CqeXYXQx6BPPUpsEOpGZPSJtYRFTBkLeHQ0+FBFBarvanxrlcc3rLifmays6ylCdTSUVa9J288LUO5WqXCy4durhDxV3ukmpeOMGQSM6KKJ2DayZnIJrqZW9bK5bSohyC0sq+AqoG9E=","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"id":"call_588056","type":"function_call","name":"get_password","arguments":{}},"event_type":"step.start"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"requires_action","usage":{"total_tokens":250,"total_input_tokens":44,"input_tokens_by_modality":[{"modality":"text","tokens":44}],"total_cached_tokens":0,"total_output_tokens":10,"total_tool_use_tokens":0,"total_thought_tokens":196,"initial_input_tokens":33},"created":"2026-11-05T15:02:10Z","updated":"2026-11-05T15:02:10Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:02:10.575462+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2131"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use get_password to tell me the password.
+            type: text
+          type: user_input
+        - signature: >-
+            EqUICqIIAWkUfRN3spAOh0QYirj5EMZxIOmoswS6ZPvnINWs3Hr3yTCcWCYFcaOjFnrjUYHCShYX/2CTdE1OWYGRNgiD2kaaRIYEl6v0Kzr95M07ysgZYBhC2vuQ5lXeDaowa0wA6iKwSXcH8R8Wyud0EXgDLddt/y8Ht3b4Rl/b9/6FZzT9+bC2cSuceEqJlT6bvhJGiwLn6Lu7IL91dPxIZQnv67fT0f+EHjFhZkCHVawFyTd9N09tyiOCSUtWsUSbHw0+szDYr2ByA6P86V0BCV6keKn0o+cRYVKtygceun8WwdlpwvWfYoqePnoUeOpDosRh1xjaSlTWcw1GpaZvERF1ZQ9zqvI3obHxwL9zXaA+LZl+U+GXv4Gtu5h2mGbBRD9cHJXSITpOOZwkuYNpgdvG1KslCDxOiMyYmQE87eDvpCXmQJYpbXlISAXfj64T6gRJ0NbsAIRehP+O2Jc6bH1GN5Q5kJaFDswBi7OUmY0QSaxKRrJbW1tLkK2/ZRCZ6u4ODZsrnpziGoeTiC1scc0DAQj4/w+F/AyCPq6nm+VmzQlXKYRhgVvQZM/s6SV81UAoyNRmyW658h/G1p607C3oTlT0jmWSPltrXkIOFWAWA8N4P1PuwWpOepFBXrxuMIaEgjiHib0AW5wBW6ZuA9EG2zweMdjTNu8pqlVVDfWnV96WqLatfBSjD3HOeWeB7FjnzVZTCOqtal+jT6tGt9hMjyBOmjoNjaLOz2dEEIp3PH0GenfHL9v9eJgKayF+LorLqRKtWGDNNEBkUAMm5Oz9zkFsSP446qwSrYw7gCnVTXMBmXyNrdcbKWZvU8Tp4K2DzpDG1kkHvpNWkXZ30n5tMVTza2fHFAW57SL5F+Op/wwEhVdstz7v7LLa1wEuEZIeE5UB8ydrx8wRPsLnyfh4XeJC8QFPc79ZX0xLiGZkVwCUQzgM7i0NlHA1EaZUAeriEmGBLvi0NZ2eDQDWotsVJXSFkepvFqoc0FMp3wBl8zgTdxF72iDXPn6lBdy98KsvPNQWpF+0LoCu2MYlSgkm5J9KeD4a63ML54aRZC2qpALaeZK6k4d0VIvKr1WAQtCbWgoRjUq96CMMO/aLVLM++/ef/eS4B8njukvlWxNeKVrENotfMOZcY7ORWt0U6r0p5EoWeQlMC5jgNm269wmNeExwlqClOxYdVyjMKzbDM3Qa5EuED3Vb2r7L/HU6GzkkujVEEb7OTngjXxDewndpAl/KzqpWaQe4T6wOHNYEzC+GDZrLS7ngTyj7CqeXYXQx6BPPUpsEOpGZPSJtYRFTBkLeHQ0+FBFBarvanxrlcc3rLifmays6ylCdTSUVa9J288LUO5WqXCy4durhDxV3ukmpeOMGQSM6KKJ2DayZnIJrqZW9bK5bSohyC0sq+AqoG9E=
+          type: thought
+        - arguments: {}
+          id: call_588056
+          name: get_password
+          type: function_call
+        - call_id: call_588056
+          result:
+          - text: "{\"error\":\"Temporarily unavailable. Call get_password again.\"}"
+            type: text
+          name: get_password
+          type: function_result
+        store: false
+        stream: true
+        tools:
+        - description: Get the password. Retry if the service is temporarily unavailable.
+          name: get_password
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=2315
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EtcCCtQCAWkUfRMoel9uJmhh96ZYu/3p1k6SAqyncR2U9aHY4IaSRTD+aMElPDhCgpvU0ABKU+vQBa+ZPFjzPtsAQ41qeIMpJGPVMEG9jXHe4zbAdqR4XBsmqelXBhNpxEi4CBK3To6o1WOKP8BsbOh2Q1sYwbUmPxClEOKzTfJiuch0bU+WlgHtdBYKA/ReEu3n2oRmBmjbG8hkPJXmD2V73EfCnsXxowndW30hmPzCD3vokvgNRNVKWFhGbEWsRTiDmepi1dE4/W2IpgEsb1CdAknZN8q5sAx6HK5LULSuCkF7BuTPt0oR4FgudI6SkBYxM+w5cZ0XDzz1DEt7KGwKRCNNrb995leZTGNsEVRM0pU/cxAIfVfLRNos5DJjVQ2iyK3qYgFNCL5uSrKUSM/1WU/gVMUv1h8OsBnito0qWNIHbXd8DalIexVfkDmkyI7DXStQpmydvg==","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"id":"call_472156","type":"function_call","name":"get_password","arguments":{}},"event_type":"step.start"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"requires_action","usage":{"total_tokens":313,"total_input_tokens":258,"input_tokens_by_modality":[{"modality":"text","tokens":258}],"total_cached_tokens":0,"total_output_tokens":10,"total_tool_use_tokens":0,"total_thought_tokens":45,"initial_input_tokens":260},"created":"2026-11-05T15:02:12Z","updated":"2026-11-05T15:02:12Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:02:12.951828+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2830"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use get_password to tell me the password.
+            type: text
+          type: user_input
+        - signature: >-
+            EqUICqIIAWkUfRN3spAOh0QYirj5EMZxIOmoswS6ZPvnINWs3Hr3yTCcWCYFcaOjFnrjUYHCShYX/2CTdE1OWYGRNgiD2kaaRIYEl6v0Kzr95M07ysgZYBhC2vuQ5lXeDaowa0wA6iKwSXcH8R8Wyud0EXgDLddt/y8Ht3b4Rl/b9/6FZzT9+bC2cSuceEqJlT6bvhJGiwLn6Lu7IL91dPxIZQnv67fT0f+EHjFhZkCHVawFyTd9N09tyiOCSUtWsUSbHw0+szDYr2ByA6P86V0BCV6keKn0o+cRYVKtygceun8WwdlpwvWfYoqePnoUeOpDosRh1xjaSlTWcw1GpaZvERF1ZQ9zqvI3obHxwL9zXaA+LZl+U+GXv4Gtu5h2mGbBRD9cHJXSITpOOZwkuYNpgdvG1KslCDxOiMyYmQE87eDvpCXmQJYpbXlISAXfj64T6gRJ0NbsAIRehP+O2Jc6bH1GN5Q5kJaFDswBi7OUmY0QSaxKRrJbW1tLkK2/ZRCZ6u4ODZsrnpziGoeTiC1scc0DAQj4/w+F/AyCPq6nm+VmzQlXKYRhgVvQZM/s6SV81UAoyNRmyW658h/G1p607C3oTlT0jmWSPltrXkIOFWAWA8N4P1PuwWpOepFBXrxuMIaEgjiHib0AW5wBW6ZuA9EG2zweMdjTNu8pqlVVDfWnV96WqLatfBSjD3HOeWeB7FjnzVZTCOqtal+jT6tGt9hMjyBOmjoNjaLOz2dEEIp3PH0GenfHL9v9eJgKayF+LorLqRKtWGDNNEBkUAMm5Oz9zkFsSP446qwSrYw7gCnVTXMBmXyNrdcbKWZvU8Tp4K2DzpDG1kkHvpNWkXZ30n5tMVTza2fHFAW57SL5F+Op/wwEhVdstz7v7LLa1wEuEZIeE5UB8ydrx8wRPsLnyfh4XeJC8QFPc79ZX0xLiGZkVwCUQzgM7i0NlHA1EaZUAeriEmGBLvi0NZ2eDQDWotsVJXSFkepvFqoc0FMp3wBl8zgTdxF72iDXPn6lBdy98KsvPNQWpF+0LoCu2MYlSgkm5J9KeD4a63ML54aRZC2qpALaeZK6k4d0VIvKr1WAQtCbWgoRjUq96CMMO/aLVLM++/ef/eS4B8njukvlWxNeKVrENotfMOZcY7ORWt0U6r0p5EoWeQlMC5jgNm269wmNeExwlqClOxYdVyjMKzbDM3Qa5EuED3Vb2r7L/HU6GzkkujVEEb7OTngjXxDewndpAl/KzqpWaQe4T6wOHNYEzC+GDZrLS7ngTyj7CqeXYXQx6BPPUpsEOpGZPSJtYRFTBkLeHQ0+FBFBarvanxrlcc3rLifmays6ylCdTSUVa9J288LUO5WqXCy4durhDxV3ukmpeOMGQSM6KKJ2DayZnIJrqZW9bK5bSohyC0sq+AqoG9E=
+          type: thought
+        - arguments: {}
+          id: call_588056
+          name: get_password
+          type: function_call
+        - call_id: call_588056
+          result:
+          - text: "{\"error\":\"Temporarily unavailable. Call get_password again.\"}"
+            type: text
+          name: get_password
+          type: function_result
+        - signature: >-
+            EtcCCtQCAWkUfRMoel9uJmhh96ZYu/3p1k6SAqyncR2U9aHY4IaSRTD+aMElPDhCgpvU0ABKU+vQBa+ZPFjzPtsAQ41qeIMpJGPVMEG9jXHe4zbAdqR4XBsmqelXBhNpxEi4CBK3To6o1WOKP8BsbOh2Q1sYwbUmPxClEOKzTfJiuch0bU+WlgHtdBYKA/ReEu3n2oRmBmjbG8hkPJXmD2V73EfCnsXxowndW30hmPzCD3vokvgNRNVKWFhGbEWsRTiDmepi1dE4/W2IpgEsb1CdAknZN8q5sAx6HK5LULSuCkF7BuTPt0oR4FgudI6SkBYxM+w5cZ0XDzz1DEt7KGwKRCNNrb995leZTGNsEVRM0pU/cxAIfVfLRNos5DJjVQ2iyK3qYgFNCL5uSrKUSM/1WU/gVMUv1h8OsBnito0qWNIHbXd8DalIexVfkDmkyI7DXStQpmydvg==
+          type: thought
+        - arguments: {}
+          id: call_472156
+          name: get_password
+          type: function_call
+        - call_id: call_472156
+          result:
+          - text: silver fox
+            type: text
+          name: get_password
+          type: function_result
+        store: false
+        stream: true
+        tools:
+        - description: Get the password. Retry if the service is temporarily unavailable.
+          name: get_password
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=3962
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EscBCsQBAWkUfRMVr4fZhFI1NpbqcOQTC/c+iQLpHbVW2URq/VtaYKnQRS5XI/Jb/x0ZGxJ910i3B3tdYFixR1eURNiIsi9j+cH/3LcU4sb9IEjZqmEE0JvMwDfPROFX9ld+s1+N9n+PXnfM0FA0xXOIYwlzTxLdg9WP0wmUqcNVjdBUug3vJlc7EnVXHiBLCstuhtRq5KGMpCVoj2LA42ZWpfBYABX0K3yvyX7ZfcAflJSoaWnfefTXeeEjDaPRi2JXS5uFAyQuwg==","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"The password is **silver fox**.","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":347,"total_input_tokens":321,"input_tokens_by_modality":[{"modality":"text","tokens":321}],"total_cached_tokens":0,"total_output_tokens":7,"total_tool_use_tokens":0,"total_thought_tokens":19,"initial_input_tokens":324},"created":"2026-11-05T15:02:16Z","updated":"2026-11-05T15:02:16Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:02:16.963307+00:00
