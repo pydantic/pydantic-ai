@@ -240,10 +240,11 @@ branch-selectable dispatch to this privileged workflow. Workflows and scripts re
   `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.github/workflows/`, `.github/actions/`,
   `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and `CODEOWNERS` itself.
 - **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
-  only: `pydantic_ai_slim/pydantic_ai/durable_exec/`, the harness's durable engines (`absurd`,
-  `aws_lambda`, `azure_durable_task`, `pgtask`, `render`), its shared durable helper `_durable.py`,
-  and the two `subagents` modules that run a delegated agent run inside a durable unit. Other
-  capabilities that use `@durable_operation` or check for durable execution stay outside this scope.
+  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
+  engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
+  `SubAgents` code that runs a delegated agent run inside a durable unit. Other capabilities that
+  use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
+  lists the exact paths.
 
 GitHub requests a review from the owners of each path a PR changes. A missing owner approval blocks
 the merge only while the `main` ruleset has a `pull_request` rule with **Require review from Code
