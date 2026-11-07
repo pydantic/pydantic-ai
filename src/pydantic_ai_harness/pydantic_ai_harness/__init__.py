@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .keenable import KeenableSearch
     from .knowledge_base import KnowledgeBase
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
@@ -136,6 +137,7 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KeenableSearch',
     'KnowledgeBase',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
@@ -239,6 +241,7 @@ _LAZY_EXPORTS = {
     'InputGuardrail': 'guardrails',
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KeenableSearch': 'keenable',
     'KnowledgeBase': 'knowledge_base',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',

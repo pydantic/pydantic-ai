@@ -1791,6 +1791,19 @@ class TestCodeMode:
         with pytest.raises(UserError, match='conflicts with the code mode'):
             await wrapper.get_tools(build_run_context(None))
 
+    async def test_sandboxed_tool_named_after_builtin_raises_user_error(self) -> None:
+        """A sandboxed tool named after a Python builtin raises UserError, since code would call the builtin."""
+
+        def open(path: str) -> str:
+            """A tool that the sandbox's `open` builtin would shadow."""
+            return path  # pragma: no cover
+
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(open, add))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
+            await wrapper.get_tools(build_run_context(None))
+
     async def test_filter_excluding_everything_yields_run_code_with_no_functions(self) -> None:
         """A filter that rejects every tool produces a `run_code` with no functions block."""
         capability = CodeMode[object](tools=lambda ctx, td: False)
