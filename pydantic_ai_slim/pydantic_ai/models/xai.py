@@ -194,6 +194,7 @@ XaiModelName = (
     str
     | Literal[
         'grok-4.7',
+        'grok-4.3',
         'grok-3',
         'grok-3-mini',
         'grok-4-1-fast-reasoning',

@@ -31,6 +31,9 @@ advisor aliases) list the models a user would pick. They are not catalogs. Apply
 - Leave out dated snapshots that have an undated alias, previews that a GA id superseded, floating `-latest`
   aliases (Mistral excepted: `-latest` is its canonical form), and non-chat models.
 - On Bedrock, list one id per model: the `global.` profile when it exists, else `us.`, else the bare id.
+- Keep every id that a model alias in `docs/model_aliases/aliases.json` resolves to, even when the rule above
+  would drop it. `tests/test_docs_model_aliases.py` fails otherwise. Changing an alias target is a separate
+  decision under `docs/model_aliases/AGENTS.md`.
 
 Profiles match any id, so removing an id from a literal changes autocomplete only. Never remove a profile branch
 because its id left a literal.
@@ -231,7 +234,7 @@ check. Keep the model-specific evidence concise:
 - **A dotted point release matches none of its family's prefixes.** `gpt-6.1-sol` does not start with `'gpt-6-sol'`. Before you add it, it resolves to `_NO_REASONING` and misses every `startswith` gate in `openai_model_profile()`. Add it to `_REASONING_SUPPORT_BY_PREFIX` and to the generation's gate tuple (`_GPT_6_MODEL_PREFIXES`).
 - **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
 - **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
-- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. Gateway routing needs the pricing entry; model-name support does not. Follow Step 3b to report the gap.
+- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** The Gateway refuses the id until the entry lands, so a user who picks it from autocomplete gets an error. Add the `gateway/` id to `UNSUPPORTED_GATEWAY_MODEL_NAMES` with a comment naming the missing price data, keep the direct-provider id, and follow Step 3b to report the gap. Remove the exclusion once the Gateway serves the id.
 - **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
 ### Anthropic
