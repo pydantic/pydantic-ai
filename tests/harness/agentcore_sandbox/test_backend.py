@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import os
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 
 import anyio
@@ -242,6 +243,20 @@ async def test_output_a_background_process_adds_after_the_exit_is_capped(
         assert (caught.value.stdout, caught.value.stderr, caught.value.limit) == ('0123', '', 8)
 
 
+async def test_a_command_that_replaces_its_output_file_fails_without_blocking_the_session(
+    fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The command directory takes its name from this id, which the command needs to swap the file.
+    monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=1))
+    directory = f'/tmp/pydantic-ai-{uuid.UUID(int=1).hex}'
+    backend = AgentCoreSandboxBackend()
+    # Without the regular-file check, the kernel's `open` of the FIFO waits for a writer that never comes.
+    with pytest.raises(WorkspaceError, match='replaced its output file'):
+        await backend.run(['sh', '-c', 'rm -f -- "$1"; mkfifo -- "$1"; echo swapped >&2', 'sh', f'{directory}/out'])
+    assert not os.path.exists(directory)
+    assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+
+
 async def test_files_and_output_travel_in_chunks(
     fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -337,7 +352,9 @@ async def test_unexpected_service_replies_are_workspace_errors(fake_agentcore: F
 async def test_a_command_that_left_no_exit_code_fails(fake_agentcore: FakeAgentCore) -> None:
     backend = AgentCoreSandboxBackend()
     await backend.working_dir()
-    fake_agentcore.queue_code_reply('{"ok": {"exit_code": null, "size": 0, "out": null, "err": null}}')
+    fake_agentcore.queue_code_reply(
+        '{"ok": {"exit_code": null, "size": 0, "out": null, "err": null, "replaced": false}}'
+    )
     with pytest.raises(WorkspaceError, match='ended without recording an exit code'):
         await backend.run(['true'])
 

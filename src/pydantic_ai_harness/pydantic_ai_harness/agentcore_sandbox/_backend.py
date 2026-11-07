@@ -137,16 +137,33 @@ def _pydantic_ai_workspace(encoded):
         size = info.st_size if stat.S_ISREG(info.st_mode) else None
         return {'name': name, 'path': path, 'is_dir': stat.S_ISDIR(info.st_mode), 'size': size}
 
-    def regular_file(path):
-        mode = os.stat(path).st_mode
+    def check_regular(mode, path):
         if stat.S_ISDIR(mode):
             raise IsADirectoryError(21, 'Is a directory', path)
         if not stat.S_ISREG(mode):
             raise OSError(f'{path!r} is not a regular file')
 
+    def open_regular(path, flags=0):
+        # Opened without waiting for a writer and checked on the descriptor itself: opening a FIFO
+        # left where a file is expected would otherwise block this kernel for the rest of the session.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | flags)
+        try:
+            check_regular(os.fstat(fd).st_mode, path)
+        except OSError:
+            os.close(fd)
+            raise
+        return os.fdopen(fd, 'rb')
+
+    def captured(directory, name):
+        # A command's output artifact, or None before the command wrote it. The command could have
+        # replaced it with a link, so links are refused too.
+        try:
+            return open_regular(os.path.join(directory, name), os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+
     def read(path, offset, size):
-        regular_file(path)
-        with open(path, 'rb') as file:
+        with open_regular(path) as file:
             file.seek(offset)
             data = file.read(size)
         return {'data': base64.b64encode(data).decode(), 'eof': len(data) < size}
@@ -159,7 +176,7 @@ def _pydantic_ai_workspace(encoded):
             except FileExistsError:
                 raise NotADirectoryError(20, 'Not a directory', parent) from None
         if os.path.exists(path):
-            regular_file(path)
+            check_regular(os.stat(path).st_mode, path)
         with open(path, 'ab' if append else 'wb') as file:
             file.write(base64.b64decode(data))
 
@@ -183,41 +200,43 @@ def _pydantic_ai_workspace(encoded):
         return os.path.realpath(path) if os.path.isdir(path) else None
 
     def finished(directory, inline):
-        def size(name):
-            try:
-                return os.path.getsize(os.path.join(directory, name))
-            except FileNotFoundError:
-                return 0
-
         def head(name):
-            try:
-                with open(os.path.join(directory, name), 'rb') as file:
-                    return file.read(inline + 1)
-            except FileNotFoundError:
-                return b''
+            file = captured(directory, name)
+            if file is None:
+                return b'', 0
+            with file:
+                return file.read(inline + 1), os.fstat(file.fileno()).st_size
 
+        reply = {'exit_code': None, 'size': 0, 'out': None, 'err': None, 'replaced': False}
         try:
-            with open(os.path.join(directory, 'rc')) as file:
-                code = file.read().strip()
-        except FileNotFoundError:
-            code = None
-        reply = {'exit_code': code, 'size': size('out') + size('err'), 'out': None, 'err': None}
-        if code is not None:
-            out, err = head('out'), head('err')
-            # Most output is small: return it now and clean up, saving a round trip per stream. Decided on
-            # what was read, as a process the command left in the background can still be writing.
-            if len(out) + len(err) <= inline:
-                reply.update(out=base64.b64encode(out).decode(), err=base64.b64encode(err).decode())
-                shutil.rmtree(directory, ignore_errors=True)
+            rc = captured(directory, 'rc')
+            if rc is None:
+                return reply
+            with rc:
+                reply['exit_code'] = rc.read().decode().strip()
+            (out, out_size), (err, err_size) = head('out'), head('err')
+        except OSError:
+            # The command replaced an output file with something that is not a regular file.
+            reply['replaced'] = True
+            return reply
+        reply['size'] = out_size + err_size
+        # Most output is small: return it now and clean up, saving a round trip per stream. Decided on
+        # what was read, as a process the command left in the background can still be writing.
+        if len(out) + len(err) <= inline:
+            reply.update(out=base64.b64encode(out).decode(), err=base64.b64encode(err).decode())
+            shutil.rmtree(directory, ignore_errors=True)
         return reply
 
-    def tail(path, limit):
+    def tail(directory, name, limit):
         try:
-            with open(path, 'rb') as file:
-                file.seek(max(os.path.getsize(path) - limit, 0))
-                return base64.b64encode(file.read()).decode()
-        except FileNotFoundError:
+            file = captured(directory, name)
+        except OSError:
             return ''
+        if file is None:
+            return ''
+        with file:
+            file.seek(max(os.fstat(file.fileno()).st_size - limit, 0))
+            return base64.b64encode(file.read(limit)).decode()
 
     operations = {
         'read': read,
@@ -230,7 +249,7 @@ def _pydantic_ai_workspace(encoded):
         'realpath': lambda path: os.path.realpath(path),
         'working_dir': working_dir,
         'finished': finished,
-        'tail': lambda directory, limit: [tail(os.path.join(directory, name), limit) for name in ('out', 'err')],
+        'tail': lambda directory, limit: [tail(directory, name, limit) for name in ('out', 'err')],
         'clean_up': lambda directory: shutil.rmtree(directory, ignore_errors=True),
     }
     request = json.loads(encoded)
@@ -258,6 +277,7 @@ class _Finished(TypedDict):
     size: int
     out: str | None
     err: str | None
+    replaced: bool
 
 
 _REPLY = TypeAdapter(_Reply)
@@ -641,6 +661,11 @@ class AgentCoreSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesy
                 await stop_shielded(lambda: self._code(_NONE, 'clean_up', directory=directory), grace=_CLEAN_UP_GRACE)
 
     async def _result(self, directory: str, finished: _Finished) -> CommandResult:
+        if finished['replaced']:
+            raise WorkspaceError(
+                'The AgentCore command replaced its output file with something other than a regular file, '
+                'so its output could not be read'
+            )
         exit_code = finished['exit_code']
         if exit_code is None:
             raise WorkspaceError('The AgentCore command ended without recording an exit code')

@@ -82,7 +82,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
 
 ### How commands and files run
 
-AgentCore runs a command on a pseudo-terminal, which merges stdout and stderr. So each command runs as a background task with stdin at EOF and its output redirected to files, which are read when it exits. On a timeout or cancellation, the backend stops the task, which kills its process, and the timeout error carries up to the last 4 KiB of each stream. A command whose combined output passes 4 MiB raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`; redirect large output to a file instead.
+AgentCore runs a command on a pseudo-terminal, which merges stdout and stderr. So each command runs as a background task with stdin at EOF and its output redirected to files, which are read when it exits. On a timeout or cancellation, the backend stops the task, which kills its process, and the timeout error carries up to the last 4 KiB of each stream. A command whose combined output passes 4 MiB raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`; redirect large output to a file instead. A command that replaces one of its output files with something other than a regular file, such as a FIFO, fails with `WorkspaceError` and leaves the session usable.
 
 File operations run as short Python programs in the session's code kernel, which runs one at a time. They follow symlinks, and reading a FIFO or another file that is not a regular file raises `OSError` instead of waiting. AgentCore returns large output slowly, so a file is read 1 MiB per request: writing an 8 MiB file and reading it back takes about a minute.
 
