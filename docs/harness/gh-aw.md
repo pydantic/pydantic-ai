@@ -182,7 +182,8 @@ def label_catalog() -> list[str]:
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
 - **No third-party imports.** The engine installs `pydantic-clai2` and
-  `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
+  `pydantic-ai-harness` at the release the definition's `engine: version:` pins (CLAI
+  at any pre-release stage of it, such as `0.67.0a0` for `0.67.0`), plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).

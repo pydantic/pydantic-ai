@@ -7,7 +7,7 @@ import os
 import shlex
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
@@ -149,13 +149,26 @@ def test_labels() -> None:
     assert Update(channel='stable', target='0.53.0').label == '0.53.0'
 
 
+def _index(versions: Sequence[str], *, yanked: Mapping[str, bool | str] | None = None) -> dict[str, object]:
+    """PyPI's index JSON for CLAI: a wheel and an sdist per version, the sdist with no `yanked` key unless set."""
+    yanked = yanked or {}
+    files: list[dict[str, object]] = []
+    for version in versions:
+        state = yanked.get(version, False)
+        files.append({'filename': f'pydantic_clai2-{version}-py3-none-any.whl', 'yanked': state})
+        files.append({'filename': f'pydantic_clai2-{version}.tar.gz', **({'yanked': state} if state else {})})
+    return {'meta': {'api-version': '1.4'}, 'name': 'pydantic-clai2', 'files': files, 'versions': list(versions)}
+
+
 def test_latest_reads_pypi_and_the_bleeding_release(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         if str(request.url) == PYPI_URL:
-            return httpx.Response(200, json={'info': {'version': '0.53.0', 'summary': 'ignored'}})
+            # The index's JSON form, the one that lists every file; its HTML form is the default.
+            assert request.headers['accept'] == 'application/vnd.pypi.simple.v1+json'
+            return httpx.Response(200, json=_index(['0.52.0', '0.53.0']))
         return httpx.Response(200, json={'commit': NEWER})
 
     transport = httpx.MockTransport(respond)
@@ -195,6 +208,41 @@ def test_find_update() -> None:
     assert find_update('stable', Installed(version='0.52.0', commit=SHA), '0.52.0') is not None
     assert find_update('main', TOOL, SHA) is None
     assert find_update('main', release, SHA) == Update(channel='main', target=SHA)
+
+
+@pytest.mark.parametrize(
+    ('running', 'index', 'offered'),
+    [
+        # CLAI publishes only pre-releases until 1.0, so a final install moves on to them.
+        pytest.param('0.66.0', _index(['0.65.0', '0.66.0', '0.67.0a0']), '0.67.0a0', id='final-to-alpha'),
+        # PyPI's newest final is older than the running pre-release, so it is not offered.
+        pytest.param('0.67.0a0', _index(['0.66.0', '0.67.0a0']), None, id='alpha-is-newest'),
+        pytest.param('0.67.0a0', _index(['0.66.0', '0.67.0a0', '0.68.0b0']), '0.68.0b0', id='alpha-to-beta'),
+        pytest.param('0.68.0b0', _index(['0.68.0b0', '1.0.0']), '1.0.0', id='beta-to-final'),
+        # Installers skip yanked files, so neither spelling of a yank is offered.
+        pytest.param(
+            '0.67.0a0',
+            _index(['0.66.0', '0.67.0a0', '0.68.0a0', '0.69.0a0'], yanked={'0.68.0a0': True, '0.69.0a0': 'broken'}),
+            None,
+            id='yanked',
+        ),
+    ],
+)
+async def test_stable_channel_offers_the_newest_release(
+    running: str, index: dict[str, object], offered: str | None
+) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=index))
+    updates, ran = _updates(
+        ['stable'], current=Installed(version=running, tool=True), fetch=partial(latest, transport=transport)
+    )
+    if offered is None:
+        assert await updates.command(['now']) == f'CLAI {running} is the newest on the stable channel.'
+        assert ran == []
+    else:
+        assert await updates.command(['now']) == f'Updated CLAI to {offered} (stable). Restarting...'
+        [command] = ran
+        # An exact pin installs a pre-release without letting any dependency resolve to one.
+        assert command[-1] == f'pydantic-clai2=={offered}'
 
 
 def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

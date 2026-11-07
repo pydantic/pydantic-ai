@@ -466,7 +466,8 @@ Run the deterministic recorder fixture.
             '--target',
             str(packages),
             f'pydantic-ai-harness[coder]=={engine_version}',
-            f'pydantic-clai2=={engine_version}',
+            # Any stage of that release, as the engine definition installs it: CLAI ships pre-releases until 1.0.
+            f'pydantic-clai2>={engine_version}a0,<={engine_version}',
             f'pydantic-ai-slim[anthropic,openai,mcp,spec]>={slim_version}',
             f'cryptography>={cryptography_version}',
         ],

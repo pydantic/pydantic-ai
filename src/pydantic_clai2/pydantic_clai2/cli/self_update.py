@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NotRequired
 
 from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
@@ -53,7 +53,8 @@ MANIFEST = 'clai2-bleeding.json'
 """Names the commit the release's sdists were built from."""
 _COMMIT_ARCHIVE = re.compile(r'.*[/-]([0-9a-f]{40})\.tar\.gz')
 """A `main` sdist, or the commit archive earlier builds installed: the full commit ends the file name."""
-PYPI_URL = 'https://pypi.org/pypi/pydantic-clai2/json'
+PYPI_URL = 'https://pypi.org/simple/pydantic-clai2/'
+"""PyPI's index page for CLAI, whose JSON form lists every file with its yanked state."""
 TIMEOUT = 10.0
 """Seconds a release lookup may take."""
 
@@ -67,12 +68,14 @@ class _DirectURL(TypedDict, total=False):
     vcs_info: _VcsInfo
 
 
-class _ProjectInfo(TypedDict):
-    version: str
+class _IndexFile(TypedDict):
+    filename: str
+    yanked: NotRequired[bool | str]
+    """`true` or the reason once yanked."""
 
 
 class _PyPIProject(TypedDict):
-    info: _ProjectInfo
+    files: list[_IndexFile]
 
 
 class _Manifest(TypedDict):
@@ -121,13 +124,25 @@ def installed() -> Installed:
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
-    """The newest PyPI version for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
+    """The newest PyPI release for `stable`, or the commit the `clai2-bleeding` release was built from for `main`.
+
+    Pre-releases count, since CLAI publishes only pre-releases until 1.0; the JSON API's `info.version` is the
+    newest final release, so it would offer an older final to a pre-release install. Yanked files are skipped,
+    as installers skip them.
+    """
     import httpx
+    from packaging.utils import parse_sdist_filename, parse_wheel_filename
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
         if channel == 'stable':
-            response = client.get(PYPI_URL).raise_for_status()
-            return _PYPI_PROJECT.validate_json(response.content)['info']['version']
+            response = client.get(
+                PYPI_URL, headers={'Accept': 'application/vnd.pypi.simple.v1+json'}
+            ).raise_for_status()
+            files = _PYPI_PROJECT.validate_json(response.content)['files']
+            names = [file['filename'] for file in files if file.get('yanked', False) is False]
+            return str(
+                max(parse_wheel_filename(n)[1] if n.endswith('.whl') else parse_sdist_filename(n)[1] for n in names)
+            )
         response = client.get(f'{bleeding_url()}/{MANIFEST}').raise_for_status()
     return _MANIFEST.validate_json(response.content)['commit']
 

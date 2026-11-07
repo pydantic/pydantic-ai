@@ -107,7 +107,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
-| `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `updates.channel` | `stable` | Where /update looks: stable for PyPI releases (pre-releases included), or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
@@ -163,7 +163,7 @@ capability that selects a model replaces it. A model you choose with `-m`,
 `CLAI_MODEL`, the project file, `/set model`, or `/model` is passed to every
 run and wins.
 
-Without installing, run `uvx pydantic-clai2`; set `UV_COMPILE_BYTECODE=1` so uv compiles
+Without installing, run `uvx 'pydantic-clai2>=0.66.1a0'`; set `UV_COMPILE_BYTECODE=1` so uv compiles
 the bytecode while it builds the environment, instead of CLAI compiling each module the
 first time it imports it. The package also installs a `pydantic-clai2` command that is an alias for `clai2`.
 
@@ -213,10 +213,13 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 ### Updating
 
-Install with `uv tool install --compile-bytecode pydantic-clai2` and CLAI can update itself.
-`updates.channel` picks where it looks:
+Install with `uv tool install --compile-bytecode 'pydantic-clai2>=0.66.1a0'` and CLAI can update itself.
+Until 1.0, every CLAI release is a pre-release, such as `0.67.0a0`, and `>=0.66.1a0` asks for one
+without letting any dependency resolve to a pre-release. `updates.channel` picks where it looks:
 
-- `stable` (default): the newest release on PyPI.
+- `stable` (default): the newest release on PyPI, pre-releases included. A final release
+  such as `0.66.0` is offered the newest pre-release; a pre-release is never offered an
+  older final.
 - `main`: the newest build from the `main` branch. For each `main` commit that changes
   CLAI, harness, or core, CI builds an sdist of each and publishes them to the
   [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
@@ -646,7 +649,7 @@ missing from the Python CLAI runs on fails right away, naming the install comman
 of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
 
 ```bash
-pip install "pydantic-clai2[typesafe]"
+pip install "pydantic-clai2[typesafe]>=0.66.1a0"
 ```
 
 From a pydantic-ai checkout, run CLAI with the extra instead:
