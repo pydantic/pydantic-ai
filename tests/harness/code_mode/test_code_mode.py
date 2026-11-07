@@ -771,20 +771,24 @@ class TestCodeMode:
         printed = await wrapper.call_tool('run_code', {'code': 'print("done")\nNone'}, ctx, tools['run_code'])
         assert printed.return_value == {'output': 'done\n'}
 
-    async def test_run_code_caps_printed_output(self) -> None:
+    async def test_run_code_caps_printed_output_and_resets(self) -> None:
+        """An output collector's memory-limit diagnostic is indistinguishable from an unsafe heap limit."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
-        with pytest.raises(ModelRetry, match='memory limit exceeded'):
+        with pytest.raises(ModelRetry, match='memory limit exceeded') as exc_info:
             await wrapper.call_tool(
                 'run_code',
                 {'code': "x = 7\nprint('x' * (10 * 1024 * 1024))"},
                 ctx,
                 tools['run_code'],
             )
-        result = await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        assert 'print less output' in exc_info.value.message
+        with pytest.raises(ModelRetry, match='Name `x` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        result = await wrapper.call_tool('run_code', {'code': 'x = 7\nx + 1'}, ctx, tools['run_code'])
         assert result.return_value == 8
 
     async def test_run_code_caps_nested_tool_calls(self) -> None:
@@ -1067,12 +1071,8 @@ class TestCodeMode:
         assert '1 nested tool calls started' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
 
-    async def test_memory_exhaustion_reports_calls_without_resetting(self) -> None:
-        """Exceeding `max_memory` reports what already ran, but keeps the session.
-
-        The allocation failed at a known point and later calls work, so a reset would discard
-        usable state even though the summary is just as necessary.
-        """
+    async def test_memory_exhaustion_reports_calls_and_resets(self) -> None:
+        """A live worker's heap is not safe after `max_memory`; reset state but retain completed calls."""
         wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
             _build_function_toolset(add)
         )
@@ -1091,7 +1091,9 @@ class TestCodeMode:
         message = exc_info.value.message
         assert 'memory limit exceeded' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
-        assert 'session was reset' not in message
+        assert 'The sandbox ran out of memory and the session was reset.' in message
+        with pytest.raises(ModelRetry, match='Name `r` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'r'}, ctx, tools['run_code'])
 
     async def test_every_resource_limit_reports_started_calls_when_exhausted(self) -> None:
         """Exhausting any option a caller can set still reports the calls that already ran.
@@ -1614,27 +1616,15 @@ class TestCodeMode:
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMonty', failing_monty)
 
         threads_before = set(threading.enumerate())
-        threads_after_retry: list[str] = []
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(RuntimeError, match='spawn failed'):
+            await wrapper.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('run_code', {'code': '1'})])
-            # Checked while the run is still live: the run's own teardown would hide a leak.
-            # anyio's `to_thread` pool, which runs this sync function, is not the portal.
-            new_threads = set(threading.enumerate()) - threads_before
-            threads_after_retry.extend(t.name for t in new_threads if t.name != 'AnyIO worker thread')
-            return ModelResponse(parts=[TextPart('done')])
-
-        result = await Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()]).run('fail to spawn')
-
-        retry = next(
-            p
-            for m in result.all_messages()
-            for p in m.parts
-            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-        )
-        assert 'spawn failed' in str(retry.content)
-        assert threads_after_retry == []
+        new_threads = set(threading.enumerate()) - threads_before
+        assert [thread.name for thread in new_threads if thread.name != 'AnyIO worker thread'] == []
 
     async def test_agent_run_preserves_repl_between_code_calls(self) -> None:
         """Code Mode keeps one REPL across model steps in an agent run."""
@@ -1789,6 +1779,19 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
 
         with pytest.raises(UserError, match='conflicts with the code mode'):
+            await wrapper.get_tools(build_run_context(None))
+
+    async def test_sandboxed_tool_named_after_builtin_raises_user_error(self) -> None:
+        """A sandboxed tool named after a Python builtin raises UserError, since code would call the builtin."""
+
+        def open(path: str) -> str:
+            """A tool that the sandbox's `open` builtin would shadow."""
+            return path  # pragma: no cover
+
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(open, add))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
             await wrapper.get_tools(build_run_context(None))
 
     async def test_filter_excluding_everything_yields_run_code_with_no_functions(self) -> None:
@@ -2771,6 +2774,106 @@ class TestCodeMode:
         assert description.count('get_weather') >= 1
         assert 'Get weather (dots)' not in description
 
+    async def test_parameter_names_that_are_not_identifiers_dispatch_under_their_schema_names(self) -> None:
+        """Keyword and non-identifier parameter names are renamed in the sandbox and restored for the tool call.
+
+        Object fields keep their schema names, so the type-checked snippet passes `@type` and `from` as `dict` keys.
+        """
+        received: list[dict[str, Any]] = []
+
+        def search(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'found'
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'properties': {'@type': {'type': 'string'}, 'from': {'type': 'integer'}},
+                    'required': ['@type'],
+                },
+            },
+            'required': ['from', 'user-id', 'filter'],
+        }
+        code = "await search(from_='me', user_id='u-1', filter={'@type': 'mail', 'from': 3})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(search, name='search', description='Search.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Search.')
+
+        assert received == snapshot([{'from': 'me', 'user-id': 'u-1', 'filter': {'@type': 'mail', 'from': 3}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('found')
+
+    async def test_functional_typed_dicts_reference_types_defined_later(self) -> None:
+        """A functional TypedDict can name itself and types rendered after it, under the type check."""
+        received: list[dict[str, Any]] = []
+
+        def walk(**kwargs: Any) -> str:
+            received.append(kwargs)
+            return 'walked'
+
+        schema = {
+            'type': 'object',
+            'properties': {'node': {'$ref': '#/$defs/Node'}},
+            'required': ['node'],
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        '@id': {'type': 'string'},
+                        'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}},
+                        'meta': {
+                            'type': 'object',
+                            'title': 'Meta',
+                            'properties': {'label': {'type': 'string'}},
+                            'required': ['label'],
+                        },
+                    },
+                    'required': ['@id'],
+                }
+            },
+        }
+        code = "await walk(node={'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}})"
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool.from_schema(walk, name='walk', description='Walk a tree.', json_schema=schema)],
+            capabilities=[CodeMode[object]()],
+        )
+        result = await agent.run('Walk.')
+
+        assert received == snapshot([{'node': {'@id': 'a', 'children': [{'@id': 'b'}], 'meta': {'label': 'x'}}}])
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == snapshot('walked')
+
     async def test_sanitized_name_collision_with_native_tool(self) -> None:
         """A sanitized name that collides with a native (already valid) tool is dropped."""
         td_native = ToolDefinition(
@@ -3409,7 +3512,7 @@ class TestCodeMode:
         run_code = tools['run_code']
 
         await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, run_code)
-        with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
+        with pytest.raises(ModelRetry, match='ran longer than its time limit') as exc_info:
             await wrapper.call_tool(
                 'run_code', {'code': 'r = await add(a=1, b=2)\nwhile True:\n    pass'}, ctx, run_code
             )

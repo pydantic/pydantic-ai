@@ -61,7 +61,6 @@ from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
@@ -1393,6 +1392,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead. The same goes
     for a response without a digest, as there's no telling whether it has changed.
+    A history missing its earlier messages counts as changed too, so pass `all_messages()` rather than
+    `new_messages()`, or the model won't see what was left out.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -2942,7 +2943,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
             text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
-            text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
+            text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
         )
 

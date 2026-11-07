@@ -32,8 +32,10 @@ ci-review-failed
 ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
+clai2
 cli
 cluster:cache	Work stream: prompt cache retention, expiry and prefix stability
+cluster:complexity	Work stream: cognitive complexity refactors under the 15-per-function gate (#10983)
 cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 cohere
 community contribution
