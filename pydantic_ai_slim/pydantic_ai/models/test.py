@@ -32,7 +32,7 @@ from ..messages import (
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
@@ -62,8 +62,8 @@ class _WrappedToolOutput:
 class TestModel(InMemoryBatchModel):
     """A model specifically for testing purposes.
 
-    This will (by default) call all tools in the agent, then return a tool response if possible,
-    otherwise a plain response.
+    This will (by default) call all tools in the agent, then return structured output (tool, native, or prompted)
+    or a plain response.
 
     How useful this model is will vary significantly.
 
@@ -169,6 +169,12 @@ class TestModel(InMemoryBatchModel):
     def provider(self) -> None:
         return None
 
+    def _provider_model_profile(self) -> ModelProfile:
+        """Enable native output and prompted output, unless a `profile=` is given."""
+        if self._profile is not None:
+            return {}
+        return ModelProfile(supports_json_schema_output=True, supports_json_object_output=True)
+
     @property
     def model_name(self) -> str:
         """The model name."""
@@ -228,6 +234,13 @@ class TestModel(InMemoryBatchModel):
             )
             assert self.custom_output_args is None, 'Cannot set both `custom_output_text` and `custom_output_args`.'
             return _WrappedTextOutput(self.custom_output_text)
+        elif output_object := model_request_parameters.output_object:
+            if self.custom_output_args is not None:
+                raise UserError(
+                    '`custom_output_args` is for tool output; use `custom_output_text` with `NativeOutput` and `PromptedOutput`.'
+                )
+            output = _JsonSchemaTestData(output_object.json_schema, self.seed).generate()
+            return _WrappedTextOutput(pydantic_core.to_json(output).decode())
         elif self.custom_output_args is not None:
             assert model_request_parameters.output_tools is not None, (
                 'No output tools provided, but `custom_output_args` is set.'
