@@ -5613,6 +5613,27 @@ async def test_adapter_dump_messages():
     )
 
 
+async def test_adapter_dump_messages_when_a_response_reuses_a_tool_call_id():
+    """A `tool_call_id` is unique within a response, not within a conversation, so each call keeps its own result."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='first')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'q': 1}, tool_call_id='call_0')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='RESULT-ONE', tool_call_id='call_0')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'q': 2}, tool_call_id='call_0')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='RESULT-TWO', tool_call_id='call_0')]),
+    ]
+
+    outputs = [
+        part.output
+        for message in VercelAIAdapter.dump_messages(messages)
+        if message.role == 'assistant'
+        for part in message.parts
+        if isinstance(part, ToolOutputAvailablePart)
+    ]
+
+    assert outputs == ['RESULT-ONE', 'RESULT-TWO']
+
+
 async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: BinaryImage):
     """The AI SDK's `validateUIMessages` rejects `null` for optional part fields, so unset ones are omitted."""
     messages: list[ModelMessage] = [
