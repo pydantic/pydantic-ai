@@ -7201,7 +7201,7 @@ async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_reque
     await agent.run('continue', message_history=message_history)
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == f'You are helpful.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    assert kwargs['system'] == f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nYou are helpful.'
     wrapped_contents = [
         block['text']
         for msg in kwargs['messages']

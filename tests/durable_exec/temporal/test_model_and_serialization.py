@@ -3180,7 +3180,7 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
+                'system': f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},

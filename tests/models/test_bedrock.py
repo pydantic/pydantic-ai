@@ -8086,7 +8086,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
+    assert system_prompt == [{'text': SYSTEM_VOICE_ANNOUNCEMENT}, {'text': 'You are helpful.'}]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)

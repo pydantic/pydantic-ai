@@ -1840,7 +1840,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         the profile's `supports_inline_system_prompts` is `False`. On such a profile it also escapes every
         `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
         when the request has a standing system prompt or instructions, adds one fixed sentence saying what
-        the tag means after the first request's leading system prompts: from the first request whose history
+        the tag means ahead of the first request's leading system prompts, so the operator's own text comes last: from the first request whose history
         has a mid-conversation system prompt and on every request after it, unless the
         [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says
         otherwise. It also converts
@@ -4013,18 +4013,18 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     (`framing_announcement='when_needed'`) is added from the first request whose history has a mid-conversation
     system prompt, and to every request after it, even once a request-scoped prompt that triggered it is no longer
     sent. An agent that never sends one pays nothing for it, and one that does changes its cache prefix once, at that
-    request, and keeps it stable from then on. It goes after the first
-    request's opening system prompts, which every adapter lifts into the provider's system field, ahead of the
-    instructions.
+    request, and keeps it stable from then on. It goes ahead of the first request's opening system prompts, which
+    every adapter lifts into the provider's system field ahead of the instructions, so the operator's own text, from
+    `system_prompt` or `instructions`, keeps the last word: with the sentence after the operator's prompt, Gemini acted
+    more often on requests quoted in a tool result that an operator instruction seemed to cover.
     """
     first_request_idx, first_request = next(
         (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
     )
-    position = _standing_system_prompt_count(first_request)
     announcement = SystemPromptPart(
         content=SYSTEM_VOICE_ANNOUNCEMENT, timestamp=first_request.timestamp or _utils.now_utc()
     )
-    parts = [*first_request.parts[:position], announcement, *first_request.parts[position:]]
+    parts = [announcement, *first_request.parts]
     return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
 
 

@@ -342,8 +342,8 @@ class ModelSettings(TypedDict, total=False):
 
     A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
     `<system>` block in a user turn, and follows it far more reliably once its standing prompt has said what the tag
-    means. Pydantic AI adds that one fixed sentence after the leading system prompts, ahead of the instructions, on a
-    request that has a system prompt or instructions:
+    means. Pydantic AI adds that one fixed sentence ahead of the leading system prompts and the instructions, so the
+    application's own text keeps the last word, on a request that has a system prompt or instructions:
 
     - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
       every request after it, even once a request-scoped one (`scope='request'`) that brought it in is no longer
