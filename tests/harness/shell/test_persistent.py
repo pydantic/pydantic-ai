@@ -389,6 +389,35 @@ class TestShellTool:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(group_id, signal.SIGKILL)
 
+    @pytest.mark.parametrize(
+        'command',
+        [
+            pytest.param('rm -rf .pydantic-ai-harness', id='removed'),
+            pytest.param('chmod 500 .pydantic-ai-harness/shell/*', id='read-only'),
+        ],
+    )
+    async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path, command: str) -> None:
+        # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop, and `dash` drops one that arrives
+        # before the watcher resets the trap it inherits. A job started with `TERM` ignored misses it every time.
+        previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            output = await shell(tmp_path, {'command': command, 'timeout': 0.2})
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        jobs = tmp_path / '.pydantic-ai-harness' / 'shell'
+        try:
+            for job in jobs.glob('*'):
+                if os.access(job, os.W_OK):  # pragma: no cover - root writes regardless of mode bits
+                    pytest.skip('mode bits do not bind this user')
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
+            for job in jobs.glob('*'):
+                job.chmod(0o700)
+
     async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
         toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()
         assert toolset is not None
