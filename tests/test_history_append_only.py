@@ -277,9 +277,11 @@ AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt_withdrawal': Scenario(configure=_dynamic_system_prompt_withdrawal, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    # Chat Completions uses gpt-5.4: the GPT-5.5/5.6/6 families reject function tools while
+    # reasoning is active over Chat Completions, and every scenario registers a function tool.
     'agent:effort_change': Scenario(
         run_kwargs={'model_settings': _effort_by_step},
-        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-5.4'},
         serialize_history=True,
     ),
     # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,

@@ -2632,6 +2632,142 @@ async def test_openai_store_true(allow_model_requests: None):
     assert kwargs.get('store') is True
 
 
+async def test_chat_completions_function_tools_reasoning_user_error_before_send(allow_model_requests: None) -> None:
+    """GPT-6 rejects function tools while reasoning is on over Chat Completions; the guard must fire first."""
+    c = completion_message(ChatCompletionMessage(content='Should not reach here.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'{city}: 21°C'  # pragma: no cover
+
+    with pytest.raises(UserError, match='function tools while reasoning is enabled'):
+        await agent.run('What is the temperature in Tokyo?')
+
+    # The request must be rejected before anything reaches the provider.
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+@pytest.mark.parametrize(
+    'model_name, thinking_false_remedy',
+    [
+        pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
+        pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
+        pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        # On these, `thinking=False` maps to the lowest effort, so it is not a way out.
+        pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
+        pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
+    ],
+)
+async def test_chat_completions_function_tools_reasoning_error_remedy_copy_per_id(
+    allow_model_requests: None, model_name: str, thinking_false_remedy: bool
+) -> None:
+    """The error always names `OpenAIResponsesModel`, suggesting `thinking=False` only where 'none' is accepted."""
+    c = completion_message(ChatCompletionMessage(content='Should not reach here.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    with pytest.raises(UserError, match='OpenAIResponsesModel') as exc_info:
+        await agent.run('echo')
+
+    message = str(exc_info.value)
+    assert ('thinking=False' in message) == thinking_false_remedy
+
+
+@pytest.mark.parametrize(
+    'model_name, thinking_false_escapes',
+    [
+        pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
+        pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
+        pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        # `thinking=False` resolves to the lowest effort here, so the guard must still fire.
+        pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
+        pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
+    ],
+)
+async def test_chat_completions_function_tools_thinking_false_escapes_on_none_supported_id(
+    allow_model_requests: None, model_name: str, thinking_false_escapes: bool
+) -> None:
+    """`thinking=False` lets function tools through where 'none' is accepted, and never where efforts are pinned."""
+    c = completion_message(ChatCompletionMessage(content='done', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, capabilities=[Thinking(effort=False)])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    if thinking_false_escapes:
+        result = await agent.run('echo')
+        assert result.output == 'done'
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs.get('reasoning_effort') == 'none'
+        assert kwargs.get('tools')
+    else:
+        with pytest.raises(UserError, match='OpenAIResponsesModel'):
+            await agent.run('echo')
+        assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_model_requests: None) -> None:
+    """Unflagged reasoning models keep sending function tools with reasoning on."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    result = await agent.run('echo')
+    assert result.output == 'hello'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('tools')
+    # Default thinking sends no explicit effort; the server-side default keeps reasoning on.
+    assert kwargs.get('reasoning_effort') is None
+
+
+async def test_chat_completions_function_tools_recorded_provider_400_on_shared_profile(
+    allow_model_requests: None,
+) -> None:
+    """Without the OpenAI-verified flag (a shared profile, e.g. reused by a gateway), the provider's 400 surfaces."""
+    message = (
+        'Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. '
+        "To use function tools, use /v1/responses or set reasoning_effort to 'none'"
+    )
+    recorded_400 = APIStatusError(
+        message,
+        response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://api.openai.com/v1')),
+        body={'error': {'message': message, 'type': 'invalid_request_error', 'param': 'tools'}},
+    )
+    mock_client = MockOpenAI.create_mock(recorded_400)
+    # The user `profile=` layer only overrides keys it carries, and the shared profile omits the
+    # OpenAI-verified flag; disable it explicitly to exercise the provider's 400 surfacing.
+    m = OpenAIChatModel(
+        'gpt-6-luna',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False),
+    )
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    with pytest.raises(ModelHTTPError, match='Function tools with reasoning_effort') as exc_info:
+        await agent.run('echo')
+    assert exc_info.value.status_code == 400
+
+
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
     # Since we use VCR, creating tests with an `httpx.Transport` is not possible.

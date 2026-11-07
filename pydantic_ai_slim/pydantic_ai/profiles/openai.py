@@ -409,6 +409,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
     (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
+    openai_chat_function_tools_require_reasoning_off: bool
+    """Whether the Chat Completions API rejects function tools while reasoning is on. Default: `False`.
+
+    When enabled, `OpenAIChatModel` raises a `UserError` for a request that combines function tools with
+    reasoning, before anything is sent: the API rejects the combination with a 400 pointing at `/v1/responses`
+    or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
+    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol). `openai_model_profile` leaves it off,
+    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
+    accepted effort rather than `'none'`, so it is not a way out there."""
+
     openai_chat_thinking_false_body: dict[str, Any]
     """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of
     `reasoning_effort`. Default: unset.
