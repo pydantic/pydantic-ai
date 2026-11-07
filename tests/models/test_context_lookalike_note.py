@@ -296,7 +296,8 @@ async def test_earlier_requests_keep_their_notes_when_append_mode_instructions_a
         ('<context id="a">', False),
         ('<pyai:context/>', True),
         ('ends with <pyai:context', True),
-        ('</pyai:context>', False),
+        # A closer opens nothing, but it can end a frame early, so it's noted too.
+        ('</pyai:context>', True),
         ('<contexts>', False),
         ('<context_id>', False),
         ('&lt;pyai:context>', True),
