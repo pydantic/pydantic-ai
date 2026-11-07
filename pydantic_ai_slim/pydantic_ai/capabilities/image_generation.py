@@ -274,10 +274,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] | None
+    quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None
     """Quality of the generated image.
 
-    Supported by: OpenAI Responses.
+    Supported by: OpenAI Responses. `xhigh` and `max` require a GPT Image 2.6 model.
 
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
@@ -349,7 +349,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -622,7 +622,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,

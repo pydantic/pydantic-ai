@@ -872,7 +872,14 @@ def test_model_json_schema_with_capabilities():
                         'model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2.6-flare',
+                                        'gpt-image-2.6-sunburst',
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -894,7 +901,7 @@ def test_model_json_schema_with_capabilities():
                         'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
                         'quality': {
                             'default': 'auto',
-                            'enum': ['low', 'medium', 'high', 'auto'],
+                            'enum': ['low', 'medium', 'high', 'xhigh', 'max', 'auto'],
                             'title': 'Quality',
                             'type': 'string',
                         },
@@ -2480,7 +2487,14 @@ def test_model_json_schema_with_capabilities():
                         'image_model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2.6-flare',
+                                        'gpt-image-2.6-sunburst',
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -2497,7 +2511,10 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Output Format',
                         },
                         'quality': {
-                            'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'enum': ['low', 'medium', 'high', 'xhigh', 'max', 'auto'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
                             'title': 'Quality',
                         },
                         'size': {

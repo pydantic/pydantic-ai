@@ -208,6 +208,13 @@ check. Keep the model-specific evidence concise:
 - **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. Gateway routing needs the pricing entry; model-name support does not. Follow Step 3b to report the gap.
 - **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
+OpenAI image-model landmines:
+
+- **Probe `quality` with a valid `size`.** The Images API validates `size` before `quality`. An unknown `quality` returns the same `low, medium, high, auto` list for every model, so it tells you nothing. Only a request that passes size validation shows the per-model rejection: `The model 'gpt-image-2' does not support quality 'xhigh'.`
+- **Probe geometry with out-of-bounds sizes.** A rejected size generates nothing and costs nothing. When the new model rejects each boundary size with the same message as a known family, add its ids to that family's tuple in `images/_openai_geometry.py`.
+- **A model page's "Responses: Not supported" means the top-level `model`.** GPT Image 2.6 pages say it, yet the Responses `image_generation` tool accepts both 2.6 ids. Probe the tool with `tool_choice={'type': 'image_generation'}` before deciding `ImageGenerationModelName`.
+- **A new `quality` value goes in every copy of the quality `Literal`.** The copies are `ImageGenerationTool.quality`, the `ImageGeneration` capability field, `__init__` and `from_spec`, and `OpenAIImageGenerationSettings.openai_quality`. `tests/test_capability_spec.py` snapshots the first two.
+
 ### Anthropic
 
 - **TWO literal lists, not one.** Add the id to BOTH:

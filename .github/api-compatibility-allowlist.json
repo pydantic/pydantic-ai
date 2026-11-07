@@ -33,6 +33,10 @@
       "symbol": "LatestGoogleImageGenerationModelNames"
     },
     {
+      "path": "pydantic_ai_slim/pydantic_ai/images/openai.py",
+      "symbol": "OpenAIImageGenerationModelName"
+    },
+    {
       "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
       "symbol": "KnownModelName"
     },

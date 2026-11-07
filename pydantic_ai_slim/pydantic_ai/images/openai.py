@@ -33,8 +33,14 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-OpenAIImageGenerationModelName = str | LatestOpenAIImageModelNames
-"""Possible OpenAI image generation model names."""
+OpenAIImageGenerationModelName = (
+    str | LatestOpenAIImageModelNames | Literal['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']
+)
+"""Possible OpenAI image generation model names.
+
+The GPT Image 2.6 names bridge the `openai` SDK until its floor reaches 3.46.0, the first release whose
+`ImageModel` lists them.
+"""
 
 _UNSUPPORTED_MODEL_NAMES = frozenset(('dall-e-2', 'dall-e-3'))
 """DALL·E models the OpenAI SDK's `ImageModel` literal admits but this adapter does not implement.
@@ -80,8 +86,8 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     different concepts for pixel sizes, aspect ratios, and resolution tiers.
     """
 
-    openai_quality: Literal['low', 'medium', 'high', 'auto']
-    """GPT Image quality setting."""
+    openai_quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
+    """GPT Image quality setting. `xhigh` and `max` require a GPT Image 2.6 model."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
     """OpenAI image background setting."""
@@ -106,8 +112,9 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
 class OpenAIImageGenerationModel(ImageGenerationModel):
     """OpenAI image generation model implementation.
 
-    This model works with OpenAI's Images API and the GPT Image model family, such as `gpt-image-2`,
-    `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+    This model works with OpenAI's Images API and the GPT Image model family, such as
+    `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and
+    `gpt-image-1-mini`.
 
     The `dall-e-2` and `dall-e-3` models are not supported and raise a
     [`UserError`][pydantic_ai.exceptions.UserError] on construction, even though they are part of the
