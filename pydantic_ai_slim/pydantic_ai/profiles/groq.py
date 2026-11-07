@@ -57,6 +57,8 @@ def groq_model_profile(model_name: str) -> ModelProfile:
             'qwen-qwq',  # legacy (deprecated)
             'deepseek-r1',  # legacy (deprecated)
             'llama-4-maverick',  # legacy (deprecated)
+            'meta-models/muse-spark-open',  # current: always-on reasoning
+            'minimaxai/minimax-m2.7',  # current: always-on reasoning
         )
     )
     is_qwen3 = model_name.startswith('qwen/qwen3')
@@ -66,11 +68,20 @@ def groq_model_profile(model_name: str) -> ModelProfile:
     # `tests/models/cassettes/test_groq/test_groq_model_web_search_tool.yaml` already come back with
     # `"model": "groq/compound"`. Accept both, since the old IDs still resolve.
     is_compound = model_name.startswith('compound-') or model_name.startswith('groq/compound')
-    return GroqModelProfile(
+    # JSON mode is accepted across Groq's catalog. JSON-schema structured output is only accepted
+    # by the models marked for it in Groq's structured-outputs docs (`meta-models/muse-spark-open`)
+    # plus `qwen/qwen3.8-*` and `qwen/qwen3.6-*`, which accept it live despite qwen3.6 not yet
+    # appearing in those docs; other models keep whatever JSON-schema support their family profile
+    # already carries.
+    profile = GroqModelProfile(
         groq_always_has_web_search_builtin_tool=is_compound,
         supports_thinking=is_reasoning_model,
         # qwen3 can disable reasoning with reasoning_effort='none'; gpt-oss and legacy models can't
         thinking_always_enabled=is_reasoning_model and not is_qwen3,
         groq_supports_reasoning_disable=is_qwen3,
         groq_supports_graded_reasoning_effort=is_gpt_oss,
+        supports_json_object_output=True,
     )
+    if model_name.startswith(('qwen/qwen3.8-', 'qwen/qwen3.6-', 'meta-models/muse-spark-open')):
+        profile['supports_json_schema_output'] = True
+    return profile
