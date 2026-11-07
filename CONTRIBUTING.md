@@ -1,1 +1,1 @@
-docs/contributing.md
+[Contributing Guide](docs/contributing.md)
