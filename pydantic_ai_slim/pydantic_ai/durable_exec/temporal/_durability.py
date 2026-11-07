@@ -56,6 +56,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._function_toolset import gate_tool_instance_defaults
 from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
@@ -439,6 +440,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config.update(self._toolset_activity_config.get(toolset_id, {}))
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
         return config
+
+    def _function_tools_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return gate_tool_instance_defaults(toolset, tools)
 
     @contextmanager
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -29,6 +31,34 @@ from ._toolset import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
+
+_TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_instances'
+"""`workflow.patched()` ID marking histories in which `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
+
+
+def gate_tool_instance_defaults(
+    toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
+) -> dict[str, ToolsetTool[AgentDepsT]]:
+    """Drop `toolset`'s `sequential` and `defer_loading` from its `Tool` instances in histories recorded before it set them.
+
+    A sequential or deferred tool changes which activities the workflow schedules, so those histories
+    replay only without them.
+    """
+    made_sequential = toolset._tools_made_sequential  # pyright: ignore[reportPrivateUsage]
+    made_deferred = toolset._tools_made_deferred  # pyright: ignore[reportPrivateUsage]
+    unpatched: dict[str, ToolsetTool[AgentDepsT]] = {}
+    for name, tool in tools.items():
+        assert isinstance(tool, FunctionToolsetTool)
+        tool_def = replace(
+            tool.tool_def,
+            sequential=tool.tool_def.sequential and tool.original_name not in made_sequential,
+            defer_loading=tool.tool_def.defer_loading and tool.original_name not in made_deferred,
+        )
+        if tool_def != tool.tool_def:
+            unpatched[name] = replace(tool, tool_def=tool_def)
+    if not unpatched or workflow.patched(_TOOL_INSTANCE_DEFAULTS_PATCH):
+        return tools
+    return {**tools, **unpatched}
 
 
 def temporalize_function_toolset(
@@ -114,6 +144,7 @@ def temporalize_function_toolset(
     return DurableFunctionToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
+        tools_in_durable_context=partial(gate_tool_instance_defaults, toolset),
         call_tool_operation=call_tool_operation,
         resolve_tool_config=resolve_tool_config,
         lifecycle='enter-outside-durable',

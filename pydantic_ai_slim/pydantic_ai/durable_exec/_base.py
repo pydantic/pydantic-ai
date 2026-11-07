@@ -1359,7 +1359,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             lifecycle=self.engine_spec.toolset_lifecycles['function'],
             durable_registrations=self._bound_operation_registrations(call_tool, validate_args),
             durable_config=base_config,
+            tools_in_durable_context=partial(self._function_tools_in_durable_context, toolset),
         )
+
+    def _function_tools_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Adjust the tools a wrapped `FunctionToolset` lists inside the durable context."""
+        return tools
 
     def _build_dynamic_toolset(self, toolset: DynamicToolset[AgentDepsT]) -> DurableDynamicToolset[AgentDepsT]:
         base_config = self._toolset_operation_config('dynamic', cast(str, toolset.id))

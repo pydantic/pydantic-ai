@@ -6213,6 +6213,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::prepare_function_call_params"
       ]
     },
+    "ToolDefinition.defer_loading": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
+      ]
+    },
     "ToolDefinition.metadata": {
       "engines": [
         "aws_lambda",
@@ -6245,6 +6256,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::run_args_validator"
+      ]
+    },
+    "ToolDefinition.sequential": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
       ]
     },
     "ToolDefinition.timeout": {
@@ -6717,6 +6739,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._resolve_temporal_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_dynamic_toolset.py::temporalize_dynamic_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_dynamic_toolset.py::temporalize_dynamic_toolset.validate_args_operation",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_mcp_toolset.py::temporalize_mcp_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
@@ -6786,6 +6809,28 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
+      ]
+    },
+    "FunctionToolset._tools_made_deferred": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
+      ]
+    },
+    "FunctionToolset._tools_made_sequential": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
       ]
     },
     "FunctionToolset.call_tool": {
@@ -6921,6 +6966,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._register_child_workflow.call_tool_operation",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_resolve_options",

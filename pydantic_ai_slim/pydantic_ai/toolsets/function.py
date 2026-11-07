@@ -160,6 +160,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ]
 
         self.tools = {}
+        # Names of `Tool` instances whose `sequential` or `defer_loading` only `add_tool` turned on,
+        # from this toolset's value. Temporal replays histories recorded before `add_tool` did so
+        # without them; see `pydantic_ai.durable_exec.temporal._function_toolset`.
+        self._tools_made_sequential: set[str] = set()
+        self._tools_made_deferred: set[str] = set()
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
@@ -732,6 +737,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tool.sequential = sequential
         tool.requires_approval = requires_approval
         tool.defer_loading = defer_loading
+        self._tools_made_sequential.discard(tool.name)
+        self._tools_made_deferred.discard(tool.name)
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
@@ -752,12 +759,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.strict = self.strict
         if tool.include_return_schema is None and self.include_return_schema is not None:
             tool.include_return_schema = self.include_return_schema
-        if self.sequential:
+        if self.sequential and not tool.sequential:
             tool.sequential = True
+            self._tools_made_sequential.add(tool.name)
         if self.requires_approval:
             tool.requires_approval = True
-        if self._defer_loading:
+        if self._defer_loading and not tool.defer_loading:
             tool.defer_loading = True
+            self._tools_made_deferred.add(tool.name)
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool

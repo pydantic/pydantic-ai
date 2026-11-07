@@ -764,6 +764,8 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         resolve_validation_config: ResolveToolConfig | None = None,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
+        tools_in_durable_context: Callable[[dict[str, ToolsetTool[AgentDepsT]]], dict[str, ToolsetTool[AgentDepsT]]]
+        | None = None,
     ):
         super().__init__(
             wrapped,
@@ -776,11 +778,14 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         self._resolve_tool_config = resolve_tool_config
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
+        self._tools_in_durable_context = tools_in_durable_context
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
         if not self._in_durable_context():
             return tools
+        if self._tools_in_durable_context is not None:
+            tools = self._tools_in_durable_context(tools)
         return {name: self._tool_with_durable_validation(name, tool) for name, tool in tools.items()}
 
     def _tool_with_durable_validation(self, name: str, tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
