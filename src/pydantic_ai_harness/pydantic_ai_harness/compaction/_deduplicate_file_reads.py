@@ -114,14 +114,14 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
             if key is not None:
                 latest_order[key] = pair.order
 
-        clear_return_ids: set[str] = set()
+        clear_return_positions: set[tuple[int, int]] = set()
         for pair, key in zip(pairs, keys):
             if key is not None and latest_order[key] != pair.order:
-                clear_return_ids.add(pair.tool_call_id)
+                clear_return_positions.add(pair.return_position)
 
-        if not clear_return_ids:
+        if not clear_return_positions:
             return messages
-        return rebuild_with_cleared(messages, clear_return_ids, set(), self.placeholder)
+        return rebuild_with_cleared(messages, clear_return_positions, set(), self.placeholder)
 
     async def before_model_request(
         self,
