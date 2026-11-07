@@ -1730,9 +1730,10 @@ class GeminiStreamedResponse(StreamedResponse):
         candidate = chunk.candidates[0]
         self._track_continuation(chunk, candidate)
 
-        if not self._has_content_filter and (finish_details := _finish_details(candidate)):
+        if not self._has_content_filter and (finished := _finish_details(candidate)) is not None:
+            finish_reason, finish_details = finished
             self.provider_details = {**(self.provider_details or {}), **finish_details}
-            self.finish_reason = _FINISH_REASON_MAP.get(finish_details['finish_reason'])
+            self.finish_reason = finish_reason
 
         if candidate.grounding_metadata is not None:
             self._grounding_metadata = candidate.grounding_metadata
@@ -2466,9 +2467,8 @@ def _response_provider_details(
     """The finish reason and provider details of a response that isn't streamed."""
     finish_reason: FinishReason | None = None
     provider_details: dict[str, Any] = {}
-    if candidate and (finish_details := _finish_details(candidate)):  # pragma: no branch
-        provider_details = finish_details
-        finish_reason = _FINISH_REASON_MAP.get(finish_details['finish_reason'])
+    if candidate and (finished := _finish_details(candidate)) is not None:  # pragma: no branch
+        finish_reason, provider_details = finished
     elif candidate is None and (blocked_details := _blocked_prompt_details(response)):
         provider_details = blocked_details
         finish_reason = 'content_filter'
@@ -2489,14 +2489,14 @@ def _response_provider_details(
     return finish_reason, provider_details
 
 
-def _finish_details(candidate: Candidate) -> dict[str, Any] | None:
-    """The finish reason and safety ratings of a candidate, or `None` while it hasn't finished."""
+def _finish_details(candidate: Candidate) -> tuple[FinishReason | None, dict[str, Any]] | None:
+    """A candidate's mapped finish reason, and its raw finish reason and safety ratings; `None` until it finishes."""
     if not candidate.finish_reason:
         return None
     details: dict[str, Any] = {'finish_reason': candidate.finish_reason.value}
     if candidate.safety_ratings:
         details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
-    return details
+    return _FINISH_REASON_MAP.get(candidate.finish_reason.value), details
 
 
 def _blocked_prompt_details(response: GenerateContentResponse) -> dict[str, Any] | None:
