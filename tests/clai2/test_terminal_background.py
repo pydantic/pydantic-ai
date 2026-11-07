@@ -10,6 +10,9 @@ from collections.abc import Iterator
 from typing import IO
 
 import pytest
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.keys import Keys
 
 from pydantic_clai2.ui.prompt.terminal_background import detect_background
 
@@ -99,20 +102,6 @@ def test_without_an_answer_colorfgbg_tells_light_from_dark(
     assert detect_background(stdin=stdin, stdout=Display(keyboard, answer), timeout=0.01) == background
 
 
-def test_keys_typed_ahead_are_left_for_the_editor(
-    terminal: tuple[int, IO[str]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The answer would arrive behind those keys, so CLAI does not ask and reads nothing."""
-    keyboard, stdin = terminal
-    monkeypatch.setenv('COLORFGBG', '0;15')
-    os.write(keyboard, b'typed\n')
-    display = Display(keyboard, b'\x1b]11;rgb:00/00/00\x07' + DA1)
-    assert detect_background(stdin=stdin, stdout=display) == '#FFFFFF'
-    assert display.getvalue() == ''
-    assert select.select([stdin], [], [], 0)[0]
-    assert os.read(stdin.fileno(), 64) == b'typed\n'
-
-
 def test_keys_typed_after_the_answer_are_left_for_the_editor(terminal: tuple[int, IO[str]]) -> None:
     keyboard, stdin = terminal
     display = Display(keyboard, b'\x1b]11;rgb:00/00/00\x07' + DA1 + b'typed')
@@ -121,6 +110,24 @@ def test_keys_typed_after_the_answer_are_left_for_the_editor(terminal: tuple[int
     tty.setcbreak(stdin, termios.TCSANOW)
     assert select.select([stdin], [], [], 1)[0]
     assert os.read(stdin.fileno(), 64) == b'typed'
+
+
+@pytest.mark.parametrize(
+    'reply',
+    [
+        pytest.param(b'\x1b]11;rgb:00/00/00\x07' + DA1, id='answered'),
+        pytest.param(b'\x1b]11;rgb:zz/00/00\x07' + DA1, id='malformed'),
+        pytest.param(DA1, id='no-osc-11'),
+    ],
+)
+def test_keys_typed_before_the_answer_reach_the_editor(terminal: tuple[int, IO[str]], reply: bytes) -> None:
+    """Keys typed before CLAI asks, and while it waits, arrive ahead of the answer; CLAI hands them to the editor."""
+    keyboard, stdin = terminal
+    os.write(keyboard, b'h')
+    display = Display(keyboard, b'i\x1b[A' + reply)
+    with create_pipe_input() as editor_input, create_app_session(input=editor_input):
+        detect_background(stdin=stdin, stdout=display)
+        assert [key.key for key in editor_input.read_keys()] == ['h', 'i', Keys.Up]
 
 
 @pytest.mark.parametrize('piped', ['stdin', 'stdout'])

@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from typing import IO
 
 import anyio
 import pytest
@@ -34,7 +35,6 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
-from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.history import render_history, turn_starts
 from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 
@@ -171,10 +171,10 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     assert printed.index('> saved turn') < printed.index('Resumed') < printed.index('Goodbye.')
 
 
-async def test_resumed_and_typed_prompts_share_the_background_the_caller_asked_for(
+async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`chat` keeps the background asked for before it, as the CLI's is, rather than asking the terminal again."""
+    """`chat` asks the terminal for its background once, and every echoed prompt is tinted from it."""
     prior = saved_prior(tmp_path, monkeypatch)
     await prior.prompt('saved turn')
     surfaces: list[PromptSurface] = []
@@ -185,10 +185,12 @@ async def test_resumed_and_typed_prompts_share_the_background_the_caller_asked_f
             super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
-    # Asking the terminal again would look this name up and fail.
-    monkeypatch.delattr('pydantic_clai2.app.detect_background')
+
+    def dark(*, stdin: IO[str], stdout: IO[str]) -> str:
+        return '#1E1E1E'
+
+    monkeypatch.setattr('pydantic_clai2.app.detect_background', dark)
     with (
-        theme.on_terminal('#1E1E1E'),
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
         anyio.fail_after(10),
@@ -197,7 +199,8 @@ async def test_resumed_and_typed_prompts_share_the_background_the_caller_asked_f
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='fresh answer')),
             deps=None,
-            console=Console(file=io.StringIO(), force_terminal=True, width=80, height=24),
+            # Truecolour, as Rich otherwise reads `COLORTERM` and may round the tint to an ANSI slot.
+            console=Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=80, height=24),
             store=SettingsStore(tmp_path / 'settings.db'),
             settings=Settings(model=None, session_namer=False),
         )

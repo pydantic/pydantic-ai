@@ -486,7 +486,8 @@ terminal's background and a little darker than a light one's. A bundled palette
 moves its background towards its text colour. The `default` theme asks the terminal
 for its background colour (OSC 11) once at startup, waiting at most a quarter of a
 second, then falls back to `COLORFGBG`. When neither says, prompts keep the bold
-text alone. CLAI asks only when its input and output are both a terminal.
+text alone. CLAI asks only when its input and output are both a terminal, and keys
+you type meanwhile still reach the prompt.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds

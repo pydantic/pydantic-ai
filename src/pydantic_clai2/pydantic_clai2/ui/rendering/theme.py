@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
 _BRANDED: ContextVar[bool] = ContextVar('clai_branded', default=False)
-_TERMINAL_BACKGROUND: ContextVar[str | None] = ContextVar('clai_terminal_background')
-"""The terminal's own background as `#RRGGBB`, `None` when it did not say; unset until CLAI has asked."""
+_TERMINAL_BACKGROUND: ContextVar[str | None] = ContextVar('clai_terminal_background', default=None)
+"""The terminal's own background as `#RRGGBB`, or `None` when it is unknown."""
 
 
 def names() -> tuple[str, ...]:
@@ -46,25 +46,18 @@ def branded() -> Generator[None]:
 @contextmanager
 def on_terminal(background: str | None) -> Generator[None]:
     """Paint for a terminal whose own background is `background`, as `#RRGGBB`, or an unknown one for `None`."""
-    token = _TERMINAL_BACKGROUND.set(background)
+    # Held here, as in `use`: `/reload` replaces the module's variable while this scope is open.
+    variable = _TERMINAL_BACKGROUND
+    token = variable.set(background)
     try:
         yield
     finally:
-        _TERMINAL_BACKGROUND.reset(token)
-
-
-def terminal_asked() -> bool:
-    """Whether an enclosing `on_terminal` already holds the terminal's answer, so asking again would only cost time."""
-    try:
-        _TERMINAL_BACKGROUND.get()
-    except LookupError:
-        return False
-    return True
+        variable.reset(token)
 
 
 def terminal_background() -> str | None:
     """The terminal's own background, or `None` when it is unknown."""
-    return _TERMINAL_BACKGROUND.get(None)
+    return _TERMINAL_BACKGROUND.get()
 
 
 def painted_in() -> str | None:

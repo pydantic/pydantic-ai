@@ -8,16 +8,13 @@ import sys
 from collections.abc import Coroutine
 from contextlib import closing
 from pathlib import Path
-from typing import IO
 
 import pytest
 
-import pydantic_clai2.ui.prompt.terminal_background
 import pydantic_clai2.ui.rendering.splash
 from pydantic_clai2.__main__ import main
 from pydantic_clai2.cli import cli
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.splash import Splash
 from tests.clai2.cli_runner import CliRunner
 
@@ -121,32 +118,3 @@ def test_startup_saved_splash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s
     monkeypatch.setattr(cli, 'run', run)
     main()
     assert requested == [enabled]
-
-
-def test_startup_asks_the_terminal_background_before_the_splash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Keys typed while the splash shows wait for the editor, and asking after it would swallow them."""
-    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
-    monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')  # `main` sets it; this restores it after the test.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, 'argv', ['clai2'])
-    events: list[str] = []
-
-    def detect(*, stdin: IO[str], stdout: IO[str]) -> str:
-        events.append('asked')
-        return '#1E1E1E'
-
-    class RecordingSplash(Splash):
-        def start(self) -> None:
-            events.append('splash')
-
-    def run(*, splash: Splash | None = None) -> None:
-        events.append(f'run on {theme.terminal_background()}')
-
-    monkeypatch.setattr(pydantic_clai2.ui.prompt.terminal_background, 'detect_background', detect)
-    monkeypatch.setattr(pydantic_clai2.ui.rendering.splash, 'Splash', RecordingSplash)
-    monkeypatch.setattr(cli, 'run', run)
-    main()
-    assert events == ['asked', 'splash', 'run on #1E1E1E']
-    assert not theme.terminal_asked()

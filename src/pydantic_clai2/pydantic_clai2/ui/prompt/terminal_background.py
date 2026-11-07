@@ -1,7 +1,4 @@
-"""Ask the terminal for its own background colour, which the default theme otherwise cannot know.
-
-Standard library only: the entry point asks before the splash, ahead of the heavy imports.
-"""
+"""Ask the terminal for its own background colour, which the default theme otherwise cannot know."""
 
 import os
 import re
@@ -20,6 +17,8 @@ _COLOUR = re.compile(
     re.IGNORECASE,
 )
 _ATTRIBUTES = re.compile(rb'\x1b\[\?[0-9;]*c')
+_REPLIES = re.compile(rb'\x1b\]11;[^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[\?[0-9;]*c')
+"""Both answers, however their payload reads; whatever else was read is keys the user typed."""
 _DARK_SLOTS = frozenset((0, 1, 2, 3, 4, 5, 6, 8))
 """`COLORFGBG` background slots that are dark in the usual ANSI palettes."""
 
@@ -29,6 +28,7 @@ def detect_background(*, stdin: IO[str], stdout: IO[str], timeout: float = TIMEO
 
     The terminal's answer to OSC 11 comes first, then `COLORFGBG`, which tells only light from dark.
     Nothing is asked unless both are a terminal, so piped or redirected output never receives the query.
+    Keys typed before the answer arrives are handed to the input the editor reads.
     """
     if sys.platform == 'win32' or os.environ.get('TERM') == 'dumb' or not (stdout.isatty() and stdin.isatty()):
         return None
@@ -41,13 +41,12 @@ def detect_background(*, stdin: IO[str], stdout: IO[str], timeout: float = TIMEO
 
 
 def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
-    """Ask with OSC 11, never over keys already typed, and wait at most `timeout` seconds.
-
-    Keys typed while the answer is awaited arrive mixed with it and are read with it.
-    """
-    import fcntl
+    """Ask with OSC 11, wait at most `timeout` seconds, and pass on the keys read before the answer."""
     import termios
     import tty
+
+    from prompt_toolkit.application import get_app_session
+    from prompt_toolkit.input.vt100 import Vt100Input
 
     try:
         saved = termios.tcgetattr(fd)
@@ -55,11 +54,8 @@ def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
         return None
     answer = b''
     try:
-        # `TCSANOW`, not `setcbreak`'s default `TCSAFLUSH`, keeps keys typed ahead of the prompt queued for it.
+        # `TCSANOW`, not `setcbreak`'s default `TCSAFLUSH`, keeps keys typed ahead of the prompt queued.
         tty.setcbreak(fd, termios.TCSANOW)
-        # Reading the answer would swallow keys already typed, which the editor shows in its draft.
-        if int.from_bytes(fcntl.ioctl(fd, termios.FIONREAD, bytes(4)), sys.byteorder):
-            return None
         stdout.write(_QUERY)
         stdout.flush()
         deadline = time.monotonic() + timeout
@@ -70,6 +66,11 @@ def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
             answer += os.read(fd, 1)
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, saved)
+    if typed := _REPLIES.sub(b'', answer):
+        # The editor reads this input, so its first read returns them ahead of anything typed later.
+        source = get_app_session().input
+        if isinstance(source, Vt100Input):
+            source.vt100_parser.feed(typed.decode(errors='replace'))
     if (match := _COLOUR.search(answer)) is None:
         return None
     return '#' + ''.join(f'{round(int(part, 16) * 255 / (16 ** len(part) - 1)):02X}' for part in match.groups())

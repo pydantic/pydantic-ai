@@ -205,7 +205,8 @@ async def chat(
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
-    terminal_background = await _terminal_background(console)
+    # Asked once, before anything is drawn; keys typed meanwhile go to the editor.
+    terminal_background = await to_thread.run_sync(partial(detect_background, stdin=sys.stdin, stdout=console.file))
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
@@ -229,7 +230,6 @@ async def chat(
     warming: Thread | None = None
     served: WebHandoff | None = None
     with (
-        theme.on_terminal(terminal_background),
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
@@ -252,9 +252,13 @@ async def chat(
                     load_plugins=load_plugins,
                     console=terminal.session_console,
                 )
-                with theme.use(
-                    lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
-                    output=console.file if console.is_terminal else None,
+                # Entered on each pass, as `/reload` replaces the theme module's variables.
+                with (
+                    theme.use(
+                        lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
+                        output=console.file if console.is_terminal else None,
+                    ),
+                    theme.on_terminal(terminal_background),
                 ):
                     try:
                         # Sessions the web UI opens run beside this one, from the start: plugins may open some.
@@ -318,16 +322,6 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
-
-
-async def _terminal_background(console: Console) -> str | None:
-    """The terminal's background: what the CLI asked before its splash, or the terminal's answer now.
-
-    The CLI asks first so keys typed during its splash still reach the editor; a direct `chat` caller has not asked.
-    """
-    if theme.terminal_asked():
-        return theme.terminal_background()
-    return await to_thread.run_sync(partial(detect_background, stdin=sys.stdin, stdout=console.file))
 
 
 def _create_home_shell(

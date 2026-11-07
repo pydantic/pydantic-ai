@@ -46,8 +46,6 @@ def main() -> None:
         print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
 
     # Splash imports configuration, which must see the loaded environment.
-    from pydantic_clai2.ui.prompt.terminal_background import detect_background
-    from pydantic_clai2.ui.rendering import theme
     from pydantic_clai2.ui.rendering.splash import Splash
 
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
@@ -64,22 +62,20 @@ def main() -> None:
         except (sqlite3.Error, ValueError):
             enabled = False
     splash = Splash(enabled=bool(enabled))
-    # Asked before the splash: keys typed while it shows wait for the editor, and the answer would swallow them.
-    with theme.on_terminal(detect_background(stdin=sys.stdin, stdout=sys.stdout)):
-        splash.start()
-        try:
-            from pydantic_clai2.cli.cli import run
+    splash.start()
+    try:
+        from pydantic_clai2.cli.cli import run
 
-            with warnings.catch_warnings(), quiet_telemetry_logs():
-                if not sys.warnoptions:
-                    # Library warnings are advice for the developer who wired the agent, not the person at the
-                    # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
-                    # (Logfire's `InspectArgumentsFailedWarning` subclasses `Warning`). `-W` or `PYTHONWARNINGS`
-                    # restores them.
-                    warnings.simplefilter('ignore', Warning)
-                run(splash=splash)
-        finally:
-            splash.stop()
+        with warnings.catch_warnings(), quiet_telemetry_logs():
+            if not sys.warnoptions:
+                # Library warnings are advice for the developer who wired the agent, not the person at the
+                # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
+                # (Logfire's `InspectArgumentsFailedWarning` subclasses `Warning`). `-W` or `PYTHONWARNINGS`
+                # restores them.
+                warnings.simplefilter('ignore', Warning)
+            run(splash=splash)
+    finally:
+        splash.stop()
 
 
 if __name__ == '__main__':

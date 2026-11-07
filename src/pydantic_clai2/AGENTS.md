@@ -395,9 +395,9 @@ from the palette.
 
 Echo the user's own text through `rendering.prompt_line`, which paints it on
 `theme.prompt_background()`. Under the default theme that tint comes from the terminal's
-background, asked once by `ui/prompt/terminal_background.py` before the splash. `chat` asks
-only when its caller has not. Add any other terminal query to that same exchange. A query
-after the splash reads the keys typed during it, which the editor would otherwise receive.
+background, which `chat` asks for once through `ui/prompt/terminal_background.py`. Add any
+other terminal query to that same exchange. It hands the keys it reads with the answers to
+the editor's prompt-toolkit input; a separate query would read and drop them.
 
 ## Source layout
 
