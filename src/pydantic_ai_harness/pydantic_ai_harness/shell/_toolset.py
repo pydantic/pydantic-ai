@@ -556,6 +556,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
         try:
             await job.cleanup()
+        # Before `PermissionError`: a read-only workspace's `WorkspaceReadOnlyError` is one too.
         except WorkspaceError:
             raise
         except PermissionError:
