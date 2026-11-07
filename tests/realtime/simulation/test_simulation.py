@@ -3229,6 +3229,19 @@ def test_elevenlabs_agents_reply_voiced_after_its_text() -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
+def test_elevenlabs_agents_reply_spoken_over_several_steps() -> None:
+    """A reply's audio can come over several steps before its text: all of it is the one reply."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
 def test_elevenlabs_agents_parallel_tool_calls_are_one_response() -> None:
     """A reply's parallel tool calls are one response, and the agent answers once every result is in."""
 
