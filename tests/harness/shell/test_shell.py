@@ -10,7 +10,7 @@ import shlex
 import shutil
 import signal
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from datetime import timedelta
@@ -2107,6 +2107,39 @@ class TestStopCommandAlreadyFinished:
                 await anyio.sleep(0.01)  # pragma: lax no cover
         result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert result.splitlines()[-2:] == ['[stopped]', '[exit code: 3]']
+
+
+@pytest.fixture
+def writable_after(shell_dir: Path) -> Iterator[Path]:
+    """`shell_dir` for a command that takes write permission away, given back afterwards so it can be removed."""
+    if os.geteuid() == 0:  # pragma: no cover
+        pytest.skip('root writes regardless of mode bits')
+    yield shell_dir
+    for path in (shell_dir, *shell_dir.rglob('*')):
+        path.chmod(path.stat().st_mode | 0o200)
+
+
+class TestReadOnlyJobDirectory:
+    @pytest.mark.parametrize(
+        'command',
+        [
+            pytest.param('chmod 500 .pydantic-ai-harness/shell/*', id='job-directory'),
+            pytest.param('chmod -R a-w .', id='workspace'),
+        ],
+    )
+    async def test_the_exit_code_is_published(self, writable_after: Path, command: str) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), command))
+        await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
+        result = await ts.check_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
+
+    async def test_stop_reports_a_job_directory_it_cannot_remove(self, writable_after: Path) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), 'chmod -R a-w .'))
+        await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
+        result = await ts.stop_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-3:] == ['[stopped]', '[exit code: 0]', '[job files not removed: permission denied]']
 
 
 class TestResolveEnv:
