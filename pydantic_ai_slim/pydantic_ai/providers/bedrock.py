@@ -172,6 +172,16 @@ class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer)
     }
 
 
+class _BedrockZaiJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    """GLM-5.3 additionally requires `$defs`/`$ref` to be inlined (see the Z.AI model profile).
+
+    Other GLM IDs accept references; the strict `contains` rewrite is retained for GLM-5.3.
+    """
+
+    def __init__(self, schema: JsonSchema, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
 class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema = super().transform(schema)
@@ -535,12 +545,18 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    # GLM-5.3 additionally requires `$defs`/`$ref` inlining (see `zai_model_profile`); other GLM IDs don't.
+    json_schema_transformer = (
+        _BedrockZaiJsonSchemaTransformer
+        if model_name.startswith('glm-5.3')
+        else _BedrockJsonSchemaTransformerWithoutContains
+    )
     return merge_profile(
         _strip_builtin_tools(zai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
+            json_schema_transformer=json_schema_transformer,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
         ),

@@ -34,6 +34,8 @@ with try_import() as imports_successful:
         BEDROCK_GEO_PREFIXES,
         BedrockJsonSchemaTransformer,
         BedrockProvider,
+        _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
+        _BedrockZaiJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         remove_bedrock_geo_prefix,
     )
 
@@ -329,6 +331,19 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+
+    # GLM-5.3 additionally requires `$defs`/`$ref` inlining (see `zai_model_profile`); the Bedrock overlay keeps it.
+    zai_glm53_profile = provider.model_profile('zai.glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert isinstance(zai_glm53_profile, dict)
+    assert zai_glm53_profile.get('json_schema_transformer', None) is _BedrockZaiJsonSchemaTransformer
+    assert issubclass(
+        zai_glm53_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
+    assert zai_glm53_profile.get('supports_json_schema_output', False) is True
+    assert zai_glm53_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    # The sibling GLM ID keeps the plain no-`contains` transformer.
+    assert zai_profile.get('json_schema_transformer', None) is _BedrockJsonSchemaTransformerWithoutContains
 
     # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
     for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):
