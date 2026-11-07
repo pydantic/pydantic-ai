@@ -15,7 +15,6 @@ from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     generate_tool_call_id as _generate_tool_call_id,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
@@ -803,11 +802,10 @@ class MistralModel(Model[Mistral]):
             image_url.detail = metadata.get('detail', 'auto')
         return MistralImageURLChunk(image_url=image_url, type='image_url')
 
-    @staticmethod
-    def _map_binary_content(item: BinaryContent) -> MistralContentChunk:
+    def _map_binary_content(self, item: BinaryContent) -> MistralContentChunk:
         if _is_text_like_media_type(item.media_type):
             return MistralTextChunk(
-                text=_format_inlined_text_file(
+                text=self._format_inlined_text_file(
                     item.data.decode('utf-8'),
                     media_type=item.media_type,
                     identifier=item.identifier,
@@ -825,12 +823,11 @@ class MistralModel(Model[Mistral]):
                 'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
             )
 
-    @staticmethod
-    async def _map_document_url(item: DocumentUrl) -> MistralContentChunk:
+    async def _map_document_url(self, item: DocumentUrl) -> MistralContentChunk:
         if _is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text')
             return MistralTextChunk(
-                text=_format_inlined_text_file(
+                text=self._format_inlined_text_file(
                     downloaded_text['data'],
                     media_type=item.media_type,
                     identifier=item.identifier,
