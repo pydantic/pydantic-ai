@@ -723,28 +723,31 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
-        tool.requires_approval = requires_approval
-        return tool
+        # `add_tool` stores a copy with the toolset's defaults applied; an explicit `requires_approval=False`
+        # passed here overrides the toolset's `requires_approval=True` on that copy.
+        added = self.tools[tool.name]
+        if requires_approval is False:
+            added.requires_approval = False
+        return added
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
-        when the tool sets none.
+        The toolset's `requires_approval=True` and `metadata` apply to a copy of the tool, and so does its
+        `max_retries` when the tool sets none. The tool passed in keeps its own values, so the same `Tool` can be
+        added to several toolsets without one toolset's defaults leaking into another's.
 
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None and self.max_retries is not None:
-            tool.max_retries = self.max_retries
-        if self.requires_approval:
-            tool.requires_approval = True
-        if self.metadata is not None:
-            tool.metadata = self.metadata | (tool.metadata or {})
-        self.tools[tool.name] = tool
+        self.tools[tool.name] = replace(
+            tool,
+            max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
+            requires_approval=tool.requires_approval or self.requires_approval,
+            metadata=self.metadata | (tool.metadata or {}) if self.metadata is not None else tool.metadata,
+        )
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:
