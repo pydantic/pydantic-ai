@@ -1638,6 +1638,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
+            'openrouter_lowest_reasoning_effort': 'minimal',
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
             'openrouter_supports_cache_control': True,
@@ -1693,6 +1694,7 @@ def test_openrouter_zai_glm_5_3():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'thinking_always_enabled': True,
+            'openrouter_lowest_reasoning_effort': 'minimal',
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
