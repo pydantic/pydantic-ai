@@ -241,7 +241,8 @@ telemetry and are converted back to the MCP format when replayed from serialized
 
 [`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
 provides typed Interactions settings. Use the shared `thinking`, `tool_choice`, and `service_tier`
-settings for portable configuration. `google_labels` and `google_video_resolution` use the same types
+settings for portable configuration. On Google Cloud, the shared `service_tier` is ignored so Provisioned
+Throughput is never skipped silently; set `google_interactions_service_tier` to choose a tier there. `google_labels` and `google_video_resolution` use the same types
 as `GoogleModelSettings`. Safety settings have a different API shape: use
 `google_interactions_safety_settings` for Interactions and `google_safety_settings` for GenerateContent.
 For native audio or video output, configure

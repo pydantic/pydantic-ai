@@ -152,7 +152,7 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     Values override the corresponding shared model settings.
     """
     google_interactions_service_tier: gi.ServiceTier
-    """Native service tier; overrides the shared `service_tier` setting."""
+    """Native service tier; overrides the shared `service_tier` setting, which Google Cloud requests ignore."""
     google_interactions_native_tools: list[gi.ToolParam]
     """Additional typed native tools, such as Google Maps and Vertex retrieval.
 
@@ -412,7 +412,9 @@ class GoogleInteractionsModel(Model[Client]):
         if 'google_labels' in settings:
             request['labels'] = _LABELS.validate_python(settings['google_labels'])
         tier = settings.get('google_interactions_service_tier')
-        if tier is None:
+        # Google Cloud documents its tiers only as headers that use Provisioned Throughput first; a body tier
+        # could silently skip that reserved capacity, so the shared setting applies on the Gemini API only.
+        if tier is None and not self.client.vertexai:
             tier = {'default': 'standard', 'flex': 'flex', 'priority': 'priority'}.get(
                 settings.get('service_tier', 'auto')
             )

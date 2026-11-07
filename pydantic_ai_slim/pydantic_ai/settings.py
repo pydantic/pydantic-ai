@@ -115,7 +115,8 @@ Per-provider mapping:
 | `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
 | `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
 
-Google Interactions uses the Gemini API column on both Gemini API and Google Cloud transports.
+Google Interactions uses the Gemini API column on the Gemini API. On Google Cloud it ignores the unified field, so
+Provisioned Throughput is never skipped silently; set `google_interactions_service_tier` to choose a tier there.
 On Google Cloud's GenerateContent API the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]

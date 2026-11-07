@@ -1386,6 +1386,33 @@ async def test_strict_tool_opt_out(
     assert mock_google.requests[-1]['service_tier'] == 'priority'
 
 
+@pytest.mark.parametrize(
+    'cloud,settings,expected',
+    [
+        (False, {'service_tier': 'flex'}, 'flex'),
+        (True, {'service_tier': 'flex'}, None),
+        (True, {'service_tier': 'flex', 'google_interactions_service_tier': 'priority'}, 'priority'),
+    ],
+)
+async def test_shared_service_tier_is_gemini_api_only(
+    mock_google: MockGoogle,
+    cloud: bool,
+    settings: GoogleInteractionsModelSettings,
+    expected: str | None,
+    allow_model_requests: None,
+):
+    """Pin the body tier per transport; a recording cannot show a Provisioned Throughput bypass on Google Cloud."""
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle), timeout=120)
+    provider = (
+        GoogleCloudProvider(api_key='test-key', http_client=http_client)
+        if cloud
+        else GoogleProvider(api_key='test-key', http_client=http_client)
+    )
+    model = GoogleInteractionsModel('gemini-3.8-flash', provider=provider)
+    await model_request(model, [ModelRequest.user_text_prompt('hello')], model_settings=settings)
+    assert mock_google.requests[-1].get('service_tier') == expected
+
+
 async def test_appended_history_part_preserves_existing_steps(
     mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
 ):
