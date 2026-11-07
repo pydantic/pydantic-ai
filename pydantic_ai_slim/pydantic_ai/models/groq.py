@@ -202,6 +202,37 @@ class GroqModelSettings(ModelSettings, total=False):
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort) for more details.
     """
 
+    groq_service_tier: Literal['auto', 'on_demand', 'flex', 'performance']
+    """The service tier to request from Groq.
+
+    Takes precedence over the top-level
+    [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], which is mapped onto
+    Groq's tiers: `'auto'` → `'auto'`, `'default'` → `'on_demand'` and `'flex'` → `'flex'`;
+    unified `'priority'` is omitted. Groq's enterprise-only `'performance'` tier is only
+    reachable through this field.
+
+    See [the Groq docs](https://console.groq.com/docs/service-tiers) for more details.
+    """
+
+
+def _resolve_service_tier(
+    model_settings: GroqModelSettings,
+) -> Literal['auto', 'on_demand', 'flex', 'performance'] | NotGiven:
+    """Resolve the tier to request: `groq_service_tier` takes precedence over the unified `service_tier`."""
+    groq_service_tier = model_settings.get('groq_service_tier')
+    if groq_service_tier is not None:
+        return groq_service_tier
+    # Unified `priority` is omitted: Groq's `performance` tier is enterprise-only, reachable
+    # only via `groq_service_tier` (not typed in the SDK's request literal, hence the cast).
+    unified_tier = model_settings.get('service_tier')
+    if unified_tier == 'auto':
+        return 'auto'
+    elif unified_tier == 'default':
+        return 'on_demand'
+    elif unified_tier == 'flex':
+        return 'flex'
+    return NOT_GIVEN
+
 
 @dataclass(init=False)
 class GroqModel(Model[AsyncGroq]):
@@ -215,7 +246,7 @@ class GroqModel(Model[AsyncGroq]):
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
 
-    unsupported_settings = frozenset({'service_tier', 'top_k'})
+    unsupported_settings = frozenset({'top_k'})
 
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
@@ -496,6 +527,7 @@ class GroqModel(Model[AsyncGroq]):
                 reasoning_format=self._translate_thinking(model_settings, model_request_parameters, disable_via_effort),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                service_tier=cast(Any, _resolve_service_tier(model_settings)),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 search_settings=search_settings,
@@ -558,6 +590,8 @@ class GroqModel(Model[AsyncGroq]):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created)
+        if service_tier := getattr(response, 'service_tier', None):
+            provider_details['service_tier'] = service_tier
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
