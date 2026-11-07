@@ -13,7 +13,8 @@ import base64
 import importlib
 import json
 import sys
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError, dataclass, fields
 from decimal import Decimal
 from pathlib import Path
@@ -48,12 +49,15 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
+from pydantic_ai_harness.compaction import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
     AcpSession,
@@ -141,6 +145,8 @@ class FakeClient(RecordingClientBase):
                 out.append((kind, getattr(update, 'title', '')))
             elif kind == 'tool_call_update':
                 out.append((kind, getattr(update, 'status', '')))
+            elif kind == 'usage_update':
+                continue
             else:  # pragma: no cover - guards against schema drift, not exercised
                 raise AssertionError(f'unexpected session/update kind: {kind!r}')
         return out
@@ -195,6 +201,22 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
             else:
                 texts.extend(item for item in part.content if isinstance(item, str))
     return texts
+
+
+class _CompletedFunctionModel(FunctionModel):
+    """Present a `FunctionModel`'s complete response through the streaming agent API."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[CompletedStreamedResponse]:
+        del run_context
+        response = await self.request(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters, replay_events=True)
 
 
 def _calls_tool_each_turn(*deltas: DeltaToolCall) -> FunctionModel:
@@ -670,6 +692,98 @@ class TestStreaming:
         assert response.usage is not None
         assert response.usage.input_tokens > 0 and response.usage.output_tokens > 0
         assert response.usage.total_tokens == response.usage.input_tokens + response.usage.output_tokens
+
+    async def test_prompt_sends_usage_update_once_per_prompt_with_model_usage_and_window(self) -> None:
+        agent = Agent(TestModel(custom_output_text='unused', profile={'context_window': 999}))
+        selected_model = TestModel(custom_output_text='done', profile={'context_window': 123_456})
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent)
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        with agent.override(model=selected_model):
+            first = await adapter.prompt(prompt=[acp.text_block('first')], session_id=session_id)
+            second = await adapter.prompt(prompt=[acp.text_block('second')], session_id=session_id)
+
+        assert first.usage is not None and second.usage is not None
+        updates = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert [(update.used, update.size) for update in updates] == [
+            (first.usage.total_tokens, 123_456),
+            (second.usage.total_tokens, 123_456),
+        ]
+
+    async def test_usage_limit_reports_interrupted_response_usage(self) -> None:
+        model = _CompletedFunctionModel(
+            lambda _messages, _info: ModelResponse(
+                parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=100, output_tokens=20)
+            )
+        )
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            Agent(model), usage_limits=UsageLimits(output_tokens_limit=15)
+        )
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
+
+        assert response.stop_reason == 'max_tokens'
+        [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert update.used == 120
+
+    @pytest.mark.parametrize('output_tokens_limit', [None, 15], ids=['completed', 'interrupted'])
+    async def test_usage_update_after_approval_uses_last_request_not_turn_total(
+        self, output_tokens_limit: int | None
+    ) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if _has_tool_return(messages):
+                return ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=100, cache_read_tokens=30, cache_write_tokens=40, output_tokens=20),
+                )
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'x'}, tool_call_id='call')],
+                usage=RequestUsage(input_tokens=50, output_tokens=10),
+            )
+
+        agent = Agent(_CompletedFunctionModel(respond, profile={'context_window': 123_456}))
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> str:
+            return f'deleted {path}'
+
+        usage_limits = UsageLimits(output_tokens_limit=output_tokens_limit) if output_tokens_limit is not None else None
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=usage_limits)
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
+
+        assert response.stop_reason == ('max_tokens' if output_tokens_limit is not None else 'end_turn')
+        assert response.usage is not None and response.usage.total_tokens == 180
+        [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert (update.used, update.size) == (120, 123_456)
+
+    async def test_usage_update_falls_back_to_default_context_window(self) -> None:
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel(custom_output_text='done')))
+        client = FakeClient()
+        session_id = await _start(adapter, client)
+
+        await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
+
+        [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
+        assert update.size == DEFAULT_CONTEXT_WINDOW
+
+    async def test_usage_update_errors_propagate(self) -> None:
+        class FailingUsageClient(FakeClient):
+            async def session_update(self, session_id: str, update: object, **kwargs: object) -> None:
+                if isinstance(update, schema.UsageUpdate):
+                    raise RuntimeError('usage update failed')
+                await super().session_update(session_id, update, **kwargs)
+
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel(custom_output_text='done')))
+        session_id = await _start(adapter, FailingUsageClient())
+
+        with pytest.raises(RuntimeError, match='usage update failed'):
+            await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id)
 
     async def test_usage_sums_across_approval_passes(self) -> None:
         # An approval pause splits the turn into two model passes; the reported usage must cover
@@ -1280,7 +1394,8 @@ class TestPermission:
 
         stored = await store.load(session_id)
         assert stored is not None
-        assert stored.updates == [acp.update_user_message_text('delete'), *client.updates]
+        persisted_updates = [update for update in client.updates if not isinstance(update, schema.UsageUpdate)]
+        assert stored.updates == [acp.update_user_message_text('delete'), *persisted_updates]
 
     async def test_allow_always_skips_the_prompt_on_later_turns(self) -> None:
         executed: list[str] = []
@@ -1559,6 +1674,27 @@ class TestCancellation:
             adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='msg-1')
         )
         await asyncio.wait_for(started.wait(), timeout=5)
+        await adapter.cancel(session_id=session_id)
+        response = await asyncio.wait_for(turn, timeout=5)
+
+        assert response.stop_reason == 'cancelled'
+
+    async def test_cancel_during_usage_update_returns_cancelled(self) -> None:
+        usage_started = asyncio.Event()
+
+        class BlockedUsageClient(FakeClient):
+            async def session_update(self, session_id: str, update: object, **kwargs: object) -> None:
+                if isinstance(update, schema.UsageUpdate):
+                    usage_started.set()
+                    await asyncio.Event().wait()
+                else:
+                    await super().session_update(session_id, update, **kwargs)
+
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel(custom_output_text='done')))
+        session_id = await _start(adapter, BlockedUsageClient())
+
+        turn = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id))
+        await asyncio.wait_for(usage_started.wait(), timeout=5)
         await adapter.cancel(session_id=session_id)
         response = await asyncio.wait_for(turn, timeout=5)
 
