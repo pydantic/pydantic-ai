@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NotRequired
 
 from anyio import CancelScope, open_process, run_process, to_thread
+from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
@@ -131,7 +132,6 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
     as installers skip them.
     """
     import httpx
-    from packaging.utils import parse_sdist_filename, parse_wheel_filename
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
         if channel == 'stable':
@@ -140,9 +140,10 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
             ).raise_for_status()
             files = _PYPI_PROJECT.validate_json(response.content)['files']
             names = [file['filename'] for file in files if file.get('yanked', False) is False]
-            return str(
-                max(parse_wheel_filename(n)[1] if n.endswith('.whl') else parse_sdist_filename(n)[1] for n in names)
-            )
+            versions = [parse_wheel_filename(n)[1] if n.endswith('.whl') else parse_sdist_filename(n)[1] for n in names]
+            if not versions:
+                raise ValueError(f'PyPI lists no unyanked {DISTRIBUTION} release.')
+            return str(max(versions))
         response = client.get(f'{bleeding_url()}/{MANIFEST}').raise_for_status()
     return _MANIFEST.validate_json(response.content)['commit']
 

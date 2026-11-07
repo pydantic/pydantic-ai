@@ -198,6 +198,10 @@ def test_latest_reports_failures() -> None:
         latest('main', transport=httpx.MockTransport(lambda request: httpx.Response(404)))
     with pytest.raises(httpx.HTTPStatusError):
         latest('stable', transport=httpx.MockTransport(lambda request: httpx.Response(403)))
+    # Every file yanked: nothing an installer would pick.
+    yanked = _index(['0.66.0'], yanked={'0.66.0': True})
+    with pytest.raises(ValueError, match='no unyanked pydantic-clai2 release'):
+        latest('stable', transport=httpx.MockTransport(lambda request: httpx.Response(200, json=yanked)))
 
 
 def test_find_update() -> None:

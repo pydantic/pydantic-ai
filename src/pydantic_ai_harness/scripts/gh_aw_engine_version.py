@@ -43,8 +43,6 @@ DEFINITION = Path(__file__).resolve().parent.parent / 'gh-aw' / 'pydantic.md'
 # connection that is accepted but never answered from holding a runner until the job
 # default.
 PYPI_TIMEOUT_SECONDS = 30
-CLAI2_INDEX = 'https://pypi.org/simple/pydantic-clai2/'
-INDEX_JSON = 'application/vnd.pypi.simple.v1+json'
 
 
 class _Engine(BaseModel):
@@ -121,9 +119,9 @@ def unpublished_reason(version: str) -> str | None:
     body = b''
     for package, url in (
         ('pydantic-ai-harness', f'https://pypi.org/pypi/pydantic-ai-harness/{version}/json'),
-        ('pydantic-clai2', CLAI2_INDEX),
+        ('pydantic-clai2', 'https://pypi.org/simple/pydantic-clai2/'),
     ):
-        request = urllib.request.Request(url, headers={'Accept': INDEX_JSON})
+        request = urllib.request.Request(url, headers={'Accept': 'application/vnd.pypi.simple.v1+json'})
         try:
             with urllib.request.urlopen(request, timeout=PYPI_TIMEOUT_SECONDS) as response:
                 status: int = response.status
