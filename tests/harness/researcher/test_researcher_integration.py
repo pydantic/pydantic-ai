@@ -115,7 +115,7 @@ Available sub-agents:
                         tool_name='delegate_task',
                         content=IsStr(
                             regex="""\
-\\[Tool\\ output\\ too\\ large\\ \\(20,719\\ chars\\);\\ stored\\ to\\ handle\\ '.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
+\\[Tool\\ output\\ too\\ large\\ \\(20,719\\ chars\\);\\ stored\\ to\\ handle\\ '.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'\\.\\ Read\\ it\\ with\\ read_tool_result\\(handle='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0',\\ offset=0,\\ limit=200,\\ from_end=False,\\ pattern=None\\)\\.\\]\\
 \\#\\ Free\\-threaded\\ CPython\\ 3\\.13\\
 \\
 \\#\\#\\ Executive\\ summary\\
@@ -132,7 +132,7 @@ html\\#c\\.PyUnstable_Module_SetGIL>\\ \\ \\
                         tool_call_id='call_ThjTLUpjfRlxSV43zSkDc4qF',
                         metadata={
                             'overflow_handle': IsStr(
-                                regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'
+                                regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'
                             ),
                             'overflow_bytes': 20757,
                         },
@@ -219,7 +219,7 @@ Available sub-agents:
                         tool_name='read_tool_result',
                         tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
-                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":0,"limit":120\\}'
+                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":0,"limit":120\\}'
                         ),
                         tool_call_id='call_H7yjfeTQBnxFNmNbiZimBniZ',
                         id='fc_0e58f8341a296874006a7f8459f5c4819680b271ba2abd79fa',
@@ -247,7 +247,7 @@ Available sub-agents:
                         tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
-\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
+\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
 \\#\\ Free\\-threaded\\ CPython\\ 3\\.13\\
 \\
 \\#\\#\\ Executive\\ summary\\
@@ -396,7 +396,7 @@ Available sub-agents:
                         tool_name='read_tool_result',
                         tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
-                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":120,"limit":140\\}'
+                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":120,"limit":140\\}'
                         ),
                         tool_call_id='call_Uc4auU7ikVIFweZ0PbbYlD4w',
                         id='fc_0e58f8341a296874006a7f845e4534819693c53cd9dd73725e',
@@ -424,7 +424,7 @@ Available sub-agents:
                         tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
-\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
+\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
 PYTHON_GIL=1\\ python3\\.13t\\ program\\.py\\
 ```\\
 \\
@@ -593,7 +593,7 @@ Available sub-agents:
                         tool_name='read_tool_result',
                         tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
-                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":260,"limit":71\\}'
+                            regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":260,"limit":71\\}'
                         ),
                         tool_call_id='call_WGPuExRtAPl7o0U4ZQnJiya0',
                         id='fc_0e58f8341a296874006a7f846069e4819682547ca97b99ee99',
@@ -621,7 +621,7 @@ Available sub-agents:
                         tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
-\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 71\\]\\
+\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/[0-9]+/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 71\\]\\
 \\
 \\#\\#\\#\\ Single\\-threaded\\ performance\\
 \\

@@ -1409,7 +1409,8 @@ class TestAgentIntegration:
 
         result = await agent.run('go')
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
-        handles = [(p.metadata or {})['overflow_handle'] for p in returns]
+        handles = [p.metadata['overflow_handle'] for p in returns if p.metadata is not None]
+        assert len(handles) == 2
         assert len(set(handles)) == 2
         assert await store.read(handles[0]) == b'first payload\n' * 100
         assert await store.read(handles[1]) == b'second payload\n' * 100
