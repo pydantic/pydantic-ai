@@ -31,7 +31,7 @@ class DeferredLoadingToolset(PreparedToolset[AgentDepsT]):
 
         async def _mark_deferred(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [
-                replace(td, defer_loading=True) if (tool_names is None or td.name in tool_names) else td
+                replace(td, defer_loading=True) if (self.tool_names is None or td.name in self.tool_names) else td
                 for td in tool_defs
             ]
 

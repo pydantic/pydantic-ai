@@ -1706,6 +1706,33 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert tools['tool_b'].tool_def.defer_loading is True
 
 
+@pytest.mark.parametrize('tool_names', [frozenset({'tool_b'}), frozenset[str](), None])
+async def test_deferred_loading_toolset_uses_updated_selection(tool_names: frozenset[str] | None):
+    """Changing the public selection between runs changes which tools are deferred."""
+
+    def tool_a() -> str:
+        return 'a'
+
+    def tool_b() -> str:
+        return 'b'
+
+    deferred = FunctionToolset([tool_a, tool_b]).defer_loading(['tool_a'])
+    model = TestModel(custom_output_text='done')
+    agent = Agent(model, toolsets=[deferred])
+    await agent.run('first run')
+    assert model.last_model_request_parameters is not None
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools if tool.defer_loading} == {
+        'tool_a'
+    }
+
+    deferred.tool_names = tool_names
+    await agent.run('second run')
+    assert model.last_model_request_parameters is not None
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools if tool.defer_loading} == (
+        {'tool_a', 'tool_b'} if tool_names is None else tool_names
+    )
+
+
 async def test_tool_search_toolset_marks_corpus_with_native():
     """Every deferred tool keeps its real name in the toolset output and carries
     `with_native='tool_search'` regardless of the current model — the adapter's
