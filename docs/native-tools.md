@@ -1072,6 +1072,8 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
 
+Set `max_num_results` to cap how many results a search returns. OpenAI Responses sends it as `max_num_results` (1 to 50), Google as `top_k`, and xAI as the collections search `limit`. Without it, each provider applies its own default.
+
 ### Usage
 
 #### OpenAI Responses

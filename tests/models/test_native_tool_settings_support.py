@@ -12,11 +12,13 @@ unknown ones are ignored, like model settings.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 from typing_extensions import get_type_hints
@@ -667,3 +669,47 @@ class TestProviderSettings:
     def test_unknown_settings_are_ignored(self, read_request: Any, make_tool: Any) -> None:
         """Like model settings, an unknown option is never sent, so it can't override a field like `allowed_domains`."""
         assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())
+
+
+def _google_request_file_search(tool: AbstractNativeTool) -> dict[str, Any]:
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(json.loads(request.content))
+        candidate = {'content': {'role': 'model', 'parts': [{'text': 'ok'}]}, 'finishReason': 'STOP'}
+        usage = {'promptTokenCount': 1, 'candidatesTokenCount': 1}
+        return httpx2.Response(200, json={'candidates': [candidate], 'usageMetadata': usage})
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+    Agent(GoogleModel('gemini-3-flash-preview', provider=provider), capabilities=[NativeTool(tool)]).run_sync('hi')
+    return requests[0]['tools'][0]['fileSearch']
+
+
+@pytest.mark.parametrize(
+    ('read_request', 'request_key'),
+    [
+        pytest.param(
+            _openai_request_tool,
+            'max_num_results',
+            id='openai',
+            marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
+        ),
+        pytest.param(
+            _google_request_file_search,
+            'top_k',
+            id='google',
+            marks=pytest.mark.skipif(not google_available(), reason='google not installed'),
+        ),
+        pytest.param(
+            _xai_request_search,
+            'limit',
+            id='xai',
+            marks=pytest.mark.skipif(not xai_available(), reason='xai not installed'),
+        ),
+    ],
+)
+@pytest.mark.usefixtures('allow_model_requests')
+def test_file_search_max_num_results_reaches_the_request(read_request: Any, request_key: str) -> None:
+    assert read_request(FileSearchTool(file_store_ids=['store'], max_num_results=5))[request_key] == 5
+    assert request_key not in read_request(FileSearchTool(file_store_ids=['store']))
