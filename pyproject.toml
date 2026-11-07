@@ -386,8 +386,6 @@ include = [
     ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
-    ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/community_demand.py",
     ".github/scripts/test_community_demand.py",
     ".github/scripts/triage_telemetry.py",
@@ -406,6 +404,12 @@ include = [
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
     ".github/scripts/test_clai2_web_bundle.py",
+    ".github/scripts/douwebot_usage_limit.py",
+    ".github/scripts/test_douwebot_usage_limit.py",
+    ".github/scripts/douwebot_opencode_run.py",
+    ".github/scripts/douwebot_opencode_result.py",
+    ".github/scripts/test_douwebot_opencode_run.py",
+    ".github/scripts/test_douwebot_opencode_result.py",
 ]
 
 [tool.ruff.lint]
@@ -486,7 +490,6 @@ quote-style = "single"
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
-".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
 ".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
@@ -499,6 +502,9 @@ quote-style = "single"
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 ".github/scripts/test_latest_versions_canary_report.py" = ["D"]
 ".github/scripts/test_clai2_web_bundle.py" = ["D"]
+".github/scripts/test_douwebot_usage_limit.py" = ["D"]
+".github/scripts/test_douwebot_opencode_run.py" = ["D"]
+".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]

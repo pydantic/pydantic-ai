@@ -157,6 +157,7 @@ Key restrictions:
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
+- A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
