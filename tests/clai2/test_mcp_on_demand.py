@@ -2,12 +2,15 @@
 
 import io
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
+import logfire
 import pytest
 from fastmcp import FastMCP
 from mcp.types import Implementation
+from opentelemetry import propagate
 from pydantic import HttpUrl, JsonValue, ValidationError
 from rich.console import Console
 
@@ -170,6 +173,38 @@ async def test_eager_and_on_demand_servers(tmp_path: Path, monkeypatch: pytest.M
 
     plugin.host.conversation.replace_messages([])
     assert 'on demand (not loaded)' in await run('/mcp status docs'), 'loading belongs to the conversation'
+
+
+OLD_PROPAGATOR_WARNING = 'Found propagated trace context.'
+NEW_PROPAGATOR_WARNING = 'Found propagated context.'
+
+
+async def test_logfire_propagator_warning_does_not_escape_in_process_tool_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Logfire propagator `RuntimeWarning` stays filtered instead of replacing the tool return."""
+    current = propagate.get_global_textmap()
+    try:
+        logfire.configure(send_to_logfire=False, console=False, metrics=False)
+        in_process(monkeypatch, docs_and_lint())
+        plugin = make_plugin(tmp_path)
+        plugin.store.put('docs', server(defer_loading=True, description='Team docs search.'))
+        model = Scripted(
+            call('load_capability', id='mcp_docs'),
+            ModelResponse(parts=[ToolCallPart('docs_search', {'query': 'setup'})]),
+        )
+        result = await plugin.agent(model).run('Search the docs.')
+        returns = {
+            part.tool_name: part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        }
+        assert returns['docs_search'] == 'found setup', 'the propagator warning is filtered, not the tool return'
+    finally:
+        propagate.set_global_textmap(current)
+    warnings.warn(OLD_PROPAGATOR_WARNING, RuntimeWarning)  # logfire 5.3 wording
+    warnings.warn(NEW_PROPAGATOR_WARNING, RuntimeWarning)  # logfire 5.5 wording
 
 
 async def test_a_loaded_server_that_cannot_connect_does_not_fail_the_prompt(
