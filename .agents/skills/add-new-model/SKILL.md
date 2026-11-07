@@ -29,7 +29,7 @@ advisor aliases) list the models a user would pick. They are not catalogs. Apply
 - Per line, list the newest id of the newest generation and the newest id of the previous generation. Remove
   the older id the new one replaces, in the provider alias and in `KnownModelName`.
 - Leave out dated snapshots that have an undated alias, previews that a GA id superseded, floating `-latest`
-  aliases (Mistral excepted: `-latest` is its canonical form), and non-chat models.
+  aliases (Mistral and TypeSafe excepted: their `-latest` ids are canonical), and non-chat models.
 - On Bedrock, list one id per model: the `global.` profile when it exists, else `us.`, else the bare id.
 - Keep every id that a model alias in `docs/model_aliases/aliases.json` resolves to, even when the rule above
   would drop it. `tests/test_docs_model_aliases.py` fails otherwise. Changing an alias target is a separate

@@ -119,13 +119,13 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',
         'gateway/bedrock:us.amazon.nova-pro-v1:0',
+        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         # Gateway rejects it with "The provided model identifier is invalid."; native Bedrock serves it.
         'gateway/bedrock:us.deepseek.r1-v1:0',
         # Gateway has no price data for these yet, so it refuses them with "No cost data available".
         'gateway/bedrock:global.moonshotai.kimi-k3',
         'gateway/bedrock:global.moonshotai.kimi-k3.1',
         'gateway/bedrock:global.zai.glm-5.3',
-        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
     }
 )
 
