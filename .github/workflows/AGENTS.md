@@ -236,20 +236,20 @@ branch-selectable dispatch to this privileged workflow. Workflows and scripts re
 
 `.github/CODEOWNERS` owns two scopes:
 
-- **Dependency and CI config**, owned by every maintainer: every `pyproject.toml` and `uv.lock`,
-  `.github/workflows/`, `.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`,
-  `Makefile`, and `CODEOWNERS` itself.
+- **Dependency and CI config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
+  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.github/workflows/`, `.github/actions/`,
+  `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and `CODEOWNERS` itself.
 - **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
   only: `pydantic_ai_slim/pydantic_ai/durable_exec/`, the harness's durable engines (`absurd`,
   `aws_lambda`, `azure_durable_task`, `pgtask`, `render`), its shared durable helper `_durable.py`,
-  and the two `subagents` modules that run a delegation as a durable unit of its own. A capability
-  that only declares `@durable_operation` stays outside this scope.
+  and the two `subagents` modules that run a delegated agent run inside a durable unit. Other
+  capabilities that use `@durable_operation` or check for durable execution stay outside this scope.
 
 GitHub requests a review from the owners of each path a PR changes. A missing owner approval blocks
-the merge only while the `main` ruleset requires code-owner review; check
-`gh api repos/pydantic/pydantic-ai/rules/branches/main` for a `pull_request` rule before relying on
-it. That rule also dismisses an approval when a later push changes the diff, so no workflow keeps
-the approval current.
+the merge only while the `main` ruleset has a `pull_request` rule with **Require review from Code
+Owners** on; check `gh api repos/pydantic/pydantic-ai/rules/branches/main` before relying on it.
+With **Dismiss stale pull request approvals when new commits are pushed** also on in that rule,
+GitHub keeps the approval current, so no workflow has to.
 
 - A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
   to someone else's PR can still approve that push.
