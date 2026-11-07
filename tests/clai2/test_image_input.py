@@ -1,5 +1,6 @@
 """Image bytes survive editing, queued turns, hooks, and persisted history."""
 
+import base64
 import io
 from array import array
 from collections.abc import Sequence
@@ -22,12 +23,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import ImageBuffer, decode_images, encode_image
 from pydantic_clai2.ui.prompt import image_input
 from pydantic_clai2.ui.prompt.image_input import (
-    ImageBuffer,
     ImageInput,
     clipboard_images,
-    encode_image,
     pasted_paths,
     read_image,
     read_images,
@@ -51,11 +52,11 @@ def test_normalize(mode: str) -> None:
 
 
 def test_size_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_PIXELS', 5)
+    monkeypatch.setattr(image_codec, 'MAX_PIXELS', 5)
     with pytest.raises(ValueError, match='megapixel'):
         read_image(image_path)
-    monkeypatch.setattr(image_input, 'MAX_PIXELS', 6)
-    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', 1)
+    monkeypatch.setattr(image_codec, 'MAX_PIXELS', 6)
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', 1)
     with pytest.raises(ValueError, match='file exceeds'):
         read_image(image_path)
     with pytest.raises(ValueError, match='attachment limit'):
@@ -119,6 +120,23 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
             clipboard_images()
 
 
+def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
+    data = base64.b64encode(image_path.read_bytes()).decode()
+    assert decode_images([data, data]) == [read_image(image_path)] * 2
+    with pytest.raises(ValueError, match='Not an image CLAI can read'):
+        decode_images([base64.b64encode(b'not an image').decode()])
+    with pytest.raises(ValueError, match='base64'):
+        decode_images(['not base64!'])
+    size = len(image_path.read_bytes())
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * size - 1)
+    with pytest.raises(ValueError, match='32 MiB'):
+        decode_images([data, data])
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', size - 1)
+    with pytest.raises(ValueError, match='10 MiB'):
+        decode_images([data])
+
+
 def test_attachment_lifetime_and_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     images = ImageInput()
     image = read_image(image_path)
@@ -129,7 +147,7 @@ def test_attachment_lifetime_and_limits(image_path: Path, monkeypatch: pytest.Mo
     assert images.resolve(first) == ('', [image])
     with pytest.raises(ValueError, match='expired'):
         images.resolve(second)
-    monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', len(image.data))
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', len(image.data))
     with pytest.raises(ValueError, match='32 MiB'):
         images.attach([image])
     assert len(images.pending) == 1
@@ -214,8 +232,8 @@ async def test_images_persist_and_resume(image_path: Path, tmp_path: Path) -> No
     assert ModelMessagesTypeAdapter.dump_json(restored.messages) == ModelMessagesTypeAdapter.dump_json(session.messages)
     first = restored.messages[0].parts[0]
     assert isinstance(first, UserPromptPart) and not isinstance(first.content, str)
-    assert first.content[0] == ''
-    assert isinstance(first.content[1], BinaryContent) and first.content[1].data == image.data
+    [only] = first.content
+    assert isinstance(only, BinaryContent) and only.data == image.data, 'no empty text block beside the image'
     await restored.prompt('follow up')
     assert ModelMessagesTypeAdapter.dump_json(restored.messages[:1]) == ModelMessagesTypeAdapter.dump_json(
         session.messages[:1]
@@ -325,7 +343,7 @@ async def test_cancelled_image_turn_is_durable(image_path: Path, tmp_path: Path)
 
 
 def test_batch_limit_stops_before_reading_remaining_files(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', 1)
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 1)
     with pytest.raises(ValueError, match='Pasted images exceed'):
         read_images([image_path, image_path.with_name('does-not-exist.png')])
 
@@ -368,7 +386,7 @@ def test_exif_orientation_is_applied_and_metadata_removed(orientation: int) -> N
 
 
 def test_encoder_buffer_rejects_writes_before_allocating(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', 4)
     with ImageBuffer() as output:
         assert output.write(b'ab') == 2
         assert output.write(bytearray(b'cd')) == 2

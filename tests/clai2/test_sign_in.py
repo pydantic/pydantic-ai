@@ -22,11 +22,12 @@ from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import sign_in
 from pydantic_clai2.plugins.sign_in import (
-    SignInRequired,
+    SignInRequiredError,
     run_subcommand,
     sign_in_command,
     sign_in_now,
@@ -35,7 +36,10 @@ from pydantic_clai2.plugins.sign_in import (
     wait_for_sign_in,
     warn_if_signed_out,
 )
+from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
+from tests.clai2.dialog_script import Asked, Back, Finish, ScriptedDialogs
 from tests.clai2.menu_script import UNTIL_CLOSED, Script
 
 pytestmark = pytest.mark.anyio
@@ -91,21 +95,42 @@ async def test_status_has_one_wording_for_each_state() -> None:
 
 async def test_sign_in_now_reports_success_failure_and_cancellation() -> None:
     service = Service()
-    assert await sign_in_now(service, runners(UNTIL_CLOSED)) == 'Signed in to Example.'
+    signing_in = ScriptedDialogs([Finish()])
+    assert await sign_in_now(service, signing_in) == 'Signed in to Example.'
     assert service.state is True
+    assert signing_in.asked == [
+        Asked(
+            kind='wait',
+            title='Signing in to Example',
+            description=(
+                'Finish signing in to Example in your browser.\n\nEsc cancels; CLAI keeps working without Example.'
+            ),
+            shown=['Open https://example.test/one', 'Open https://example.test/two'],
+        )
+    ]
     failing = Service(error=RuntimeError('Client failed to connect: access_denied.'))
-    assert await sign_in_now(failing, runners(UNTIL_CLOSED)) == (
+    assert await sign_in_now(failing, ScriptedDialogs([Finish()])) == (
         'Could not sign in to Example: Client failed to connect: access_denied. Run /example login to try again.'
     )
     waiting = Service(hang=True)
     with anyio.fail_after(5):
-        message = await sign_in_now(waiting, runners(CLOSE))
+        message = await sign_in_now(waiting, ScriptedDialogs([Back()]))
     assert message == 'Example sign-in cancelled. Run /example login to try again.'
     assert waiting.state is False
 
 
+async def test_the_terminal_waiting_screen_closes_when_the_sign_in_finishes_or_on_esc() -> None:
+    service = Service()
+    assert await wait_for_sign_in(service, TerminalDialogs(runners(UNTIL_CLOSED)))
+    assert service.state is True
+    waiting = Service(hang=True)
+    with anyio.fail_after(5):
+        assert not await wait_for_sign_in(waiting, TerminalDialogs(runners(CLOSE)))
+    assert waiting.state is False
+
+
 async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sign_in, 'menu_key', lambda: 'esc')
+    monkeypatch.setattr(dialogs, 'menu_key', lambda: 'esc')
     service = Service(hang=True)
     seen: list[tuple[str, str]] = []
 
@@ -114,7 +139,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
         read_key: Callable[[], str] = menu._read_key  # pyright: ignore[reportPrivateUsage]
         preview = menu._preview  # pyright: ignore[reportPrivateUsage]
         assert preview is not None and service.shown is not None
-        item = MenuItem('Cancel sign-in', value=None)
+        item = MenuItem('Cancel', value=None)
         seen.append((read_key(), preview(item)))
         service.shown('Enter code: ABCD')
         seen.append((read_key(), preview(item)))
@@ -123,9 +148,9 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
 
     scripted = Runners(run_list=lambda menu: CLOSE, run_choice=run_choice, run_text=lambda widget: CLOSE)  # pyright: ignore[reportArgumentType]
     with anyio.fail_after(5):
-        assert not await wait_for_sign_in(service, scripted)
+        assert not await wait_for_sign_in(service, TerminalDialogs(scripted))
     [(first_key, first), (second_key, second)] = seen
-    assert first_key == second_key == sign_in._REDRAW  # pyright: ignore[reportPrivateUsage]
+    assert first_key == second_key == dialogs._REDRAW  # pyright: ignore[reportPrivateUsage]
     assert first.splitlines() == [
         'Finish signing in to Example in your browser.',
         '',
@@ -229,7 +254,7 @@ async def test_oauth_runs_never_open_a_browser_and_sign_in_is_only_on_request(
         async with method.client():
             pass  # pragma: no cover -- never connects
     assert 'Not signed in to Example. Run /example login to sign in.' in str(raised.value)
-    assert isinstance(raised.value.__cause__, SignInRequired)
+    assert isinstance(raised.value.__cause__, SignInRequiredError)
     assert browser == []
 
     shown: list[str] = []
@@ -276,3 +301,13 @@ async def test_oauth_over_sse_and_with_headers() -> None:
     assert isinstance(transport, SSETransport)
     assert transport.headers == {'X-A': 'b'}
     assert transport.url == 'https://mcp.example/sse'
+
+
+def test_sign_in_required_error_keeps_its_deprecated_name() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    assert issubclass(SignInRequiredError, UserError)
+    with pytest.warns(PydanticAIDeprecationWarning, match='`SignInRequired` has been renamed to `SignInRequiredError`'):
+        from pydantic_clai2.plugins.sign_in import SignInRequired
+    assert SignInRequired is SignInRequiredError
+    assert not hasattr(sign_in, 'SignInMissing')

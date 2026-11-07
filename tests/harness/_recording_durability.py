@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
@@ -48,10 +50,14 @@ class _RecordingBackend(CallableOperationBackend[None]):
         agent_name: str,
         calls: list[tuple[str, tuple[object, ...]]],
         fail_operations: frozenset[str],
+        results: list[tuple[str, object]],
+        isolated: bool,
     ) -> None:
         super().__init__(namer=JournalOperationNamer(agent_name), config=_RecordingConfig())
+        self.isolated = isolated
         self.calls = calls
         self.fail_operations = fail_operations
+        self.results = results
 
     async def execute(
         self,
@@ -65,7 +71,16 @@ class _RecordingBackend(CallableOperationBackend[None]):
         self.calls.append((name, cache_key))
         if name in self.fail_operations:
             raise RuntimeError(f'{name} failed')
-        return await body()
+        if self.isolated:
+            # As on a worker, the operation doesn't see the caller's context variables.
+            async def run() -> object:
+                return await body()
+
+            result = await asyncio.create_task(run(), context=contextvars.Context())
+        else:
+            result = await body()
+        self.results.append((name, result))
+        return result
 
 
 class RecordingDurability(BaseDurabilityCapability[object]):
@@ -77,14 +92,17 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         wrapped_toolset_kinds=frozenset(),
     )
 
-    def __init__(self, *, fail_operations: frozenset[str] = frozenset()) -> None:
+    def __init__(self, *, fail_operations: frozenset[str] = frozenset(), isolated: bool = False) -> None:
         super().__init__()
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.results: list[tuple[str, object]] = []
+        """Each completed operation's result, as an engine would journal it."""
         self.fail_operations = fail_operations
+        self.isolated = isolated
 
     @property
     def in_durable_context(self) -> bool:
         return True
 
     def get_durable_operation_backend(self) -> _RecordingBackend:
-        return _RecordingBackend(self.name, self.calls, self.fail_operations)
+        return _RecordingBackend(self.name, self.calls, self.fail_operations, self.results, self.isolated)

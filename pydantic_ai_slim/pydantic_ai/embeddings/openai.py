@@ -2,8 +2,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from pydantic_ai import _utils
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai import _model_errors, _utils
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
@@ -16,7 +16,7 @@ from .settings import EmbeddingSettings
 
 try:
     import tiktoken
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
     from openai.types.create_embedding_response import Usage
 
@@ -138,12 +138,19 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                 )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body, headers=dict(e.response.headers)
+                raise ModelHTTPError.for_category(
+                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.body,
+                    headers=dict(e.response.headers),
+                    provider_error_code=e.code,
+                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:  # pragma: lax no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        except APIConnectionError as e:
+            timeout = isinstance(e, APITimeoutError)
+            raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
 
         embeddings = [item.embedding for item in response.data]
 

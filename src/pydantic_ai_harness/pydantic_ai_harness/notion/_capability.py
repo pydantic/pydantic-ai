@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -27,12 +27,21 @@ class Notion(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `Notion` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
+    One `Notion` is one connection to one account. Two sharing this `id` are
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Search and change Notion workspace content.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Notion OAuth access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    tool_prefix: str | None = None
+    """Prepended with `_` to the server's tool names, as in `work_notion-search`.
+
+    Unset, the server's names are kept, since they already start with the service, as in `notion-search`.
+    Give two instances distinct prefixes to use both.
+    """
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Notion OAuth access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `NOTION_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
     Notion tools.
@@ -45,7 +54,7 @@ class Notion(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
@@ -55,32 +64,17 @@ class Notion(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Notion MCP toolset."""
-        id = self.id or _ID
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
-            )
-        elif callable(self.auth):
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id or _ID, include_instructions=self.include_instructions
+        )
         if self.read_only:
-            return read_only_toolset(toolset)
-        return toolset
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
+            toolset = read_only_toolset(toolset)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
             'https://mcp.notion.com/mcp',
             id=self.id or _ID,
             auth=credential(auth, env='NOTION_ACCESS_TOKEN', service='Notion'),
-            headers=None,
             include_instructions=self.include_instructions,
         )

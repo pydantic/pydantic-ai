@@ -4,7 +4,14 @@ name: "Pydantic AI Stale Issues Finder"
 description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
 # Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
 # Adjust to 'daily' or another weekly schedule to change frequency.
-on: weekly on monday
+on:
+  schedule: weekly on monday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -66,6 +73,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -110,6 +118,8 @@ models:
     input: 0.6
     output: 2.4
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -139,8 +149,11 @@ pre-agent-steps:
   # and also reads $GITHUB_PATH entries added before the engine step.
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
+  # Check out the workflow's commit at /tmp/gh-aw/runner-src, where the
+  # launcher runs the shim and its library from, and fail the job if it
+  # cannot. Then warm that checkout's uv script environment on the OPEN
+  # network so the firewalled agent reuses a warm cache. The warm-up is
+  # non-fatal on failure.
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Fetch all open issues before the AWF firewall blocks gh CLI access.
@@ -152,7 +165,6 @@ pre-agent-steps:
       # One file per issue under /tmp/gh-aw/agent/issues/all.
       # Batches under /tmp/gh-aw/agent/issues/batches/batch-XXX.
       BATCH_SIZE: 25
-      ISSUE_LIMIT: 1000
     run: |
       bash .github/scripts/prefetch-open-issues.sh
 

@@ -3,6 +3,7 @@
 import io
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -28,7 +29,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.ordinal import (
     INSTRUCTIONS,
     INVALID,
@@ -47,27 +47,47 @@ from pydantic_clai2.builtin_plugins.ordinal import (
 )
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
+from pydantic_clai2.config.api_keys import delete_key, load_keys, rename_key, save_key
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
-from pydantic_clai2.plugins.loader import (
-    _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
-    PluginError,
-    PluginLoader,
-)
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.menus import Option, SettingsMenu
+from pydantic_clai2.plugins.process_plugins import RETIRED_BUILTINS
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.conftest import stored_accounts
+from tests.clai2.dialog_script import Answer, Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
+from tests.clai2.test_workspace_defaults import per_run
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ordinal')
 CLOSE = MenuResult(cancelled=True)
 Vault = dict[tuple[str, str], str]
-Picked = str | KeyReference | None
 NOT_SIGNED_IN = 'Not signed in to Ordinal. Run /ordinal login to sign in.'
+UNCHANGED = 'Ordinal: nothing changed.'
+LABEL = f'Ordinal access token (saved in /keys as {KEY_NAME})'
+TYPING = Asked(
+    kind='text',
+    title=LABEL,
+    label='Token',
+    placeholder=f'Paste the token; it is saved in /keys as {KEY_NAME}',
+    secret=True,
+)
+METHODS = Asked(
+    kind='choose',
+    title='Choose Sign-in',
+    options=(
+        Option(value='browser', label='Browser sign-in'),
+        Option(value='key', label='Saved key from /keys'),
+        Option(value='environment', label=f'{KEY_NAME} environment variable'),
+    ),
+    current='browser',
+)
 
 
 class SignIn:
@@ -85,6 +105,7 @@ class SignIn:
         if SignIn.error is not None:
             raise SignIn.error
         if SignIn.unfinished:
+            show('https://ordinal.example/authorize')
             await anyio.sleep_forever()
         await store_sign_in()
 
@@ -130,22 +151,25 @@ def script(
     choices: list[MenuResult] | None = None,
     texts: list[TextInputResult] | None = None,
 ) -> Script:
-    """Answer the settings menu's widgets in order; the list closes after `lists`."""
+    """Answer the terminal settings menu's widgets in order, its actions' dialogs included; the list closes after `lists`."""
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     return scripted
 
 
-def key_choice(monkeypatch: pytest.MonkeyPatch, choice: Picked) -> list[str]:
-    """Answer `prompt_api_key`, whose saved-key list needs a real terminal, and record its labels."""
-    labels: list[str] = []
+def settings_menu(**settings: JsonValue) -> SettingsMenu:
+    """The declared menu over a host outside the loader, which keeps saved settings for this load."""
+    menu = load_ordinal(plugin_host(settings)).plugin.settings_menu()
+    assert menu is not None
+    return menu
 
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> Picked:
-        labels.append(label)
-        return choice
 
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.prompt_api_key', prompt_api_key)
-    return labels
+async def act(menu: SettingsMenu, row: str, answers: list[Answer]) -> tuple[list[str], list[Asked]]:
+    """Run the action for `row` with scripted dialogs, as the web UI runs it; its messages and what it asked."""
+    scripted = ScriptedDialogs(answers)
+    messages = list(await menu.actions[row](scripted))
+    assert scripted.unused == []
+    return messages, scripted.asked
 
 
 def choose_saved_key(name: str) -> None:
@@ -163,7 +187,7 @@ class Shell:
         declaration = BUILTIN if settings is None else BUILTIN.model_copy(update={'settings': settings})
         self.loader: PluginLoader[None] = PluginLoader(
             store=self.store,
-            console=Console(file=self.output, width=200),
+            console=Console(file=self.output, width=200, force_terminal=True, color_system=None),
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
             builtin=(declaration,),
@@ -176,11 +200,14 @@ class Shell:
 
     def auth(self) -> OrdinalAuth[None]:
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, OrdinalAuth)
-        return capability  # pyright: ignore[reportUnknownVariableType]
+        auth = per_run(capability)
+        assert isinstance(auth, OrdinalAuth)
+        return auth  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> Ordinal[None] | None:
-        return await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        ordinal = await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert ordinal is None or ordinal.defer_loading
+        return ordinal
 
     async def next_run(self) -> Ordinal[None]:
         ordinal = await self.run_capability()
@@ -214,7 +241,7 @@ def test_declared_as_a_disabled_built_in_with_no_settings() -> None:
     assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.ordinal'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
-    assert _RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
+    assert RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
 
 
 def test_url_matches_the_harness_endpoint() -> None:
@@ -259,12 +286,11 @@ async def test_reopening_repicks_a_saved_key_and_options_without_reinstalling(
 ) -> None:
     save_key(name='SHARED_ORDINAL', value='shared-token')
     shell = await enabled(tmp_path, monkeypatch, sign_in='environment')
-    labels = key_choice(monkeypatch, KeyReference(name='SHARED_ORDINAL'))
-    script(monkeypatch, lists=[pick('key')])
+    shown = script(monkeypatch, lists=[pick('key')], choices=[pick('SHARED_ORDINAL')])
     assert await shell.loader.command(['configure', 'ordinal']) == '\n'.join(
         ['Ordinal uses SHARED_ORDINAL from /keys. Manage it there.', 'Saved Sign-in: Saved key from /keys.']
     )
-    assert labels == [f'Ordinal access token (saved in /keys as {KEY_NAME})']
+    assert shown.opened == ['list', 'choice', 'list']
     assert shell.saved() == {'sign_in': 'key', 'include_instructions': True}
     assert (await shell.next_run()).auth == 'shared-token'
     assert set(load_keys()) == {'SHARED_ORDINAL'}
@@ -280,8 +306,7 @@ async def test_key_is_resolved_every_run_and_fails_closed(
     choose_saved_key(KEY_NAME)
     shell = await enabled(tmp_path, monkeypatch, sign_in='key')
     assert (await shell.next_run()).auth == 'first', 'a chosen key wins over the environment'
-    key_choice(monkeypatch, KeyReference(name=KEY_NAME))
-    script(monkeypatch, lists=[pick('key')])
+    script(monkeypatch, lists=[pick('key')], choices=[pick(KEY_NAME)])
     assert await shell.loader.configure('ordinal') == f'Ordinal uses {KEY_NAME} from /keys. Manage it there.'
     save_key(name=KEY_NAME, value='replaced')
     assert (await shell.next_run()).auth == 'replaced'
@@ -301,9 +326,9 @@ async def test_menu_marks_a_missing_or_invalid_key_and_r_resets(
     delete_key(name=KEY_NAME)
     assert [row.note for row in source.rows()] == ['', 'missing from /keys', '']
 
-    script(monkeypatch, lists=[pick('key'), pick('sign_in')], choices=[CLOSE])
-    key_choice(monkeypatch, None)
-    assert await shell.loader.configure('ordinal') == 'Ordinal settings unchanged.'
+    # `/keys` is empty, so the key row goes straight to the masked input.
+    script(monkeypatch, lists=[pick('key'), pick('sign_in')], choices=[CLOSE], texts=[TextInputResult(cancelled=True)])
+    assert await shell.loader.configure('ordinal') == UNCHANGED
 
     menu = FieldMenu(source)
     presses = [menu.reset_marker(None, MenuItem(row.label, value=row.key)) for row in (KEY, INSTRUCTIONS, METHOD)]
@@ -336,43 +361,110 @@ async def test_typed_token_needs_confirmation_to_replace_a_shared_key(
 ) -> None:
     save_key(name=KEY_NAME, value='kept')
     shell = await enabled(tmp_path, monkeypatch)
-    key_choice(monkeypatch, 'unwanted')
-    script(monkeypatch, lists=[pick('key'), pick('key')], choices=[pick(False), CLOSE])
-    assert await shell.loader.configure('ordinal') == 'Ordinal settings unchanged.'
+    script(
+        monkeypatch,
+        lists=[pick('key'), pick('key')],
+        choices=[pick('enter'), pick(False), pick('enter'), CLOSE],
+        texts=[typed('unwanted'), typed('unwanted')],
+    )
+    assert await shell.loader.configure('ordinal') == UNCHANGED
     assert load_keys()[KEY_NAME].get_secret_value() == 'kept'
 
-    key_choice(monkeypatch, 'wanted')
-    script(monkeypatch, lists=[pick('key')], choices=[pick(True)])
+    script(monkeypatch, lists=[pick('key')], choices=[pick('enter'), pick(True)], texts=[typed('wanted')])
     assert 'ORDINAL_ACCESS_TOKEN from /keys' in await shell.loader.configure('ordinal')
     assert load_keys()[KEY_NAME].get_secret_value() == 'wanted'
-
-
-async def test_a_key_saved_meanwhile_by_another_process_is_not_replaced_unasked(
-    vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    shell = await enabled(tmp_path, monkeypatch)
-
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> Picked:
-        # The picker listed no keys; another CLAI process saves one before this token is.
-        save_key(name=KEY_NAME, value='theirs')
-        return 'mine'
-
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.prompt_api_key', prompt_api_key)
-    shown = script(monkeypatch, lists=[pick('key')], choices=[pick(False)])
-    assert await shell.loader.configure('ordinal') == 'Ordinal settings unchanged.'
-    assert shown.opened == ['list', 'choice', 'list']
-    assert load_keys()[KEY_NAME].get_secret_value() == 'theirs'
 
 
 async def test_cancelled_or_blank_token_changes_nothing(
     vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shell = await enabled(tmp_path, monkeypatch)
-    # No saved keys: the real `prompt_api_key` goes straight to the masked prompt.
+    # No saved keys: the key row goes straight to the masked input.
     script(monkeypatch, lists=[pick('key'), pick('key')], texts=[TextInputResult(cancelled=True), typed('  ')])
-    assert await shell.loader.configure('ordinal') == 'Ordinal settings unchanged.'
+    assert await shell.loader.configure('ordinal') == UNCHANGED
     assert load_keys() == {}
     assert shell.saved() == {}
+
+
+def test_the_menu_declares_its_rows_and_the_rows_that_ask_more(vault: Vault) -> None:
+    menu = settings_menu()
+    assert menu.source.title == 'Ordinal'
+    assert [(row.key, row.label) for row in menu.source.rows()] == [
+        ('sign_in', 'Sign-in'),
+        ('key', '/keys entry'),
+        ('include_instructions', 'Server instructions'),
+    ]
+    assert list(menu.actions) == ['sign_in', 'key'] and menu.searchable
+
+
+async def test_configure_outside_a_terminal_explains_how(vault: Vault) -> None:
+    assert await load_ordinal(plugin_host()).plugin.configure() == (
+        'Configure Ordinal from a terminal: /plugins configure ordinal'
+    )
+
+
+async def test_the_key_action_saves_a_typed_token_and_switches_to_the_key_once(vault: Vault) -> None:
+    menu = settings_menu()
+    messages, asked = await act(menu, 'key', [Type(text='ord_typed')])
+    assert messages == [
+        f'Ordinal uses {KEY_NAME} from /keys. Manage it there.',
+        'Saved Sign-in: Saved key from /keys.',
+    ]
+    assert asked == [TYPING]
+    assert menu.source.current(METHOD) == 'key'
+    assert menu.source.current(KEY) == KEY_NAME
+    assert load_keys()[KEY_NAME].get_secret_value() == 'ord_typed'
+
+    save_key(name='TEAM_ORDINAL', value='ord_team')
+    messages, asked = await act(menu, 'key', [Pick(value='TEAM_ORDINAL')])
+    assert messages == ['Ordinal uses TEAM_ORDINAL from /keys. Manage it there.']
+    [choosing] = asked
+    assert (choosing.kind, choosing.title) == ('choose', LABEL)
+    assert [option.label for option in choosing.options] == [KEY_NAME, 'TEAM_ORDINAL', 'Enter a different API key']
+    assert menu.source.current(KEY) == 'TEAM_ORDINAL'
+    assert 'ord_team' not in (load_codex_credentials(account=KEY_ACCOUNT) or '')
+
+
+async def test_the_key_action_asks_before_replacing_and_backing_out_changes_nothing(vault: Vault) -> None:
+    save_key(name=KEY_NAME, value='kept')
+    menu = settings_menu()
+    messages, asked = await act(menu, 'key', [Pick(value='enter'), Type(text='unwanted'), Confirm(yes=False)])
+    assert messages == []
+    assert [(question.kind, question.title) for question in asked] == [
+        ('choose', LABEL),
+        ('text', LABEL),
+        ('confirm', f'{KEY_NAME} is already in /keys'),
+    ]
+    assert asked[1].secret
+    assert (asked[2].yes, asked[2].no) == (
+        f'Replace {KEY_NAME} for every plugin and connection that uses it',
+        'Keep the saved token',
+    )
+    assert await act(menu, 'key', [Back()]) == ([], [asked[0]])
+    assert load_keys()[KEY_NAME].get_secret_value() == 'kept'
+    assert menu.source.current(KEY) == KEY.default
+    assert menu.source.current(METHOD) == 'browser'
+
+
+async def test_the_sign_in_action_saves_the_choice_and_signs_in_only_when_needed(vault: Vault) -> None:
+    menu = settings_menu()
+    assert await act(menu, 'sign_in', [Back()]) == ([], [METHODS])
+    assert await act(menu, 'sign_in', [Pick(value='environment')]) == (['Saved Sign-in.'], [METHODS])
+    messages, asked = await act(menu, 'sign_in', [Pick(value='browser'), Finish()])
+    assert messages == ['Saved Sign-in.', 'Signed in to Ordinal.']
+    assert asked[0] == replace(METHODS, current='environment')
+    assert (asked[1].kind, asked[1].title) == ('wait', 'Signing in to Ordinal')
+    assert SignIn.attempts == 1
+    assert await act(menu, 'sign_in', [Pick(value='browser')]) == (['Saved Sign-in.'], [METHODS])
+    assert SignIn.attempts == 1, 'already signed in, so the browser stays closed'
+
+
+async def test_backing_out_of_the_sign_in_action_cancels_it(vault: Vault) -> None:
+    SignIn.unfinished = True
+    messages, asked = await act(settings_menu(sign_in='environment'), 'sign_in', [Pick(value='browser'), Back()])
+    assert messages == ['Saved Sign-in.', 'Ordinal sign-in cancelled. Run /ordinal login to try again.']
+    assert asked[1].shown == ['https://ordinal.example/authorize']
+    assert SignIn.attempts == 1
 
 
 async def test_each_sign_in_method_is_used_alone(vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -442,7 +534,8 @@ async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest
     plugin = load_ordinal(plugin_host({'sign_in': 'browser'}))
     assert await run(plugin) == 'Signed in to Ordinal.'
     assert await run(plugin, 'status') == 'Signed in to Ordinal.'
-    [auth] = plugin.capabilities
+    [capability] = plugin.capabilities
+    auth = per_run(capability)
     assert isinstance(auth, OrdinalAuth)
     context = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert isinstance(await auth(context), Ordinal)
@@ -466,7 +559,8 @@ async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.
 async def test_invalid_saved_choice_fails_closed(vault: Vault) -> None:
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
     plugin = load_ordinal(plugin_host({'sign_in': 'key'}))
-    [auth] = plugin.capabilities
+    [capability] = plugin.capabilities
+    auth = per_run(capability)
     assert isinstance(auth, OrdinalAuth)
     with pytest.raises(UserError, match='/plugins configure ordinal'):
         await auth(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
@@ -713,7 +807,7 @@ async def test_saved_catalog_toggle_becomes_the_built_in(
     await loader.load_all()
     [capability] = loader.capabilities()
     # `/plugins reload` re-imports the module, so compare where the class lives rather than its identity.
-    assert type(capability).__module__ == 'pydantic_clai2.builtin_plugins.ordinal'
+    assert type(per_run(capability)).__module__ == 'pydantic_clai2.builtin_plugins.ordinal'
 
     customized = PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', settings={'id': 'mine'})
     store.save_plugin(customized)

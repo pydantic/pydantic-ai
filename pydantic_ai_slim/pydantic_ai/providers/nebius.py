@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
@@ -14,6 +15,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -25,11 +27,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class NebiusProvider(_OpenAICompatibleProvider):
+class NebiusProvider(_OpenAISDKProvider):
     """Provider for Nebius AI Studio API."""
 
     @property
@@ -54,13 +56,15 @@ class NebiusProvider(_OpenAICompatibleProvider):
             'openai': harmony_model_profile,  # used for gpt-oss models on Nebius
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'zai-org': _glm_5_3_schema_profile,
         }
 
         profile = None
+        route_profile = special_token_route_profile('nebius', model_name)
 
         model_name = model_name.lower()
         if '/' not in model_name:
-            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+            return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), route_profile)
 
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
@@ -68,7 +72,9 @@ class NebiusProvider(_OpenAICompatibleProvider):
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile, route_profile
+        )
 
     @overload
     def __init__(self) -> None: ...

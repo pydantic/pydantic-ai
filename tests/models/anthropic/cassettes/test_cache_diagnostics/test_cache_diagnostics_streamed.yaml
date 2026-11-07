@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -25,7 +25,7 @@ interactions:
           content:
           - text: "Reply with exactly: OK"
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         cache_control:
           type: ephemeral
           ttl: 5m
@@ -218,10 +218,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=7922
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b15a806de2d018f9c68bd2e6e8764041-94a7ed4422ae9ae8-01
+      - 00-43f50a217def8ae8e6b2066ef1e4f93d-fb9888e441579929-01
       transfer-encoding:
       - chunked
       vary:
@@ -229,8 +231,8 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYbtkjAgiUgaKw3n1efY
+        model: claude-sonnet-5-5
+        id: msg_011CgPEgnh8qz3rwSosq5ZMJ
         type: message
         role: assistant
         content:
@@ -241,17 +243,20 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 3
+          input_tokens: 4
           cache_creation_input_tokens: 0
-          cache_read_input_tokens: 4897
+          cache_read_input_tokens: 6323
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
           output_tokens: 4
+          output_tokens_details:
+            thinking_tokens: 0
           service_tier: standard
-          inference_geo: not_available
+          inference_geo: global
+          speed: standard
         diagnostics: null
-  recorded_at: 2026-09-29T23:31:25.585620+00:00
+  recorded_at: 2026-10-25T16:02:33.708154+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -259,7 +264,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -285,12 +290,12 @@ interactions:
           content:
           - text: "Reply with exactly: DONE"
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         cache_control:
           type: ephemeral
           ttl: 5m
         diagnostics:
-          previous_message_id: msg_011CfYbtkjAgiUgaKw3n1efY
+          previous_message_id: msg_011CgPEgnh8qz3rwSosq5ZMJ
         stream: true
         system:
         - type: text
@@ -490,10 +495,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=109
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-8fcd2364939b7708e6b543499a1a8c3f-aa3d92bd0ee1e58a-01
+      - 00-3761780b05dfacdee41a1a18e2d7e37a-caca90853bb9aff4-01
       transfer-encoding:
       - chunked
       vary:
@@ -502,7 +509,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYbtqmGecuuE1dtyb46z","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":4972,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":4972,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":{"cache_miss_reason":{"type":"tools_changed","cache_missed_input_tokens":3701}}} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEhPqzMS65UFJXUrrcK","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":6420,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":6420,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":{"cache_miss_reason":{"type":"tools_changed","cache_missed_input_tokens":4586}}}           }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
@@ -511,15 +518,15 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DONE"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DONE"}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0           }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":4972,"cache_read_input_tokens":0,"output_tokens":5}    }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":6420,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}             }
 
         event: message_stop
         data: {"type":"message_stop"  }
 
-  recorded_at: 2026-09-29T23:31:26.724647+00:00
+  recorded_at: 2026-10-25T16:02:34.808481+00:00

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import anyio
 import anyio.to_thread
 
+from pydantic_ai import _model_errors
 from pydantic_ai._utils import BaseExceptionGroup, gather
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import check_allow_model_requests
@@ -27,7 +28,9 @@ try:
     from botocore.exceptions import (
         ClientError,
         ConnectionError as BotocoreConnectionError,
+        ConnectTimeoutError,
         HTTPClientError,
+        ReadTimeoutError,
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -676,16 +679,23 @@ class BedrockEmbeddingModel(EmbeddingModel):
             metadata = e.response.get('ResponseMetadata', {})
             status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(
+                error = e.response.get('Error', {})
+                code, message = error.get('Code'), error.get('Message')
+                provider_error_code = code if isinstance(code, str) else None
+                raise ModelHTTPError.for_category(
+                    _model_errors.bedrock_code_category(provider_error_code, message)
+                    or _model_errors.http_status_category(status_code, message),
                     status_code=status_code,
                     model_name=self.model_name,
                     body=e.response,
                     headers=metadata.get('HTTPHeaders'),
+                    provider_error_code=provider_error_code,
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except (HTTPClientError, BotocoreConnectionError) as e:
             # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+            timeout = isinstance(e, (ReadTimeoutError, ConnectTimeoutError))
+            raise _model_errors.connection_error(self.model_name, str(e), e, timeout=timeout) from e
 
         # Extract input token count from HTTP headers
         input_tokens = int(

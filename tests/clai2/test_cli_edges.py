@@ -13,7 +13,7 @@ import pytest
 
 import pydantic_clai2.ui.rendering.splash
 from pydantic_clai2.__main__ import main
-from pydantic_clai2.cli import _cli
+from pydantic_clai2.cli import cli
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering.splash import Splash
 from tests.clai2.cli_runner import CliRunner
@@ -115,6 +115,6 @@ def test_startup_saved_splash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s
         assert isinstance(splash, RecordingSplash)
 
     monkeypatch.setattr(pydantic_clai2.ui.rendering.splash, 'Splash', RecordingSplash)
-    monkeypatch.setattr(_cli, 'run', run)
+    monkeypatch.setattr(cli, 'run', run)
     main()
     assert requested == [enabled]

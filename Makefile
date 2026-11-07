@@ -4,9 +4,11 @@
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
+# `install`, `install-all-python` and `sync` reinstall `griffelib`: `griffe` 1.x installs over `griffelib`'s `griffe/`
+# files, so syncing `griffe` 1.x away deletes them, and uv does not notice they are missing.
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \
@@ -15,15 +17,15 @@ install: .uv ## Install the package, dependencies, and pre-commit for local deve
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
-	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
+	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
 
 .PHONY: format
 format: ## Format the code
@@ -107,6 +109,10 @@ integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:
 .PHONY: integration-redis
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
+
+.PHONY: integration-azure-durable-task
+integration-azure-durable-task: ## Run the harness Azure Durable Task tests (`docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:v0.0.9`, or set AZURE_DURABLE_TASK_TEST_ENDPOINT)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/azure_durable_task
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

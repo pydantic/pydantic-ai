@@ -3,7 +3,8 @@
 AoE launches CLAI as a custom agent in a tmux session and reads a non-built-in agent's state from
 `/tmp/aoe-hooks-<euid>/<instance>/status`. This plugin writes that file the way AoE's own hooks do,
 publishes the conversation ID beside it, remembers which conversation the AoE session holds so a
-restarted pane picks it up again, and pushes the conversation title with `aoe session rename`.
+restarted pane picks it up again, and, when its `titles` setting is on, pushes the conversation
+title with `aoe session rename`.
 """
 
 import asyncio
@@ -20,18 +21,18 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import anyio
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, on_event
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
+from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import (
     ConversationChanged,
-    NoSettings,
     Plugin,
     PluginHost,
     SessionEnd,
@@ -56,6 +57,21 @@ _LOOKUP_ATTEMPTS = 20
 _LOOKUP_INTERVAL = 0.25
 """AoE sets the instance ID on the tmux session just after starting the pane, so allow it five seconds."""
 _COMMAND_TIMEOUT = 10.0
+TITLES_FEATURE = 'aoe-titles'
+"""Tags a saved `titles` setting, so a build without it ignores the setting instead of failing to load."""
+
+
+class AoeSettings(BaseModel):
+    """What `/plugins add aoe pydantic_clai2.builtin_plugins.aoe '{...}'` may override."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
+    titles: bool = Field(
+        default=False,
+        description=(
+            "Rename the AoE session after the conversation title. With AoE's `session.tie_workdir_to_name`, "
+            'a rename can move an AoE-managed worktree out from under CLAI2.'
+        ),
+    )
 
 
 def hooks_base() -> Path:
@@ -65,9 +81,7 @@ def hooks_base() -> Path:
 
 def state_directory() -> Path:
     """Where the AoE session to conversation mapping lives: `$XDG_STATE_HOME/pydantic-clai2/aoe`."""
-    root = os.environ.get('XDG_STATE_HOME', '')
-    state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
-    return state / 'pydantic-clai2' / 'aoe'
+    return state_dir() / 'aoe'
 
 
 def run_command(*argv: str) -> subprocess.CompletedProcess[str] | None:
@@ -106,19 +120,28 @@ def locate(pane: str) -> Pane | None:
         return None
     instance_id = os.environ.get('AOE_INSTANCE_ID')
     if instance_id is None:
-        agent_session = _AGENT_SESSION.fullmatch(session_name)
-        if agent_session is None:
-            return None
-        for attempt in range(_LOOKUP_ATTEMPTS):
-            if attempt:
-                time.sleep(_LOOKUP_INTERVAL)
-            hidden = _output('tmux', 'show-environment', '-t', pane, '-h', 'AOE_INSTANCE_ID')
-            if hidden is not None and hidden.startswith('AOE_INSTANCE_ID='):
-                instance_id = hidden.strip().partition('=')[2]
-                break
-        if instance_id is None or not instance_id.startswith(agent_session.group(1)):
+        instance_id = _hidden_instance_id(pane, session_name)
+        if instance_id is None:
             return None
     return Pane(instance_id, int(pane_pid)) if _INSTANCE_ID.fullmatch(instance_id) else None
+
+
+def _hidden_instance_id(pane: str, session_name: str) -> str | None:
+    """The ID in the tmux session's hidden environment, when `session_name` is that instance's agent session."""
+    agent_session = _AGENT_SESSION.fullmatch(session_name)
+    if agent_session is None:
+        return None
+    instance_id = None
+    for attempt in range(_LOOKUP_ATTEMPTS):
+        if attempt:
+            time.sleep(_LOOKUP_INTERVAL)
+        hidden = _output('tmux', 'show-environment', '-t', pane, '-h', 'AOE_INSTANCE_ID')
+        if hidden is not None and hidden.startswith('AOE_INSTANCE_ID='):
+            instance_id = hidden.strip().partition('=')[2]
+            break
+    if instance_id is None or not instance_id.startswith(agent_session.group(1)):
+        return None
+    return instance_id
 
 
 def nested(pane_pid: int) -> bool:
@@ -300,7 +323,7 @@ class _Reporter:
     mappings: Mappings | None = None
     aoe: str | None = None
     profile: str | None = None
-    titles: bool = True
+    titles: bool = False
     published: _Published = field(default_factory=_Published)
     changed: anyio.Event = field(default_factory=anyio.Event)
     worker: asyncio.Task[None] | None = None
@@ -431,15 +454,21 @@ class _Reporting(AbstractCapability[None]):
         self.reporter.answered(event)
 
 
-class AoePlugin(Plugin):
+class AoePlugin(Plugin[AoeSettings]):
     """Report to Agent of Empires only inside its tmux sessions. Nothing happens anywhere else."""
 
-    def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        return cls(host, host.settings(AoeSettings, requires={'titles': [TITLES_FEATURE]}))
+
+    def __init__(self, host: PluginHost[None], settings: AoeSettings) -> None:
         super().__init__(host, settings)
         self.pane = os.environ.get('TMUX_PANE')
         # Headless runs have no terminal, and AoE only starts CLAI in a tmux pane on a POSIX system.
         candidate = sys.platform != 'win32' and bool(os.environ.get('TMUX')) and bool(self.pane)
         self.reporter = _Reporter(host=host) if candidate and host.console.is_terminal else None
+        if self.reporter is not None:
+            self.reporter.titles = settings.titles
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return () if self.reporter is None else (_Reporting(self.reporter),)

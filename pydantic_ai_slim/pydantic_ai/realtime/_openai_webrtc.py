@@ -21,23 +21,31 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx2
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
-from .. import _utils
-from .._http import AsyncHTTPClient
+from .. import _model_errors, _utils
+from .._http import AsyncHTTPClient, legacy_httpx
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
 if TYPE_CHECKING:
     import httpx
-    import httpx2
 
 
 #: A hangup runs from a session's shielded teardown, so it must not hang there: a call that doesn't end
 #: quickly is reported, not waited on.
 HANG_UP_TIMEOUT = 10.0
 HANG_UP_MAX_RETRIES = 1
+
+#: The failures to reach the provider that a hangup is retried on, from either HTTP client a provider can have.
+_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (httpx2.TransportError,) + (
+    (legacy_httpx.TransportError,) if legacy_httpx is not None else ()
+)
+_TIMEOUT_ERRORS: tuple[type[Exception], ...] = (httpx2.TimeoutException,) + (
+    (legacy_httpx.TimeoutException,) if legacy_httpx is not None else ()
+)
 
 
 @contextmanager
@@ -50,8 +58,13 @@ def ignore_ended_call(ended_code: str) -> Generator[None]:
     try:
         yield
     except ModelHTTPError as e:
-        if not (e.status_code == 404 and _utils.is_str_dict(e.body) and e.body.get('code') == ended_code):
+        if not _is_ended_call(e.status_code, e.body, ended_code):
             raise
+
+
+def _is_ended_call(status_code: int, error: object, ended_code: str) -> bool:
+    """Whether a hangup's failure says the provider no longer knows the call: a 404 whose error has `ended_code`."""
+    return status_code == 404 and _utils.is_str_dict(error) and error.get('code') == ended_code
 
 
 class _ClientSecretResponse(BaseModel):
@@ -108,8 +121,12 @@ async def mint_client_secret(
     model_name: str,
     session_config: dict[str, Any],
     expires_after_seconds: int | None,
+    webrtc_url: str | None,
 ) -> RealtimeClientSecret:
-    """`POST .../realtime/client_secrets` to mint an ephemeral browser token bound to `session_config`."""
+    """`POST .../realtime/client_secrets` to mint an ephemeral browser token bound to `session_config`.
+
+    `webrtc_url` is where a browser posts its WebRTC offer with the token, if the provider takes one.
+    """
     payload: dict[str, Any] = {'session': session_config}
     if expires_after_seconds is not None:
         payload['expires_after'] = {'anchor': 'created_at', 'seconds': expires_after_seconds}
@@ -135,8 +152,46 @@ async def mint_client_secret(
     return RealtimeClientSecret(
         value=data.value,
         expires_at=expires_at,
+        webrtc_url=webrtc_url,
         provider_details=provider_details or None,
     )
+
+
+async def hang_up_call(
+    *, http_client: AsyncHTTPClient, hangup_url: str, headers: dict[str, str], model_name: str, ended_code: str
+) -> None:
+    """`POST .../realtime/calls/{call_id}/hangup` to end a call; one the provider no longer knows is already over.
+
+    For a provider whose SDK client can't reach the hangup endpoint (Azure OpenAI's `/openai/v1` API, whatever
+    `api_version` the client is configured with); OpenAI goes through the SDK. As the SDK would, a failure to
+    reach the provider or a 5xx is retried `HANG_UP_MAX_RETRIES` times: a hangup that fails leaves the call up.
+    """
+    retries_left = HANG_UP_MAX_RETRIES
+    while True:
+        try:
+            response = await http_client.post(hangup_url, headers=headers, timeout=HANG_UP_TIMEOUT)
+        except _TRANSPORT_ERRORS as e:
+            if not retries_left:
+                # As the SDK's own errors are mapped on OpenAI's path.
+                raise _model_errors.connection_error(
+                    model_name, str(e), e, timeout=isinstance(e, _TIMEOUT_ERRORS)
+                ) from e
+        else:
+            if response.status_code < 500 or not retries_left:
+                _check_hang_up_response(response, model_name, ended_code)
+                return
+        retries_left -= 1
+
+
+def _check_hang_up_response(response: httpx.Response | httpx2.Response, model_name: str, ended_code: str) -> None:
+    if response.status_code == 404:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        if _is_ended_call(response.status_code, data.get('error') if _utils.is_str_dict(data) else None, ended_code):
+            return
+    _raise_for_status(response, model_name)
 
 
 def _webrtc_answer_from_response(

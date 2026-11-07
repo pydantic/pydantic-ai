@@ -22,7 +22,7 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.openrouter_auth import OpenRouterAuth
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class Connection(BaseModel):
@@ -90,12 +90,12 @@ def model(name: str) -> OpenRouterModel:
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
     """Pick one discovered model in Termflow."""
     builder = MenuBuilder('OpenRouter models').items([MenuItem(name, value=name) for name in names])
-    result = slash_search(builder, footer='enter select · esc cancel', key_source=menu_key).run()
+    result = slash_search(builder, footer='Enter select - Esc cancel', key_source=menu_key).run()
     return result.item.value if not result.cancelled and result.item and isinstance(result.item.value, str) else None
 
 
-async def connect(context: CommandContext, args: list[str]) -> str:
-    """Prompt privately, discover models, then persist only after selection."""
+async def connect(context: CommandContext, args: list[str], *, console: Console) -> str:
+    """Prompt privately, discover models, then persist only after selection; a sign-in prints through `console`."""
     if args:
         raise ValueError('Usage: /openrouter (choose browser login or enter an API key privately)')
     try:
@@ -110,7 +110,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
         if action == 'configure':
             connection = None
     if connection is None:
-        connection = await prompt_connection()
+        connection = await prompt_connection(console=console)
     if connection is None:
         return 'Connection cancelled.'
     names = await discover(connection)
@@ -121,13 +121,17 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     return context.set_setting(['model', f'openrouter:{selected}'])
 
 
-async def prompt_connection() -> Connection | None:
-    """Collect connection details without recording them in history."""
+async def prompt_connection(*, console: Console) -> Connection | None:
+    """Collect connection details without recording them in history.
+
+    A browser sign-in prints its URL through `console`, the shell's, so it lands in the transcript above
+    the paste prompt instead of over the live editor.
+    """
     method = await run_worker(lambda: authentication_menu().run())
     if method.cancelled or method.item is None:
         return None
     if method.item.value == 'browser':
-        return Connection(token=await OpenRouterAuth(console=Console()).login())
+        return Connection(token=await OpenRouterAuth(console=console).login())
     prompt: PromptSession[str] = PromptSession()
     token = await prompt_api_key(prompt=prompt, label='OpenRouter API key (https://openrouter.ai/keys): ')
     if token is None:

@@ -1,32 +1,48 @@
-"""Agent Skills in the built-in `coder` plugin: folders, the model's catalog, `/skill-name` commands, and notices."""
+"""Agent Skills in the built-in `coder` plugin: folders, the model's catalog, `/skill-name` commands, notices, and turning skills off."""
 
 import io
 import os
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from pydantic import JsonValue, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import (
+    AgentCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
-from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
+from pydantic_clai2 import Session, chat
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, collect, load_plugin
+from pydantic_clai2.plugins import (
+    LoadedPlugin,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionStart,
+    collect,
+    load_plugin,
+)
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime.session_runtime import create_shell
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs
 
 PromptT = TypeVar('PromptT')
 
@@ -96,8 +112,26 @@ async def run_once(loaded: LoadedPlugin[None], workspace: Path) -> FirstRequest:
     return seen
 
 
+def bound_types(loaded: LoadedPlugin[None]) -> list[type[object]]:
+    """The capability classes `loaded` binds, with the `Skills` `coder` wraps in a group shown as `Skills`."""
+    types: list[type[object]] = []
+    for capability in loaded.capabilities:
+        match capability:
+            case WrapperCapability(wrapped=CombinedCapability(capabilities=[Skills()])):
+                types.append(Skills)
+            case _:
+                types.append(type(capability))
+    return types
+
+
+def commands_of(loaded: LoadedPlugin[None]) -> Commands:
+    commands = Commands()
+    commands.register_many(loaded.commands)
+    return commands
+
+
 def has_skills(loaded: LoadedPlugin[None]) -> bool:
-    return any(isinstance(capability, Skills) for capability in loaded.capabilities)
+    return Skills in bound_types(loaded)
 
 
 class TestSkillFolders:
@@ -141,10 +175,228 @@ class TestSkillFolders:
         await loader.load_all()
         loaded = loader.entries()[0].loaded
         assert loaded is not None
-        loaded.host.save_settings(CoderSettings(repo_context=False, skill_folders=['skills']))
+        loaded.host.save_settings(
+            CoderSettings(repo_context=False, task_control=False, skill_folders=['skills'], disabled_skills=['review'])
+        )
 
-        assert store.plugin_requirements('coder') == {'skill_folders': ['coder-skill-folders']}
+        assert store.plugin_requirements('coder') == {
+            'task_control': ['coder-task-control'],
+            'skill_folders': ['coder-skill-folders'],
+            'disabled_skills': ['coder-disabled-skills'],
+        }
         await loader.close('exit')
+
+
+class TestDisabledSkills:
+    @pytest.mark.parametrize(
+        ('disabled', 'offered'),
+        [
+            ([], ['deploy', 'review']),
+            (['review'], ['deploy']),
+            (['review', 'deploy'], []),
+            # The setting is the same in every project, so a name this one lacks is not an error.
+            (['elsewhere'], ['deploy', 'review']),
+            # Compared after NFKC normalization, as harness compares names: a fullwidth `v` is `v`.
+            (['re\uff56iew'], ['deploy']),
+        ],
+        ids=['none', 'one', 'all', 'unknown', 'normalized'],
+    )
+    async def test_a_disabled_skill_is_hidden_from_the_model_and_has_no_command(
+        self, project: Path, disabled: list[str], offered: list[str]
+    ) -> None:
+        for name in ('deploy', 'review'):
+            write_skill(project / '.agents' / 'skills', name, description=f'{name.title()} help.')
+        loaded, output = await load_coder({'disabled_skills': list[JsonValue](disabled)})
+
+        seen = await run_once(loaded, project)
+
+        assert sorted(command.name for command in loaded.commands) == offered
+        assert [line for line in seen.instructions.splitlines() if line.startswith('- ')] == [
+            f'- {name}: {name.title()} help.' for name in offered
+        ]
+        assert ('load_capability' in seen.tools) == bool(offered)
+        assert output.getvalue() == ''
+
+    @pytest.mark.parametrize('value', ['', ' review', 'bad\x1bname'])
+    def test_invalid_names_are_rejected(self, value: str) -> None:
+        with pytest.raises(ValidationError, match='Skill names must be nonempty'):
+            CoderSettings(disabled_skills=[value])
+
+    def test_names_are_saved_normalized(self) -> None:
+        assert CoderSettings(disabled_skills=['re\uff56iew']).disabled_skills == ['review']
+
+    async def test_the_skills_row_toggles_each_skill_and_saves_it(self, project: Path) -> None:
+        for name in ('deploy', 'review'):
+            write_skill(project / '.agents' / 'skills', name, description=f'{name.title()} help.')
+        loaded, _ = await load_coder({'disabled_skills': ['elsewhere']})
+        plugin = loaded.plugin
+        assert isinstance(plugin, CoderPlugin)
+        source = CoderSource(plugin.host)
+        row = next(row for row in source.rows() if row.key == 'disabled_skills')
+        assert (row.label, row.display(source.current(row))) == ('Skills', '1 off')
+        script = ScriptedDialogs(
+            [
+                Pick(value='review'),
+                Pick(value='review'),
+                Pick(value='deploy'),
+                Pick(value='elsewhere'),
+                Pick(value=':close'),
+            ]
+        )
+
+        messages = await plugin.settings_menu().actions['disabled_skills'](script)
+
+        assert messages == ['Turned review off.', 'Turned review on.', 'Turned deploy off.', 'Turned elsewhere on.']
+        assert plugin.host.settings(CoderSettings).disabled_skills == ['deploy']
+        assert [option.label for option in script.asked[0].options] == [
+            '[x] deploy',
+            '[x] review',
+            '[ ] elsewhere (not found here)',
+            'Save & close',
+        ]
+        assert [option.label for option in script.asked[1].options][:2] == ['[x] deploy', '[ ] review']
+        deploy = project.resolve() / '.agents' / 'skills' / 'deploy' / 'SKILL.md'
+        assert script.asked[0].options[0].description == f'Deploy help.\n\n{deploy}'
+        assert ' '.join(script.asked[1].description.split()).startswith('Turned review off. Each pick turns a skill')
+        assert source.current(row) == '["deploy"]'
+
+    async def test_the_skill_list_says_when_no_skills_were_found_and_reports_save_errors(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        loaded, _ = await load_coder({'disabled_skills': ['review']})
+        plugin = loaded.plugin
+        assert isinstance(plugin, CoderPlugin)
+
+        def refuse(settings: BaseModel, /) -> None:
+            raise ValueError('disk full')
+
+        # On the host: an earlier `loader.reload('coder')` in this process may have replaced the module's classes.
+        monkeypatch.setattr(plugin.host, 'save_settings', refuse)
+        script = ScriptedDialogs([Pick(value='review'), Back()])
+
+        assert await plugin.settings_menu().actions['disabled_skills'](script) == []
+        assert ' '.join(script.asked[0].description.split()).startswith(
+            'No skills were found in the skill folders when Coder loaded. Each pick'
+        )
+        assert script.asked[1].description.startswith('Could not save: disk full\n\n')
+        assert plugin.host.settings(CoderSettings).disabled_skills == ['review']
+
+
+class TestSkillFoldersAboveTheLaunchDirectory:
+    async def test_launching_in_a_subdirectory_finds_the_repositorys_skills_nearest_first(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'review', description='Root review.')
+        write_skill(project / '.agents' / 'skills', 'release', description='Root release.')
+        package = project / 'packages' / 'app'
+        write_skill(package / '.agents' / 'skills', 'review', description='Package review.')
+        src = package / 'src'
+        src.mkdir()
+        monkeypatch.chdir(src)
+
+        with pytest.warns(UserWarning, match="skill name 'review' is already taken"):
+            loaded, output = await load_coder({'skill_folders': ['.agents/skills']})
+            seen = await run_once(loaded, src)
+
+        assert '- review: Package review.\n- release: Root release.' in seen.instructions
+        assert [command.name for command in loaded.commands] == ['review', 'release']
+        assert 'Root review' not in output.getvalue()
+
+    async def test_the_sessions_directory_is_searched_not_the_processs(
+        self, tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Skills come from `host.workspace` and the repository around it, wherever the process is."""
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'release')
+        (project / 'src').mkdir()
+        write_skill(tmp_path / 'elsewhere' / '.agents' / 'skills', 'stray')
+        monkeypatch.chdir(tmp_path / 'elsewhere')
+        host = PluginHost[None](
+            name='coder',
+            console=Console(file=io.StringIO()),
+            settings={'repo_context': False, 'sub_agents': False, 'skill_folders': ['.agents/skills']},
+            workspace=lambda: project / 'src',
+        )
+        plugin = CoderPlugin[None].from_host(host)
+        await plugin.prepare()
+
+        assert [command.name for command in collect(plugin).commands] == ['release']
+
+    async def test_the_walk_stops_at_the_git_root(self, tmp_path: Path, project: Path) -> None:
+        write_skill(tmp_path / '.agents' / 'skills', 'outside')
+        (project / '.git').mkdir()
+
+        loaded, _ = await load_coder({'skill_folders': ['.agents/skills']})
+
+        assert list(loaded.commands) == []
+
+    async def test_outside_a_repository_only_the_launch_directory_is_searched(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review')
+        (project / 'src').mkdir()
+        monkeypatch.chdir(project / 'src')
+
+        loaded, _ = await load_coder({'skill_folders': ['.agents/skills']})
+
+        assert list(loaded.commands) == []
+
+    def test_relative_folders_expand_across_parents_in_place(self) -> None:
+        settings = CoderSettings(skill_folders=['.agents/skills', '~/skills', '/abs', '.claude/skills'])
+
+        assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
+            '.agents/skills',
+            '/repo/pkg/.agents/skills',
+            '/repo/.agents/skills',
+            '/home/tester/skills',
+            '/abs',
+            '.claude/skills',
+            '/repo/pkg/.claude/skills',
+            '/repo/.claude/skills',
+        ]
+
+
+class TestSkillInvocationFrontmatter:
+    async def test_a_model_disabled_skill_is_a_command_only(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'deploy').mkdir(parents=True)
+        (library / 'deploy' / 'SKILL.md').write_text(
+            '---\ndescription: Deploy.\ndisable-model-invocation: true\n---\n\nShip it.\n', encoding='utf-8'
+        )
+        loaded, output = await load_coder()
+
+        seen = await run_once(loaded, project)
+
+        assert [command.name for command in loaded.commands] == ['deploy']
+        assert 'load_capability' not in seen.tools
+        assert 'deploy' not in seen.instructions
+        assert output.getvalue() == ''
+
+    async def test_a_skill_that_is_not_user_invocable_is_catalog_only(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'background').mkdir(parents=True)
+        (library / 'background' / 'SKILL.md').write_text(
+            '---\ndescription: Background.\nuser-invocable: false\n---\n\nKnow this.\n', encoding='utf-8'
+        )
+        loaded, _ = await load_coder()
+
+        seen = await run_once(loaded, project)
+
+        assert list(loaded.commands) == []
+        assert '- background: Background.' in seen.instructions
+
+    async def test_frontmatter_for_other_clients_loads_without_a_notice(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'review').mkdir(parents=True)
+        (library / 'review' / 'SKILL.md').write_text(
+            '---\ndescription: Review.\nallowed-tools: Read\ncontext: fork\n---\n', encoding='utf-8'
+        )
+
+        loaded, output = await load_coder()
+
+        assert [command.name for command in loaded.commands] == ['review']
+        assert output.getvalue() == ''
 
 
 class TestSkillCatalog:
@@ -172,7 +424,7 @@ class TestSkillCatalog:
         seen = await run_once(loaded, project)
 
         # A `Skills` that found nothing stays bound, so a skill added mid-session reaches the next turn's catalog.
-        assert [type(capability) for capability in loaded.capabilities] == ([Coder] if settings else [Coder, Skills])
+        assert bound_types(loaded) == ([Coder] if settings else [Coder, Skills])
         assert list(loaded.commands) == []
         assert 'load_capability' not in seen.tools
         assert 'deferred' not in seen.instructions
@@ -222,27 +474,104 @@ class TestSkillCatalog:
         finally:
             library.chmod(0o755)
 
-        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert bound_types(loaded) == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
 
     async def test_skills_are_off_where_clai_has_no_local_workspace(
         self, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         write_skill(project / '.agents' / 'skills', 'review')
-        monkeypatch.setattr('pydantic_clai2.runtime._session.sys.platform', 'win32')
+        monkeypatch.setattr('pydantic_clai2.runtime.session.sys.platform', 'win32')
 
         loaded, output = await load_coder()
 
-        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert bound_types(loaded) == [Coder]
         assert (list(loaded.commands), output.getvalue()) == ([], '')
 
-    async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
-        write_skill(project / 'skills', 'review')
-        loaded, output = await load_coder({'skill_folders': ['skills/review']})
+    @pytest.mark.parametrize('supplies_workspace', [False, True], ids=['no-workspace', 'sandbox'])
+    async def test_skills_load_beside_a_plugin_capability_function(
+        self, tmp_path: Path, project: Path, supplies_workspace: bool
+    ) -> None:
+        # Such a plugin may supply a sandbox, so CLAI attaches the project directory only once the run's
+        # capability functions resolve: after `Skills` reads its catalog.
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        sandbox = tmp_path / 'sandbox'
+        sandbox.mkdir()
 
-        assert not has_skills(loaded)
-        assert list(loaded.commands) == []
-        assert output.getvalue().startswith('Skills are off: Skill library path points to a skill package')
+        class PerRun(Plugin[NoSettings, None]):
+            def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+                return (self.for_run,)
+
+            def for_run(self, ctx: RunContext[None]) -> LocalWorkspace[None] | None:
+                return LocalWorkspace[None](sandbox) if supplies_workspace else None
+
+        per_run = load_plugin(
+            PerRun, PluginHost[None](name='per_run', console=Console(file=io.StringIO()), settings={})
+        )
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run.capabilities],
+        )
+        result = await session.prompt('go')
+
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert '- review: Project review.' in (request.instructions or '')
+        # A sandbox the capability function supplies still wins over the project directory.
+        expected = (sandbox if supplies_workspace else project).resolve()
+        assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
+
+    @pytest.mark.parametrize('first', ['coder', 'own'])
+    async def test_another_skills_on_the_agent_combines_with_coders(self, project: Path, first: str) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        write_skill(project / 'team', 'deploy', description='Team deploy.')
+        coder, _ = await load_coder()
+        # It names `.agents/skills` too; combined with `coder`'s, that `review` is listed once.
+        own = Skills[None](['team', '.agents/skills'])
+        plugins = [*coder.capabilities, own] if first == 'coder' else [own, *coder.capabilities]
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=plugins,
+        )
+        result = await session.prompt('go')
+
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        instructions = request.instructions or ''
+        assert instructions.count('- review: Project review.') == 1
+        assert '- deploy: Team deploy.' in instructions
+
+    async def test_a_folder_that_is_one_skill_is_skipped_with_a_notice(self, project: Path, home: Path) -> None:
+        # A stray `.agents/skills/SKILL.md` in a repository must not turn off the user's personal skills.
+        write_skill(project / '.agents', 'skills')
+        (project / '.claude').mkdir()
+        (project / '.claude' / 'skills').write_text('not a folder', encoding='utf-8')
+        write_skill(home / '.agents' / 'skills', 'release')
+        loaded, output = await load_coder()
+
+        assert has_skills(loaded)
+        assert [command.name for command in loaded.commands] == ['release']
+        resolved = project.resolve()
+        assert output.getvalue() == (
+            f'Skipping {resolved}/.agents/skills: it is a skill package, not a library.\n'
+            f'Skipping {resolved}/.claude/skills: it is not a directory.\n'
+        )
+
+    async def test_a_skill_package_created_mid_session_does_not_fail_turns(self, project: Path, home: Path) -> None:
+        write_skill(home / '.agents' / 'skills', 'release', description='Personal release.')
+        loaded, _ = await load_coder()
+        # What a model asked to "write a skill" might create.
+        write_skill(project / '.agents', 'skills')
+
+        with pytest.warns(UserWarning, match=r'\.agents/skills: it is a skill package, not a library\.'):
+            seen = await run_once(loaded, project)
+
+        assert '- release: Personal release.' in seen.instructions
 
 
 def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
@@ -253,7 +582,7 @@ def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 class TestSkillCommands:
@@ -314,6 +643,46 @@ class TestSkillCommands:
         host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings={})
         with pytest.raises(RuntimeError, match="Plugin 'coder' has no shell to run a prompt in"):
             host.submit_prompt('hello')
+
+    async def test_a_skill_command_sends_the_skill_as_it_is_now(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review', body='Old steps.')
+        submitted: list[str] = []
+        loaded, _ = await load_coder(submitted=submitted)
+        (skill / 'SKILL.md').write_text('---\ndescription: Help.\n---\n\nNew steps.\n', encoding='utf-8')
+
+        assert await commands_of(loaded).execute_async('/review app.py') == ''
+
+        assert submitted == [
+            f'# Skill: review\n\nSkill directory: `{skill.resolve()}`. Relative paths in this skill resolve '
+            'against it.\n\nNew steps.\n\nARGUMENTS: app.py'
+        ]
+
+    async def test_a_skill_command_says_so_when_the_skill_is_gone(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review')
+        write_skill(project / '.agents' / 'skills', 'deploy')
+        background = write_skill(project / '.agents' / 'skills', 'background')
+        submitted: list[str] = []
+        loaded, _ = await load_coder(submitted=submitted)
+        commands = commands_of(loaded)
+        (skill / 'SKILL.md').unlink()
+        (project / '.agents' / 'skills' / 'deploy' / 'SKILL.md').write_text('no frontmatter', encoding='utf-8')
+        (background / 'SKILL.md').write_text('---\ndescription: B.\nuser-invocable: false\n---\n', encoding='utf-8')
+
+        with pytest.raises(ValueError) as gone:
+            await commands.execute_async('/review')
+        with pytest.raises(ValueError) as broken:
+            await commands.execute_async('/deploy')
+        with pytest.raises(ValueError, match=r"Skill 'background' is now `user-invocable: false`\. /reload"):
+            await commands.execute_async('/background')
+
+        assert str(gone.value) == (
+            f"Skill 'review' is gone: no skill folder has it any more; it was in {skill.resolve()}/SKILL.md. "
+            '/reload updates the commands.'
+        )
+        assert str(broken.value).startswith(
+            f"Skill 'deploy' is gone: Skipping {project.resolve()}/.agents/skills/deploy/SKILL.md: "
+        )
+        assert submitted == []
 
     async def test_reload_picks_up_skills_added_mid_session(self, tmp_path: Path, project: Path) -> None:
         store = SettingsStore(tmp_path / 'settings.db')

@@ -39,7 +39,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -178,7 +177,7 @@ async def _start(adapter: PydanticAIACPAgent[None, object], client: FakeClient) 
 
 def _has_tool_return(messages: list[ModelMessage]) -> bool:
     last = messages[-1]
-    return isinstance(last, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in last.parts)
+    return isinstance(last, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in last.parts)
 
 
 def _user_texts(messages: list[ModelMessage]) -> list[str]:
@@ -228,7 +227,7 @@ def _approval_agent(executed: list[str]) -> Agent[None, str]:
 class _PerRunApprovalCapability(AbstractCapability[None]):
     """A session capability whose `for_run()` supplies an approval-gated tool the pre-run scan cannot see.
 
-    `get_toolset()` contributes nothing until the run, so `_approval_tool_names` cannot know its
+    `get_toolset()` contributes nothing until the run, so `_scan_approval_names` cannot know its
     `delete_file` pauses for approval and the call is announced as running. The run still pauses it
     (the per-run instance carries the same tool with `requires_approval=True`), which is exactly the
     per-run gap from #820.
@@ -602,10 +601,12 @@ class TestStreaming:
             ('agent_thought_chunk', 'think'),
         ]
 
-    async def test_tool_result_failure_is_marked_failed(self) -> None:
+    async def test_a_retried_tool_result_is_marked_failed(self) -> None:
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
         client = FakeClient()
-        event = FunctionToolResultEvent(part=RetryPromptPart(content='bad args', tool_name='t', tool_call_id='c1'))
+        event = FunctionToolResultEvent(
+            part=ToolReturnPart(content='bad args', tool_name='t', tool_call_id='c1', outcome='retried')
+        )
 
         turn = _TurnState(conn=client, session_id='sid', cwd='.', approval_names=frozenset())
         await adapter._emit_event(turn, event)  # pyright: ignore[reportPrivateUsage]
@@ -1532,8 +1533,7 @@ class TestPermission:
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_approval_agent([]))
         config: AcpSessionConfig[None] = AcpSessionConfig(deps=None, toolsets=[CombinedToolset([])])
 
-        names = adapter._approval_tool_names(config)  # pyright: ignore[reportPrivateUsage]
-        plain = adapter._known_non_approval_names(config)  # pyright: ignore[reportPrivateUsage]
+        names, plain = adapter._scan_approval_names(config)  # pyright: ignore[reportPrivateUsage]
 
         assert names == frozenset({'delete_file'})
         assert plain == frozenset()

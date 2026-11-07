@@ -18,15 +18,28 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Change tool output: override render(event), returning a Rich renderable or None.
 - Add a fragment to the status row: return functions from get_status_segments,
   each returning a short string.
-- Add a working animation: return make_spinner(name, frames, interval=...,
+- Add a working animation: return build_spinner(name, frames, interval=...,
   description=...) values from get_spinners, or add an entry in spinners.json next
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, on_turn_end, or on_conversation_changed.
+  on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
+  on_command_end. Follow delegated tasks with on_task_progress, which fires for every
+  stream event of every task, text deltas included, so keep it cheap. It also gets
+  the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
+- Drive the prompt from somewhere other than the keyboard, such as a remote UI:
+  host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
+  cancels the running turn or command, await host.complete(text) returns what Tab offers, and
+  host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
+  host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
+  shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
+  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, resumes, or prompts them;
+  it is None while no task owner runs them, such as in a headless -p run.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
-- Offer a settings menu: override async configure().
+- Offer a settings menu: return SettingsMenu(source=..., actions=...) from settings_menu();
+  an action asks through the Dialogs it gets (choose, text, confirm, wait). Override async
+  configure() only for a menu that cannot be declared; it opens in the terminal alone.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.
@@ -47,6 +60,16 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   plugin extension. A command can own its own UI instead. You can add a
   fragment to the status row with get_status_segments; you cannot redesign or
   replace the row itself.
+
+## User worktree removal commands
+
+Use the user-only `worktrees.remove_commands` setting to replace confirmed
+exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
+worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for repository-scoped argv configuration, placeholders, and shell functions.
+The exit picker defaults to keeping the checkout. **No, don't ask again for this
+worktree** saves that choice for this checkout in the settings database; a new
+checkout reusing the same path is asked again.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
@@ -141,10 +164,37 @@ opt in. An explicit false remains an opt-out. To run without coding tools,
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
-NAME, so repository code never runs without that approval. Outside a session,
+NAME, so repository code never runs without that approval. Its "hooks" table
+(commands run before and after tool calls and as a turn starts and ends) is the
+project plugin project_hooks, approved the same way; any change to the table,
+or to a program inside the project that a list command runs, such as
+["./scripts/check.sh"],
+needs approval again (a string command is approved as written), and so does
+any change to a project plugin's file. The user's own table is the settings of
+the built-in hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
+
+### Repository instruction boundaries
+
+The built-in repo_context plugin's `walk_up` option, on by default, loads ancestor
+instructions. List the inclusive stops with
+`/set repo_context.walk_up_roots '["~", "/srv/projects"]'` (default `["~"]`,
+home): roots are resolved, following symlinks, and the walk stops at the nearest
+one containing the workspace, or at the repository root when none does.
+Authorize shared instruction targets with
+`/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
+
+Use absolute paths, `~`, or `~/...`, and single-quote the whole JSON list,
+which also covers paths containing spaces. Keep these user-only settings out of
+plugin JSON and `.clai/settings.json`; changes apply next run. Choose a directory
+containing only trusted instructions, not `/` or all of home. See the user
+reference's Repository instructions section for setup and path rules, and
+[Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
+for loading and backend requirements.
+
+### Git plugins
 
 Inside a CLAI session only, /plugins add GIT_URL clones and loads a trusted
 repository over HTTPS or SSH (or a local file:// URL). Its root __init__.py or
@@ -236,7 +286,7 @@ new source. Do not mutate another plugin or the agent to add a plugin's tools.
 
 ## Finding CLAI source
 
-The package root keeps the shell entry point (`_app.py`) and the documented
+The package root keeps the shell entry point (`app.py`) and the documented
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`.
 Implementations live in `cli/` (launch and command context), `config/` (settings
 and storage), `runtime/` (sessions and reload), `models/` (catalog and provider
@@ -285,6 +335,8 @@ The CLAI moments are async methods returning None:
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
 | on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
+| on_command_end | CommandEnd(text, output, error) | Show a /command's result somewhere else |
+| on_task_progress | TaskProgress(task, event) | Follow a delegated task's run, as /tasks does |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
@@ -480,7 +532,6 @@ thinking, not tool-specific rendering.
 Add a fragment to the status row with get_status_segments:
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -489,7 +540,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
@@ -506,12 +557,12 @@ Offer a working animation with get_spinners; the user selects it with /spinner:
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are padded to one width and interval is clamped to 0.02-1 seconds. The
@@ -528,7 +579,7 @@ The following uses CLAI's internal UI helpers; check them when upgrading:
 ```python
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.commands import Command
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.plugins import Plugin
@@ -611,7 +662,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2 import chat
-from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.clai_docs import ClaiDocs
 
 model = OpenAIChatModel(
     'my-model',
@@ -620,7 +671,7 @@ model = OpenAIChatModel(
         api_key=os.environ['MY_MODEL_API_KEY'],
     ),
 )
-agent = Agent(model, capabilities=[Coder(), customization_guide()])
+agent = Agent(model, capabilities=[Coder(), ClaiDocs()])
 asyncio.run(chat(agent, deps=None))
 ```
 
@@ -645,7 +696,8 @@ For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
 /plugins reports that plugins are off. Nothing saved changes, so the next plain
 clai2 loads plugins as before. The agent keeps its own model unless -m or
-CLAI_MODEL selects another; a saved or project model does not replace it. -p runs
+CLAI_MODEL selects another; a saved or project model does not replace it. Code
+mode starts off, whatever is saved, until /set run.code_mode true. -p runs
 the same agent headlessly, --resume and --worktree work as usual, and --agent
 cannot be combined with the config or plugins subcommands. A launcher is still the
 way to pass deps, plugins, or builtin_plugins.
@@ -690,6 +742,16 @@ removes the native effort override. Custom parameters stay unchanged: remove any
 that override effort with `/model settings` first. Models without an effort
 control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 
+`/commit [MESSAGE]` stages and commits every change in the session's directory;
+without MESSAGE the session's model drafts one from the changes. `/push` runs
+`git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
+does the same, with a file list and the drafts to edit first. A plugin's own
+`/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
+by them, and CLAI says so.
+
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
@@ -727,12 +789,16 @@ builders headlessly, with injected runners instead of a real terminal.
 
 In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
-edits, and verify disable removes your commands and tools. Keep README.md and
+edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by Plugin or PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.
 
 ## Headless invocation
+
+`clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+from a local browser UI instead; the built-in `web` plugin is a worked example of
+`host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
 `clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use

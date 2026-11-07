@@ -1,8 +1,10 @@
 """Highlight a shell command as Bash, and the code embedded in it (heredocs, `python -c`) in its own language."""
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 
+from rich.style import Style
 from rich.syntax import Syntax, SyntaxTheme
 from rich.text import Text
 
@@ -69,6 +71,8 @@ _INLINE = re.compile(
     r'(?:\'(?P<single>[^\']*)\'|"(?P<double>[^"$`\\]*)")'
 )
 """A command, a flag, and its quoted argument, when the argument reaches the command as shown: no expansions."""
+_SECONDARY = Style(dim=True, underline=False)
+"""Lexed code reads as secondary to the answer: dimmed, without the underline `syntax_theme()` gives module names."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -96,9 +100,7 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
     pending: list[tuple[str, bool, str | None]] = []
     *lines, last = command.split('\n')
     for line in [*(f'{line}\n' for line in lines), last]:
-        if position > limit and not pending:
-            shell += command[position:]  # Nothing from here on is shown.
-            break
+        line_start = position
         position += len(line)
         if pending:
             delimiter, strip_tabs, language = pending[0]
@@ -108,15 +110,14 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
             segments.append(Segment(text=body, language=language))
             body = ''
             pending.pop(0)
+        elif line_start > limit:
+            shell += command[line_start:]  # Nothing from here on is shown.
+            break
         start = len(shell)
         shell += line
         # A body starts on the next line, so a heredoc opened on a line ending past `limit` is never shown.
         if position <= limit:
-            pending.extend(
-                (match[3], bool(match[1]), _heredoc_language(line, match=match))
-                for match in _HEREDOC.finditer(line)
-                if _opens_heredoc(shell[: start + match.start()])
-            )
+            pending.extend(_opened_heredocs(line, shell=shell, start=start))
         if pending:
             segments.append(_shell_segment(shell))
             shell = ''
@@ -124,6 +125,15 @@ def command_segments(command: str, *, end: int | None = None) -> list[Segment]:
         segments.append(Segment(text=body, language=pending[0][2]))
     segments.append(_shell_segment(shell))
     return [segment for segment in segments if segment.text]
+
+
+def _opened_heredocs(line: str, *, shell: str, start: int) -> Iterator[tuple[str, bool, str | None]]:
+    """The heredocs `line` opens: delimiter, whether leading tabs are stripped, language. `shell[start:]` is `line`."""
+    return (
+        (match[3], bool(match[1]), _heredoc_language(line, match=match))
+        for match in _HEREDOC.finditer(line)
+        if _opens_heredoc(shell[: start + match.start()])
+    )
 
 
 def _opens_heredoc(before: str) -> bool:
@@ -136,25 +146,34 @@ def _heredoc_language(line: str, *, match: re.Match[str]) -> str | None:
     """The language of the heredoc `match` opens, from the simple command around it on `line`."""
     before = _SEPARATOR.split(line[: match.start()])[-1]
     after = _SEPARATOR.split(line[match.end() :])[0]
-    words = [word.strip('\'"') for word in before.split()]
-    for index, word in enumerate(words):
-        if word.startswith(('>', '<')):
-            break
-        language = _INTERPRETERS.get(_command_name(word))
-        if language is not None:
-            # `python3 script.py <<EOF` and `python3 -c CODE <<EOF` run other code, which reads the heredoc as data.
-            rest = words[index + 1 :]
-            script = next((word for word in rest if not word.startswith('-')), '')
-            code_flags = {f'-{flag}' for flag in _INLINE_FLAGS[language]}
-            if _extension_language(script) != language and code_flags.isdisjoint(rest):
-                return language
-            break
+    language = _reader_language(before)
+    if language is not None:
+        return language
     for target in _TARGET.findall(f'{before} {after}'):
         language = _extension_language(target.strip('\'"'))
         if language is not None:
             return language
     name = ''.join(word for word in match[3].lower().split('_') if word not in ('eof', 'end'))
     return _NAMES.get(name.removesuffix('eof'))
+
+
+def _reader_language(before: str) -> str | None:
+    """The language of the interpreter in `before`, the command up to a heredoc, when it runs the heredoc as code."""
+    words = [word.strip('\'"') for word in before.split()]
+    for index, word in enumerate(words):
+        if word.startswith(('>', '<')):
+            return None
+        language = _INTERPRETERS.get(_command_name(word))
+        if language is None:
+            continue
+        # `python3 script.py <<EOF` and `python3 -c CODE <<EOF` run other code, which reads the heredoc as data.
+        rest = words[index + 1 :]
+        script = next((word for word in rest if not word.startswith('-')), '')
+        code_flags = {f'-{flag}' for flag in _INLINE_FLAGS[language]}
+        if _extension_language(script) != language and code_flags.isdisjoint(rest):
+            return language
+        return None
+    return None
 
 
 def _command_name(word: str) -> str:
@@ -178,7 +197,7 @@ def _shell_segment(text: str) -> Segment:
 
 
 def highlight_command(command: str, *, end: int) -> Text:
-    """`command[:end]` in `theme.syntax_theme()`, with code in an unknown language muted.
+    """`command[:end]` in `theme.syntax_theme()`, dimmed and not underlined, with code in an unknown language muted.
 
     Languages are found in the whole command, but nothing past `end` is lexed. `command` must
     already be terminal-safe: highlighting styles text, it does not escape it.
@@ -210,4 +229,6 @@ def _lex(code: str, *, language: str, syntax_theme: SyntaxTheme) -> Text:
     highlighted = Syntax(code, language, theme=syntax_theme, tab_size=0).highlight(code)
     if not code.endswith('\n'):
         highlighted.right_crop(1)  # The newline the lexer ends all code with.
+    # Last, so it overrides the token styles; it also dims names left in the terminal foreground.
+    highlighted.stylize(_SECONDARY)
     return highlighted

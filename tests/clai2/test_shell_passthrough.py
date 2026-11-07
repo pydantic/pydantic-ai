@@ -31,11 +31,15 @@ from pydantic_clai2.cli.shell_passthrough import (
     shell_command,
     terminal_modes_kept,
 )
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._processes import taskkill_path
+from pydantic_clai2.runtime.processes import taskkill_path
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
+from tests.conftest import no_leaked_tasks
 
 
 @pytest.fixture(autouse=True)
@@ -161,7 +165,7 @@ class TestShellPassthrough:
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
-            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts)
+            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd())
         )
         await spawn_started.wait()
 
@@ -196,10 +200,17 @@ class TestShellPassthrough:
             stdin: int | None,
             stdout: int,
             stderr: int,
+            cwd: str,
         ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
             # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
             process = await spawn(
-                factory, command, start_new_session=start_new_session, stdin=stdin, stdout=stdout, stderr=stderr
+                factory,
+                command,
+                start_new_session=start_new_session,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
             )
             with anyio.fail_after(5):
                 while not (tmp_path / 'ready').exists():
@@ -208,6 +219,9 @@ class TestShellPassthrough:
             return process
 
         monkeypatch.setattr(loop, 'subprocess_shell', spawn_then_ctrl_c)
+        # A loaded runner can take longer than the real grace to run the trap, and a kill landing
+        # mid-trap leaves `cleanup.txt` empty. The trap exits on its own, so a longer grace costs nothing.
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._INTERRUPT_GRACE', 5)
         command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text
@@ -378,7 +392,9 @@ async def test_large_stdout_and_stderr_are_drained_concurrently(
     output = io.StringIO()
     command = "i=0; while [ $i -lt 20000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
-        context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
+        context = await run_shell_command(
+            command, console=Console(file=output), interrupts=Interrupts(), cwd=Path.cwd()
+        )
     stdout = 'stdout\n' * 20000
     stderr = 'stderr\n' * 20000
     if max_output_chars == 100:
@@ -404,22 +420,23 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
 
     output = Output()
     interrupts = Interrupts()
-    tasks_before = asyncio.all_tasks()
-    task = asyncio.create_task(
-        run_shell_command('printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts)
-    )
-    with anyio.fail_after(10):
-        await printed.wait()
-        assert not task.done()
-        if external_cancel:
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        else:
-            assert interrupts.cancel()
-            context = await task
-            assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
-    assert asyncio.all_tasks() == tasks_before
+    with no_leaked_tasks():
+        task = asyncio.create_task(
+            run_shell_command(
+                'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd()
+            )
+        )
+        with anyio.fail_after(10):
+            await printed.wait()
+            assert not task.done()
+            if external_cancel:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                assert interrupts.cancel()
+                context = await task
+                assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX fork and detached sessions')
@@ -466,33 +483,33 @@ async def test_detached_descendant_cannot_hold_output_open(
             asyncio.get_running_loop().call_soon(interrupts.cancel)
 
     monkeypatch.setattr(_ShellOutput, 'process_exited', on_process_exit)
-    tasks_before = asyncio.all_tasks()
-    task = asyncio.create_task(
-        run_shell_command(
-            f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
-            console=Console(file=Output()),
-            interrupts=interrupts,
+    with no_leaked_tasks():
+        task = asyncio.create_task(
+            run_shell_command(
+                f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
+                console=Console(file=Output()),
+                interrupts=interrupts,
+                cwd=Path.cwd(),
+            )
         )
-    )
-    try:
-        with anyio.fail_after(10):
-            await ready.wait()
-        if cancellation == 'running':
-            assert interrupts.cancel()
-        done, _ = await asyncio.wait({task}, timeout=10)
-        assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
-        context = task.result()
-        assert '\nstdout:\nDETACHED_READY\n' in context
-        assert ('\nExit code 0\n' if cancellation == 'none' else '\nInterrupted\n') in context
-        assert protocols[0].closed.is_set()
-        os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
-    finally:
-        if pid_file.exists():
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(int(pid_file.read_text()), signal.SIGKILL)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert asyncio.all_tasks() == tasks_before
+        try:
+            with anyio.fail_after(10):
+                await ready.wait()
+            if cancellation == 'running':
+                assert interrupts.cancel()
+            done, _ = await asyncio.wait({task}, timeout=10)
+            assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
+            context = task.result()
+            assert '\nstdout:\nDETACHED_READY\n' in context
+            assert ('\nExit code 0\n' if cancellation == 'none' else '\nInterrupted\n') in context
+            assert protocols[0].closed.is_set()
+            os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
+        finally:
+            if pid_file.exists():
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def test_output_limit_counts_characters_and_marks_truncation_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -537,8 +554,10 @@ def _interactive_context(command: str, status: str) -> str:
 async def test_terminal_command_runs_with_the_screen_released(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """The live panel leaves the screen before the command starts and returns after it exits."""
-    monkeypatch.chdir(tmp_path)
+    """The live panel leaves the screen before the command starts and returns after it exits.
+
+    The command runs in the session's directory, not the process's.
+    """
     events: list[str] = []
 
     @contextmanager
@@ -550,7 +569,7 @@ async def test_terminal_command_runs_with_the_screen_released(
     command = "printf 'sec''ret'; printf 'oo''ps' >&2; : > ran; exit 4"
     output = io.StringIO()
     with holding_output(hold):
-        context = await run_in_terminal(command, console=Console(file=output))
+        context = await run_in_terminal(command, console=Console(file=output), cwd=tmp_path)
     assert events == ['hold leave_screen=True ran=False', 'release ran=True']
     # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
     assert capfd.readouterr() == ('secret', 'oops')
@@ -587,9 +606,10 @@ async def test_forced_terminal_command_saves_only_its_status(
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
-async def test_cancelled_terminal_command_is_killed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    task = asyncio.create_task(run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO())))
+async def test_cancelled_terminal_command_is_killed(tmp_path: Path) -> None:
+    task = asyncio.create_task(
+        run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO()), cwd=tmp_path)
+    )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists():
             await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
@@ -600,7 +620,7 @@ async def test_cancelled_terminal_command_is_killed(tmp_path: Path, monkeypatch:
 
 async def test_terminal_command_spawn_failure_is_reported() -> None:
     output = io.StringIO()
-    context = await run_in_terminal('echo a\x00b', console=Console(file=output))
+    context = await run_in_terminal('echo a\x00b', console=Console(file=output), cwd=Path.cwd())
     assert 'Shell error: embedded null byte' in output.getvalue()
     assert context == _interactive_context('echo a\x00b', 'Shell error: embedded null byte')
 
@@ -639,3 +659,28 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
             return signal.getsignal(signal.SIGINT)
 
     assert await asyncio.to_thread(handler_inside) == signal.getsignal(signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`!pwd` prints the session's directory, not the one CLAI was started in."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'repo').mkdir()
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(), deps_type=type(None)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=False, width=200),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=tmp_path / 'repo',
+    )
+    shell.send_input('!pwd')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert str((tmp_path / 'repo').resolve()) in output.getvalue()

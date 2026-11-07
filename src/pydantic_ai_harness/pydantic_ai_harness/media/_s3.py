@@ -3,8 +3,8 @@
 Targets AWS S3, Cloudflare R2, MinIO, and other S3-compatible endpoints.
 Implements path-style URLs (`<endpoint>/<bucket>/<key>`) -- the lowest common
 denominator across providers. Only PUT / GET / HEAD are implemented;
-multipart, lifecycle, and listing operations are out of scope (any blob we
-store is sub-5GB by construction so multipart is unnecessary).
+multipart, lifecycle, and listing operations are out of scope, so a blob is
+limited to S3's 5 GB single-PUT cap.
 
 The SigV4 implementation follows the AWS reference algorithm but is local
 to this module to keep `pydantic-ai-harness` free of `botocore` / `boto3`.
@@ -27,10 +27,10 @@ from pydantic_ai_harness.media._store import (
     KeyStrategy,
     MediaContext,
     PublicUrlResolver,
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
     default_key_strategy,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 
 _ALGORITHM = 'AWS4-HMAC-SHA256'
 _SERVICE = 's3'
-# Conservative subset for x-amz-meta-* keys: ASCII letters/digits/dash; lowercase.
+# Conservative subset for x-amz-meta-* keys: ASCII letters/digits/dash. S3
+# lowercases header names, so keys come back from `get_metadata` lowercased.
 _META_KEY_RE = re.compile(r'^[a-zA-Z0-9-]+$')
 
 
@@ -109,7 +110,9 @@ def sign_request(
             headers_to_sign[k.lower()] = v
 
     sorted_keys = sorted(headers_to_sign)
-    canonical_headers = ''.join(f'{k}:{headers_to_sign[k]}\n' for k in sorted_keys)
+    # SigV4 canonicalizes each value by trimming it and collapsing runs of
+    # whitespace; S3 does the same to the headers it receives.
+    canonical_headers = ''.join(f'{k}:{" ".join(headers_to_sign[k].split())}\n' for k in sorted_keys)
     signed_headers = ';'.join(sorted_keys)
 
     canonical_request = '\n'.join(
@@ -189,9 +192,11 @@ class S3MediaStore:
     - `client=` -- bring your own `httpx.AsyncClient` for connection pooling.
 
     **Metadata persistence**: `context.metadata` is sent as signed
-    `x-amz-meta-*` headers on PUT (subject to ASCII naming rules) and
-    read back via `get_metadata(uri)`, which strips the `x-amz-meta-`
-    prefix from the HEAD response headers.
+    `x-amz-meta-*` headers on PUT and read back via `get_metadata(uri)`,
+    which strips the `x-amz-meta-` prefix from the HEAD response headers.
+    Keys must match `[A-Za-z0-9-]+` and come back lowercased. Every `put`
+    is a PUT, so a later `put` with different metadata replaces it when both
+    calls resolve to the same key.
     """
 
     def __init__(
@@ -291,7 +296,7 @@ class S3MediaStore:
         return True
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)

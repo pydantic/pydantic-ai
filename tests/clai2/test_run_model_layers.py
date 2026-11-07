@@ -26,12 +26,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session, StockAgent
+from pydantic_clai2.runtime.session_runtime import create_shell
 from tests.clai2.menu_script import make_context
 
 
@@ -472,6 +473,8 @@ async def test_selected_name_clai_translates(tmp_path: Path) -> None:
     recorder, session = await run_turn(
         tmp_path,
         settings=resolve_settings({'model': 'fast'}),
+        # Without the customization guide, which `TestModel` would load with a made-up id.
+        agent=StockAgent[None, str](None, deps_type=type(None), output_type=str, capabilities=[], name='clai2'),
         resolve=lambda name: 'test' if name == 'fast' else name,
     )
     assert recorder.calls == []

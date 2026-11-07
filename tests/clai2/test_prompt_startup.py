@@ -27,14 +27,14 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     captured: list[TranscriptBuffer] = []
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             if not captured:
                 captured.append(self.transcript)
                 text = '\n'.join(Text.from_ansi(row).plain for row in self.transcript.frame(width=200, height=200).rows)
                 assert '/new starts a session' in text
                 assert f'pydantic-clai2 {installed().label}' in text
                 assert text.count('PLUGIN_LOAD_NOTICE') == 1
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
@@ -70,9 +70,9 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
     surfaces: list[PromptSurface] = []
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             surfaces.append(self)
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()

@@ -1,11 +1,16 @@
 import re
+from copy import deepcopy
+from typing import Literal
 
 import pytest
 from pytest_mock import MockerFixture
+from typing_extensions import TypeAliasType
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -35,6 +40,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
 ]
+
+Key = TypeAliasType('Key', str)
 
 
 def test_openrouter_provider():
@@ -166,6 +173,11 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
     assert anthropic_profile is not None
     assert anthropic_profile.get('supports_json_schema_output', False) is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-5.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-5-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.get('thinking_always_enabled', False) is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
@@ -344,3 +356,139 @@ def test_openrouter_google_json_schema_transformer():
     # Removed fields
     assert '$schema' not in result
     assert 'title' not in result
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_openrouter_google_boolean_defs(definition: bool):
+    """The legacy inliner keeps false rejecting when the reference has a sibling `not`."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'x': {'not': {'type': 'string'} if definition else {}}},
+    }
+    assert schema == original
+
+
+def test_openrouter_google_resolves_property_names_ref_through_tool_preparation():
+    """The OpenRouter Google transformer drops `$defs`, so the `$ref` under `propertyNames` must be inlined too.
+
+    A `propertyNames` without a `$ref` is left as written. A recording can't check either: cassettes match on
+    method and URI, not the request body.
+    """
+
+    def accept_values(values: dict[Key, int], labels: dict[Literal['a', 'b'], int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'values': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                        'type': 'object',
+                    },
+                    'labels': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'enum': ['a', 'b']},
+                        'type': 'object',
+                    },
+                },
+                'required': ['values', 'labels'],
+                'type': 'object',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = OpenRouterProvider(api_key='api-key').model_profile('google/gemini-2.5-flash')
+    agent = Agent(FunctionModel(model_function, profile=profile), tools=[accept_values])
+    assert agent.run_sync('accept').output == 'done'
+
+
+def test_openrouter_google_resolves_contains_ref():
+    """The OpenRouter Google transformer inlines a `$ref` under `contains` and leaves a `contains` without one as written.
+
+    Pydantic never emits `contains`, so the schema is written by hand. A recording can't check this: cassettes
+    match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'positives': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'$ref': '#/$defs/Positive'}},
+            'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+        },
+        '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+    }
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'positives': {
+                    'type': 'array',
+                    'items': {'type': 'integer'},
+                    'contains': {'type': 'integer', 'minimum': 1},
+                },
+                'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic/claude-sonnet-5.5',
+        'google/gemini-3.5-flash',
+        'google/gemini-3.5-flash-lite',
+        'google/gemini-3.6-flash',
+        'google/gemini-3.7-flash',
+        'google/gemini-3.8-flash',
+        'google/gemini-4-argon',
+        'moonshotai/kimi-k2.7-code',
+        'moonshotai/kimi-k2-thinking',
+        'openai/gpt-5.2-codex',
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'openai/gpt-oss-safeguard-20b',
+        'qwen/qwen3.8-max-prime',
+        'qwen/qwen3.8-max-0902',
+        'qwen/qwen3.8-2.4t-a95b',
+        'qwen/qwen3-vl-30b-a3b-thinking',
+        'qwen/qwen3-next-80b-a3b-thinking',
+        'qwen/qwen3-235b-a22b-thinking-2507',
+        'x-ai/grok-4.20-multi-agent',
+        'x-ai/grok-build-0.1',
+        'z-ai/glm-5.3',
+        'z-ai/glm-5.3-flash',
+        'google/gemini-3.5-flash:batch',
+    ],
+)
+def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
+    """OpenRouter rejects `effort='none'` on these routes, which its model list marks `reasoning.mandatory`."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled', False) is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic/claude-sonnet-5',
+        'google/gemini-3.1-flash-lite',
+        'moonshotai/kimi-k3',
+        'openai/gpt-5.4',
+        'qwen/qwen3.8-27b',
+        'x-ai/grok-4.20',
+        'z-ai/glm-5.2',
+    ],
+)
+def test_openrouter_optional_reasoning_routes_are_not_always_on(model_name: str):
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled', False) is False

@@ -44,7 +44,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1652,6 +1652,7 @@ class TestImageGenerationCapability:
                     ],
                     usage=RequestUsage(input_tokens=54, output_tokens=5),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1673,6 +1674,7 @@ class TestImageGenerationCapability:
                     parts=[TextPart(content='done')],
                     usage=RequestUsage(input_tokens=54, output_tokens=6),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1745,8 +1747,12 @@ class TestImageGenerationCapability:
         result = await agent.run('Generate a test image')
 
         assert result.output == 'gave up'
-        retry_prompts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
-        assert [part.content for part in retry_prompts] == snapshot(
+        retry_parts = [
+            part
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+            if part.outcome == 'retried'
+        ]
+        assert [part.content for part in retry_parts] == snapshot(
             ['image generation was blocked for content moderation']
         )
 
@@ -1790,17 +1796,20 @@ class TestImageGenerationCapability:
                     ],
                     usage=RequestUsage(input_tokens=54, output_tokens=5),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1809,8 +1818,9 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=7),
+                    usage=RequestUsage(input_tokens=62, output_tokens=7),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1932,6 +1942,7 @@ class TestImageGenerationCapability:
                     ],
                     usage=RequestUsage(input_tokens=59, output_tokens=9),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1953,6 +1964,7 @@ class TestImageGenerationCapability:
                     parts=[TextPart(content='Here is the generated image.')],
                     usage=RequestUsage(input_tokens=59, output_tokens=15),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1999,6 +2011,7 @@ class TestImageGenerationCapability:
                     ],
                     usage=RequestUsage(input_tokens=59, output_tokens=9),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2020,6 +2033,7 @@ class TestImageGenerationCapability:
                     parts=[TextPart(content='Here is the generated image.')],
                     usage=RequestUsage(input_tokens=59, output_tokens=15),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),

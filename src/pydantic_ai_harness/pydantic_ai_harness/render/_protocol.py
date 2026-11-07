@@ -33,6 +33,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, CustomEvent, ModelResponse
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._typeguards import is_object_dict
 
 from ._compat import (
     JSONObject as JsonObject,
@@ -169,7 +170,7 @@ class EffectRecorder:
         if usage is None or before is None:
             return None
         delta = usage - before
-        return delta if delta.has_values() else None
+        return delta if delta.has_values() or delta.unmeasured_requests else None
 
 
 _EFFECT_RECORDER: ContextVar[EffectRecorder | None] = ContextVar(
@@ -384,15 +385,11 @@ def _contains_negative_count(value: object) -> bool:
         return False
     if isinstance(value, int):
         return value < 0
-    if _is_object_dict(value):
+    if is_object_dict(value):
         return any(_contains_negative_count(item) for item in value.values())
     if _is_object_list(value):
         return any(_contains_negative_count(item) for item in value)
     return False
-
-
-def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
 
 
 def _is_object_list(value: object) -> TypeGuard[list[object]]:

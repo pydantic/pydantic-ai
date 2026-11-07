@@ -24,7 +24,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     TextPart,
     ThinkingPart,
@@ -37,7 +36,8 @@ from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import ModelRequestParameters, StreamedResponse
+from ._in_memory_batch import InMemoryBatchModel
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
@@ -59,7 +59,7 @@ class _WrappedToolOutput:
 
 
 @dataclass(init=False)
-class TestModel(Model):
+class TestModel(InMemoryBatchModel):
     """A model specifically for testing purposes.
 
     This will (by default) call all tools in the agent, then return a tool response if possible,
@@ -76,6 +76,9 @@ class TestModel(Model):
     # instead of requiring a subclass to restate what the profile already says.
     supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+    # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
+    # history a test inspects.
+    _announces_system_voice = False
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
@@ -277,8 +280,12 @@ class TestModel(Model):
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
-            # check if there are any retry prompts, if so retry them
-            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
+            # check if there are any retries, if so retry them. `prepare_messages` has already
+            # translated every retry, so a tool-bound one is a `'retried'` tool return and a
+            # tool-less one is the system-voice part it renders as.
+            new_retry_names = {
+                p.tool_name for p in last_message.parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+            }
             if new_retry_names:
                 # Handle retries for both function tools and output tools
                 # Check function tools first
