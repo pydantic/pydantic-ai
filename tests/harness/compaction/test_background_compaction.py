@@ -504,3 +504,72 @@ def test_background_start_is_a_fraction_below_one(start: float) -> None:
 def test_background_start_needs_a_trigger() -> None:
     with pytest.raises(ValueError, match='needs a max_tokens or max_fraction trigger'):
         FallbackCompaction(fallback_chain=[SlidingWindowCompaction(max_messages=1)], background_start=0.5)
+
+
+DENSE = '汉' * 3_200
+"""Token-dense text: about 800 tokens by the heuristic, billed far above that by the reported usage."""
+
+OVER_DENSE = 'more ' * 1_200
+"""About 1,800 heuristic tokens: with the 1,150-token response, it pushes the request over the trigger."""
+
+
+def dense_opening(input_tokens: int) -> list[ModelMessage]:
+    """Like `opening`, over token-dense text whose reported usage diverges from the heuristic."""
+    return [
+        ModelRequest.user_text_prompt(DENSE),
+        ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=input_tokens)),
+    ]
+
+
+async def start_dense_background(summarizer: Summarizer, compaction: FallbackCompaction[None]) -> list[ModelMessage]:
+    """Start a background summary whose snapshot the anchor bills at 1,801 against a heuristic 801."""
+    first = await agent(Main([1_150]), compaction).run(
+        'next', message_history=dense_opening(1_800), conversation_id='c'
+    )
+    await summarizer.wait_started()
+    return first.all_messages()
+
+
+async def test_divergent_bases_held_summary_applied_in_run() -> None:
+    """The held summary fits once the reclaim is judged on the anchor's billing of the dense snapshot."""
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    history = await start_dense_background(summarizer, compaction)
+    summarizer.release.set()
+    second = await agent(Main([500]), compaction).run(OVER_DENSE, message_history=history, conversation_id='c')
+    assert summaries(second.all_messages()) == ['summary 1'] and summarizer.calls == 1
+    assert 'c' not in compaction.background_conversations
+    await compaction.aclose()
+
+
+async def test_divergent_bases_held_summary_applied_out_of_run() -> None:
+    """`take_background_compaction` judges the swapped-in history on the anchored base too."""
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    history = [*await start_dense_background(summarizer, compaction), ModelRequest.user_text_prompt(OVER_DENSE)]
+    summarizer.release.set()
+    spans = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(spans))
+    compacted = await compaction.take_background_compaction(
+        history,
+        model=FunctionModel(Main([]), model_name='main'),
+        conversation_id='c',
+        tracer=provider.get_tracer('test'),
+    )
+    assert compacted is not None and summaries(compacted) == ['summary 1']
+    [span] = named(spans, 'compact_messages')
+    assert span.attributes is not None and span.attributes['compaction.background'] == 'used'
+    assert compacted[2:] == history[3:], 'what came after the snapshot is kept verbatim'
+    assert summarizer.calls == 1 and 'c' not in compaction.background_conversations
+
+
+async def test_divergent_bases_genuine_over_trigger_still_stale() -> None:
+    """Scaling the reclaim into anchored units does not wave through a genuinely over-trigger history."""
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    history = await start_dense_background(summarizer, compaction)
+    summarizer.release.set()
+    second = await agent(Main([500]), compaction).run('more ' * 4_000, message_history=history, conversation_id='c')
+    assert summarizer.calls == 2 and summaries(second.all_messages()) == ['summary 2']
+    await compaction.aclose()
