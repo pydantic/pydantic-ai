@@ -156,8 +156,9 @@ class ModelProfile(TypedDict, total=False):
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter, and when there are any, or instructions, they're followed
-    by a sentence saying what the tag means. User prompts and tool returns go out as written; text in them
+    provider's top-level system parameter, and the system prompt says what the tag means, from the request the
+    [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says. User prompts and
+    tool returns go out as written; text in them
     that resembles a `<system>` tag gets a note instead.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
