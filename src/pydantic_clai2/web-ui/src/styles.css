@@ -3424,6 +3424,30 @@ textarea.setting-input {
   overflow-wrap: anywhere;
 }
 
+/* A project's chevron, or the room for one, so every project's name starts in one column. */
+.dialog-option-fold {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 9px -8px 0 6px;
+  align-self: flex-start;
+}
+
+/* A project's worktrees, beneath it and indented past its folder icon. */
+.dialog-option-row.nested {
+  padding-left: 42px;
+}
+
+.dialog-option-row.nested .dialog-option {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.dialog-option-count {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
 /* A Git checkout's New worktree…, beside its option, so the option's text never runs under it; it shows while the
    pointer is on the row. */
 .dialog-option-worktree {
