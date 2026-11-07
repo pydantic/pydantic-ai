@@ -397,8 +397,8 @@ class TestShellTool:
         ],
     )
     async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path, command: str) -> None:
-        # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop, and `dash` drops one that arrives
-        # before the watcher resets the trap it inherits. A job started with `TERM` ignored misses it every time.
+        # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop. A job started with `TERM` ignored never
+        # receives it: the loss `dash` causes only when the signal arrives before the watcher resets its inherited trap.
         previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
             output = await shell(tmp_path, {'command': command, 'timeout': 0.2})
@@ -408,10 +408,11 @@ class TestShellTool:
         group_id = int(output.split('kill -- -')[1].split('`')[0])
         jobs = tmp_path / '.pydantic-ai-harness' / 'shell'
         try:
+            await wait_for_exit(pid)
+            # Checked once the supervisor is gone, so the command's `chmod` has run.
             for job in jobs.glob('*'):
                 if os.access(job, os.W_OK):  # pragma: no cover - root writes regardless of mode bits
                     pytest.skip('mode bits do not bind this user')
-            await wait_for_exit(pid)
         finally:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(group_id, signal.SIGKILL)

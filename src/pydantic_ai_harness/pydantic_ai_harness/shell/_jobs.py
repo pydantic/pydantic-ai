@@ -122,15 +122,16 @@ running, and a command that reads its own log (a glob over job logs) reaches the
 the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
 size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
-own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only once
-the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its last
-check. When `watch.stop` cannot be created, as when the command removed the job directory or made it read-only, the
-wrapper sends `TERM` regardless and exits without waiting for the watcher. That `TERM` is then the watcher's only stop,
-and it can be lost: `dash` drops a `TERM` that arrives before the watcher's subshell has reset the trap it inherits from
-the wrapper, and a shell that started with `TERM` ignored never gets it. Such a watcher exits at its next check, once the
-wrapper is gone. A watcher that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started
-with `TERM` ignored, at its next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a
-`sleep` without fractional seconds gets 1.
+own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only
+once the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its
+last check. When `watch.stop` cannot be created, as when the command removed the job directory or made it read-only, the
+wrapper sends `TERM` regardless and exits without waiting for the watcher; publishing the exit status needs the same
+write, so none is published. That `TERM` is then the watcher's only stop, and it can be lost: `dash` drops a `TERM` that
+arrives before the watcher's subshell has reset the trap it inherits from the wrapper, and a shell that started with
+`TERM` ignored never gets it. Such a watcher exits at its next check, once the wrapper is gone. A watcher that gets no
+`TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM` ignored, at its next check. It
+sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional
+seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
