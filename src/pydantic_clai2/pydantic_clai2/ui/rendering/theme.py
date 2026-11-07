@@ -15,8 +15,6 @@ if TYPE_CHECKING:
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
 _BRANDED: ContextVar[bool] = ContextVar('clai_branded', default=False)
-_TERMINAL_BACKGROUND: ContextVar[str | None] = ContextVar('clai_terminal_background', default=None)
-"""The terminal's own background as `#RRGGBB`, or `None` when it is unknown."""
 
 
 def names() -> tuple[str, ...]:
@@ -41,23 +39,6 @@ def branded() -> Generator[None]:
         yield
     finally:
         _BRANDED.reset(token)
-
-
-@contextmanager
-def on_terminal(background: str | None) -> Generator[None]:
-    """Paint for a terminal whose own background is `background`, as `#RRGGBB`, or an unknown one for `None`."""
-    # Held here, as in `use`: `/reload` replaces the module's variable while this scope is open.
-    variable = _TERMINAL_BACKGROUND
-    token = variable.set(background)
-    try:
-        yield
-    finally:
-        variable.reset(token)
-
-
-def terminal_background() -> str | None:
-    """The terminal's own background, or `None` when it is unknown."""
-    return _TERMINAL_BACKGROUND.get()
 
 
 def painted_in() -> str | None:
@@ -116,7 +97,7 @@ def diff_theme() -> DiffTheme:
         addition=blend_hex(palette.bg, palette.ansi[2], _DIFF_TINT),
         deletion=blend_hex(palette.bg, palette.ansi[1], _DIFF_TINT),
         # Markers stand out from their line: brighter on a dark background, darker on a light one.
-        marker_brighten=-0.5 if _is_light(palette.bg) else 2.0,
+        marker_brighten=-0.5 if _is_light(palette) else 2.0,
     )
 
 
@@ -127,30 +108,26 @@ def diff_renderer() -> DiffRenderer:
 
     palette = current()
     # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
-    highlighter = Highlighter(style='default') if palette is not None and _is_light(palette.bg) else None
+    highlighter = Highlighter(style='default') if palette is not None and _is_light(palette) else None
     return DiffRenderer(highlighter=highlighter, theme=diff_theme())
 
 
 def prompt_background() -> str | None:
-    """The background of the user's own messages: the terminal's, moved towards its text; `None` when unknown.
+    """The background of the user's own messages: the palette's, moved towards its text.
 
-    A palette's background moves towards its foreground. The default theme's moves towards white on a
-    dark terminal and black on a light one, since its foreground is the terminal's own.
+    `None` under the default theme, which leaves colours to a terminal whose background CLAI does not know.
     """
     from termflow.themes.palette import blend_hex
 
     palette = current()
-    background = palette.bg if palette is not None else terminal_background()
-    if background is None:
+    if palette is None:
         return None
-    light = _is_light(background)
-    text = palette.fg if palette is not None else '#000000' if light else '#FFFFFF'
     # A darker tint stands out more than a lighter one, so a light background moves less.
-    return blend_hex(background, text, 0.04 if light else 0.12)
+    return blend_hex(palette.bg, palette.fg, 0.04 if _is_light(palette) else 0.12)
 
 
-def _is_light(background: str) -> bool:
-    red, green, blue = (int(background[index : index + 2], 16) for index in (1, 3, 5))
+def _is_light(palette: TerminalPalette) -> bool:
+    red, green, blue = (int(palette.bg[index : index + 2], 16) for index in (1, 3, 5))
     return 0.299 * red + 0.587 * green + 0.114 * blue > 128
 
 
@@ -159,7 +136,7 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
 
     Roles are the background and foreground, the user's messages' background, diff lines and markers,
     CLAI's brand colours, and the 16 ANSI slots. The default theme leaves the background, foreground,
-    and slots to the terminal, and has no message background while the terminal's is unknown.
+    and slots to the terminal, and has no message background.
     Output painted in one theme repaints in another by translating its colours role by role.
     """
     with use(lambda: name):

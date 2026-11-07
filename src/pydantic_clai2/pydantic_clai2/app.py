@@ -48,7 +48,6 @@ from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
-from pydantic_clai2.ui.prompt.terminal_background import detect_background
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 from pydantic_clai2.ui.stderr_relay import relay_stderr
@@ -203,7 +202,6 @@ async def chat(
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
-    terminal_background = detect_background(stdout=console.file)
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
@@ -249,13 +247,9 @@ async def chat(
                     load_plugins=load_plugins,
                     console=terminal.session_console,
                 )
-                # Entered on each pass, as `/reload` replaces the theme module's variables.
-                with (
-                    theme.use(
-                        lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
-                        output=console.file if console.is_terminal else None,
-                    ),
-                    theme.on_terminal(terminal_background),
+                with theme.use(
+                    lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
+                    output=console.file if console.is_terminal else None,
                 ):
                     try:
                         # Sessions the web UI opens run beside this one, from the start: plugins may open some.

@@ -61,8 +61,7 @@ from pydantic_clai2.ui.rendering.tool_output import (
 def prompt_line(text: str) -> Text:
     """Text the user typed, as the transcript shows it.
 
-    An accent marker and bold text on a tinted background set it apart from answers. The tint is left
-    out when the terminal's background is unknown.
+    An accent marker and bold text set it apart from answers, on a tinted background under a palette.
     """
     background = theme.prompt_background()
     on = '' if background is None else f' on {background}'

@@ -481,12 +481,10 @@ and status. Its diffs use green additions and red deletions. Starting and exitin
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
-Your prompts show in bold on a grey background, a little lighter than a dark
-terminal's background and a little darker than a light one's. A bundled palette
-moves its background towards its text colour. The `default` theme reads
-`COLORFGBG`, which some terminals set to tell a light background from a dark one.
-When it is unset, or CLAI's output is not a terminal, prompts keep the bold text
-alone.
+Under a bundled palette, your prompts show in bold on a grey background: the
+palette's background moved a little towards its text colour, so lighter on a dark
+palette and darker on a light one. The `default` theme does not know your
+terminal's background, so prompts keep the bold text alone.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds

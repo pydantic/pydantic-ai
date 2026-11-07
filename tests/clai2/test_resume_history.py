@@ -2,7 +2,6 @@
 
 import io
 from pathlib import Path
-from typing import IO
 
 import anyio
 import pytest
@@ -35,6 +34,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.history import render_history, turn_starts
 from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 
@@ -171,10 +171,10 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     assert printed.index('> saved turn') < printed.index('Resumed') < printed.index('Goodbye.')
 
 
-async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
+async def test_resumed_and_typed_prompts_carry_the_palette_tint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`chat` learns the terminal's background once, and every echoed prompt is tinted from it."""
+    """Under a palette, prompts restored by `/resume` and prompts typed after it share its tint."""
     prior = saved_prior(tmp_path, monkeypatch)
     await prior.prompt('saved turn')
     surfaces: list[PromptSurface] = []
@@ -185,11 +185,6 @@ async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
             super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
-
-    def dark(*, stdout: IO[str]) -> str:
-        return '#1E1E1E'
-
-    monkeypatch.setattr('pydantic_clai2.app.detect_background', dark)
     with (
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
@@ -202,15 +197,17 @@ async def test_resumed_and_typed_prompts_carry_the_terminal_tint(
             # Truecolour, as Rich otherwise reads `COLORTERM` and may round the tint to an ANSI slot.
             console=Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=80, height=24),
             store=SettingsStore(tmp_path / 'settings.db'),
-            settings=Settings(model=None, session_namer=False),
+            settings=Settings(model=None, session_namer=False, theme='tokyo_night'),
         )
-    rows = [Text.from_ansi(row) for row in surfaces[0].transcript.frame(width=200, height=200).rows]
+    # Framed under the palette, as the transcript repaints lines in the theme selected when it draws them.
+    with theme.use(lambda: 'tokyo_night'):
+        rows = [Text.from_ansi(row) for row in surfaces[0].transcript.frame(width=200, height=200).rows]
     prompts = [row for row in rows if row.plain.startswith('> ')]
     assert [row.plain for row in prompts] == ['> saved turn', '> /exit']
     for row in prompts:
         background = row.get_style_at_offset(Console(), 2).bgcolor
         assert background is not None and background.triplet is not None
-        assert background.triplet.hex == '#393939'
+        assert background.triplet.hex == '#2e303f'
 
 
 async def test_startup_resume_shows_history_below_the_startup_output(

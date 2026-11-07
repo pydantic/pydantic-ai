@@ -214,23 +214,21 @@ async def test_echo_prompt_stands_apart_from_answers() -> None:
     assert marker.color.triplet.hex == theme.LITHIUM.lower()
     assert first.bold and first.color is None
     assert second.bold
-    assert marker.bgcolor is None and first.bgcolor is None, 'no tint while the terminal background is unknown'
+    assert marker.bgcolor is None and first.bgcolor is None, 'the default theme has no tint'
 
 
 @pytest.mark.parametrize(
-    ('name', 'terminal', 'tint'),
+    ('name', 'tint'),
     [
-        pytest.param('default', '#1E1E1E', '#393939', id='default-dark-lightens'),
-        pytest.param('default', '#FFFFFF', '#f5f5f5', id='default-light-darkens'),
-        pytest.param('tokyo_night', None, '#2e303f', id='dark-palette-lightens'),
-        pytest.param('github_light', '#000000', '#f6f6f7', id='light-palette-ignores-terminal'),
+        pytest.param('tokyo_night', '#2e303f', id='dark-palette-lightens'),
+        pytest.param('github_light', '#f6f6f7', id='light-palette-darkens'),
     ],
 )
-async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, terminal: str | None, tint: str) -> None:
-    """The prompt's background moves from the terminal's, or the palette's, towards its text; answers keep none."""
+async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, tint: str) -> None:
+    """The prompt's background moves from the palette's towards its text; answers keep none."""
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
-    with theme.use(lambda: name), theme.on_terminal(terminal):
+    with theme.use(lambda: name):
         renderer = StreamRenderer(console, stop_loading=lambda: None)
         await renderer.echo_prompt('first\nsecond')
         await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('answer')))

@@ -394,8 +394,8 @@ green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tin
 from the palette.
 
 Echo the user's own text through `rendering.prompt_line`, which paints it on
-`theme.prompt_background()`. Under the default theme that tint comes from the terminal's
-background, which `chat` reads once from `COLORFGBG` through `ui/prompt/terminal_background.py`.
+`theme.prompt_background()`: under a palette, its background moved towards its text. The
+default theme has no tint, since CLAI does not know the terminal's background.
 
 ## Source layout
 

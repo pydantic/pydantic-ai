@@ -101,7 +101,6 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and left-button drag selection over painted transcript and question-widget cells: highlight and text |
-| `ui/prompt/terminal_background.py` | `detect_background`: whether the terminal's own background is light or dark, from `COLORFGBG`, when the output is a terminal |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
@@ -176,7 +175,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, the terminal background scope (`on_terminal`), `color()`, `sgr()`, `prompt_background()`, `roles()` |
+| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `prompt_background()`, `roles()` |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |

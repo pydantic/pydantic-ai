@@ -1126,11 +1126,10 @@ lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
-accent colour, with the prompt text in bold on a grey background: a little lighter
-than a dark terminal's background, a little darker than a light one's. This keeps
-your prompts apart from answers. Steering messages, commands entered during a turn,
-prompts restored by `/resume`, and answers you type to a question look the same.
-See [Themes](#themes) for where the grey comes from.
+accent colour, with the prompt text in bold. This keeps your prompts apart from
+answers. Steering messages, commands entered during a turn, prompts restored by
+`/resume`, and answers you type to a question look the same. Under a bundled
+palette they also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.
@@ -1654,10 +1653,10 @@ status, and diff highlighting. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
-Your prompts' grey background follows the theme. A bundled palette moves its
-background towards its text colour. The `default` theme reads `COLORFGBG`, which
-some terminals set to tell a light terminal from a dark one. When it is unset, or
-CLAI's output is not a terminal, prompts keep the bold text alone.
+Under a bundled palette, your prompts sit on a grey background: the palette's
+background moved a little towards its text colour, lighter on a dark palette and
+darker on a light one. The `default` theme does not know your terminal's
+background, so prompts keep the bold text alone.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds

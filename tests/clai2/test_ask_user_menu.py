@@ -678,7 +678,7 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
 
 
 def test_a_typed_answer_has_the_prompt_background_and_its_header_does_not() -> None:
-    with theme.on_terminal('#FFFFFF'):
+    with theme.use(lambda: 'github_light'):
         rendered = render_answer(
             AskUserAnsweredEvent(
                 request_id='custom',
@@ -687,7 +687,7 @@ def test_a_typed_answer_has_the_prompt_background_and_its_header_does_not() -> N
         )
     assert isinstance(rendered, Text)
     answer = rendered.get_style_at_offset(Console(), rendered.plain.index('mine')).bgcolor
-    assert answer is not None and answer.triplet is not None and answer.triplet.hex == '#f5f5f5'
+    assert answer is not None and answer.triplet is not None and answer.triplet.hex == '#f6f6f7'
     assert rendered.get_style_at_offset(Console(), rendered.plain.index('Approach')).bgcolor is None
 
 

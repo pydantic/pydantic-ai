@@ -470,14 +470,11 @@ def test_palette_output_repaints_in_another_palette_or_the_default_theme() -> No
 
 
 def test_a_retained_prompt_background_repaints_in_the_theme_now_selected() -> None:
-    """The default theme has no prompt background while the terminal's own is unknown, so a palette's tint goes."""
-    with theme.on_terminal('#1E1E1E'):
-        buffer = _painted(_printed([Style(bold=True, bgcolor=theme.prompt_background())]))
-        with theme.use(lambda: 'tokyo_night'):
-            assert _colours(buffer.frame(width=80, height=24).rows) == [(None, '#2e303f')]
-        assert _colours(buffer.frame(width=80, height=24).rows) == [(None, '#393939')]
+    """A palette's prompt tint becomes another palette's, and goes under the default theme, which has none."""
     with theme.use(lambda: 'tokyo_night'):
         buffer = _painted(_printed([Style(bold=True, bgcolor=theme.prompt_background())]))
+    with theme.use(lambda: 'github_light'):
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(None, '#f6f6f7')]
     assert _colours(buffer.frame(width=80, height=24).rows) == [(None, 'default')]
 
 
