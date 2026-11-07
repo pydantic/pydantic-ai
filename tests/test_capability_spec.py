@@ -1041,7 +1041,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:qwen.qwen3-next-80b-a3b',
                         'gateway/bedrock:qwen.qwen3-vl-235b-a22b',
                         'gateway/bedrock:us.amazon.nova-premier-v1:0',
-                        'gateway/bedrock:us.deepseek.r1-v1:0',
                         'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
                         'gateway/bedrock:us.mistral.pixtral-large-2502-v1:0',

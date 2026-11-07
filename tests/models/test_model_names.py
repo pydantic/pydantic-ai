@@ -119,6 +119,8 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',
         'gateway/bedrock:us.amazon.nova-pro-v1:0',
+        # Gateway rejects it with "The provided model identifier is invalid."; native Bedrock serves it.
+        'gateway/bedrock:us.deepseek.r1-v1:0',
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
     }
 )
