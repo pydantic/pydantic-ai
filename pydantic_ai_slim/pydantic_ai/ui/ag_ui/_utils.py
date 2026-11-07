@@ -23,6 +23,7 @@ from ...messages import (
     tool_return_content_ta,
 )
 from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feedback_payload, tool_retry_payload
+from .._utils import without_internal_text_metadata
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
@@ -410,6 +411,7 @@ def dump_tool_return_content(content: Any) -> str:
       through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
       that the loader restores to their subclasses. Nested raw `bytes` use UTF-8, so they can change the
       model-facing text after a round trip; use `BinaryContent` for binary data.
+      The reserved `__pydantic_ai__` namespace of `TextContent` metadata in it stays server-side.
     - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only. A
       scalar whose JSON form is a string (a `datetime`, say) is emitted as the same unquoted text the model
       sees, so the reloaded `str` renders to the model exactly as the original value did.
@@ -418,7 +420,7 @@ def dump_tool_return_content(content: Any) -> str:
         return content
     if content is None:
         return ''
-    dumped = tool_return_content_ta.dump_json(content)
+    dumped = tool_return_content_ta.dump_json(without_internal_text_metadata(content))
     if dumped.startswith(b'"'):
         # The model's adapter uses base64 for bytes; this adapter defaults to UTF-8.
         return _tool_return_text(content)

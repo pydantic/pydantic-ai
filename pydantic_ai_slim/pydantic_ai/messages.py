@@ -5906,10 +5906,10 @@ def sanitize_messages(
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
     - [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] on the text items of a
-      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], resetting it to `None` and keeping the
-      text. Metadata is never sent to the model, but application code and capabilities read it to
-      recognize content they added themselves, such as a background task's report, so a client that
-      can set it could make its own text pass as theirs.
+      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] and nested in tool return parts,
+      resetting it to `None` and keeping the text. Metadata is never sent to the model, but
+      application code and capabilities read it to recognize content they added themselves, such as a
+      background task's report, so a client that can set it could make its own text pass as theirs.
     - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
@@ -6098,6 +6098,7 @@ def _sanitize_response(context: _SanitizeMessagesContext, message: ModelResponse
         disallowed_schemes=context.disallowed_url_schemes,
         reset_force_download_values=context.reset_force_download_values,
         dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+        stripped_text_metadata=context.stripped_text_metadata,
     )
     if not new_response_parts:
         # Drop the response entirely so we don't leave an empty `ModelResponse(parts=[])` in history.
@@ -6174,7 +6175,7 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
     if context.stripped_text_metadata:
         warnings.warn(
             f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
-            f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it '
+            f'prompt or tool return item(s). Metadata is never sent to the model, but application code and capabilities read it '
             f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
             f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
@@ -6306,8 +6307,8 @@ def _sanitize_request_parts(
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
-    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
-    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
+    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt and tool
+    return [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
     Returns the kept parts and whether any part carrying the system voice
     ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
     stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
@@ -6343,6 +6344,7 @@ def _sanitize_request_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:
@@ -6389,13 +6391,15 @@ def _without_text_metadata(content: list[UserContent], stripped: list[TextConten
 
     `stripped` is updated in place with the original items whose metadata was dropped.
     """
-    kept: list[UserContent] = []
-    for item in content:
-        if isinstance(item, TextContent) and item.metadata is not None:
-            stripped.append(item)
-            item = replace(item, metadata=None)
-        kept.append(item)
-    return kept
+    return [_text_without_metadata(item, stripped) if isinstance(item, TextContent) else item for item in content]
+
+
+def _text_without_metadata(item: TextContent, stripped: list[TextContent]) -> TextContent:
+    """An untrusted `item` without its metadata; `stripped` is updated in place with it when it had any."""
+    if item.metadata is None:
+        return item
+    stripped.append(item)
+    return replace(item, metadata=None)
 
 
 def _sanitize_file_url(
@@ -6422,6 +6426,7 @@ def _sanitize_tool_return_part(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> _ReturnPartT:
     """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
 
@@ -6438,6 +6443,7 @@ def _sanitize_tool_return_part(
         disallowed_schemes,
         reset_force_download_values,
         dropped_uploaded_file_providers,
+        stripped_text_metadata,
     )
     content = sanitized_content if keep_content else None
     if type(part) is base:
@@ -6455,6 +6461,7 @@ def _sanitize_tool_return_content(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> tuple[bool, ToolReturnContent]:
     """Recursively sanitize file references (file URLs and uploaded files) nested in tool return content.
 
@@ -6464,12 +6471,17 @@ def _sanitize_tool_return_content(
     schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
     is set.
 
+    The metadata of any [`TextContent`][pydantic_ai.messages.TextContent] is dropped too, as it is
+    from user prompts: it carries the mark of a frame the framework wrote (see `framework_frame_text`),
+    which a client must not be able to claim.
+
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the `TextContent` items whose
+    metadata was dropped.
     """
-    if isinstance(content, FileUrl | UploadedFile):
-        return _sanitize_tool_return_file(
+    if isinstance(content, FileUrl | UploadedFile | TextContent):
+        return _sanitize_tool_return_item(
             content,
             allowed_file_url_schemes,
             allowed_file_url_force_download,
@@ -6477,6 +6489,7 @@ def _sanitize_tool_return_content(
             disallowed_schemes,
             reset_force_download_values,
             dropped_uploaded_file_providers,
+            stripped_text_metadata,
         )
     # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
     # but resolves to `Any` at type-check time, so pyright can't infer the element types.
@@ -6492,6 +6505,7 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_mapping[key] = sanitized_value
@@ -6508,6 +6522,7 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_sequence.append(sanitized_item)
@@ -6515,26 +6530,29 @@ def _sanitize_tool_return_content(
     return True, content
 
 
-def _sanitize_tool_return_file(
-    file: FileUrl | UploadedFile,
+def _sanitize_tool_return_item(
+    item: FileUrl | UploadedFile | TextContent,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
     allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
-) -> tuple[bool, FileUrl | UploadedFile]:
-    """Sanitize a file reference in tool return content, as `_sanitize_tool_return_content` describes."""
-    if isinstance(file, FileUrl):
-        scheme = urlparse(file.url).scheme.lower()
+    stripped_text_metadata: list[TextContent],
+) -> tuple[bool, FileUrl | UploadedFile | TextContent]:
+    """Sanitize a file reference or text item in tool return content, as `_sanitize_tool_return_content` describes."""
+    if isinstance(item, TextContent):
+        return True, _text_without_metadata(item, stripped_text_metadata)
+    if isinstance(item, FileUrl):
+        scheme = urlparse(item.url).scheme.lower()
         if scheme and scheme not in allowed_file_url_schemes:
             disallowed_schemes.add(scheme)
-            return False, file
-        return True, _sanitize_file_url(file, allowed_file_url_force_download, reset_force_download_values)
+            return False, item
+        return True, _sanitize_file_url(item, allowed_file_url_force_download, reset_force_download_values)
     if not allow_uploaded_files:
-        dropped_uploaded_file_providers.add(file.provider_name)
-        return False, file
-    return True, file
+        dropped_uploaded_file_providers.add(item.provider_name)
+        return False, item
+    return True, item
 
 
 def _sanitize_response_parts(
@@ -6546,6 +6564,7 @@ def _sanitize_response_parts(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
@@ -6558,7 +6577,8 @@ def _sanitize_response_parts(
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the tool return
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
@@ -6582,6 +6602,7 @@ def _sanitize_response_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:

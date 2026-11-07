@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Final
 
 from pydantic_ai._mcp_apps import MCPAppToolResult
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, TextContent, ToolReturnContent
 
 INTERNAL_METADATA_KEY = '__pydantic_ai__'
 """Reserved key in UI message metadata for state the adapters own; never read from client-controlled metadata."""
@@ -56,6 +57,33 @@ def without_ui_message_id(message: ModelMessage) -> ModelMessage:
     if rest:
         new_metadata[INTERNAL_METADATA_KEY] = rest
     return replace(message, metadata=new_metadata or None)
+
+
+def without_internal_text_metadata(content: ToolReturnContent) -> ToolReturnContent:
+    """Tool return `content` with the reserved namespace left out of the metadata of each `TextContent` in it.
+
+    For dumping to a client: the framework keeps state there, such as the mark on a frame a capability wrote, and it
+    stays server-side like the reserved namespace of message metadata. Sequences and mappings are rebuilt as lists and
+    dicts, which dump the same.
+    """
+    if isinstance(content, TextContent):
+        return _text_without_internal_metadata(content)
+    # `ToolReturnContent` resolves to `Any` at type-check time, so pyright can't infer the element types.
+    if isinstance(content, Mapping):
+        mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        return {key: without_internal_text_metadata(value) for key, value in mapping.items()}
+    if isinstance(content, Sequence) and not isinstance(content, str | bytes | bytearray):
+        sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        return [without_internal_text_metadata(item) for item in sequence]
+    return content
+
+
+def _text_without_internal_metadata(text: TextContent) -> TextContent:
+    metadata = text.metadata
+    if not is_str_dict(metadata) or INTERNAL_METADATA_KEY not in metadata:
+        return text
+    rest = {key: value for key, value in metadata.items() if key != INTERNAL_METADATA_KEY}
+    return replace(text, metadata=rest or None)
 
 
 def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:

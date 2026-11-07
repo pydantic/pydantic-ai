@@ -36,8 +36,8 @@ def framework_frame_text(
     `prepare_messages` doesn't take the frame's own tags for text that resembles one. `author` says who wrote its
     body, such as `'tool'` for a background tool's output: that body is still checked, and text in it that resembles
     a frame gets a note naming that author. Without one, the body is the framework's or the capability's own. The mark
-    lives in `TextContent.metadata`, which the UI adapters drop from client-submitted history, so a client can't
-    claim it.
+    lives in `TextContent.metadata`, which `sanitize_messages` drops from client-submitted user prompts and tool return
+    content, so a client can't claim it, and which the UI adapters leave out of tool return content they send.
     """
     namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     return TextContent(
