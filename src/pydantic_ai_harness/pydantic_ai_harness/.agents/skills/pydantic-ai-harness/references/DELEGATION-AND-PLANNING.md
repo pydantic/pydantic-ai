@@ -214,6 +214,13 @@ orchestrator = Agent(
   with the deprecated wrapper agents (`TemporalAgent`, ...).
   On Temporal and DBOS, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its
   own; other durable engines raise `UserError`.
+- Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
+  own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
+  every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
+  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
+  `dynamic_agents`, or `max_calls`, a delegation raises `UserError`.
+  The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
+  Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
 
 ## DelegationReports
 
