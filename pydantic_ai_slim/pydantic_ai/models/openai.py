@@ -972,6 +972,7 @@ class _ResponsesCreateParams(TypedDict):
     user: str | Omit
     include: list[responses.ResponseIncludable] | Omit
     prompt_cache_key: str | Omit
+    safety_identifier: str | Omit
     prompt_cache_retention: Literal['in_memory', '24h'] | Omit
     prompt_cache_options: ResponsesPromptCacheOptions | Omit
     moderation: Moderation | Omit
@@ -1165,6 +1166,23 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
+
+    OpenAI now tracks end-user identity for abuse monitoring with `safety_identifier`, mapped to
+    [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier],
+    and prompt caching with `prompt_cache_key`, mapped to
+    [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key].
+
+    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    """
+
+    openai_safety_identifier: str
+    """A stable identifier representing the end-user, which can help OpenAI monitor and detect abuse.
+
+    Supported by both the Chat Completions API and the Responses API. It is OpenAI's replacement for
+    the `user` field mapped to
+    [`openai_user`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_user], with
+    [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key]
+    as the matching identifier for prompt caching.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
@@ -1966,6 +1984,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
+                    safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
                     web_search_options=web_search_options or OMIT,
                     # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
                     service_tier=cast(Any, _resolve_openai_service_tier(model_settings)),
@@ -4879,6 +4898,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,
             user=model_settings.get('openai_user', OMIT),
+            safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
             include=include or OMIT,
             prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
             prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
