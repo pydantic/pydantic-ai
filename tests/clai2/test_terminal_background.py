@@ -5,6 +5,7 @@ import os
 import pty
 import select
 import termios
+import tty
 from collections.abc import Iterator
 from typing import IO
 
@@ -110,6 +111,16 @@ def test_keys_typed_ahead_are_left_for_the_editor(
     assert display.getvalue() == ''
     assert select.select([stdin], [], [], 0)[0]
     assert os.read(stdin.fileno(), 64) == b'typed\n'
+
+
+def test_keys_typed_after_the_answer_are_left_for_the_editor(terminal: tuple[int, IO[str]]) -> None:
+    keyboard, stdin = terminal
+    display = Display(keyboard, b'\x1b]11;rgb:00/00/00\x07' + DA1 + b'typed')
+    assert detect_background(stdin=stdin, stdout=display) == '#000000'
+    # As the editor does: read without waiting for a line, and without flushing what is queued.
+    tty.setcbreak(stdin, termios.TCSANOW)
+    assert select.select([stdin], [], [], 1)[0]
+    assert os.read(stdin.fileno(), 64) == b'typed'
 
 
 @pytest.mark.parametrize('piped', ['stdin', 'stdout'])

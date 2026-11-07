@@ -41,7 +41,10 @@ def detect_background(*, stdin: IO[str], stdout: IO[str], timeout: float = TIMEO
 
 
 def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
-    """Ask with OSC 11, never over keys already typed, and wait at most `timeout` seconds."""
+    """Ask with OSC 11, never over keys already typed, and wait at most `timeout` seconds.
+
+    Keys typed while the answer is awaited arrive mixed with it and are read with it.
+    """
     import fcntl
     import termios
     import tty
@@ -52,7 +55,7 @@ def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
         return None
     answer = b''
     try:
-        # `TCSANOW`, unlike `tty.setraw`'s default, keeps keys typed ahead of the prompt queued for it.
+        # `TCSANOW`, not `setcbreak`'s default `TCSAFLUSH`, keeps keys typed ahead of the prompt queued for it.
         tty.setcbreak(fd, termios.TCSANOW)
         # Reading the answer would swallow keys already typed, which the editor shows in its draft.
         if int.from_bytes(fcntl.ioctl(fd, termios.FIONREAD, bytes(4)), sys.byteorder):
@@ -63,7 +66,8 @@ def _ask(fd: int, *, stdout: IO[str], timeout: float) -> str | None:
         while not _ATTRIBUTES.search(answer) and (left := deadline - time.monotonic()) > 0:
             if not select.select([fd], [], [], left)[0]:
                 break
-            answer += os.read(fd, 1024)
+            # One byte at a time, so keys typed after the DA1 reply stay queued for the editor.
+            answer += os.read(fd, 1)
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, saved)
     if (match := _COLOUR.search(answer)) is None:
