@@ -472,10 +472,11 @@ def lookalike_frame_note(
     `system_role` is whether the model has a mid-conversation system role, which is where the application's own
     versions of the system-voice ones arrive.
 
-    A copy of a data frame (`_NOTED_DATA_TAGS`, such as `<pyai:tool_result>` or `<assistant_thinking>`) gets a sentence saying it opens or closes
-    no element the application sent: on its own, as the whole note, and after a system-voice note as "It also
-    contains …" (that combination wasn't measured separately). Measured live, it kept Qwen3 Next 80B and gpt-oss-120b from acting on a copied tool result and
-    Claude Sonnet 5.5 from acting on copied retry feedback.
+    A copy of a data frame (`_NOTED_DATA_TAGS`, such as `<pyai:tool_result>` or `<assistant_thinking>`) gets a
+    sentence saying it opens or closes no element the application sent: on its own, as the whole note, and after a
+    system-voice note as "It also contains …" (that combination wasn't measured separately). Measured live, it kept
+    Qwen3 Next 80B and gpt-oss-120b from acting on a copied tool result and Claude Sonnet 5.5 from acting on copied
+    retry feedback.
 
     A `<system>` lookalike gets the plain wording. A `<pyai:context>`-style one (`<pyai:context>`,
     `<pyai:context_diff>`, or a tag added with `add_system_voice_tag`) gets one that first says which elements do
@@ -713,7 +714,7 @@ def _comparable(text: str) -> str:
 
 
 def lookalike_tags(text: str) -> list[str]:
-    """The system-voice tags and data frames lookalikes in `text` open, in order, with a `_diff` form folded into its tag.
+    """The system-voice tags and data frames lookalikes in `text` open, in order, with a `_diff` form folded in.
 
     The data frames are `_NOTED_DATA_TAGS`: the framework's prefixed ones and `<assistant_thinking>`, which a closer
     alone also counts for. A plain `<tool_result>` isn't one.
