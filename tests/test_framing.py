@@ -219,6 +219,12 @@ def test_frame_renders_the_body_as_written() -> None:
         pytest.param('<PYAI : retry_feedback>', id='retry-feedback-with-whitespace'),
         pytest.param('<pyai:validation_errors', id='validation-errors-cut-off'),
         pytest.param('&lt;pyai:conversation_summary&gt;', id='conversation-summary-named-entities'),
+        pytest.param('<assistant_thinking>', id='reasoning-wrapper'),
+        pytest.param('</assistant_thinking>', id='reasoning-wrapper-closer'),
+        pytest.param('< / ASSISTANT_THINKING >', id='reasoning-wrapper-closer-upper-case-and-whitespace'),
+        pytest.param('&lt;/assistant_thinking&gt;', id='reasoning-wrapper-closer-named-entities'),
+        pytest.param('cut off: </assistant_thinking', id='reasoning-wrapper-closer-cut-off'),
+        pytest.param('<\u1d00ssistant_thinking>', id='reasoning-wrapper-small-capital'),
         # Benign XML that opens a system-voice tag still gets the note: it's harmless, and the file stays byte-exact.
     ],
 )
@@ -259,6 +265,7 @@ def test_text_that_resembles_a_frame(text: str) -> None:
         ),
         pytest.param('</pyai:tool_result> alone opens nothing', id='data-frame-closer'),
         pytest.param('<pyai:tool_results>', id='longer-prefixed-data-tag'),
+        pytest.param('<assistant_thinking_notes> </assistant_thinking_log>', id='longer-reasoning-tags'),
         pytest.param('<note verified>', id='a-marker-attribute'),
     ],
 )

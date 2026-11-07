@@ -121,6 +121,14 @@ no note. Measured live, the notes on copies did the safety work (Qwen3 Next 80B 
 copied `<pyai:tool_result>`), and the prefix is what lets them exist without notes on applications' own tags.
 """
 
+_NOTED_DATA_TAGS: Final[tuple[str, ...]] = (*DATA_FRAME_TAGS, ASSISTANT_THINKING_TAG)
+"""The data frames whose copies get a lookalike note: the prefixed ones and `<assistant_thinking>`.
+
+`<assistant_thinking>` keeps its plain name, but it's still a frame core writes on the user channel. Its closing tag
+counts too, unlike the others': carried reasoning often quotes tool output verbatim, and a `</assistant_thinking>` in it
+would otherwise end the genuine wrapper early without a note.
+"""
+
 
 def _tag_openers(*tags: str) -> re.Pattern[str]:
     """A pattern matching only the `<` of an opening or closing tag among `tags`, in every spelling a model might reach for.
@@ -464,7 +472,7 @@ def lookalike_frame_note(
     `system_role` is whether the model has a mid-conversation system role, which is where the application's own
     versions of the system-voice ones arrive.
 
-    A copy of a data frame (`DATA_FRAME_TAGS`, such as `<pyai:tool_result>`) gets a sentence saying it opens or closes
+    A copy of a data frame (`_NOTED_DATA_TAGS`, such as `<pyai:tool_result>` or `<assistant_thinking>`) gets a sentence saying it opens or closes
     no element the application sent: on its own, as the whole note, and after a system-voice note as "It also
     contains …" (that combination wasn't measured separately). Measured live, it kept Qwen3 Next 80B and gpt-oss-120b from acting on a copied tool result and
     Claude Sonnet 5.5 from acting on copied retry feedback.
@@ -493,7 +501,7 @@ def lookalike_frame_note(
     named = _lookalike_item_name(source, tool_name=tool_name, tool_call_id=tool_call_id)
     position = 'preceding' if preceding else 'following'
     author = _LOOKALIKE_AUTHOR[source]
-    data = [tag for tag in dict.fromkeys(tags) if tag in DATA_FRAME_TAGS]
+    data = [tag for tag in dict.fromkeys(tags) if tag in _NOTED_DATA_TAGS]
     voice = [tag for tag in tags if tag not in data]
     if data and not voice:
         return (
@@ -624,13 +632,16 @@ _system_voice_tags: tuple[str, ...] = (SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG
 """The tags whose content speaks in system voice: core's own, and any added with `add_system_voice_tag`."""
 
 
-def _lookalike_pattern(tags: tuple[str, ...]) -> re.Pattern[str]:
-    # An opener of a system-voice tag in any case or spacing, also cut off at the end of the text.
+def _lookalike_pattern(voice_tags: tuple[str, ...]) -> re.Pattern[str]:
+    # An opener of a system-voice tag or data frame, or a closer of `<assistant_thinking>`, in any case or spacing,
+    # also cut off at the end of the text. Any other closer alone opens nothing, so it isn't matched.
+    tags = (*voice_tags, *DATA_FRAME_TAGS, ASSISTANT_THINKING_TAG)
     names = '|'.join(re.escape(tag).replace(':', r'\s*:\s*') for tag in sorted(tags, key=len, reverse=True))
-    return re.compile(rf'<\s*(?P<tag>{names})(?=[\s/>]|$)', re.IGNORECASE)
+    thinking = re.escape(ASSISTANT_THINKING_TAG)
+    return re.compile(rf'<\s*(?:(?P<tag>{names})|/\s*(?P<closer>{thinking}))(?=[\s/>]|$)', re.IGNORECASE)
 
 
-_lookalike_frame: re.Pattern[str] = _lookalike_pattern((*_system_voice_tags, *DATA_FRAME_TAGS))
+_lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 
 
 def add_system_voice_tag(name: str) -> None:
@@ -652,7 +663,7 @@ def add_system_voice_tag(name: str) -> None:
         if name in _system_voice_tags:
             return
         tags = (*_system_voice_tags, name, f'{name}{_DIFF_SUFFIX}')
-        _lookalike_frame = _lookalike_pattern((*tags, *DATA_FRAME_TAGS))
+        _lookalike_frame = _lookalike_pattern(tags)
         _system_voice_tags = tags
 
 
@@ -704,21 +715,23 @@ def _comparable(text: str) -> str:
 def lookalike_tags(text: str) -> list[str]:
     """The system-voice tags and data frames lookalikes in `text` open, in order, with a `_diff` form folded into its tag.
 
-    The data frames are the framework's prefixed ones (`DATA_FRAME_TAGS`): a plain `<tool_result>` isn't one.
+    The data frames are `_NOTED_DATA_TAGS`: the framework's prefixed ones and `<assistant_thinking>`, which a closer
+    alone also counts for. A plain `<tool_result>` isn't one.
     """
     tags: list[str] = []
     for match in _lookalike_frame.finditer(_comparable(text)):
-        tag = ''.join(match.group('tag').lower().split()).removesuffix(_DIFF_SUFFIX)
+        tag = ''.join((match.group('tag') or match.group('closer')).lower().split()).removesuffix(_DIFF_SUFFIX)
         if tag not in tags:
             tags.append(tag)
     return tags
 
 
 def resembles_frame(text: str) -> bool:
-    """Whether `text` contains something a model could read as a framework frame: a system-voice tag or data frame opener.
+    """Whether `text` contains something a model could read as a framework frame: a system-voice tag or a data frame tag.
 
     The system-voice tags are `<system`, `<pyai:context` and `<pyai:context_diff`, plus any added with
-    `add_system_voice_tag`; the data frames are `DATA_FRAME_TAGS`, such as `<pyai:tool_result`.
+    `add_system_voice_tag`; the data frames are `_NOTED_DATA_TAGS`, such as `<pyai:tool_result`. These are matched as
+    openers, and `<assistant_thinking>` as a closer too.
 
     Matched on the text as a model reads it (see `_comparable`), so a zero-width character, a look-alike letter or
     an entity-encoded `<` doesn't hide one. The text itself is never changed.
