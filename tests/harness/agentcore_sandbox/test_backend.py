@@ -243,6 +243,13 @@ async def test_output_a_background_process_adds_after_the_exit_is_capped(
         assert (caught.value.stdout, caught.value.stderr, caught.value.limit) == ('0123', '', 8)
 
 
+def _pin_command_directory(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Fix the id the next command directories take their name from, unique to this run, and return the directory."""
+    fixed = uuid.uuid4()
+    monkeypatch.setattr(uuid, 'uuid4', lambda: fixed)
+    return f'/tmp/pydantic-ai-{fixed.hex}'
+
+
 async def test_a_command_that_replaces_its_output_file_fails_without_blocking_the_session(
     fake_agentcore: FakeAgentCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -296,13 +303,6 @@ async def test_a_timed_out_command_that_replaced_its_output_file_still_reports_t
         ready.unlink()
     assert not os.path.exists(directory)
     assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
-
-
-def _pin_command_directory(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Fix the id the next command directories take their name from, unique to this run, and return the directory."""
-    fixed = uuid.uuid4()
-    monkeypatch.setattr(uuid, 'uuid4', lambda: fixed)
-    return f'/tmp/pydantic-ai-{fixed.hex}'
 
 
 async def test_files_and_output_travel_in_chunks(
