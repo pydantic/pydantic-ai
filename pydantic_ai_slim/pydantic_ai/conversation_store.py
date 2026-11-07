@@ -336,11 +336,13 @@ class ConversationStore(ABC):
         history = await self._history_of(record, limit=window) if record is not None else []
         if history is None:
             raise ConversationConflict(conversation_id)
-        shared = 0
-        for entry, message in zip(history, messages):
-            if entry.message != message:
-                break
-            shared += 1
+        shared = _shared_prefix(history, messages)
+        if record is not None and window is not None and shared < len(history):
+            whole = await self._history_of(record)
+            if whole is None:
+                raise ConversationConflict(conversation_id)
+            if _cleaned_matches_prefix(whole, messages, window):
+                return record.head_id, messages[window:], branches
         parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
         if shared < len(history):
             # A rewritten history leaves the stored one as a branch.
@@ -665,3 +667,22 @@ class InMemoryConversationStore(ConversationStore):
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         return deepcopy(self._entries[entry_id])
+
+
+def _shared_prefix(history: Sequence[ConversationEntry], messages: Sequence[_messages.ModelMessage]) -> int:
+    shared = 0
+    for entry, message in zip(history, messages):
+        if entry.message != message:
+            break
+        shared += 1
+    return shared
+
+
+def _cleaned_matches_prefix(
+    history: Sequence[ConversationEntry], messages: Sequence[_messages.ModelMessage], window: int
+) -> bool:
+    stored = [entry.message for entry in history]
+    cleaned = _messages._clean_message_history(stored)  # pyright: ignore[reportPrivateUsage]
+    if cleaned == messages[:window]:
+        return True
+    return len(cleaned) >= window > 0 and cleaned[-window:] == messages[:window]

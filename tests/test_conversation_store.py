@@ -913,3 +913,81 @@ class _RecordRacingStore(InMemoryConversationStore):
         if race is not None:
             await race()
         return record
+
+
+@dataclasses.dataclass
+class _Answer:
+    text: str
+
+
+async def test_a_serialized_conversation_with_an_output_tool_appends_each_turn_without_branching() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+
+    for turn in range(1, 6):
+        loaded = await store.load('c') or Conversation(conversation_id='c')
+        revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(loaded))
+        result = await agent.run(f'Q{turn}', conversation=revived)
+        await store.save(ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(result.conversation)))
+
+        record = await store.read_record('c')
+        assert record is not None
+        assert record.branches == []
+        reloaded = await store.load('c')
+        assert reloaded is not None
+        prompts = [
+            part.content
+            for message in reloaded.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert prompts == [f'Q{i}' for i in range(1, turn + 1)]
+        assert _entry_count(store) == turn * 3
+
+
+async def test_a_serialized_window_with_an_output_tool_appends_to_the_whole_conversation() -> None:
+    store = _RacingStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    first = await agent.run('Q1')
+    second = await agent.run('Q2', conversation=first.conversation)
+    await store.save(second)
+
+    window = await store.load(second.conversation.conversation_id, limit=4)
+    assert window is not None
+    revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window))
+    third = await agent.run('Q3', conversation=revived)
+    await store.save(ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(third.conversation)))
+
+    record = await store.read_record(window.conversation_id)
+    assert record is not None
+    assert record.branches == []
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    prompts = [
+        part.content
+        for message in reloaded.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert prompts == ['Q1', 'Q2', 'Q3']
+
+    # Also cover conflict when the full history disappears during the fallback read.
+    window2 = await store.load(window.conversation_id, limit=4)
+    assert window2 is not None
+    revived2 = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window2))
+    fourth = await agent.run('Q4', conversation=revived2)
+    fourth_revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(fourth.conversation))
+
+    reads = 0
+
+    async def delete_on_second_read() -> None:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            store.race = lambda: store.delete(window.conversation_id)
+
+    store.race = delete_on_second_read
+    with pytest.raises(ConversationConflict):
+        await store.save(fourth_revived)
