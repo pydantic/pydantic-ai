@@ -110,6 +110,7 @@ from pydantic_ai.exceptions import (
     ModelUnavailableError,
     SkipModelRequest,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -585,6 +586,55 @@ async def test_durability_sticky_fallback_wraps_around_to_the_wrapped_primary(cl
     # The answer records the primary, so the conversation goes back to starting from it.
     assert output == [('primary', 'function:primary')]
     # The failed attempt on the sticky candidate, then the primary.
+    assert _scheduled_activity_count(history) == 2
+
+
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+unsupported_setting_fallback_durable_agent = Agent(
+    _IgnoresStopSequences(_fallback_target_fn, model_name='ignores_stop'),
+    name='durability_unsupported_setting_fallback_agent',
+    model_settings={'stop_sequences': ['STOP']},
+    capabilities=[
+        ModelFallback('fallback_target', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class UnsupportedSettingFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, str | None, list[str]]:
+        result = await unsupported_setting_fallback_durable_agent.run(prompt)
+        attempts = [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+        return result.output, result.response.model_id, attempts
+
+
+async def test_durability_fallback_on_unsupported_setting_warning(client: Client):
+    """The `UnsupportedSettingWarning` a model raises in its activity reaches `ModelFallback` as itself, unretried."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnsupportedSettingFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(unsupported_setting_fallback_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            UnsupportedSettingFallbackDurableAgentWorkflow.run,
+            args=['hello'],
+            id=UnsupportedSettingFallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == ('from fallback', 'fallback_target', ['ignores_stop error'])
+    # One attempt each: the skipped one isn't retried.
     assert _scheduled_activity_count(history) == 2
 
 

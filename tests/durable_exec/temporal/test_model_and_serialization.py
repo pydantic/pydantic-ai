@@ -48,6 +48,7 @@ from pydantic_ai import (
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
+from pydantic_ai._unsupported_settings import raise_warnings, warn_unsupported_settings
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
@@ -69,6 +70,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -3553,6 +3555,26 @@ def _crossed(error: ModelAPIError) -> BaseException:
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
     return rebuilt.value
+
+
+def test_an_unsupported_setting_warning_raised_for_fallback_crosses_as_itself_unretried():
+    """The warning a model raises for a `fallback_on` that names it reaches the workflow as itself, never retried."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors(), raise_warnings():
+            warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
+    assert raised.value.non_retryable
+    with pytest.raises(UnsupportedSettingWarning, match="The `stop_sequences` setting is not supported by model 'm'"):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_an_unsupported_setting_warning_a_filter_raised_fails_the_activity_as_before():
+    """A warning a warnings filter turned into an error isn't translated: the activity fails, and retries, as before."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        with pytest.raises(UnsupportedSettingWarning):
+            with model_errors_as_application_errors():
+                warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
 
 
 def test_what_a_stream_produced_before_failing_crosses_with_its_error():
