@@ -71,7 +71,6 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
-    find_monty_error,
     in_temporal_workflow,
     is_sandbox_panic,
 )
@@ -1360,14 +1359,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         Returns `None` for an interruption, which the caller re-raises unchanged.
         """
-        if isinstance(error, Exception):
-            error = (
-                find_monty_error(
-                    error,
-                    (MontySyntaxError, MontyTypingError, MontyRuntimeError, MontyCrashedError, MontyDisconnectError),
-                )
-                or error
-            )
         capture = execution.capture
         match error:
             case MontySyntaxError():

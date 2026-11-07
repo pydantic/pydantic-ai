@@ -62,19 +62,7 @@ DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 """Given a sandbox function name and its keyword arguments, do the host-side work (a tool call or sub-agent run)."""
 
 _T = TypeVar('_T')
-_ErrorT = TypeVar('_ErrorT', bound=BaseException)
 _Args = TypeVarTuple('_Args')
-
-
-def find_monty_error(error: BaseException, error_types: type[_ErrorT] | tuple[type[_ErrorT], ...]) -> _ErrorT | None:
-    """Find the first matching error among at most ten exceptions, following only explicit causes."""
-    for _ in range(10):
-        if isinstance(error, error_types):
-            return error
-        if error.__cause__ is None:
-            return None
-        error = error.__cause__
-    return None
 
 
 def in_temporal_workflow() -> bool:
@@ -207,9 +195,8 @@ class MontyRunState:
     ) -> AsyncMontySession:
         try:
             return await _enter_monty(self._session_stack, checkout(), self.portal)
-        except Exception as error:
-            refusal = find_monty_error(error, MontyRefusedError)
-            if refusal is None or refusal.cause not in ('caller_cap', 'capacity', 'worker_unavailable'):
+        except MontyRefusedError as error:
+            if error.cause not in ('caller_cap', 'capacity', 'worker_unavailable'):
                 raise
             await call_monty(self.portal, anyio.sleep, 0.1)
             return await _enter_monty(self._session_stack, checkout(), self.portal)

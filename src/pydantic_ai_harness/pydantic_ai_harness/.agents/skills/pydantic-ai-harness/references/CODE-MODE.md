@@ -225,7 +225,6 @@ CodeMode(
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_secs` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
-- Pool adapters can wrap Monty errors with an explicit `__cause__`. Code Mode searches a bounded cause chain to apply the underlying Monty error's recovery policy. Setup failures preserve the outer exception.
 
 ## Durable Execution
 
