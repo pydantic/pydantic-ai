@@ -109,6 +109,19 @@ Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and C
 
 Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists what changed.
 
+## From problem to capability
+
+Six problems that come up in almost every agent build, and the capability for each. The sections below are the full, capability-first index:
+
+| If your problem is... | Capability | How it works |
+|---|---|---|
+| The model's output must pass a check, and bad output should be retried or blocked | [Guardrails](guardrails.md) | Return `GuardrailResult.retry(...)` to send the output back to the model; a bare `False` blocks. Retry is not supported under `run_stream()`. |
+| One tool result is flooding the context window | [Tool Output Limits](tool-output-limits.md) | A band clamps oversized output, e.g. `Truncate(max_chars=4_000)`; the default spills to a file, then truncates at 10,000 characters. |
+| The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), applied through harness [Shell](shell.md) | Set `working_dir` on the workspace when you create it (`LocalWorkspace('./repo')`); per-capability `cwd=` arguments are ignored with a warning. |
+| One run must not spend more than a fixed amount | [Spend Limits](spend.md) | Cap it per run with `Budget(window='run')`; responses are priced from provider pricing data, or your own `price` function. |
+| The model repeats the same tool call without making progress | [Detect Loops](detect-loops.md) | The default `action='nudge'` tells the model to change approach; only `action='error'` stops the run with `LoopDetectedError`. |
+| The model sends malformed JSON in a tool call | [Repair Tool Arguments](repair-tool-arguments.md) | Import from the `repair_tool_arguments` submodule; install the `repair-tool-arguments` extra (which includes `json-repair`). |
+
 ## Capabilities
 
 Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 80+ in all, grouped by what they give your agent:
