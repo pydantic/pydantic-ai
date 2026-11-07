@@ -260,6 +260,14 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
+_TERRA_PENDING_RECORDING = pytest.mark.skip(
+    reason='cassette not yet recorded; requires AWS Bedrock access: remove the two '
+    '`pytest.param(..., marks=_TERRA_PENDING_RECORDING)` wrappers for `gpt-6.1-terra` '
+    'and run `uv run pytest tests/models/test_bedrock.py --record-mode=rewrite '
+    '-k "gpt-6.1-terra"`'
+)
+
+
 @pytest.mark.parametrize(
     'model_name',
     [
@@ -269,6 +277,8 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
         'global.openai.gpt-6-sol',
         'global.openai.gpt-6-luna',
         'global.openai.gpt-6-astra',
+        pytest.param('us.openai.gpt-6.1-terra', marks=_TERRA_PENDING_RECORDING),
+        pytest.param('global.openai.gpt-6.1-terra', marks=_TERRA_PENDING_RECORDING),
     ],
 )
 @pytest.mark.vcr(additional_matchers=['body'])
@@ -9252,6 +9262,8 @@ BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
     'global.openai.gpt-6-sol',
     'global.openai.gpt-6-luna',
     'global.openai.gpt-6-astra',
+    pytest.param('us.openai.gpt-6.1-terra', marks=_TERRA_PENDING_RECORDING),
+    pytest.param('global.openai.gpt-6.1-terra', marks=_TERRA_PENDING_RECORDING),
 ]
 
 
