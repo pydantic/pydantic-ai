@@ -33,7 +33,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
     from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI
+    from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -624,3 +624,118 @@ async def test_zai_sensitive_without_content_raises_content_filter_error(allow_m
 
     with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
         await Agent(model).run('Tell me something.')
+
+
+def tool_stream_chunk(content: str, finish_reason: str | None = None) -> chat.ChatCompletionChunk:
+    return chat.ChatCompletionChunk.model_construct(
+        id='123',
+        choices=[
+            ChunkChoice.model_construct(
+                delta=ChoiceDelta(role='assistant', content=content),
+                index=0,
+                finish_reason=finish_reason,
+            )
+        ],
+        created=1704067200,  # 2024-01-01
+        model='glm-5.2',
+        object='chat.completion.chunk',
+    )
+
+
+def tool_stream_completion(content: str) -> chat.ChatCompletion:
+    return chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='stop',
+                index=0,
+                message=ChatCompletionMessage(role='assistant', content=content),
+            )
+        ],
+        created=1704067200,  # 2024-01-01
+        model='glm-5.2',
+        object='chat.completion',
+    )
+
+
+async def test_zai_tool_stream_sent_on_streamed_run_with_function_tools(allow_model_requests: None):
+    """A streamed run with function tools on GLM-5.2 sets `tool_stream` so arguments arrive incrementally."""
+    mock_client = MockOpenAI.create_mock_stream(
+        [tool_stream_chunk('Paris is '), tool_stream_chunk('sunny.', finish_reason='stop')]
+    )
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def weather(city: str) -> str:
+        return 'sunny'
+
+    async with agent.run_stream('What is the weather in Paris?') as result:
+        assert await result.get_output() == 'Paris is sunny.'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert kwargs['extra_body']['tool_stream'] is True
+
+
+async def test_zai_explicit_extra_body_tool_stream_preserved(allow_model_requests: None):
+    """An explicit `tool_stream` in the user's `extra_body` wins over the flag ZaiModel would add."""
+    mock_client = MockOpenAI.create_mock_stream([tool_stream_chunk('Paris is sunny.', finish_reason='stop')])
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def weather(city: str) -> str:
+        return 'sunny'
+
+    async with agent.run_stream(
+        'What is the weather in Paris?', model_settings=ModelSettings(extra_body={'tool_stream': False})
+    ) as result:
+        assert await result.get_output() == 'Paris is sunny.'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert kwargs['extra_body']['tool_stream'] is False
+
+
+async def test_zai_tool_stream_absent_on_streamed_run_without_tools(allow_model_requests: None):
+    """`tool_stream` is not set on streamed runs without function tools."""
+    mock_client = MockOpenAI.create_mock_stream([tool_stream_chunk('Hello.', finish_reason='stop')])
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=mock_client))
+    async with Agent(model).run_stream('Tell me something.') as result:
+        assert await result.get_output() == 'Hello.'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert 'tool_stream' not in kwargs.get('extra_body', {})
+
+
+async def test_zai_tool_stream_absent_on_non_streamed_run(allow_model_requests: None):
+    """`tool_stream` is not set on non-streamed runs, even with function tools."""
+    mock_client = MockOpenAI.create_mock(tool_stream_completion('Paris is sunny.'))
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def weather(city: str) -> str:
+        return 'sunny'
+
+    result = await agent.run('What is the weather in Paris?')
+    assert result.output == 'Paris is sunny.'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert 'tool_stream' not in kwargs.get('extra_body', {})
+
+
+async def test_zai_tool_stream_absent_for_unflagged_model(allow_model_requests: None):
+    """`tool_stream` is not set for model ids outside the GLM-4.6+ prefixes, even on streamed tool runs."""
+    mock_client = MockOpenAI.create_mock_stream([tool_stream_chunk('Paris is sunny.', finish_reason='stop')])
+    model = ZaiModel('glm-4.5', provider=ZaiProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def weather(city: str) -> str:
+        return 'sunny'
+
+    async with agent.run_stream('What is the weather in Paris?') as result:
+        assert await result.get_output() == 'Paris is sunny.'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert 'tool_stream' not in kwargs.get('extra_body', {})
