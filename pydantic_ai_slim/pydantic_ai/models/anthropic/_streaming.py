@@ -66,6 +66,7 @@ from ._response import (
     compaction_provider_details,
     last_pass_input_tokens,
     map_usage,
+    report_inference_geo,
     report_input_transformations,
 )
 
@@ -90,6 +91,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _report_inference_geo: bool = False
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -124,6 +126,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.diagnostics is not None:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
+                    # Where the request ran is only reported on the opening message's usage.
+                    self.provider_details = report_inference_geo(
+                        self.provider_details, event.message.usage.inference_geo, report=self._report_inference_geo
+                    )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block

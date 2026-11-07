@@ -256,3 +256,16 @@ def compaction_provider_details(encrypted_content: str | None, signature: str | 
         if value is not None
     }
     return details or None
+
+
+def report_inference_geo(
+    provider_details: dict[str, Any] | None, inference_geo: str | None, *, report: bool
+) -> dict[str, Any] | None:
+    """Add where the request ran to `provider_details`.
+
+    Anthropic echoes `usage.inference_geo` on every response, so it's only reported when `report` is set, which is
+    when the request carried `anthropic_inference_geo`: other responses keep their `provider_details` unchanged.
+    """
+    if not report or inference_geo is None:
+        return provider_details
+    return {**(provider_details or {}), 'inference_geo': inference_geo}
