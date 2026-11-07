@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -422,16 +423,21 @@ SDK_MODEL_IDS: dict[str, list[str]] = {
 
 
 @cache
-def _locked_versions(package: str) -> frozenset[str]:
-    lock = tomllib.loads((Path(__file__).parents[2] / 'uv.lock').read_text())
-    return frozenset(entry['version'] for entry in lock['package'] if entry['name'] == package)
+def _committed_lock() -> dict[str, Any]:
+    # Read from git, not the working tree: the lowest-versions job and the upgrade canary rewrite `uv.lock` before
+    # they install, so the working-tree file would always match what they installed.
+    lock = subprocess.run(
+        ['git', 'show', 'HEAD:uv.lock'], cwd=Path(__file__).parent, capture_output=True, text=True, check=True
+    ).stdout
+    return tomllib.loads(lock)
 
 
 def _skip_unless_locked(package: str) -> None:
-    """Skip on CI legs that install another SDK version than `uv.lock`, such as lowest-versions or the upgrade canary."""
+    """Skip where the installed SDK isn't the committed `uv.lock` version, as on lowest-versions and the canary."""
     installed = version(package)
-    if installed not in _locked_versions(package):  # pragma: lax no cover
-        pytest.skip(f'`{package}` {installed} is not the version in `uv.lock`')
+    locked = {entry['version'] for entry in _committed_lock()['package'] if entry['name'] == package}
+    if installed not in locked:  # pragma: lax no cover
+        pytest.skip(f'`{package}` {installed} is not the version in the committed `uv.lock`')
 
 
 @pytest.mark.parametrize('sdk', [pytest.param(sdk, id=sdk.id) for sdk in SDK_MODEL_LITERALS])
