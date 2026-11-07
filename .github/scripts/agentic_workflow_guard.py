@@ -67,7 +67,7 @@ from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
-from agent_provider_health import AGENT_START_HEALTH_STEPS
+from agent_provider_health import AGENT_START_HEALTH_STEPS, HOST_RESULT_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -1152,6 +1152,64 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
     return violations
 
 
+def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI agent jobs must record the terminal result on the host after inference and upload it with the decision."""
+    violations: list[Violation] = []
+    record_name, upload_name = HOST_RESULT_STEPS
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
+            continue
+        jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
+        gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
+        agent_steps = _as_mapping(jobs.get('agent')).get('steps')
+        gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
+        steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
+        gate_env = _as_mapping(next((step.get('env') for step in gate if step.get('id') == 'health'), None))
+        execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), len(steps))
+        recheck = next(
+            (
+                (match['path'], step.get('id'))
+                for step in steps[:execution]
+                if (match := AGENT_START_HEALTH_CHECK.search(str(step.get('run', ''))))
+            ),
+            None,
+        )
+        fetched, recheck_id = recheck if recheck is not None else (None, None)
+        # Both steps must run after a failed engine step, the run whose result matters most, once the recheck passed.
+        after_failure = _normalized_condition(f"always() && steps.{recheck_id}.outputs.ready == 'true'")
+        after = steps[execution + 1 :]
+        record = next((i for i, step in enumerate(after) if step.get('name') == record_name), None)
+        record_env = _as_mapping(after[record].get('env')) if record is not None else {}
+        # The record step needs the gate's identity to match the agent's result, and the key for its own check.
+        identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
+        recorded = (
+            record is not None
+            and fetched is not None
+            and _normalized_condition(str(after[record].get('if', ''))) == after_failure
+            and f'python3 -I {fetched} record ' in str(after[record].get('run', ''))
+            and bool(gate_env)
+            and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
+        )
+        uploaded = record is not None and any(
+            step.get('name') == upload_name
+            and _normalized_condition(str(step.get('if', ''))) == after_failure
+            and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
+            for step in after[record + 1 :]
+        )
+        if not recorded or not uploaded:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-host-result',
+                    'After engine execution, including a failed one, the agent job must run `record` from the fetched '
+                    'controller with the gate identity and Z.AI key, then upload `run-result.json` with the health '
+                    'decision. The steps must keep the names in `agent_provider_health.HOST_RESULT_STEPS`.',
+                )
+            )
+    return violations
+
+
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
     """The monitor accepts completions only from the enumerated Z.AI workflows and serializes only incident work."""
     monitor_path = workflows_dir / 'agent-provider-health.yml'
@@ -1564,6 +1622,7 @@ def run_checks(
     violations += check_provider_health_identity(workflows_dir)
     violations += check_provider_health_recovery_wiring(workflows_dir)
     violations += check_provider_health_agent_start(workflows_dir)
+    violations += check_provider_health_host_result(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:
