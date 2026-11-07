@@ -677,6 +677,7 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         google_geometry.resolve_google_dimensions('gemini-3.1-flash-lite-image', tiers['512'])
 
 
+@pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
 @pytest.mark.parametrize(
     ('dimensions', 'error_message'),
     [
@@ -685,25 +686,23 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         ((800, 800), 'total pixel count'),
     ],
 )
-def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(dimensions: tuple[int, int], error_message: str):
-    with pytest.raises(UserError, match=error_message):
-        openai_geometry.resolve_openai_dimensions('gpt-image-2', dimensions)
-
-
-@pytest.mark.parametrize('model_name', ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
-def test_openai_gpt_image_2_6_shares_gpt_image_2_geometry(model_name: str):
+def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(
+    model_name: str, dimensions: tuple[int, int], error_message: str
+):
     """GPT Image 2.6 takes the GPT Image 2 size limits.
 
     The live Images API rejects `1000x1000`, `800x800`, `3856x1296`, `3840x1024` and `3840x2224` for
-    both 2.6 models with the same messages as for `gpt-image-2`, and accepts `1024x640`, the smallest
-    shape inside the pixel budget.
+    both 2.6 models with the same messages as for `gpt-image-2`.
     """
+    with pytest.raises(UserError, match=error_message):
+        openai_geometry.resolve_openai_dimensions(model_name, dimensions)
+
+
+@pytest.mark.parametrize('model_name', ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
+def test_openai_gpt_image_2_6_resolves_gpt_image_2_shapes(model_name: str):
+    """The live Images API accepts `1024x640`, the smallest GPT Image 2 shape inside the pixel budget, for 2.6."""
     assert openai_geometry.resolve_openai_dimensions(model_name, (1024, 640)) == '1024x640'
     assert openai_geometry.resolve_openai_aspect_ratio(model_name, '16:9') == '1280x720'
-    with pytest.raises(UserError, match='longest edge'):
-        openai_geometry.resolve_openai_dimensions(model_name, (4096, 2048))
-    with pytest.raises(UserError, match='total pixel count'):
-        openai_geometry.resolve_openai_dimensions(model_name, (800, 800))
 
 
 def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
