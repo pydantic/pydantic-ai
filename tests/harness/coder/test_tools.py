@@ -1,6 +1,6 @@
 """Coder's tool surface as the model sees it; the tools themselves are tested with `FileSystem` and `Shell`."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,7 +16,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
-from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.coder import Autonomy, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.subagents import TaskControl
@@ -25,6 +25,9 @@ from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool, call_tools
+
+_PLAN = 'Propose a plan and wait for approval before editing.'
+_FINISH = 'You are running a delegated task. Choose sensible defaults and finish.'
 
 
 @dataclass
@@ -38,6 +41,19 @@ class _ToolLog(AbstractCapability[object]):
     ) -> ValidatedToolArgs:
         self.seen.append(call.tool_name)
         return args
+
+
+def _finish_or_delegate(seen: dict[str, str], messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Record the guidance the run was given, and require it to be a static instruction."""
+    first = messages[0].parts[-1]
+    seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+    guidance = next(
+        part
+        for part in info.model_request_parameters.instruction_parts or []
+        if 'software engineering agent' in part.content
+    )
+    assert guidance.dynamic is False
+    return _delegate_a_command(messages, info)
 
 
 def _delegate_a_command(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -204,20 +220,120 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
-        guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
+        guidance_part = next(part for part in parts if 'software engineering agent' in part.content)
+        assert guidance_part.dynamic is False
+        guidance = guidance_part.content
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 500
-        assert all(principle in default for principle in ('DRY', 'YAGNI', 'Zen of Python'))
-        assert 'SOLID' not in default
-        assert "Match the surrounding code's style,\nstructure, and imports" in default
-        assert 'delete any scratch files you created' in default
-        assert 'in full with `read_file` rather than batched `cat` in the shell' in default
-        assert 'batch independent searches into one\nshell call' in default
-        assert 'once the relevant tests pass, broaden or\nrepeat testing only when new changes' in default
-        assert 'measure the result against that target before finishing' in default
-        assert 'first\nassume your model of the problem is wrong' in default
+        assert len(default.split()) < 220
+        assert "Match the surrounding code's style, structure, and imports." in default
+        assert 'Work until done. Ask only for credentials, approvals, or real ambiguity.' in default
+        assert 'Read files with `read_file`, not batched `cat`.' in default
+        assert 'Deliverables may be used outside this workspace' in default
+        assert 'from a clean directory.' in default
+        assert "Write checks from the task's stated behavior, not your code." in default
+        assert 'go through each requirement and edge case the task states' in default
+        assert 'uses every field the provided data supplies' in default
+        assert 'Measure results against any numeric target the task states.' in default
+        assert 'assume you misread' in default
+        assert 'Check behavior with heredocs for one-offs, not new files.' in default
+        assert 'Servers the task needs may keep running; stop the rest.' in default
+        assert 'delete your scratch files' not in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    @pytest.mark.parametrize(
+        ('autonomy', 'ask', 'targets', 'cleanup'),
+        [
+            ('low', 'Propose a plan and wait for approval before editing.', False, False),
+            ('medium', 'Work until done; ask when a choice really matters.', False, False),
+            ('high', 'Ask only for credentials, approvals, or real ambiguity.', True, False),
+            ('max', 'Work fully autonomously; nobody will answer questions.', True, True),
+        ],
+    )
+    async def test_autonomy_sets_how_far_the_agent_goes_alone(
+        self, tmp_path: Path, autonomy: Autonomy, ask: str, targets: bool, cleanup: bool
+    ) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ask in text
+        assert ('Measure results against any numeric target the task states.' in text) is targets
+        assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
+        assert 'Deliverables may be used outside this workspace' in text
+        assert 'go through each requirement and edge case the task states' in text
+        assert 'uses every field the provided data supplies' in text
+        assert "Write checks from the task's stated behavior, not your code." in text
+
+    async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
+        """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        agent = Agent(
+            FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder(autonomy='low', repo_context=False)]
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
+        assert 'Measure results against any numeric target the task states.' not in seen['Delegate it']
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+        assert 'Measure results against any numeric target the task states.' in seen['Run it']
+
+    async def test_a_durable_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
+        """A durable worker does not inherit the caller's context variables, and the delegate text still applies.
+
+        The child run is awaited only after `delegation_depth()` is set, and a recorded delegation sets
+        that level again on the worker before the child starts. An isolated operation body sees a fresh
+        context, which is where a worker would lose a context variable read too late.
+        """
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        agent = Agent(
+            FunctionModel(respond),
+            name='coder',
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Coder(autonomy='low', repo_context=False),
+                RecordingDurability(isolated=True),
+            ],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+
+    async def test_a_delegate_with_task_control_is_also_told_to_finish(self, tmp_path: Path) -> None:
+        """Whether a delegate gets `ask_parent` depends on the workspace and sub-agent, so every delegate finishes alone.
+
+        Task control streams the child, so the child's guidance is read from the stream function.
+        """
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            _finish_or_delegate(seen, messages, info)
+            yield 'done'
+
+        agent = Agent(
+            FunctionModel(respond, stream_function=stream),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Coder(autonomy='low', repo_context=False, task_control=TaskControl()),
+            ],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert _PLAN in seen['Delegate it'] and _FINISH not in seen['Delegate it']
+        assert _FINISH in seen['Run it'] and _PLAN not in seen['Run it']
+
+    def test_unknown_autonomy_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"`autonomy` must be one of 'low', 'medium', 'high', 'max', not 'full'"):
+            Coder(autonomy='full')  # pyright: ignore[reportArgumentType]
 
     async def test_file_tool_mistakes_do_not_end_the_run(self, tmp_path: Path) -> None:
         """Consecutive denied writes come back as retries until `MAX_FILE_TOOL_RETRIES` is spent."""
@@ -263,22 +379,26 @@ class TestCoder:
 
     @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize('sub_agents', [False, True])
+    @pytest.mark.parametrize('extra_instructions', [None, 'Keep new files under 400 lines.'])
     async def test_instructions_follow_the_composition(
-        self, tmp_path: Path, repo_context: bool, sub_agents: bool
+        self, tmp_path: Path, repo_context: bool, sub_agents: bool, extra_instructions: str | None
     ) -> None:
-        """The repo-file note comes with `RepoContext`, which loads them; the delegation rule with `delegate_task`."""
+        """The delegation rule comes with `delegate_task`, and extra guidance is appended, with or without `RepoContext`."""
         model = TestModel(call_tools=[])
-        coder = Coder(repo_context=repo_context, sub_agents=sub_agents)
+        coder = Coder(instructions=extra_instructions, repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        parts = model.last_model_request_parameters.instruction_parts or []
+        text = '\n'.join(part.content for part in parts)
+        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('instruction files (AGENTS.md, CLAUDE.md) that apply to the project' in text) is repo_context
-        rule = (
-            'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
-        )
-        assert (rule in text) is sub_agents
+        assert (
+            "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
+            'whatever other instructions say about delegating.' in text
+        ) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
+        if extra_instructions:
+            assert guidance.endswith('\n' + extra_instructions)
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),
@@ -335,7 +455,7 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert ('are already loaded into your context' in text) is loaded
+        assert ("if any, are already in your context; don't search for them" in text) is loaded
         assert ("A subdirectory's instruction files are added to your context" in text) is nested
 
     async def test_instructions_name_the_configured_instruction_files(self, tmp_path: Path) -> None:
@@ -344,7 +464,7 @@ class TestCoder:
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        assert 'Repository instruction files (RULES.md) that apply to the project' in text
+        assert 'Instruction files (RULES.md) for the project, if any, are already in your context' in text
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
