@@ -255,9 +255,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook. Result artifacts are public, so they carry no private report.
 - `publish` validates every finding against its check's files, and drops a finding on a line the
-  pull request did not add or remove, from the review and the verdict, counting it in the job log.
-  A `critical` or `high` finding on a file whose patch GitHub omitted, or left out of its file
-  listing, marks its check `INCOMPLETE` instead.
+  pull request did not add or remove from the review, counting it in the job log. A dropped
+  `critical` or `high` finding marks its check `INCOMPLETE`, including one on a file whose patch
+  GitHub omitted. A dropped `medium` finding leaves the verdict unchanged.
   When there are findings, it posts one `COMMENT` review with each check's usage and the receipt
   `<!-- pr-review-checks run=… head=… -->`, which douwebot's clean approval gate does not count as a
   douwebot finding. The job summary always carries the usage table. A `critical` or `high` finding,

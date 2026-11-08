@@ -79,7 +79,6 @@ class PullFile(BaseModel):
     """One file of the pull request's diff. GitHub omits `patch` when the diff is too large to show."""
 
     filename: str
-    changes: int = 0
     patch: str = ''
 
 
@@ -225,17 +224,14 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
         return
     results = load_results(Path(env['RESULTS_DIR']), checks)
     # Findings are public, and one on a line the pull request did not change can describe a weakness it did not add.
-    # A file whose patch GitHub omitted, or left out of a listing past its cap, has no known changed lines.
-    changed = {
-        file.filename: _changed_lines(file.patch) for file in github.pull_files() if file.patch or not file.changes
-    }
+    changed = {file.filename: _changed_lines(file.patch) for file in github.pull_files()}
     for check, result in results.items():
-        kept = [f for f in result.findings if (f.side, f.line) in changed.get(f.path, set())]
-        if dropped := len(result.findings) - len(kept):
-            print(f'{check}: dropped {dropped} findings outside the changed lines.')
-        update: dict[str, object] = {'findings': kept}
-        if any(f.severity in BLOCKING and f.path not in changed for f in result.findings):
-            print(f'{check}: a blocking finding is on a file GitHub sent no patch for, so the check is incomplete.')
+        outside = [f for f in result.findings if (f.side, f.line) not in changed.get(f.path, set())]
+        if outside:
+            print(f'{check}: dropped {len(outside)} findings outside the changed lines.')
+        update: dict[str, object] = {'findings': [f for f in result.findings if f not in outside]}
+        # A blocking finding placed on an unchanged line, or on a file whose patch GitHub omitted, must not pass.
+        if any(f.severity in BLOCKING for f in outside):
             update['outcome'] = 'INCOMPLETE'
         results[check] = result.model_copy(update=update)
     state, description = verdict(checks, results)

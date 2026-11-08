@@ -322,24 +322,20 @@ def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: py
     assert 'general: dropped 1 findings outside the changed lines.' in capsys.readouterr().out
 
 
-def test_findings_outside_the_changed_lines_do_not_fail_the_status(tmp_path: Path) -> None:
-    """Dropped findings leave the verdict, and so does a finding on a file the pull request only renamed."""
-    for file in [
-        PullFile(filename='a.py', changes=2, patch='@@ -9 +9 @@\n-old = 9\n+new = 9'),
-        PullFile(filename='a.py'),
-    ]:
-        github = FakeGitHub(files=[file])
-        publish(github, _publish_env(tmp_path, _result('general', 'high')))
-        assert github.reviews == []
-        assert [status[1] for status in github.statuses] == ['success']
-
-
 @pytest.mark.parametrize(
-    'files', [[PullFile(filename='a.py', changes=5000)], []], ids=['patch omitted', 'file unlisted']
+    'files',
+    [[PullFile(filename='a.py', patch='@@ -9 +9 @@\n-old = 9\n+new = 9')], [PullFile(filename='a.py')], []],
+    ids=['unchanged line', 'patch omitted', 'file unlisted'],
 )
-def test_blocking_finding_without_a_patch_makes_its_check_incomplete(tmp_path: Path, files: list[PullFile]) -> None:
-    """GitHub omits a large file's patch and caps its file listing; neither may turn a blocking finding into a pass."""
+@pytest.mark.parametrize(
+    ('severity', 'expected'),
+    [('high', ('failure', 'Incomplete: general')), ('medium', ('success', 'Reviewed by general.'))],
+)
+def test_a_dropped_finding_fails_the_status_only_when_blocking(
+    tmp_path: Path, files: list[PullFile], severity: str, expected: tuple[str, str]
+) -> None:
+    """A dropped finding stays unpublished, and a blocking one must not pass the head."""
     github = FakeGitHub(files=files)
-    publish(github, _publish_env(tmp_path, _result('general', 'high')))
+    publish(github, _publish_env(tmp_path, _result('general', severity)))
     assert github.reviews == []
-    assert [status[1:3] for status in github.statuses] == [('failure', 'Incomplete: general')]
+    assert [status[1:3] for status in github.statuses] == [expected]
