@@ -316,6 +316,46 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
 
+@pytest.mark.parametrize('endpoint', [None, 'https://collector.invalid'], ids=['no-endpoint', 'otlp-endpoint'])
+def test_host_installer_adds_logfire_only_for_an_otlp_endpoint(tmp_path: Path, endpoint: str | None) -> None:
+    """Telemetry packages cost an install only when gh-aw supplies an OTLP endpoint.
+
+    `PAI_OTEL_EXPORT_PATH` is agent-only `engine.env`, so this host step never sees it, and the file
+    exporter behind it is the importing repository's own dependency.
+    """
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    python = binaries / 'python3'
+    python.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$INSTALL_LOG"\n')
+    python.chmod(0o755)
+    home = tmp_path / 'home'
+    cli = home / '.local/bin/clai2'
+    cli.parent.mkdir(parents=True)
+    cli.write_text('#!/bin/sh\nexit 0\n')
+    cli.chmod(0o755)
+    log = tmp_path / 'installer.log'
+    script = next(step.run for step in definition().pre_agent_steps if 'pip install' in step.run)
+    endpoint_env = {'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint} if endpoint is not None else {}
+    completed = subprocess.run(
+        ['bash', '-e', '-c', script],
+        env={
+            'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
+            'HOME': str(home),
+            'INSTALL_LOG': str(log),
+            'GH_AW_ENGINE_VERSION': '0.64.0',
+            **endpoint_env,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    installed = log.read_text()
+    assert ('logfire>=4.39.0' in installed) == (endpoint is not None)
+    assert 'opentelemetry-exporter-otlp-json-file' not in installed
+
+
 def test_threat_detection_runs_on_a_built_in_engine() -> None:
     # gh-aw's `threat-detect` only knows its built-in engines; naming one here keeps
     # detection working without a compile-time fallback warning on every workflow.
@@ -690,17 +730,26 @@ def test_the_child_receives_empty_stdin(tmp_path: Path) -> None:
         pytest.param('{"type":"add_comment"}\nnot json\n  {"type": "noop"}  \n', id='noop-after-malformed-line'),
     ],
 )
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 def test_a_noop_written_by_an_earlier_step_skips_the_engine(tmp_path: Path, safe_outputs: str) -> None:
-    """gh-aw's documented way for a step to skip the agent, which its built-in harnesses honor."""
+    """gh-aw's documented way for a step to skip the agent, which its built-in harnesses honor.
+
+    The skipped run still ends with one authenticated `session.result`, so the log parser reports success.
+    """
     path = tmp_path / 'outputs.jsonl'
     path.write_text(safe_outputs, encoding='utf-8')
 
-    completed = run_harness(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
 
-    assert completed.returncode == 0, completed.stderr
-    assert f'skipping the engine: an earlier step wrote a noop to {path}' in completed.stdout
-    assert completed.stderr == ''
-    assert not (tmp_path / 'record.json').exists()
+    assert f'skipping the engine: an earlier step wrote a noop to {path}' in invocation.stdout
+    assert invocation.env['GH_AW_PREWRITTEN_NOOP'] == '1'
+    assert 'GH-AW-SESSION-PUBKEY:' in invocation.capture
+    completed = run_invocation(invocation)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    parsed = parse_log(tmp_path, completed.stderr)
+    assert [entry.type for entry in parsed.log_entries] == ['session.result']
+    assert parsed.log_entries[0].data['status'] == 'success'
+    assert parsed.diagnostic_log_entries == []
 
 
 @pytest.mark.parametrize(
@@ -732,6 +781,97 @@ def test_missing_or_unreadable_safe_outputs_run_the_engine(
     invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
 
     assert invocation.target == 'gh_aw_agent:agent'
+
+
+# The CLI boundary sets the metadata a workflow policy would observe, then fails the run.
+METADATA_PROBE = """import runpy
+import sys
+from unittest.mock import patch
+
+
+def cli(*args, **kwargs):
+    import workflow_fixture
+    workflow_fixture.result_metadata.update(workflow_fixture.observed)
+    raise SystemExit(1)
+
+
+with patch.object(runpy, 'run_module', cli):
+    exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
+"""
+PLAN_LIMIT = {'provider_health': {'failure': {'kind': 'plan_limit', 'http_status': 429}}}
+
+
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+@pytest.mark.parametrize(
+    ('target', 'fixture', 'signed', 'message'),
+    [
+        pytest.param(
+            'workflow_fixture:result_metadata',
+            f'result_metadata = {{}}\nobserved = {PLAN_LIMIT!r}\n',
+            PLAN_LIMIT,
+            None,
+            id='signed',
+        ),
+        pytest.param(
+            'workflow_fixture:result_metadata',
+            "result_metadata = {}\nobserved = {'value': object()}\n",
+            None,
+            'Omitting result metadata that is not JSON',
+            id='not-json',
+        ),
+        pytest.param(
+            'workflow_fixture',
+            'result_metadata = {}\n',
+            None,
+            'PAI_RESULT_METADATA expects MODULE:ATTRIBUTE',
+            id='no-separator',
+        ),
+        pytest.param(
+            'workflow_fixture:result_metadata',
+            "result_metadata = ['provider_health']\n",
+            None,
+            'PAI_RESULT_METADATA must refer to a dictionary with string keys',
+            id='not-a-dictionary',
+        ),
+        pytest.param(
+            'workflow_fixture:result_metadata',
+            "result_metadata = {1: 'provider_health'}\n",
+            None,
+            'PAI_RESULT_METADATA must refer to a dictionary with string keys',
+            id='non-string-key',
+        ),
+    ],
+)
+def test_result_metadata_is_signed_into_the_terminal_record_only_when_valid(
+    tmp_path: Path, target: str, fixture: str, signed: dict[str, object] | None, message: str | None
+) -> None:
+    """Invalid or unserializable metadata still leaves an authenticated failure result, without that metadata."""
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'workflow_fixture:agent', 'PAI_RESULT_METADATA': target},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    (Path(invocation.cwd) / 'workflow_fixture.py').write_text(
+        'from pydantic_ai import Agent\nagent = Agent()\n' + fixture, encoding='utf-8'
+    )
+
+    completed = subprocess.run(
+        [sys.executable, '-P', '-c', METADATA_PROBE, invocation.program, *invocation.argv[3:]],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    if message is not None:
+        assert message in completed.stdout
+    terminal = parse_log(tmp_path, completed.stderr).log_entries[-1]
+    assert terminal.type == 'session.result'
+    assert terminal.data['status'] == 'failure'
+    assert terminal.data.get('metadata') == signed
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
@@ -1095,7 +1235,8 @@ async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     )
     monkeypatch.setenv('GH_AW_MCP_CONFIG', invocation.env['GH_AW_MCP_CONFIG'])
     monkeypatch.delitem(sys.modules, 'custom_agent', raising=False)
-    module = import_generated_agent(invocation, monkeypatch)
+    # Off the event loop, as the launcher imports it: a first import of `pydantic_ai.mcp` scans package files.
+    module = await asyncio.to_thread(import_generated_agent, invocation, monkeypatch)
     agent: Agent[None, str] = module.agent
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
