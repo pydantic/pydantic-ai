@@ -103,6 +103,25 @@ pytestmark = [
 ]
 
 
+@pytest.mark.parametrize(
+    ('thinking', 'expected'),
+    [
+        (False, 'low'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+        ('max', 'high'),
+    ],
+)
+def test_mistral_large_4_thinking_levels(thinking: bool | ThinkingLevel, expected: str) -> None:
+    model = MistralModel('mistral-large-4', provider=MistralProvider(api_key='foobar'))
+    assert model._translate_thinking(  # pyright: ignore[reportPrivateUsage]
+        ModelRequestParameters(thinking=thinking)
+    ) == expected
+
+
 def test_mistral_hidden_tools_stay_off_the_wire():
     """Guard Mistral's single-line switch from `tool_defs` to `declared_tool_defs`."""
     model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
