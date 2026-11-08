@@ -123,14 +123,13 @@ def test_import_agent_resolves_a_launch_directory_target_beside_an_installed_nam
 
 
 def package_modules_at_import(monkeypatch: pytest.MonkeyPatch, module_name: str) -> list[list[str]]:
-    """Record, each time `module_name` is imported, which modules of its top-level package are already loaded."""
+    """Record, at each `importlib.import_module` call, which modules of `module_name`'s top-level package are loaded."""
     top_level = module_name.partition('.')[0]
     recorded: list[list[str]] = []
     import_module = importlib.import_module
 
     def record_and_import(name: str, package: str | None = None) -> ModuleType:
-        if name == module_name:
-            recorded.append(sorted(loaded for loaded in sys.modules if loaded.partition('.')[0] == top_level))
+        recorded.append(sorted(loaded for loaded in sys.modules if loaded.partition('.')[0] == top_level))
         return import_module(name, package)
 
     monkeypatch.setattr(importlib, 'import_module', record_and_import)
