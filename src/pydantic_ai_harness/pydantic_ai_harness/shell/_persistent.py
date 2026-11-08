@@ -202,11 +202,12 @@ async def run_persistent_command(
 async def _stop_failed_call(job: Job, error: BaseException) -> None:
     """Stop and remove the job of a call that is raising `error`.
 
-    A stop that fails too is noted on `error` rather than replacing it, and leaves the job's directory.
+    A stop or removal that fails too is noted on `error` rather than replacing it; a failed stop leaves the job's
+    directory.
     """
     with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
         try:
             await job.kill()
             await job.cleanup()
-        except (WorkspaceError, OSError) as stop_error:
-            error.add_note(f'Stopping the command also failed: {stop_error}')
+        except (WorkspaceError, OSError) as cleanup_error:
+            error.add_note(f'Cleaning up the command also failed: {cleanup_error}')
