@@ -836,13 +836,6 @@ def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, ob
     return dict(thinking)
 
 
-def _request_parts(messages: Sequence[ModelMessage]) -> Iterator[ModelRequestPart]:
-    """The parts of each `ModelRequest` in `messages`, in order."""
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            yield from message.parts
-
-
 def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
     """Whether a value is a mapping whose keys are all strings."""
     if not isinstance(value, Mapping):
@@ -1958,7 +1951,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             name in declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.visibility_of(name) != 'visible'
-            for part in _request_parts(messages)
+            for part in self._request_parts(messages)
             if isinstance(part, ToolAvailabilityDeltaPart)
             for name in part.tools_added
         ):
@@ -1967,7 +1960,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # who can't use the beta opts out by setting the profile flag to `False`, which falls back to
         # leaving finished request-scoped prompts out of the request.
         if anthropic_profile.get('supports_request_scoped_system_prompts', False) and any(
-            _is_request_scoped(part) for part in _request_parts(messages)
+            _is_request_scoped(part) for part in self._request_parts(messages)
         ):
             betas.add(_ANTHROPIC_TURN_SCOPED_SYSTEM_BETA)
         # Co-extensive with the renderer in `_map_message`: the messages here are the ones
@@ -1976,10 +1969,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             isinstance(part, ModelSettingsDeltaPart)
             and not part.top_level
             and part.settings.get('thinking') is not None
-            for part in _request_parts(messages)
+            for part in self._request_parts(messages)
         ):
             betas.add(_MID_CONVERSATION_EFFORT_BETA)
         return betas
+
+    @staticmethod
+    def _request_parts(messages: Sequence[ModelMessage]) -> Iterator[ModelRequestPart]:
+        """The parts of each `ModelRequest` in `messages`, in order."""
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                yield from message.parts
 
     def _messages_use_anthropic_uploaded_file(self, messages: list[ModelMessage]) -> bool:
         """Whether any normalized message contains an Anthropic-hosted `UploadedFile`.
@@ -1994,7 +1994,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return False
-        for part in _request_parts(messages):
+        for part in self._request_parts(messages):
             items: Sequence[object]
             match part:
                 case UserPromptPart() if not isinstance(part.content, str):
