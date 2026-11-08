@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Autonomy, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.coder._instructions import coder_instructions
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -28,6 +29,16 @@ from .._tool_calls import call_tool, call_tools
 
 _PLAN = 'Propose a plan and wait for approval before editing.'
 _FINISH = 'You are running a delegated task. Choose sensible defaults and finish.'
+_MISREAD_TEXT = (
+    'If inputs seem inconsistent or goals impossible, assume you misread. '
+    'Re-read, and try other interpretations before settling.'
+)
+_MISREAD_MAX_TEXT = (
+    'If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), '
+    'assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion '
+    'before settling for a partial answer. A result that leaves a stated criterion unmet means your '
+    'interpretation is likely wrong, not that the answer is "none".'
+)
 
 
 @dataclass
@@ -265,6 +276,19 @@ class TestCoder:
         assert 'go through each requirement and edge case the task states' in text
         assert 'uses every field the provided data supplies' in text
         assert "Write checks from the task's stated behavior, not your code." in text
+        assert (_MISREAD_MAX_TEXT in text) is cleanup
+        assert (_MISREAD_TEXT in text) is not cleanup
+
+    @pytest.mark.parametrize('autonomy', ['low', 'medium', 'high', 'max'])
+    def test_max_expands_the_misread_check_for_parent_and_delegate(self, autonomy: Autonomy) -> None:
+        """A delegate follows its parent's autonomy for the misread check, as it does for cleanup."""
+        for text in coder_instructions(autonomy=autonomy, delegate_tool=None):
+            if autonomy == 'max':
+                assert _MISREAD_MAX_TEXT in text
+                assert _MISREAD_TEXT not in text
+            else:
+                assert _MISREAD_TEXT in text
+                assert _MISREAD_MAX_TEXT not in text
 
     async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
         """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""

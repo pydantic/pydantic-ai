@@ -240,7 +240,7 @@ replying.
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
-| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, and deletes its scratch files. Use it for runs nobody can answer, such as CI jobs. |
+| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
 or running commands if it ignores the sentence. To require approval before writes or commands, add

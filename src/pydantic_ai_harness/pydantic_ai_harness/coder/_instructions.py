@@ -66,6 +66,13 @@ _MISREAD = (
     'If inputs seem inconsistent or goals impossible, assume you misread. '
     'Re-read, and try other interpretations before settling.'
 )
+_MISREAD_MAX = (
+    'If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), '
+    'assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion '
+    'before settling for a partial answer. A result that leaves a stated criterion unmet means your '
+    'interpretation is likely wrong, not that the answer is "none".'
+)
+"""Replaces `_MISREAD` at `'max'` only: nobody can confirm a reading, so a partial answer goes unchallenged."""
 _HEREDOC = 'Check behavior with heredocs for one-offs, not new files.'
 
 _FINISHING = (
@@ -74,13 +81,13 @@ _FINISHING = (
 )
 
 
-def _checks(*, measure: bool, cleanup: bool) -> str:
+def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     return ' '.join(
         [
             _DELIVER,
             *([_TARGETS] if measure else []),
             _CONFIRM,
-            _MISREAD,
+            _MISREAD_MAX if misread_max else _MISREAD,
             _EXACT,
             _EVERY_FIELD,
             _HEREDOC,
@@ -108,9 +115,9 @@ def coder_instructions(
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads there.
     """
-    cleanup = autonomy == 'max'
-    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=cleanup)
-    delegate_checks = _checks(measure=True, cleanup=cleanup)
+    is_max = autonomy == 'max'
+    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
+    delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max)
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
