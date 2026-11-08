@@ -54,6 +54,7 @@ class FunctionSchema:
     takes_ctx: bool
     is_async: bool
     single_arg_name: str | None = None
+    field_names: tuple[str, ...] = ()
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
@@ -73,6 +74,8 @@ class FunctionSchema:
         """
         if self.single_arg_name is not None:
             return self.single_arg_name
+        if len(self.field_names) == 1:
+            return self.field_names[0]
         properties = self.json_schema.get('properties', {})
         if len(properties) == 1:
             return next(iter(properties))
@@ -230,6 +233,7 @@ def function_schema(
         validator=schema_validator,
         json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
+        field_names=tuple(schema_context.fields),
         positional_fields=schema_context.positional_fields,
         var_positional_field=schema_context.var_positional_field,
         takes_ctx=bool(takes_ctx),

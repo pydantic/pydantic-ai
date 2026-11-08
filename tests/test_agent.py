@@ -7,12 +7,12 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator
 from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
@@ -1730,6 +1730,18 @@ def test_output_type_function():
             )
         ]
     )
+
+
+def test_output_type_function_with_aliased_single_parameter():
+    def answer(city: Annotated[str, Field(alias='cityName')]) -> str:
+        return f'city={city}'
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'cityName': 'Paris'})])
+
+    agent = Agent(FunctionModel(call_tool), output_type=answer)
+    assert agent.run_sync('where?').output == 'city=Paris'
 
 
 def test_output_type_function_with_run_context():
