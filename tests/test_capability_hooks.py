@@ -1303,6 +1303,29 @@ class TestCombinedBeforeWrapAfter:
 class TestRunHooksRunStream:
     """Test that wrap_run and after_run fire for run_stream()."""
 
+    async def test_run_stream_captures_tool_returns_in_history(self):
+        @dataclass
+        class CaptureHistory(AbstractCapability[Any]):
+            messages: list[ModelMessage] = field(default_factory=list)
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                self.messages[:] = result.all_messages()
+                return result
+
+        class Output(BaseModel):
+            value: int
+
+        cap = CaptureHistory()
+        agent = Agent(TestModel(custom_output_args={'value': 1}), output_type=Output, capabilities=[cap])
+        with capture_run_messages() as captured:
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+
+        assert isinstance(captured[-1], ModelRequest)
+        assert isinstance(cap.messages[-1], ModelRequest)
+        assert isinstance(captured[-1].parts[0], ToolReturnPart)
+        assert isinstance(cap.messages[-1].parts[0], ToolReturnPart)
+
     async def test_wrap_run_fires_for_run_stream(self):
         cap = LoggingCapability()
         agent = Agent(

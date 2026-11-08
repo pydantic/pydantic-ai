@@ -1158,14 +1158,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # To allow this message history to be used in a future run without dangling tool calls,
                                 # append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(
-                                        _messages.ModelRequest(
-                                            parts,
-                                            run_id=graph_ctx.state.run_id,
-                                            conversation_id=graph_ctx.state.conversation_id,
-                                            timestamp=_utils.now_utc(),
-                                        )
+                                    tool_return_message = _messages.ModelRequest(
+                                        parts,
+                                        run_id=graph_ctx.state.run_id,
+                                        conversation_id=graph_ctx.state.conversation_id,
+                                        timestamp=_utils.now_utc(),
                                     )
+                                    messages.append(tool_return_message)
+                                    # `messages` is a snapshot used by StreamedRunResult, while the live history is
+                                    # also exposed through capture_run_messages() and AgentRunResult.after_run.
+                                    # Keep both views in sync so a captured streamed run has no dangling tool calls.
+                                    graph_ctx.state.message_history.append(tool_return_message)
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
