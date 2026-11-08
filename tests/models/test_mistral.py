@@ -44,6 +44,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
@@ -3320,6 +3321,24 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '30'
     assert exc.headers.get('x-request-id') == 'rid-1'
+
+
+def test_mistral_invalid_argument_code_is_not_context_window_error(allow_model_requests: None) -> None:
+    body = {
+        'object': 'error',
+        'message': 'reasoning_effort none is not supported for this model',
+        'type': 'invalid_request_invalid_args',
+        'code': '3051',
+    }
+    response = httpx2.Response(400, content=json.dumps(body).encode())
+    mock_client = MockMistralAI.create_mock(SDKError(json.dumps(body), raw_response=response))
+    agent = Agent(MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert not isinstance(exc_info.value, ModelContextWindowExceededError)
+    assert exc_info.value.provider_error_code == '3051'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
