@@ -283,21 +283,30 @@ async def test_google_extra_headers_user_agent_replaces_ours(
     assert user_agents == expected
 
 
-@pytest.mark.parametrize('extra_header', ['User-Agent', 'user-agent', 'USER-AGENT'])
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
 @pytest.mark.parametrize(
     'client_header,expected',
     [
         ('user-agent', ['google-genai per-request-app']),
-        ('User-Agent', ['per-request-app', 'google-genai']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
     ],
 )
 async def test_google_extra_headers_user_agent_replaces_user_built_client_user_agent(
-    allow_model_requests: None, client_header: str, extra_header: str, expected: list[str]
+    allow_model_requests: None, client_header: str, extra_headers: dict[str, str], expected: list[str]
 ) -> None:
     """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
 
     A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
-    can remove.
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
     """
     requests: list[httpx2.Request] = []
 
@@ -305,7 +314,7 @@ async def test_google_extra_headers_user_agent_replaces_user_built_client_user_a
         requests.append(request)
         return httpx2.Response(200, json=_GEMINI_RESPONSE)
 
-    settings: GoogleModelSettings = {'extra_headers': {extra_header: 'per-request-app'}}
+    settings: GoogleModelSettings = {'extra_headers': extra_headers}
     async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
         http_options = HttpOptions(httpx_async_client=http_client, headers={client_header: 'client-app'})
         client = Client(api_key='test-key', http_options=http_options)

@@ -1110,21 +1110,30 @@ async def test_google_image_generation_extra_headers_user_agent_replaces_ours(
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-@pytest.mark.parametrize('extra_header', ['User-Agent', 'user-agent', 'USER-AGENT'])
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
 @pytest.mark.parametrize(
     'client_header,expected',
     [
         ('user-agent', ['google-genai per-request-app']),
-        ('User-Agent', ['per-request-app', 'google-genai']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
     ],
 )
 async def test_google_image_generation_extra_headers_user_agent_replaces_user_built_client_user_agent(
-    client_header: str, extra_header: str, expected: list[str]
+    client_header: str, extra_headers: dict[str, str], expected: list[str]
 ):
     """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
 
     A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
-    can remove.
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
     """
     requests: list[httpx2.Request] = []
 
@@ -1142,7 +1151,7 @@ async def test_google_image_generation_extra_headers_user_agent_replaces_user_bu
         ),
     ) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
-        await model.generate('a robot', settings={'extra_headers': {extra_header: 'per-request-app'}})
+        await model.generate('a robot', settings={'extra_headers': extra_headers})
 
     user_agents = [
         re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value)

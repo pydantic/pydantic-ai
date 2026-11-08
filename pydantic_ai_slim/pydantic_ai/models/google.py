@@ -517,20 +517,21 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
     """Move a user-agent the caller set in `headers`, in any spelling, to where it replaces the client's.
 
     The SDK merges per-request headers into the client's by exact name, and adds its label only to a lowercase
-    `user-agent`. So the caller's value goes under each other spelling the client has, and otherwise under
-    `user-agent`, as the one line the SDK adds its label to. That label would leave an empty value with a trailing
-    space, which h11 rejects, so an empty value sends the client's line without our label instead.
+    `user-agent`. So the caller's value goes under `user-agent`, the one line on a client that has no other
+    spelling, and under each other spelling the client has. aiohttp folds those into the last one, the SDK's
+    `user-agent`. h11 rejects surrounding whitespace, which the SDK's label no longer covers on another spelling,
+    and the label would leave an empty value with a trailing space, so an empty value sends the client's
+    `user-agent` without our label instead.
 
     Returns whether the caller set one.
     """
     caller_user_agents = [headers.pop(name) for name in [*headers] if name.lower() == 'user-agent']
     if not caller_user_agents:
         return False
-    user_agent = ' '.join(filter(None, caller_user_agents))
-    if client_names := [name for name in client_headers if name != 'user-agent' and name.lower() == 'user-agent']:
-        headers.update(dict.fromkeys(client_names, user_agent))
-    else:
-        headers['user-agent'] = user_agent or client_headers.get('user-agent', '').removesuffix(f' {get_user_agent()}')
+    user_agent = ' '.join(filter(None, caller_user_agents)).strip()
+    client_names = [name for name in client_headers if name != 'user-agent' and name.lower() == 'user-agent']
+    headers.update(dict.fromkeys(client_names, user_agent))
+    headers['user-agent'] = user_agent or client_headers.get('user-agent', '').removesuffix(f' {get_user_agent()}')
     return True
 
 
