@@ -753,8 +753,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. builtin tools) and any betas from
-    extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    Merged with auto-added betas (e.g. builtin tools), any betas from extra_headers['anthropic-beta'],
+    and those in the client's `default_headers`, except on `AsyncAnthropicBedrock`, where Bedrock ignores them.
+    See the Anthropic docs for available beta features.
     """
 
     anthropic_speed: Literal['standard', 'fast']
