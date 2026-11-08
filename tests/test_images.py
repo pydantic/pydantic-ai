@@ -695,13 +695,6 @@ def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(
         openai_geometry.resolve_openai_dimensions(model_name, dimensions)
 
 
-@pytest.mark.parametrize('model_name', ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
-def test_openai_gpt_image_2_6_resolves_gpt_image_2_shapes(model_name: str):
-    """The live Images API accepts `1024x640`, the smallest GPT Image 2 shape inside the pixel budget, for 2.6."""
-    assert openai_geometry.resolve_openai_dimensions(model_name, (1024, 640)) == '1024x640'
-    assert openai_geometry.resolve_openai_aspect_ratio(model_name, '16:9') == '1280x720'
-
-
 def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
     geometry = openai_geometry.resolve_openai_geometry(
         'gpt-image-2',
@@ -3536,10 +3529,13 @@ def _openai_png_response() -> ImagesResponse:
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(openai_mock_client: AsyncMock):
+@pytest.mark.parametrize(
+    'model_name', ['gpt-image-2', 'gpt-image-2-2026-04-21', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']
+)
+async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(model_name: str, openai_mock_client: AsyncMock):
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
-        'gpt-image-2',
+        model_name,
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
