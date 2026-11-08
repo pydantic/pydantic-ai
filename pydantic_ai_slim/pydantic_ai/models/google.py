@@ -1156,6 +1156,18 @@ class GoogleModel(Model[Client]):
         elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
             server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
             headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+        # The SDK adds its label only to a lowercase `user-agent`, and a per-request one replaces the client's own
+        # in its case-sensitive merge. With no user-agent from the caller, carry over a value the user set on a
+        # client they built, and add ours unless the client has it. A caller's user-agent instead goes out on its
+        # own line beside our `User-Agent`, which only that exact spelling replaces, and the client's line drops
+        # our label so it isn't sent twice.
+        client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
+        client_user_agent = client_headers.get('user-agent', '')
+        if any(name.lower() == 'user-agent' for name in headers):
+            headers = {'User-Agent': get_user_agent(), **headers}
+            headers.setdefault('user-agent', client_user_agent.removesuffix(f' {get_user_agent()}'))
+        elif get_user_agent() not in client_user_agent:
+            headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
         http_options: HttpOptionsDict = {'headers': headers}
         if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
@@ -1265,7 +1277,7 @@ class GoogleModel(Model[Client]):
             if not model_request_parameters.allow_text_output:
                 modalities.remove(Modality.TEXT.value)
 
-        headers: dict[str, str] = {'Content-Type': 'application/json', 'user-agent': get_user_agent()}
+        headers: dict[str, str] = {'Content-Type': 'application/json'}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
