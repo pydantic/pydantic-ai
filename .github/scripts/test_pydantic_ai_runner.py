@@ -1762,6 +1762,30 @@ def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(monkeypatch: p
     )
 
 
+def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """UI Security Review's model called `noop` 89 times past its limit, until the run's deadline, and posted no review."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI UI Security Review')
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    noop_offered: list[bool] = []
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        noop_offered.append(any(tool_def.name == 'mcp__safeoutputs__noop' for tool_def in info.function_tools))
+        if sink.exists() and 'submit_pull_request_review' in sink.read_text(encoding='utf-8'):
+            return ModelResponse(parts=[TextPart('done')])
+        if noop_offered[-1] and len(noop_offered) < 5:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'placeholder'})])
+        return ModelResponse(
+            parts=[ToolCallPart('mcp__safeoutputs__submit_pull_request_review', {'body': 'SECURITY: INCOMPLETE'})]
+        )
+
+    assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
+    # The second `noop` is past the limit, so the third request no longer offers it.
+    assert noop_offered == [True, True, False, False]
+
+
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
 def test_run_caps_subagents_so_the_budget_notice_still_fires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int

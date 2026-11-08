@@ -40,7 +40,7 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
 
-[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] lists the latest Bedrock models for autocomplete, one id per model, including models from Anthropic, Amazon, Meta, Mistral and OpenAI. Any other model id Bedrock accepts works too.
 
 ### Data retention
 

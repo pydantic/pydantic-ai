@@ -24,7 +24,8 @@ else:
 
 
 DeepSeekModelName = Literal[
-    'deepseek-chat', 'deepseek-flash', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'
+    'deepseek-v4-pro',
+    'deepseek-flash',
 ]
 
 

@@ -667,7 +667,8 @@ filterwarnings = [
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
-    "ignore:Found propagated trace context:RuntimeWarning",
+    # logfire < 5.5 says 'Found propagated trace context', 5.5+ says 'Found propagated context'.
+    "ignore:Found propagated (trace )?context:RuntimeWarning",
     # `starlette.testclient` still references the `anyio.abc.BlockingPortal` alias that anyio 4.15.0
     # deprecated, so the warning fires at import time and fails collection of every test module that
     # imports it. There is nothing to bump to: starlette's `master` still uses the alias.

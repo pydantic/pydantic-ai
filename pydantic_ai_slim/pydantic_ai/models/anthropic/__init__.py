@@ -260,7 +260,6 @@ try:
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
     )
-    from anthropic.types.model_param import ModelParam
 
     from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
@@ -516,13 +515,21 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
     return with_max_retries(client, model_settings, carry_over={'aws_profile': client.aws_profile})
 
 
-LatestAnthropicModelNames = ModelParam
-"""Anthropic model names from the installed SDK."""
+LatestAnthropicModelNames = Literal[
+    'claude-fable-5-1',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+    'claude-opus-4-8',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5',
+]
+"""Latest Anthropic models: per line, the newest model of the newest generation and of the previous one."""
 
-AnthropicModelName = LatestAnthropicModelNames
+AnthropicModelName = str | LatestAnthropicModelNames
 """Possible Anthropic model names.
 
-The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
