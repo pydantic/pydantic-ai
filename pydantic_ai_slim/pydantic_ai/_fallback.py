@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 from opentelemetry.trace import Span, Tracer
 
-from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from ._model_request_attempts import AttemptStart, carried_attempts, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import ContentFilterError, FallbackExceptionGroup, UserError
 from .messages import (
@@ -253,6 +253,8 @@ class AttemptLog:
             self.attempts.extend(failure.failed_attempts or [])
         elif isinstance(failure, FallbackExceptionGroup):
             self.attempts.extend(failure.attempts)
+        else:
+            self.attempts.extend(carried_attempts(failure))
         attempt = failed_attempt(model, failure, start=start, duration=start.elapsed())
         self.attempts.append(attempt)
         if parent is not None and tracer is not None:

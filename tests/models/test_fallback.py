@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
 from decimal import Decimal
@@ -2240,12 +2240,12 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
 
 
-@pytest.mark.parametrize('inner_outcome', ['answered', 'failed'])
+@pytest.mark.parametrize('inner_outcome', ['answered', 'failed', 'unhandled'])
 async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> None:
     """An outer `FallbackModel` keeps the attempts an inner one made, so their billed usage still counts.
 
     The inner model's rejected response is on the response the outer one then rejects, or on the
-    `FallbackExceptionGroup` the outer one falls back on.
+    `FallbackExceptionGroup` or unhandled exception the outer one falls back on.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2260,19 +2260,66 @@ async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> N
     inner = FallbackModel(
         FunctionModel(respond, model_name='inner_a'),
         FunctionModel(respond if inner_outcome == 'answered' else failure_response, model_name='inner_b'),
-        fallback_on=[ModelHTTPError, reject_inner_a],
+        fallback_on=[reject_inner_a] if inner_outcome == 'unhandled' else [ModelHTTPError, reject_inner_a],
     )
     outer = FallbackModel(
-        inner, FunctionModel(respond, model_name='outer'), fallback_on=[FallbackExceptionGroup, reject_inner]
+        inner,
+        FunctionModel(respond, model_name='outer'),
+        fallback_on=[ModelHTTPError, FallbackExceptionGroup, reject_inner],
     )
     result = await Agent(outer).run('test')
 
     expected = {
         'answered': ([('inner_a', 'rejected'), ('inner_b', 'rejected')], 30),
         'failed': ([('inner_a', 'rejected'), ('inner_b', 'error'), ('fallback:inner_a,inner_b', 'error')], 20),
+        'unhandled': ([('inner_a', 'rejected'), ('fallback:inner_a,inner_b', 'error')], 20),
     }
     attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
     assert (attempts, result.usage.input_tokens) == expected[inner_outcome]
+
+
+@pytest.mark.parametrize('via', ['model', 'capability'])
+@pytest.mark.parametrize('limit', ['within', 'tokens', 'cost'])
+async def test_nested_fallback_carried_usage_counts_once(via: str, limit: str) -> None:
+    """Outer recovery counts rejected tokens and cost once, including when checking usage limits.
+
+    FunctionModel supplies deterministic billed usage; no provider-specific behavior is involved.
+    """
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=120, cost=Decimal('0.012')))
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=45, cost=Decimal('0.0045')))
+
+    inner = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(failure_response, model_name='failing'),
+        fallback_on=_rejected_primary,
+    )
+    final = FunctionModel(backup, model_name='backup')
+    agent = (
+        Agent(FallbackModel(inner, final, fallback_on=ModelHTTPError))
+        if via == 'model'
+        else Agent(inner, capabilities=[ModelFallback(final, fallback_on=ModelHTTPError)])
+    )
+    limits = {
+        # Counting the rejected response twice would exceed these limits.
+        'within': UsageLimits(input_tokens_limit=200, cost_limit=Decimal('0.02')),
+        'tokens': UsageLimits(input_tokens_limit=150),
+        'cost': UsageLimits(cost_limit=Decimal('0.015')),
+    }
+    usage = RunUsage()
+    expected_error = {'tokens': 'input_tokens_limit', 'cost': 'cost_limit'}
+    with pytest.raises(UsageLimitExceeded, match=expected_error[limit]) if limit != 'within' else nullcontext():
+        result = await agent.run('test', usage=usage, usage_limits=limits[limit])
+        assert result.output == 'accepted'
+        # The winner retains its own usage; rejected usage belongs to its failed attempt.
+        assert result.response.usage == RequestUsage(input_tokens=45, cost=Decimal('0.0045'))
+        assert [attempt.usage for attempt in result.response.failed_attempts or [] if attempt.usage] == [
+            RequestUsage(input_tokens=120, cost=Decimal('0.012'))
+        ]
+    assert (usage.input_tokens, usage.cost) == (165, Decimal('0.0165'))
 
 
 class _UsageAttemptsSpy(AbstractCapability[Any]):
