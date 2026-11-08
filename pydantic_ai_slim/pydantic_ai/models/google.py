@@ -513,6 +513,27 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
+def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str, str]) -> bool:
+    """Move a user-agent the caller set in `headers`, in any spelling, to where it replaces the client's.
+
+    The SDK merges per-request headers into the client's by exact name, and adds its label only to a lowercase
+    `user-agent`. So the caller's value goes under each other spelling the client has, and otherwise under
+    `user-agent`, as the one line the SDK adds its label to. That label would leave an empty value with a trailing
+    space, which h11 rejects, so an empty value sends the client's line without our label instead.
+
+    Returns whether the caller set one.
+    """
+    caller_user_agents = [headers.pop(name) for name in [*headers] if name.lower() == 'user-agent']
+    if not caller_user_agents:
+        return False
+    user_agent = ' '.join(filter(None, caller_user_agents))
+    if client_names := [name for name in client_headers if name != 'user-agent' and name.lower() == 'user-agent']:
+        headers.update(dict.fromkeys(client_names, user_agent))
+    else:
+        headers['user-agent'] = user_agent or client_headers.get('user-agent', '').removesuffix(f' {get_user_agent()}')
+    return True
+
+
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -1144,15 +1165,10 @@ class GoogleModel(Model[Client]):
             headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
         # The SDK adds its label only to a lowercase `user-agent`, and a per-request one replaces the client's own
         # in its case-sensitive merge. With no user-agent from the caller, carry over a value the user set on a
-        # client they built, and add ours unless the client has it. A caller's user-agent instead goes out on its
-        # own line beside our `User-Agent`, which only that exact spelling replaces, and the client's line drops
-        # our label so it isn't sent twice.
+        # client they built, and add ours unless the client has it.
         client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
         client_user_agent = client_headers.get('user-agent', '')
-        if any(name.lower() == 'user-agent' for name in headers):
-            headers = {'User-Agent': get_user_agent(), **headers}
-            headers.setdefault('user-agent', client_user_agent.removesuffix(f' {get_user_agent()}'))
-        elif get_user_agent() not in client_user_agent:
+        if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
             headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
         http_options: HttpOptionsDict = {'headers': headers}
         if (timeout := model_settings.get('timeout')) is not None:
