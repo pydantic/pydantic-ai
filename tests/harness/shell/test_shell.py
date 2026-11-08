@@ -10,7 +10,7 @@ import shlex
 import shutil
 import signal
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from datetime import timedelta
@@ -38,6 +38,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
@@ -2109,6 +2110,47 @@ class TestStopCommandAlreadyFinished:
         assert result.splitlines()[-2:] == ['[stopped]', '[exit code: 3]']
 
 
+@pytest.fixture
+def writable_after(shell_dir: Path) -> Iterator[Path]:
+    """`shell_dir` for a command that takes write permission away, given back afterwards so it can be removed."""
+    if os.geteuid() == 0:  # pragma: no cover
+        pytest.skip('root writes regardless of mode bits')
+    yield shell_dir
+    for path in (shell_dir, *shell_dir.rglob('*')):
+        path.chmod(path.stat().st_mode | 0o200)
+
+
+class TestReadOnlyJobDirectory:
+    @pytest.mark.parametrize(
+        'command',
+        [
+            pytest.param('chmod 500 .pydantic-ai-harness/shell/*', id='job-directory'),
+            pytest.param('chmod -R a-w .', id='workspace'),
+        ],
+    )
+    async def test_the_exit_code_is_published(self, writable_after: Path, command: str) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), command))
+        await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
+        result = await ts.check_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
+
+    async def test_stop_reports_a_job_directory_it_cannot_remove(self, writable_after: Path) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), 'chmod -R a-w .'))
+        job = await _job(ts, _ctx(writable_after), command_id)
+        await _wait_for_exit(job.pid)
+        result = await ts.stop_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-3:] == [
+            '[stopped]',
+            '[exit code: 0]',
+            '[job directory not removed: permission denied]',
+        ]
+        # The job directory is writable again, so its files go; the read-only jobs directory keeps it.
+        assert list(Path(job.directory).iterdir()) == []
+        assert 'unknown command ID' in await ts.check_command(_ctx(writable_after), command_id)
+
+
 class TestResolveEnv:
     """Unit coverage for the env-resolution branches."""
 
@@ -2234,6 +2276,11 @@ class TestEnvControlPropagation:
         assert toolset._resolve_env() == {'PATH': '/usr/bin'}  # pyright: ignore[reportPrivateUsage]
 
 
+class _RefusesRemove(LocalWorkspaceBackend):
+    async def remove(self, path: str) -> None:
+        raise WorkspaceReadOnlyError('read-only')
+
+
 class TestReadOnlyWorkspace:
     """A read-only workspace refuses `run`, so the shell offers no tools and reports a refusal as a failure."""
 
@@ -2268,6 +2315,14 @@ class TestReadOnlyWorkspace:
         with pytest.raises(ToolFailed) as exc_info:
             await ts.call_tool('run_command', {'command': 'echo hi'}, read_only, tools['run_command'])
         assert exc_info.value.message == READ_ONLY_FAILURE
+
+    async def test_a_read_only_workspace_still_fails_the_stop(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(_ctx(shell_dir), 'true'))
+        await _wait_for_exit((await _job(ts, _ctx(shell_dir), command_id)).pid)
+        with pytest.raises(ToolFailed) as failed:
+            await ts.stop_command(_run_context(Workspace(_RefusesRemove(shell_dir))), command_id)
+        assert failed.value.message == READ_ONLY_FAILURE
 
 
 class TestDetachedJobRoundTrip:

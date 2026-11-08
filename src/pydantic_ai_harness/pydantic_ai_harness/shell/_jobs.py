@@ -109,6 +109,7 @@ fi
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
 code=$?
+[ -w "$dir" ] || chmod u+w "$dir" 2> /dev/null
 stop_watcher
 publish $code
 """
@@ -124,23 +125,31 @@ size doesn't clear it at every check. The watcher starts before `max_file_bytes`
 growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
 own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only
 once the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its
-last check. When `watch.stop` cannot be created, as when the command removed the job directory or made it read-only, the
-wrapper sends `TERM` regardless and exits without waiting for the watcher; publishing the exit status needs the same
-write, so none is published. That `TERM` is then the watcher's only stop, and it can be lost: `dash` drops a `TERM` that
-arrives before the watcher's subshell has reset the trap it inherits from the wrapper, and a shell that started with
-`TERM` ignored never gets it. Such a watcher exits at its next check, once the wrapper is gone. A watcher that gets no
-`TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM` ignored, at its next check. It
-sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional
-seconds gets 1.
+last check. When `watch.stop` cannot be created, as when the command removed the job directory or left it read-only
+(below), the wrapper sends `TERM` regardless and exits without waiting for the watcher; publishing the exit status needs
+the same write, so none is published. That `TERM` is then the watcher's only stop, and it can be lost: `dash` drops a
+`TERM` that arrives before the watcher's subshell has reset the trap it inherits from the wrapper, and a shell that
+started with `TERM` ignored never gets it. Such a watcher exits at its next check, once the wrapper is gone. A watcher
+that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM` ignored, at its
+next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without
+fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
-command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
+command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation, or a job directory the wrapper cannot write to
+(below), leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
 for `launch.ready` first) never starts it and publishes `143` instead. A launcher that dies
 before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
 never waits for it forever.
+
+A command can take write permission away from its job directory, as `chmod -R a-w .` in the workspace does. Stopping the
+watcher and publishing both create files there, so once the command exits, the wrapper gives the directory's owner write
+permission back; a directory that is still writable costs only the `-w` test, a shell builtin. Nothing else the command
+changed is restored, so a jobs directory it made read-only keeps `Job.cleanup` from removing the job directory. A stop
+signal that lands while `chmod` runs ends it, as `chmod` runs with default signal handling, and the directory stays
+read-only: no exit status is published.
 
 A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
 handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
