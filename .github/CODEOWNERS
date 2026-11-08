@@ -11,6 +11,7 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /.github/workflows/       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /.github/actions/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /.github/scripts/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.github/pr-review-checks/ @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /.pre-commit-config.yaml  @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /Makefile                 @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 

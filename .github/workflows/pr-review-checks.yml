@@ -134,6 +134,11 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: true
 
+      - name: Fetch the base commit
+        run: git -C pr-head fetch --no-tags --quiet "https://github.com/${GITHUB_REPOSITORY}.git" "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
       - name: Gather PR context
         run: |
           gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${DEFAULT_BRANCH}" --jq .content | base64 -d > /tmp/gather-review-context.sh

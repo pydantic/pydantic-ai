@@ -182,8 +182,9 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
 @pytest.mark.parametrize('text', ['Still reading.', _result('elsewhere.py')])
 def test_invalid_answer_under_the_budget_fails(tmp_path: Path, text: str) -> None:
     """A malformed answer, or a finding on a file this check does not own, is a reviewer error."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as error:
         check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=1))
+    assert 'elsewhere.py' not in str(error.value)
 
 
 def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:

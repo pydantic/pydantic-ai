@@ -145,6 +145,7 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
     (repository / 'kept.py').write_text('x = 1\n++ b/fake\n')
     (repository / 'quo"te.py').write_text('quoted = 1\n')
     (repository / 'with space.py').write_text('spaced = 1\n')
+    (repository / 'quo"te space.py').write_text('both = 1\n')
     _git(repository, 'add', '-A')
     _git(repository, 'commit', '-q', '-m', 'head')
 
@@ -155,3 +156,4 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
     assert files['kept.py'] == ChangedFile('kept.py', '', ('++ b/fake',))
     assert files['quo"te.py'] == ChangedFile('quo"te.py', '', ('quoted = 1',))
     assert files['with space.py'] == ChangedFile('with space.py', '', ('spaced = 1',))
+    assert files['quo"te space.py'] == ChangedFile('quo"te space.py', '', ('both = 1',))

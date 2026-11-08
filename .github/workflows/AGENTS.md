@@ -250,7 +250,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `tests-and-dependencies` check owns tests, cassettes, dependency manifests and lockfiles, and holds
   them to the repository's testing and dependency rules rather than the security rubric. A change only
   to the documentation and agent instructions `is_content` lists selects nothing and passes; files
-  under `.github/` always get a review.
+  under `.github/` always get a review, except a generated `*.lock.yml`, whose `.md` source the
+  `general` check reviews.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
@@ -278,10 +279,10 @@ PR cannot test its own change to this workflow or its scripts.
 # Code owners approve dependency and CI config changes
 
 `.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
-`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
-`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
-dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
-approval current.
+`.github/actions/`, `.github/scripts/`, `.github/pr-review-checks/`, `.pre-commit-config.yaml`,
+`Makefile`, and itself. The `main` ruleset requires an approving review from a code owner on a PR
+that changes any of them, and dismisses it when a later push changes the diff. GitHub enforces both,
+so no workflow keeps the approval current.
 
 - A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
   to someone else's PR can still approve that push.

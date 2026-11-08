@@ -136,7 +136,7 @@ def load_results(directory: Path, checks: list[str]) -> dict[str, CheckResult]:
         if result.check not in checks or path.stem != result.check:
             raise GateError(f'Unexpected result file {path.name}')
         if outside := sorted({finding.path for finding in result.findings} - set(result.files)):
-            raise GateError(f'{result.check} reported findings outside its files: {outside}')
+            raise GateError(f'{result.check} reported {len(outside)} findings outside its files')
         results[result.check] = result
     return results
 
