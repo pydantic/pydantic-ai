@@ -3530,9 +3530,18 @@ def _openai_png_response() -> ImagesResponse:
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize(
-    'model_name', ['gpt-image-2', 'gpt-image-2-2026-04-21', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']
+    'model_name',
+    [
+        'gpt-image-2',
+        'gpt-image-2-2026-04-21',
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-flare-2026-12-01',
+        'gpt-image-2.6-sunburst',
+        'gpt-image-2.6-sunburst-2026-12-01',
+    ],
 )
 async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(model_name: str, openai_mock_client: AsyncMock):
+    """OpenAI lists no dated GPT Image 2.6 snapshot yet; the hypothetical dated ids pin the dash-suffix match."""
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         model_name,

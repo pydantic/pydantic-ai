@@ -12449,6 +12449,7 @@ async def test_openai_responses_image_generation_gpt_image_2_6_xhigh(
         ]
     )
     assert result.output == snapshot(IsInstance(BinaryImage))
+    assert result.output.media_type == 'image/jpeg'
     return_part = next(
         part
         for message in result.all_messages()
