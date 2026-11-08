@@ -1875,6 +1875,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return context_management
 
+    @staticmethod
+    def _pop_beta_headers(extra_headers: dict[str, str]) -> set[str]:
+        """Remove the `anthropic-beta` header from `extra_headers`, in any spelling, and return the betas it lists.
+
+        The SDK folds header names case-insensitively, so one left in `extra_headers` would replace the header it
+        builds from `betas`.
+        """
+        names = [name for name in extra_headers if name.lower() == 'anthropic-beta']
+        return {
+            stripped_beta
+            for name in names
+            for beta in extra_headers.pop(name).split(',')
+            if (stripped_beta := beta.strip())
+        }
+
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
@@ -1913,8 +1928,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
 
-        if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
+        betas.update(self._pop_beta_headers(extra_headers))
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
