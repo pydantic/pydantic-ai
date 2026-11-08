@@ -2625,13 +2625,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             raise
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
-                        self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
                         # `ModelRetry` — then there's no response to preserve in history.
-                        if _handler_response is not None:  # pragma: no branch
-                            self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                        self._settle_rejected_response(
+                            ctx,
+                            _handler_response,
+                            accounted_responses,
+                            record_usage=not _handler_usage_recorded,
+                        )
                         await self._build_retry_node(ctx, e)
                     except BaseException:
                         await _settle_pending(_pending, None)
@@ -2740,13 +2743,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
             await _settle_pending(state.pending, None)
-            self._enforce_usage_limits(ctx, state.accounted_responses)
-            # `ModelRetry` from any model lifecycle hook retries the model request.
-            # If the handler was called, preserve the response in history for context.
-            if state.response is not None:
-                self._append_response(
-                    ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
-                )
+            # `ModelRetry` from any model lifecycle hook retries the model request. If the handler was
+            # called, preserve the response in history for context.
+            self._settle_rejected_response(
+                ctx,
+                state.response,
+                state.accounted_responses,
+                record_usage=not state.usage_recorded,
+                described=state.described_attempts,
+            )
             return await self._build_retry_node(ctx, e)
         except BaseException:
             await _settle_pending(state.pending, None)
@@ -3738,6 +3743,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             billed = _billed_by_request(response, request_context.messages)
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
         _record_billed_usage(ctx.state.usage, billed, described=described)
+
+    def _settle_rejected_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse | None,
+        accounted_responses: Sequence[_messages.ModelResponse],
+        *,
+        record_usage: bool,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
+    ) -> None:
+        """Commit a response a hook rejected with `ModelRetry`, then enforce the limits it was billed against.
+
+        The response is billed even though the hook rejected it, so it goes to history before the check: a
+        run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
+        """
+        if response is not None:
+            self._append_response(ctx, response, record_usage=record_usage, described=described)
+        try:
+            self._enforce_usage_limits(ctx, accounted_responses)
+        except exceptions.UsageLimitExceeded:
+            # Only a billed response can cross a limit, so there is one to mark as never acted on.
+            if response is not None:  # pragma: no branch
+                ctx.state.message_history[-1] = replace(response, state='interrupted')
+            raise
 
     @staticmethod
     def _enforce_usage_limits(
