@@ -1,4 +1,4 @@
-"""Run one Security Review check with read-only OpenCode tools inside its step and time budget."""
+"""Run one PR review check with read-only OpenCode tools inside its step and time budget."""
 
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ from urllib.parse import quote
 
 from douwebot_opencode_result import final_text
 from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
-from publish_security_review import CheckResult, SecurityFinding
+from publish_pr_review_checks import CheckResult, ReviewFinding
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from security_review_checks import SecurityCheck, changed_files, check_named, select
+from pr_review_checks import ReviewCheck, changed_files, check_named, select
 
-PROMPTS = Path('.github/security-review/prompts')
+PROMPTS = Path('.github/pr-review-checks/prompts')
 REVIEW_CONTEXT = Path('.github/.review-context')
 MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
@@ -41,7 +41,7 @@ class ModelResult(BaseModel):
     """What the model returns."""
 
     outcome: Literal['COMPLETE', 'INCOMPLETE']
-    findings: list[SecurityFinding] = Field(max_length=MAX_FINDINGS)
+    findings: list[ReviewFinding] = Field(max_length=MAX_FINDINGS)
     coverage: str
     private_report: str
 
@@ -71,7 +71,7 @@ def strip_instructions(head: Path) -> None:
 
 def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str) -> Path:
     """Copy only this check's diffs and file list next to the PR details."""
-    context = workspace / '.github' / '.security-review' / check
+    context = workspace / '.github' / '.pr-review-checks' / check
     (context / 'diff').mkdir(parents=True)
     shutil.copy(workspace / REVIEW_CONTEXT / 'pr-details.json', context / 'pr-details.json')
     unseen = set(files)
@@ -123,7 +123,7 @@ def _annotated_diff(repository: Path, base: str, head: str, path: str) -> str:
     return '\n'.join(lines) + '\n'
 
 
-def build_prompt(check: SecurityCheck, context: Path, workspace: Path, *, pr_number: int, repository: str) -> str:
+def build_prompt(check: ReviewCheck, context: Path, workspace: Path, *, pr_number: int, repository: str) -> str:
     """Fill the shared prompt with this check's fragment and limits."""
     values = {
         '{check_title}': check.title,
@@ -195,10 +195,10 @@ def run_opencode(
     return usage
 
 
-def check_result(check: SecurityCheck, files: list[str], stream: Path, usage: Usage) -> tuple[CheckResult, str]:
+def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usage) -> tuple[CheckResult, str]:
     """Validate the model's result; a spent budget is an incomplete review, never a crash."""
     outcome: Literal['COMPLETE', 'INCOMPLETE'] = 'INCOMPLETE'
-    findings: list[SecurityFinding] = []
+    findings: list[ReviewFinding] = []
     private_report = ''
     at_step_budget = usage.steps >= check.max_steps
     if usage.stopped:
@@ -233,7 +233,7 @@ def check_result(check: SecurityCheck, files: list[str], stream: Path, usage: Us
 
 def report_privately(webhook: str, check: str, pr_number: int, repository: str, report: str) -> None:
     """Send a vulnerability that already exists on the base branch to the private triage channel."""
-    text = f'Security Review ({check}) on {repository}#{pr_number} found a pre-existing issue:\n\n{report}'
+    text = f'PR Review Check ({check}) on {repository}#{pr_number} found a pre-existing issue:\n\n{report}'
     request = urllib.request.Request(
         webhook, data=json.dumps({'text': text}).encode(), headers={'Content-Type': 'application/json'}
     )
@@ -245,16 +245,16 @@ def export_span(endpoint: str, token: str, result: CheckResult, attributes: Mapp
     """Send one span per review to Logfire: OpenCode's own spans carry no model, token or step counts."""
     values = {
         **attributes,
-        'security_review.outcome': result.outcome,
-        'security_review.findings': len(result.findings),
-        'security_review.steps': result.steps,
-        'security_review.tokens': result.tokens,
-        'security_review.seconds': result.seconds,
+        'pr_review_checks.outcome': result.outcome,
+        'pr_review_checks.findings': len(result.findings),
+        'pr_review_checks.steps': result.steps,
+        'pr_review_checks.tokens': result.tokens,
+        'pr_review_checks.seconds': result.seconds,
     }
     span = {
         'traceId': secrets.token_hex(16),
         'spanId': secrets.token_hex(8),
-        'name': f'Security Review {result.check}',
+        'name': f'PR Review Check {result.check}',
         'kind': 1,
         'startTimeUnixNano': str(started),
         'endTimeUnixNano': str(time.time_ns()),
@@ -263,7 +263,7 @@ def export_span(endpoint: str, token: str, result: CheckResult, attributes: Mapp
             for key, value in values.items()
         ],
     }
-    resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'security-review'}}]}
+    resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'pr-review-checks'}}]}
     body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': __name__}, 'spans': [span]}]}]}
     request = urllib.request.Request(
         f'{endpoint}/v1/traces',
@@ -298,15 +298,15 @@ def main() -> None:
     token = env.get('LOGFIRE_TOKEN', '')
     endpoint = (env.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
     attributes = {
-        'security_review.check': check.name,
+        'pr_review_checks.check': check.name,
         'github.repository': repository,
         'github.pr_number': str(pr_number),
         'github.head_sha': env['HEAD_SHA'],
         'github.run_id': env['GITHUB_RUN_ID'],
     }
     started = time.time_ns()
-    stream = runner_temp / f'security-review-{check.name}.ndjson'
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='security-review-opencode-') as temp:
+    stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
+    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='pr-review-checks-opencode-') as temp:
         temp_root = Path(temp)
         config_dir = temp_root / 'config' / 'opencode'
         config_dir.mkdir(parents=True)
@@ -338,7 +338,7 @@ def main() -> None:
         if not (webhook := env.get('TRIAGE_WEBHOOK_URL', '')):
             raise ValueError('The review produced a private report, but TRIAGE_WEBHOOK_URL is empty')
         report_privately(webhook, check.name, pr_number, repository, private_report)
-    output = runner_temp / 'security-review-result'
+    output = runner_temp / 'pr-review-checks-result'
     output.mkdir(exist_ok=True)
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(

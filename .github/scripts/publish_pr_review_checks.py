@@ -1,4 +1,4 @@
-"""Gate and publish the `Security Review` commit status from trusted default-branch code."""
+"""Gate and publish the `PR Review Checks` commit status from trusted default-branch code."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from typing import Literal, Protocol
 from pr_gates import Commit, GateError, GhCli, Label
 from pydantic import BaseModel, Field, TypeAdapter
 
-CONTEXT = 'Security Review'
-RUN_LABEL = 'security-review:run'
-ACCEPTED_LABEL = 'security-review:accepted'
-MARKER = re.compile(r'\n\n<!-- security-review run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
+CONTEXT = 'PR Review Checks'
+RUN_LABEL = 'pr-review-checks:run'
+ACCEPTED_LABEL = 'pr-review-checks:accepted'
+MARKER = re.compile(r'\n\n<!-- pr-review-checks run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 # `.permission` maps maintain and custom roles onto these base levels.
 TRUSTED_PERMISSIONS = frozenset({'admin', 'write'})
 
@@ -25,7 +25,7 @@ BLOCKING: frozenset[Severity] = frozenset({'critical', 'high'})
 CommitStatus = Literal['pending', 'success', 'failure']
 
 
-class SecurityFinding(BaseModel):
+class ReviewFinding(BaseModel):
     """One inline finding on a file its check reviews."""
 
     path: str
@@ -41,7 +41,7 @@ class CheckResult(BaseModel):
     check: str
     files: list[str]
     outcome: Literal['COMPLETE', 'INCOMPLETE']
-    findings: list[SecurityFinding]
+    findings: list[ReviewFinding]
     coverage: str
     steps: int
     tokens: int
@@ -75,7 +75,7 @@ class _IssueEvent(BaseModel):
     label: _EventLabel | None = None
 
 
-class SecurityGitHub(Protocol):
+class ReviewChecksGitHub(Protocol):
     """The GitHub reads and writes the gate and the publisher need."""
 
     def pull_request(self) -> LivePullRequest: ...
@@ -86,7 +86,7 @@ class SecurityGitHub(Protocol):
     def post_review(self, payload: str) -> str | None: ...
 
 
-def gate(github: SecurityGitHub, env: Mapping[str, str]) -> bool:
+def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
     """Return whether this event reviews the head; every other outcome writes its own status."""
     url = run_url(env)
     if group := env.get('MERGE_GROUP_SHA'):
@@ -120,7 +120,7 @@ def gate(github: SecurityGitHub, env: Mapping[str, str]) -> bool:
     return True
 
 
-def _run_label_trusted(github: SecurityGitHub, labels: set[str]) -> bool:
+def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
     """The run label counts only when its latest application came from a user with write access."""
     if RUN_LABEL not in labels:
         return False
@@ -164,7 +164,7 @@ def verdict(checks: list[str], results: Mapping[str, CheckResult]) -> tuple[Comm
 
 def review_payload(results: list[CheckResult], head: str, run_id: int, *, inline: bool) -> str:
     """One `COMMENT` review for every check's findings, bound to this run and head."""
-    body = '## Security Review\n\n' + '\n'.join(
+    body = '## PR Review Checks\n\n' + '\n'.join(
         f'- `{result.check}` ({result.outcome.lower()}): {result.coverage}' for result in results
     )
     body += '\n\n<details><summary>Usage</summary>\n\n' + usage_table(results) + '\n\n</details>'
@@ -176,11 +176,11 @@ def review_payload(results: list[CheckResult], head: str, run_id: int, *, inline
                 comments.append({'path': finding.path, 'line': finding.line, 'side': finding.side, 'body': text})
             else:
                 body += f'\n\n### `{finding.path}:{finding.line}` (`{finding.side}`)\n\n{text}'
-    body += f'\n\n<!-- security-review run={run_id} head={head} -->'
+    body += f'\n\n<!-- pr-review-checks run={run_id} head={head} -->'
     return json.dumps({'commit_id': head, 'event': 'COMMENT', 'body': body, 'comments': comments})
 
 
-def publish(github: SecurityGitHub, env: Mapping[str, str]) -> None:
+def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
     """Post the findings and the final status for the head this run reviewed."""
     head = env['HEAD_SHA']
     url = run_url(env)
@@ -234,7 +234,7 @@ class _PostedReview(BaseModel):
     html_url: str
 
 
-class SecurityGhCli(GhCli):
+class ReviewChecksGhCli(GhCli):
     """Pull request state, permissions, labels, reviews and statuses through `gh api`."""
 
     def pull_request(self) -> LivePullRequest:
@@ -281,7 +281,7 @@ class SecurityGhCli(GhCli):
 def main() -> None:
     """`gate` decides whether this event reviews its head; `publish` posts the result."""
     env = os.environ
-    github = SecurityGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0'))
+    github = ReviewChecksGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0'))
     if sys.argv[1] == 'gate':
         review = gate(github, env)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:

@@ -1,4 +1,4 @@
-"""Run one Security Review check inside its budget and hand the publisher only publishable fields."""
+"""Run one PR review check inside its budget and hand the publisher only publishable fields."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import security_review_run
-from security_review_checks import CHECKS, GENERAL, SecurityCheck
-from security_review_run import Usage, build_prompt, check_result, run_opencode, strip_instructions, write_context
+import run_pr_review_check
+from pr_review_checks import CHECKS, GENERAL, ReviewCheck
+from run_pr_review_check import Usage, build_prompt, check_result, run_opencode, strip_instructions, write_context
 
 CHECK = dataclasses.replace(GENERAL, max_steps=3, max_minutes=5)
 WORKSPACE = Path(__file__).parents[2]
@@ -104,12 +104,12 @@ def test_context_numbers_a_lock_diff_the_shared_context_leaves_out(tmp_path: Pat
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
-def test_prompt_fills_every_placeholder(check: SecurityCheck) -> None:
+def test_prompt_fills_every_placeholder(check: ReviewCheck) -> None:
     """Each check's prompt carries its fragment and limits, with no placeholder left."""
-    context = WORKSPACE / '.github' / '.security-review' / check.name
+    context = WORKSPACE / '.github' / '.pr-review-checks' / check.name
     prompt = build_prompt(check, context, WORKSPACE, pr_number=7, repository='o/r')
     assert not re.search(r'\{[a-z_]+\}', prompt)
-    assert '.github/.security-review/' + check.name in prompt
+    assert '.github/.pr-review-checks/' + check.name in prompt
     assert prompt.rstrip().endswith('}')
     assert ('### Classes to examine in every check' in prompt) is check.security_rubric
 
@@ -143,7 +143,7 @@ def test_time_budget_stops_the_review(tmp_path: Path, monkeypatch: pytest.Monkey
         def cancel(self) -> None:
             pass
 
-    monkeypatch.setattr(security_review_run.threading, 'Timer', ImmediateTimer)
+    monkeypatch.setattr(run_pr_review_check.threading, 'Timer', ImmediateTimer)
     usage = run_opencode(['sh', '-c', 'sleep 30'], '', cwd=tmp_path, env={}, output=tmp_path / 'out', minutes=5)
     assert usage.stopped
     result, _ = check_result(CHECK, ['a.py'], tmp_path / 'out', usage)

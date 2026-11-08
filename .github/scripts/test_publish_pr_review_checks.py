@@ -1,4 +1,4 @@
-"""Gate each pull request event and publish the `Security Review` status for the head it reviewed."""
+"""Gate each pull request event and publish the `PR Review Checks` status for the head it reviewed."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pr_gates import Commit, GateError, Label
-from publish_security_review import (
+from publish_pr_review_checks import (
     ACCEPTED_LABEL,
     MARKER,
     RUN_LABEL,
@@ -21,7 +21,7 @@ from publish_security_review import (
     CheckResult,
     CommitStatus,
     LivePullRequest,
-    SecurityFinding,
+    ReviewFinding,
     gate,
     publish,
     review_payload,
@@ -188,7 +188,7 @@ def test_moved_head_writes_nothing() -> None:
 
 def _result(check: str, *severities: str, outcome: str = 'COMPLETE') -> CheckResult:
     findings = [
-        SecurityFinding.model_validate({'path': 'a.py', 'line': 3, 'side': 'RIGHT', 'severity': s, 'body': 'Fix.'})
+        ReviewFinding.model_validate({'path': 'a.py', 'line': 3, 'side': 'RIGHT', 'severity': s, 'body': 'Fix.'})
         for s in severities
     ]
     return CheckResult.model_validate(

@@ -1,4 +1,4 @@
-"""Select Security Review checks and the files each one reviews."""
+"""Select the PR Review Checks and the files each one reviews."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from security_review_checks import CHECKS, ChangedFile, SecurityCheck, changed_files, select
+from pr_review_checks import CHECKS, ChangedFile, ReviewCheck, changed_files, select
 
-PROMPTS = Path(__file__).parents[1] / 'security-review' / 'prompts'
+PROMPTS = Path(__file__).parents[1] / 'pr-review-checks' / 'prompts'
 
 
 def _file(path: str, *lines: str, previous: str = '') -> ChangedFile:
@@ -27,14 +27,14 @@ def test_every_check_has_a_prompt_fragment() -> None:
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
-def test_every_check_has_a_budget(check: SecurityCheck) -> None:
+def test_every_check_has_a_budget(check: ReviewCheck) -> None:
     """A zero step or minute budget fails the check on every pull request."""
     assert check.max_steps > 0
     assert check.max_minutes > 0
 
 
 def test_content_only_change_selects_nothing() -> None:
-    """Docs and agent instructions need no security review, so the status passes at once."""
+    """Docs and agent instructions need no review, so the status passes at once."""
     files = [_file('docs/agent.md'), _file('THREAT_MODEL.md'), _file('src/pydantic_ai_harness/AGENTS.md')]
     assert select(files) == {}
 

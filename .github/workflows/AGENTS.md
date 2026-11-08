@@ -232,18 +232,18 @@ failure through GitHub's latest-per-context commit statuses. Rerun an existing c
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# `Security Review` reviews every pull request head
+# `PR Review Checks` reviews every pull request head
 
-`security-review.yml` runs default-branch code on `pull_request_target` and publishes one
-`Security Review` commit status on the PR head. The status carries the verdict, not a job
+`pr-review-checks.yml` runs default-branch code on `pull_request_target` and publishes one
+`PR Review Checks` commit status on the PR head. The status carries the verdict, not a job
 conclusion: under `pull_request_target` the jobs' check runs attach to the default-branch commit.
-Name no job `Security Review`, because a check run with that name also matches the required context.
-The status blocks merge only while the `main` ruleset lists `Security Review` as a required check.
+Name no job `PR Review Checks`, because a check run with that name also matches the required context.
+The status blocks merge only while the `main` ruleset lists `PR Review Checks` as a required check.
 
 - `gate` reads the author's repository permission. An app, or an author without `write` or `admin`,
   gets a failing "Awaiting maintainer" status until a `User` with write access applies
-  `security-review:run`. The label stays valid across pushes; the gate checks who applied it last.
-- `detect` runs `security_review_checks.py` on the head's `git diff`, read as data, and starts one
+  `pr-review-checks:run`. The label stays valid across pushes; the gate checks who applied it last.
+- `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one
   review job per selected check. A check selects the files under its trigger paths, and can also
   select a file whose changed lines match its diff tokens. The `general` check reviews every changed
   source, workflow and configuration file that no selected check owns by path. The
@@ -260,17 +260,17 @@ The status blocks merge only while the `main` ruleset lists `Security Review` as
   exists on the base branch goes only to the private triage Slack webhook. Result artifacts are
   public, so they carry no private report.
 - `publish` validates every finding against its check's files. When there are findings, it posts one
-  `COMMENT` review with each check's usage and the receipt `<!-- security-review run=… head=… -->`,
+  `COMMENT` review with each check's usage and the receipt `<!-- pr-review-checks run=… head=… -->`,
   which douwebot's clean approval gate does not count as a douwebot finding. The job summary always
   carries the usage table. A `critical` or `high` finding, an
   `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
-- A `User` with write access applies `security-review:accepted` to pass the current head despite its
+- A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
   findings. A push removes the label and reviews the new head. Rerunning the review replaces an
   acceptance; apply the label again.
 - Drafts are reviewed like any other pull request. A merge group gets success without a review.
 
-To add a check, add a `SpecialistCheck` entry in `security_review_checks.py` and its prompt
-fragment in `.github/security-review/prompts/`. The workflow needs no change. Like `bots.yml`, a
+To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
+fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
 
 # Code owners approve dependency and CI config changes

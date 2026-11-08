@@ -1,4 +1,4 @@
-"""Select the Security Review checks for a pull request and the files each check reviews."""
+"""Select the PR Review Checks for a pull request and the files each check reviews."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from pathlib import Path
 
 
 @dataclass(frozen=True, kw_only=True)
-class SecurityCheck:
-    """One check. Its prompt fragment is `.github/security-review/prompts/<name>.md`."""
+class ReviewCheck:
+    """One check. Its prompt fragment is `.github/pr-review-checks/prompts/<name>.md`."""
 
     name: str
     title: str
@@ -29,7 +29,7 @@ class SecurityCheck:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SpecialistCheck(SecurityCheck):
+class SpecialistCheck(ReviewCheck):
     """A check selected by the files it owns, and optionally by tokens in other files' changed lines."""
 
     paths: re.Pattern[str]
@@ -54,7 +54,7 @@ class ChangedFile:
 # Checkout, context gathering and tool setup run before a review's own clock starts.
 SETUP_MINUTES = 10
 
-GENERAL = SecurityCheck(
+GENERAL = ReviewCheck(
     name='general',
     title='General vulnerability review',
     scope='every changed source, workflow and configuration file that no other security check owns',
@@ -122,7 +122,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     ),
 )
 
-CHECKS: tuple[SecurityCheck, ...] = (GENERAL, *SPECIALIST_CHECKS)
+CHECKS: tuple[ReviewCheck, ...] = (GENERAL, *SPECIALIST_CHECKS)
 
 # Mirrors `is_non_test_content` in the `classify` job of `ci.yml`.
 _CONTENT = (
@@ -224,7 +224,7 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
     return [ChangedFile(file.path, file.previous_path, tuple(lines.get(file.path, ()))) for file in files.values()]
 
 
-def check_named(name: str) -> SecurityCheck:
+def check_named(name: str) -> ReviewCheck:
     """Return the configured check with this name."""
     return next(entry for entry in CHECKS if entry.name == name)
 

@@ -17,7 +17,7 @@ import review_gates
 import yaml
 from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
 from publish_douwebot_review import Finding, ReviewResult, publication
-from publish_security_review import CheckResult, review_payload as security_review_payload
+from publish_pr_review_checks import CheckResult, review_payload as pr_review_checks_payload
 from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
@@ -679,7 +679,7 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     assert not verdicts(github)['douwebot'].failures
 
 
-def test_security_review_receipt_does_not_count_as_douwebot_finding():
+def test_pr_review_checks_receipt_does_not_count_as_douwebot_finding():
     result = CheckResult(
         check='general',
         files=['a.py'],
@@ -690,7 +690,7 @@ def test_security_review_receipt_does_not_count_as_douwebot_finding():
         tokens=1,
         seconds=1,
     )
-    parent = review(8, body=json.loads(security_review_payload([result], HEAD, 30, inline=True))['body'])
+    parent = review(8, body=json.loads(pr_review_checks_payload([result], HEAD, 30, inline=True))['body'])
     comment = review_gates.ReviewComment(
         pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='Security finding'
     )
