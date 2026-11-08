@@ -35,6 +35,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
@@ -151,7 +152,9 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import INPUTS
     from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.utilities.hashing import hash_objects
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -164,6 +167,7 @@ try:
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
+        _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
@@ -707,7 +711,8 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
             children=[
                 BasicSpan(
-                    content='Found propagated trace context. See https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing.'
+                    # logfire < 5.5 says 'trace context'
+                    content=IsStr(regex=r'Found propagated (trace )?context\. See .+')
                 ),
                 BasicSpan(
                     content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -2257,6 +2262,186 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     assert key_for('model-first') != key_for('model-second')
 
 
+def test_cache_policy_hashes_non_utf8_bytes_by_value():
+    """Bytes that aren't valid UTF-8 hash by value, not by which objects the payload shares.
+
+    Prefect's JSON encoder can't serialize them, and on the `cloudpickle` fallback a payload that
+    repeats one bytes object hashes differently from one holding two equal copies.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    data = b'\xff\xfe'
+    assert key_for([data, data]) == key_for([data, bytes(bytearray(data))])
+    assert key_for(data) != key_for(b'\xff\xfd')
+    assert key_for(data) != key_for(bytearray(data))
+    assert key_for(b'abc') != key_for('abc')
+    assert key_for(data) != key_for(data.decode('latin-1'))
+    assert key_for({1, 2}) != key_for([1, 2])
+    # UTF-8 bytes already hash by value on the JSON path, so their keys are what Prefect computes.
+    assert key_for(b'abc') == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': b'abc'}, flow_parameters={})
+
+
+@pytest.mark.parametrize('binary', [b'\xff\xfe', bytearray(b'\xff\xfe')], ids=['bytes', 'bytearray'])
+@pytest.mark.parametrize('position', ['input', 'deps', 'validation_context'])
+def test_cache_policy_distinguishes_binary_from_descriptor(binary: bytes | bytearray, position: str):
+    """A caller's dict must not replay a binary input's task, even after repeated projection."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        payload = {'items': ([value],)}
+        if position == 'input':
+            inputs = payload
+        else:
+            ctx = RunContext(
+                deps=payload if position == 'deps' else None,
+                validation_context=payload if position == 'validation_context' else None,
+                model=TestModel(),
+                usage=RunUsage(),
+            )
+            inputs = {'args': (ctx,)}
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+
+    # Copy the descriptor to an ordinary dict, as a caller could supply in the same cache scope.
+    descriptor = dict(_cacheable_value(binary))
+    binary_key, dict_key = key_for(binary), key_for(descriptor)
+    assert binary_key is not None
+    assert dict_key is not None
+    assert binary_key != dict_key
+    for value, expected in [(binary, binary_key), (descriptor, dict_key)]:
+        for _ in range(3):
+            value = _cacheable_value(value)
+            assert key_for(value) == expected
+
+
+def test_cacheable_value_hashes_non_utf8_bytes_by_value():
+    """`_cacheable_value` projects bytes like the task keys do, and leaves a model on the `cloudpickle` fallback."""
+
+    def digest_of(value: Any) -> str | None:
+        return hash_objects(_cacheable_value(value))
+
+    data = b'\xff\xfe'
+    assert digest_of([data, data]) == digest_of([data, bytes(bytearray(data))])
+    assert digest_of(data) != digest_of(data.decode('latin-1'))
+
+    class Upload(BaseModel):
+        data: bytes
+
+    # Prefect can't JSON-encode this field either, so the model stays on the fallback and still forks the key.
+    upload = Upload(data=data)
+    assert _cacheable_value(upload) is upload
+    assert digest_of(upload) is not None
+    assert digest_of(upload) != digest_of(Upload(data=b'\xff\xfd'))
+
+    class Uploads(BaseModel):
+        lock: Any
+        first: bytes | list[bytes]
+        second: bytes | list[bytes]
+
+    # A lock can't be hashed, so this model is expanded field by field and its bytes need projecting too.
+    lock = threading.Lock()
+    assert digest_of(Uploads(lock=lock, first=data, second=data)) == digest_of(
+        Uploads(lock=lock, first=data, second=bytes(bytearray(data)))
+    )
+    assert digest_of(Uploads(lock=lock, first=[data], second=[data])) == digest_of(
+        Uploads(lock=lock, first=[data], second=[bytes(bytearray(data))])
+    )
+
+
+def test_cache_policy_escapes_reserved_keys_once():
+    """Escaping a caller's descriptor must not collide with another caller's already-prefixed key."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    class Deps(BaseModel):
+        payload: Any
+        lock: Any
+
+    @dataclass
+    class ReservedField:
+        __pydantic_ai_binary__: Any
+
+    descriptor = dict(_cacheable_value(b'\xff\xfe'))
+    prefix, payload = next(iter(descriptor.items()))
+    values = [b'\xff\xfe', descriptor, {prefix * 2: payload}, {prefix * 3: payload}]
+    assert len({key_for(value) for value in values}) == len(values)
+    assert key_for(ReservedField(payload)) == key_for(descriptor)
+    for value in values:
+        deps = Deps(payload=value, lock=threading.Lock())
+        projected = _cacheable_value(deps)
+        assert key_for(projected) == key_for(_cacheable_value(projected))
+        assert key_for(projected) == key_for(_cacheable_value(deps))
+
+    # Unrelated dictionary inputs retain their existing keys, including non-string keys.
+    for value in [{'text': 'hello', 'data': b'abc'}, {1: 'hello'}]:
+        assert key_for(value) == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+
+async def test_prefect_task_cache_does_not_replay_binary_for_dict():
+    """Exercise Prefect's result store, including the repeat projection used by context inputs."""
+    executed: list[str] = []
+
+    @task(cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY, persist_result=True)
+    async def identify(ctx: RunContext[Any]) -> str:
+        result = 'binary' if isinstance(ctx.deps, bytes) else 'dictionary'
+        executed.append(result)
+        return result
+
+    @flow
+    async def compare() -> list[str]:
+        binary = b'\xff\xfe'
+        descriptor = dict(_cacheable_value(binary))
+        results: list[str] = []
+        for value in [binary, descriptor, binary, descriptor]:
+            ctx = RunContext(deps=value, model=TestModel(), usage=RunUsage())
+            results.append(await identify(ctx))
+        return results
+
+    assert await compare() == ['binary', 'dictionary', 'binary', 'dictionary']
+    assert executed == ['binary', 'dictionary']
+
+
+@pytest.mark.parametrize('content', ['hello', b'hello'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_cacheable_value_preserves_dataclasses_in_expanded_models(content: str | bytes, nested: bool):
+    """Pin the shared projection's pre-upgrade hash without relying on Prefect's result store."""
+
+    @dataclass
+    class Settings:
+        content: str | bytes
+
+    class Deps(BaseModel):
+        settings: Any
+        lock: Any
+
+    settings = Settings(content)
+    value = {'items': ([settings],)} if nested else settings
+    projected = _cacheable_value(Deps(settings=value, lock=threading.Lock()))
+    # Before binary normalization, expansion retained serializable dataclasses as objects.
+    assert hash_objects(projected) == hash_objects({'settings': value, 'lock': '<non-serializable>'})
+
+
+def test_cacheable_value_preserves_message_timestamps_in_expanded_models():
+    """Messages exposed by model expansion retain the same timestamp-sensitive hash as before."""
+
+    class Deps(BaseModel):
+        message: ModelRequest
+        lock: Any
+
+    def digest_of(timestamp: datetime) -> str | None:
+        message = ModelRequest(parts=[UserPromptPart('hello', timestamp=timestamp)])
+        return hash_objects(_cacheable_value(Deps(message=message, lock=threading.Lock())))
+
+    assert digest_of(datetime(2026, 1, 1, tzinfo=UTC)) != digest_of(datetime(2026, 1, 2, tzinfo=UTC))
+
+
 async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     """A tool task's key must depend on the tool's value, not on which objects the payload shares.
 
@@ -2828,6 +3013,55 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert attempts == 2
     assert tool_runs == ['record_side_effect']
     assert model_runs == 2
+
+
+async def test_flow_retry_replays_model_request_with_binary_history() -> None:
+    """A flow retry replays a model request whose history holds non-UTF-8 binary content.
+
+    Prefect's JSON encoder can't serialize bytes that aren't valid UTF-8, so a history holding an
+    image used to push `hash_objects` onto its `cloudpickle` fallback. The follow-up run's history
+    includes the first run's replayed (deserialized) response, which shares objects differently
+    than the live one did, so the key changed and the follow-up request was submitted again.
+    """
+    model_inputs: list[str] = []
+    tool_runs = 0
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        if isinstance(part, UserPromptPart):
+            model_inputs.append(part.content if isinstance(part.content, str) else str(part.content[0]))
+            if part.content == 'use tool':
+                return ModelResponse(parts=[ToolCallPart('side_effect')])
+        else:
+            model_inputs.append(part.part_kind)
+        return ModelResponse(parts=[TextPart('answer')])
+
+    agent = Agent(FunctionModel(model_fn), name='binary_history_agent', capabilities=[PrefectDurability[object]()])
+
+    @agent.tool_plain
+    def side_effect() -> str:
+        nonlocal tool_runs
+        tool_runs += 1
+        return 'done'
+
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run(['look', BinaryContent(data=b'\xff\xfe', media_type='image/png')])
+        follow_up = await agent.run('follow up', message_history=result.all_messages())
+        tool_run = await agent.run('use tool', message_history=follow_up.all_messages())
+        # Fail after every run, so the retry has each model request's and tool's result to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return tool_run.output
+
+    assert await flaky() == 'answer'
+    assert attempts == 2
+    assert model_inputs == ['look', 'follow up', 'use tool', 'tool-return']
+    assert tool_runs == 1
 
 
 async def test_flow_retry_keeps_run_deadline() -> None:

@@ -451,7 +451,6 @@ def test_known_openai_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('openai:')} == {
-        'openai:gpt-image-1',
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
@@ -462,7 +461,6 @@ def test_known_google_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('google:')} == {
-        'google:gemini-2.5-flash-image',
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
         'google:gemini-3.1-flash-lite-image',
@@ -474,7 +472,6 @@ def test_known_google_cloud_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('google-cloud:')} == {
-        'google-cloud:gemini-2.5-flash-image',
         'google-cloud:gemini-3-pro-image',
         'google-cloud:gemini-3.1-flash-image',
         'google-cloud:gemini-3.1-flash-lite-image',

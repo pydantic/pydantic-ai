@@ -389,13 +389,13 @@ def test_gemini_batch_error_raises_the_error_of_its_rpc_code(
 
 
 def test_gemini_batch_error_suggests_a_known_model_for_an_unknown_one() -> None:
-    model = GoogleModel('gemini-2.5-flash-lit', provider=GoogleProvider(api_key='test-key'))
-    message = 'models/gemini-2.5-flash-lit is not found for API version v1beta, or is not supported.'
+    model = GoogleModel('gemini-3.5-flash-lit', provider=GoogleProvider(api_key='test-key'))
+    message = 'models/gemini-3.5-flash-lit is not found for API version v1beta, or is not supported.'
     result = BatchResult(custom_id='item', status='errored', body=json.dumps({'code': 5, 'message': message}))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, _request())
     assert (exc_info.value.status_code, exc_info.value.provider_error_code) == (404, 'NOT_FOUND')
-    assert exc_info.value.suggested_model_id == 'google:gemini-2.5-flash-lite'
+    assert exc_info.value.suggested_model_id == 'google:gemini-3.5-flash-lite'
 
 
 _OK_RESPONSE = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hi!'}]}, 'finishReason': 'STOP'}]}

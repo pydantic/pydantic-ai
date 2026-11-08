@@ -18,12 +18,28 @@ with try_import() as imports_successful:
     from openai.types.responses.response import ResponseUsage
     from openai.types.responses.response_output_item import ResponseOutputItem
 
-    from pydantic_ai.models.openai import NOT_GIVEN, OMIT
+    from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.models.openai import NOT_GIVEN, OMIT, _history_hasher, _with_history_digest  # pyright: ignore[reportPrivateUsage]
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
     MockResponse = responses.Response | Exception
     MockResponseStreamEvent = responses.ResponseStreamEvent | Exception
+
+
+def with_history_digests(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """A hand-built history with each response's digest recorded, as if it was created with `openai_previous_response_id`.
+
+    A response without one isn't continued from, so a test of a chain needs them.
+    """
+    history: list[ModelMessage] = []
+    for message in messages:
+        history.append(
+            _with_history_digest(message, _history_hasher(history, None))
+            if isinstance(message, ModelResponse)
+            else message
+        )
+    return history
 
 
 @dataclass
