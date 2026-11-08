@@ -22,7 +22,7 @@ import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from types import ModuleType
 from typing import Literal
@@ -674,6 +674,47 @@ def test_wrapper_prefers_an_installed_regular_package_to_the_checkout(
         import_generated_agent(invocation, monkeypatch)
     assert loaded_before_import == [[]]
     assert sys.modules['gh_aw_test_regular'].__file__ == str(installed / '__init__.py')
+
+
+class _FinderWithoutFindSpec:
+    """A `sys.meta_path` finder from before `find_spec`; Python 3.11 still asks its `find_module`."""
+
+    def find_module(self, fullname: str, path: Sequence[str] | None = None) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ('target', 'name', 'appends_checkout'),
+    [('gh_aw_test_installed:agent', 'installed', False), ('gh_aw_test_checkout:agent', 'checkout', True)],
+    ids=['installed-target', 'checkout-target'],
+)
+@pytest.mark.filterwarnings(r'ignore:.*find_spec\(\) not found:ImportWarning')
+def test_wrapper_skips_a_meta_path_finder_without_find_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str, name: str, appends_checkout: bool
+) -> None:
+    """The import system skips such a finder, so the wrapper's lookup does too."""
+    installed = tmp_path / 'site-packages'
+    installed.mkdir()
+    (installed / 'gh_aw_test_installed.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='installed')\n", encoding='utf-8'
+    )
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'gh_aw_test_checkout.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='checkout')\n", encoding='utf-8'
+    )
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': target})
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    monkeypatch.setattr(sys, 'meta_path', [_FinderWithoutFindSpec(), *sys.meta_path])
+    for module_name in ('gh_aw_test_installed', 'gh_aw_test_checkout'):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    module = import_generated_agent(invocation, monkeypatch)
+
+    agent = getattr(module, 'agent')
+    assert isinstance(agent, Agent)
+    assert agent.name == name
+    assert (invocation.cwd in sys.path) is appends_checkout
 
 
 @pytest.mark.parametrize(

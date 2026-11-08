@@ -156,9 +156,11 @@ Some details to know.
 - **A private wrapper module resolves the agent.** The engine writes it in every mode: the
   default composition, an imported `PAI_AGENT`, or a spec. The wrapper appends the
   checkout to `sys.path`, after installed packages, only for an imported target that is
-  not importable without it, such as `my_agent:agent` above. It finds the target without
-  importing anything, so it may also append the checkout for a target in a legacy
-  `pkgutil`-style namespace package. Gateway tools and recording apply in every mode.
+  not importable without it, such as `my_agent:agent` above. It looks the target up without
+  importing anything, so it may also append the checkout for a target that lookup misses, such
+  as one in a package whose `__init__.py` changes `__path__` (a legacy `pkgutil`-style namespace
+  package, for example) or in namespace package portions inside a zip file. Gateway tools and
+  recording apply in every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install
   step and the agent, so a `--user` install lands in the same `$HOME/.local` the

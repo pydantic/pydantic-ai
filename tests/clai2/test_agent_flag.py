@@ -3,6 +3,7 @@
 import importlib
 import io
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 
@@ -181,6 +182,39 @@ def test_import_agent_prefers_an_installed_regular_package_to_the_launch_directo
         import_agent('clai_agent_flag_regular.agents:agent')
     assert loaded_before_import == [[]]
     assert sys.modules['clai_agent_flag_regular'].__file__ == str(installed / 'clai_agent_flag_regular' / '__init__.py')
+
+
+class _FinderWithoutFindSpec:
+    """A `sys.meta_path` finder from before `find_spec`; Python 3.11 still asks its `find_module`."""
+
+    def find_module(self, fullname: str, path: Sequence[str] | None = None) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ('module_name', 'appends_launch_directory'),
+    [('clai_agent_flag_installed', False), (_MODULE, True)],
+    ids=['installed-target', 'launch-directory-target'],
+)
+@pytest.mark.filterwarnings(r'ignore:.*find_spec\(\) not found:ImportWarning')
+def test_import_agent_skips_a_meta_path_finder_without_find_spec(
+    fixture_module: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    appends_launch_directory: bool,
+) -> None:
+    """The import system skips such a finder, so the lookup does too."""
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_installed.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    monkeypatch.setattr(sys, 'meta_path', [_FinderWithoutFindSpec(), *sys.meta_path])
+    monkeypatch.delitem(sys.modules, 'clai_agent_flag_installed', raising=False)
+
+    assert isinstance(import_agent(f'{module_name}:agent'), Agent)
+    assert (str(fixture_module) in sys.path) is appends_launch_directory
 
 
 @pytest.mark.parametrize(
