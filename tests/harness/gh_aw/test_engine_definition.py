@@ -45,6 +45,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from tests.conftest import try_import
+
+with try_import() as mcp_imports_successful:
+    import pydantic_ai.mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
@@ -1059,6 +1063,7 @@ async def test_a_failed_stream_emits_one_partial_message_and_failure_result(
     assert all(event.id != 'forged' for event in parsed.log_entries)
 
 
+@pytest.mark.skipif(not mcp_imports_successful(), reason='mcp not installed')
 @pytest.mark.subprocess(reason='connects to `tests/mcp_server.py` over stdio')
 async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
