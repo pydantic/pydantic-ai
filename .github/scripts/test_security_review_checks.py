@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from security_review_checks import CHECKS, ChangedFile, changed_files, select
+from security_review_checks import CHECKS, ChangedFile, SecurityCheck, changed_files, select
 
 PROMPTS = Path(__file__).parents[1] / 'security-review' / 'prompts'
 
@@ -24,6 +24,13 @@ def test_every_check_has_a_prompt_fragment() -> None:
     assert sorted(path.stem for path in PROMPTS.glob('*.md') if path.stem != 'shared') == sorted(
         check.name for check in CHECKS
     )
+
+
+@pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
+def test_every_check_has_a_budget(check: SecurityCheck) -> None:
+    """A zero step or minute budget fails the check on every pull request."""
+    assert check.max_steps > 0
+    assert check.max_minutes > 0
 
 
 def test_content_only_change_selects_nothing() -> None:

@@ -309,6 +309,9 @@ jobs:
           .github/scripts/test_douwebot_usage_limit.py
           .github/scripts/test_douwebot_opencode_run.py
           .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_security_review_checks.py
+          .github/scripts/test_security_review_run.py
+          .github/scripts/test_publish_security_review.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_ui_security_detection.py

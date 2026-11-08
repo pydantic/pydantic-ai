@@ -19,6 +19,10 @@ class SecurityCheck:
     title: str
     scope: str
     """Completes "This check covers …" in the shared prompt."""
+    max_steps: int
+    """At this step OpenCode stops offering tools, and the review ends `INCOMPLETE`."""
+    max_minutes: int
+    """After this many minutes the runner stops the review and reports it `INCOMPLETE`."""
 
 
 @dataclass(frozen=True)
@@ -44,10 +48,17 @@ class ChangedFile:
         return any(pattern.fullmatch(path) for path in (self.path, self.previous_path) if path)
 
 
+# The maintainer has not set the review budgets yet. A zero budget fails every review.
+BUDGET_PENDING = 0
+# Checkout, context gathering and tool setup run before a review's own clock starts.
+SETUP_MINUTES = 10
+
 GENERAL = SecurityCheck(
     name='general',
     title='General vulnerability review',
     scope='every changed source, workflow and configuration file that no other security check owns',
+    max_steps=BUDGET_PENDING,
+    max_minutes=BUDGET_PENDING,
 )
 
 SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
@@ -55,6 +66,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='url-fetch',
         title='URL fetch and egress',
         scope='URL fetching, downloads, provider file references and browser egress',
+        max_steps=BUDGET_PENDING,
+        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
             r'|capabilities/(web_fetch|file_understanding)\.py|realtime/_utils\.py)'
@@ -70,6 +83,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='ui',
         title='UI adapters and local web UI',
         scope="the UI adapters' client/server trust boundary and CLAI 2's local web control UI",
+        max_steps=BUDGET_PENDING,
+        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(ui/.*|messages\.py)'
             r'|src/pydantic_clai2/(web-ui/.*|pydantic_clai2/builtin_plugins/web/.*|pydantic_clai2/cli/web\.py'
@@ -82,6 +97,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='telemetry',
         title='Telemetry',
         scope='instrumentation, spans, logs and the content controls on them',
+        max_steps=BUDGET_PENDING,
+        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_instrumentation|_otel_messages|capabilities/instrumentation'
             r'|models/instrumented|embeddings/instrumented|images/instrumented|realtime/_instrumentation)\.py'
@@ -95,6 +112,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='sandboxes',
         title='Sandboxes and Code Mode',
         scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
+        max_steps=BUDGET_PENDING,
+        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
             r'(bubblewrap_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
@@ -167,7 +186,8 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
     merge_base = subprocess.run(
         [*git, 'merge-base', base, head], check=True, capture_output=True, text=True
     ).stdout.strip()
-    # `--no-ext-diff` and `--no-textconv` keep the pull request's `.gitattributes` from running a command.
+    # `--no-ext-diff` and `--no-textconv` keep the pull request's `.gitattributes` from running a command,
+    # and `--text` keeps a `-diff` attribute from hiding a file's changed lines.
     diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '-M', merge_base, head]
     status = subprocess.run([*git, *diff, '--name-status', '-z'], check=True, capture_output=True, text=True).stdout
     fields = status.split('\0')
@@ -182,7 +202,9 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
             previous, path = '', fields[index + 1]
             index += 2
         files[path] = ChangedFile(path, previous if code.startswith('R') else '', ())
-    patch = subprocess.run([*git, *diff, '-U0'], check=True, capture_output=True, text=True, errors='replace').stdout
+    patch = subprocess.run(
+        [*git, *diff, '--text', '-U0'], check=True, capture_output=True, text=True, errors='replace'
+    ).stdout
     lines: dict[str, list[str]] = {}
     in_header = False
     old_path = new_path = ''
@@ -200,11 +222,17 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
     return [ChangedFile(file.path, file.previous_path, tuple(lines.get(file.path, ()))) for file in files.values()]
 
 
+def check_named(name: str) -> SecurityCheck:
+    """Return the configured check with this name."""
+    return next(entry for entry in CHECKS if entry.name == name)
+
+
 def main() -> None:
-    """Print the selection as JSON: `{"checks": [...], "files": {check: [paths]}}`."""
+    """Print the review matrix as JSON: one `{"check": name, "job_minutes": n}` entry per selected check."""
     repository, base, head = sys.argv[1:4]
     selection = select(changed_files(Path(repository), base, head))
-    print(json.dumps({'checks': list(selection), 'files': selection}, separators=(',', ':')))
+    matrix = [{'check': name, 'job_minutes': check_named(name).max_minutes + SETUP_MINUTES} for name in selection]
+    print(json.dumps(matrix, separators=(',', ':')))
 
 
 if __name__ == '__main__':

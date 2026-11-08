@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
 from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
+from publish_security_review import MARKER as SECURITY_REVIEW_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ReviewGate = Literal['douwebot']
@@ -185,7 +186,9 @@ def douwebot_approval(
         if comment.pull_request_review_id in marked_ids:
             verdict.failures.append('Douwebot has inline findings on this head, including resolved/optional ones.')
         else:
-            # gh-aw gives its reviews a separate receipt despite sharing the account.
+            # gh-aw and Security Review give their reviews separate receipts despite sharing the account.
+            if parent and SECURITY_REVIEW_MARKER.search(parent.body):
+                continue
             receipt = f'{parent.body if parent else ""}\n{comment.body}'
             if any(
                 f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
