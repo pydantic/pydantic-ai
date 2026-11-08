@@ -449,7 +449,7 @@ class GroqModel(Model[AsyncGroq]):
         # `User-Agent` only under that spelling.
         extra_headers = {
             'User-Agent' if name.lower() == 'user-agent' else name: value
-            for name, value in model_settings.get('extra_headers', {}).items()
+            for name, value in dict(model_settings.get('extra_headers', {})).items()
         }
         extra_headers.setdefault('User-Agent', get_user_agent())
 
