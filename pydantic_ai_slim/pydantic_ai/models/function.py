@@ -506,23 +506,24 @@ def _estimate_request_part_tokens(part: ModelRequestPart, allow_tool_availabilit
 
 
 def _estimate_response_part_tokens(part: ModelResponsePart) -> int:
-    if isinstance(part, TextPart):
-        return _estimate_string_tokens(part.content)
-    elif isinstance(part, ThinkingPart):
-        return _estimate_string_tokens(part.content)
-    elif isinstance(part, ToolCallPart | NativeToolCallPart):
-        return 1 + _estimate_string_tokens(part.args_as_json_str())
-    elif isinstance(part, NativeToolReturnPart):
-        return _estimate_string_tokens(part.model_response_str())
-    elif isinstance(part, FilePart):
-        return _estimate_string_tokens([part.content])
-    elif isinstance(part, CompactionPart):
-        # A provider's own compaction item is opaque state, not text the model reads.
-        return 0
-    elif isinstance(part, SpeechPart):
-        return _estimate_string_tokens(part.content)
-    else:
-        assert_never(part)
+    match part:
+        case TextPart():
+            return _estimate_string_tokens(part.content)
+        case ThinkingPart():
+            return _estimate_string_tokens(part.content)
+        case ToolCallPart() | NativeToolCallPart():
+            return 1 + _estimate_string_tokens(part.args_as_json_str())
+        case NativeToolReturnPart():
+            return _estimate_string_tokens(part.model_response_str())
+        case FilePart():
+            return _estimate_string_tokens([part.content])
+        case CompactionPart():
+            # A provider's own compaction item is opaque state, not text the model reads.
+            return 0
+        case SpeechPart():
+            return _estimate_string_tokens(part.content)
+        case _:
+            assert_never(part)
 
 
 def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
