@@ -533,7 +533,7 @@ class _JsonSchemaTestData:
                 return self._array_gen(schema)
             case 'null':
                 return None
-            case type_:
+            case type_:  # pragma: no cover
                 raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
     def _resolve_ref(self, ref: str) -> dict[str, Any]:
