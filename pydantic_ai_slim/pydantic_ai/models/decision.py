@@ -694,7 +694,7 @@ class DecisionModel(Model[InterfaceClient]):
         if forced_tool is not None and not _has_fields(forced_tool):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        instructions = self._instructions(messages, model_request_parameters)
+        instructions = self._instruction_text(messages, model_request_parameters)
         settings = cast(DecisionModelSettings, model_settings or {})
         # The bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
         # out from a rejected answer would mean paying for the request that carried the prompt and history.
@@ -781,7 +781,7 @@ class DecisionModel(Model[InterfaceClient]):
         provider_details['route'] = route_details
         return self._response(route, args, response_usage, response.model_name, provider_details)
 
-    def _instructions(
+    def _instruction_text(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> str | None:
         """The agent's instructions as one text, which the questions carry, or `None` without any."""
