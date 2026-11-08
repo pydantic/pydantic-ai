@@ -516,6 +516,8 @@ agent = Agent(
 )
 ```
 
+Stateful mode sends `context_management` on every request, not only once the conversation nears the threshold. In our measurements, the field added about 50 ms of server processing time per request, with or without `token_threshold`. If that matters for a long-running, latency-sensitive agent, use stateless mode instead: it sends no `context_management` and compacts only when its trigger fires.
+
 As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
