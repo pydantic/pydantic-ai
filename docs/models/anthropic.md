@@ -598,7 +598,7 @@ Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry
 [Pydantic AI Gateway](../gateway.md): use `AnthropicProvider` with a Claude API key instead. They need an API key or
 auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
 Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
-`extra_headers` are unsupported. A user-agent is the exception: a batch always sends Pydantic AI's. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
+`extra_headers` are unsupported. A user-agent can't be set either way: a batch always sends Pydantic AI's. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
 
 ## Mid-conversation system messages
 
