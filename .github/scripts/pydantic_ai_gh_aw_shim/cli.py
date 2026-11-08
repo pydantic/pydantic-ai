@@ -169,6 +169,9 @@ class _AnswerSafeOutputLimit(WrapperToolset[object]):
     tool's retries before any tool-execute hook runs.
     """
 
+    # The safe outputs the server has rejected as past their limit, for `_RecoverMCPToolErrors` to withhold.
+    past_limit: set[str]
+
     # gh-aw's safe-outputs server rejects a call past a type's `max` with this code (`enforcePerTypeMax`).
     _LIMIT_ERROR: ClassVar[str] = 'E002: '
 
@@ -186,6 +189,7 @@ class _AnswerSafeOutputLimit(WrapperToolset[object]):
             ):
                 raise
             logger.warning('safe output %r is past its limit — returned to model as a result', name)
+            self.past_limit.add(name)
             return f'error: {limit_error}. The earlier calls are already recorded, so do not call this tool again.'
 
 
@@ -199,11 +203,28 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
     the call in-run — e.g. resubmit the review with a non-empty body.
 
     A safe output past its per-run limit is also returned as a result rather than a retry: the
-    model cannot correct it, and with one tool retry the second such call ended the run.
+    model cannot correct it, and with one tool retry the second such call ended the run. Later
+    requests no longer offer it: a model told not to call it again kept calling it while it stayed
+    offered, until the run's deadline. It leaves the request, not the run's tools, so a call from
+    memory is still answered here instead of spending the tool retry.
     """
 
+    _past_limit: set[str] = dataclasses.field(default_factory=set[str])
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return _RecoverMCPToolErrors()
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[object]) -> AbstractToolset[object]:
-        return _AnswerSafeOutputLimit(toolset)
+        return _AnswerSafeOutputLimit(toolset, self._past_limit)
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        parameters = request_context.model_request_parameters
+        offered = [tool_def for tool_def in parameters.function_tools if tool_def.name not in self._past_limit]
+        return dataclasses.replace(
+            request_context, model_request_parameters=dataclasses.replace(parameters, function_tools=offered)
+        )
 
     async def on_tool_execute_error(
         self,
