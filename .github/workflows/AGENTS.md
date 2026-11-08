@@ -248,18 +248,19 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   select a file whose changed lines match its diff tokens. The `general` check reviews every changed
   source, workflow and configuration file that no selected check owns by path. The
   `tests-and-dependencies` check owns tests, cassettes, dependency manifests and lockfiles, and holds
-  them to the repository's testing and dependency rules rather than the security rubric. A change to
-  documentation or agent instructions only selects nothing and passes.
+  them to the repository's testing and dependency rules rather than the security rubric. A change only
+  to the documentation and agent instructions `is_content` lists selects nothing and passes; files
+  under `.github/` always get a review.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
-  deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts,
-  so the model can trace callers. The check's `max_steps` and `max_minutes` end a review as
-  `INCOMPLETE`; the defaults are permissive starting values, to be tuned down from recorded runs.
-  Token totals are recorded and never capped. With `LOGFIRE_TOKEN` set, OpenCode exports its own
-  spans and logs over OTLP, and the runner exports one span per review with its outcome, steps,
-  tokens and duration. OpenCode's spans carry no prompt or completion text and no token counts. A
-  vulnerability that already exists on the base branch goes only to the private triage Slack
-  webhook. Result artifacts are public, so they carry no private report.
+  deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
+  and the gathered PR context, so the model can trace callers. The check's `max_steps` and
+  `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
+  tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
+  set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
+  with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
+  and no token counts. A vulnerability that already exists on the base branch goes only to the
+  private triage Slack webhook. Result artifacts are public, so they carry no private report.
 - `publish` validates every finding against its check's files. When there are findings, it posts one
   `COMMENT` review with each check's usage and the receipt `<!-- pr-review-checks run=… head=… -->`,
   which douwebot's clean approval gate does not count as a douwebot finding. The job summary always

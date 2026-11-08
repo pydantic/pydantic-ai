@@ -17,7 +17,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import run_pr_review_check
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
-from run_pr_review_check import Usage, build_prompt, check_result, run_opencode, strip_instructions, write_context
+from run_pr_review_check import (
+    Usage,
+    build_prompt,
+    check_result,
+    run_opencode,
+    step_tokens,
+    strip_instructions,
+    write_context,
+)
 
 CHECK = dataclasses.replace(GENERAL, max_steps=3, max_minutes=5)
 WORKSPACE = Path(__file__).parents[2]
@@ -183,6 +191,21 @@ def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
     stream = _stream(tmp_path, '{"private_report": "pre-existing issue"')
     with pytest.raises(ValueError) as error:
         check_result(CHECK, ['a.py'], stream, Usage(steps=1))
+    assert 'pre-existing issue' not in ''.join(traceback.format_exception(error.value))
+
+
+@pytest.mark.parametrize(
+    'line',
+    [
+        '{"type": "text", "part": "pre-existing issue"',
+        '{"type": "step_finish", "part": "pre-existing issue"}',
+        '{"type": "step_finish", "part": {"tokens": "pre-existing issue"}}',
+    ],
+)
+def test_malformed_stream_event_stays_out_of_the_job_log(line: str) -> None:
+    """Stream lines can hold model text, so a malformed one fails without repeating it."""
+    with pytest.raises(ValueError) as error:
+        step_tokens(line)
     assert 'pre-existing issue' not in ''.join(traceback.format_exception(error.value))
 
 

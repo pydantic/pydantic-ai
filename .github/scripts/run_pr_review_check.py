@@ -149,13 +149,13 @@ def step_tokens(line: str) -> int | None:
     """Return the tokens a `step_finish` event reports, or None for any other event."""
     try:
         event = _EVENT.validate_json(line)
+        if event.get('type') != 'step_finish':
+            return None
+        part = _EVENT.validate_python(event.get('part'))
+        tokens = _TOKENS.validate_python(part.get('tokens', {}))
     except ValidationError:
         # A validation error repeats its input, a stream line can hold model text, and job logs are public.
         raise ValueError('OpenCode wrote an invalid stream event') from None
-    if event.get('type') != 'step_finish':
-        return None
-    part = _EVENT.validate_python(event.get('part'))
-    tokens = _TOKENS.validate_python(part.get('tokens', {}))
     total = 0.0
     for value in tokens.values():
         total += sum(value.values()) if isinstance(value, dict) else value
@@ -217,7 +217,7 @@ def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usag
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             if outside := sorted({finding.path for finding in result.findings} - set(files)):
-                raise ValueError(f'Findings outside this check: {outside}')
+                raise ValueError(f'{len(outside)} findings name files outside this check')
             findings, coverage, private_report = result.findings, result.coverage, result.private_report
             # OpenCode withdraws the tools at the step budget, so a review that reached it may have stopped short.
             if at_step_budget:

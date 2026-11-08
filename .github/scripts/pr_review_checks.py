@@ -185,7 +185,9 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
 
 def _patch_path(field: str, prefix: str) -> str:
     """A patch header's path without its `a/` or `b/` prefix, or '' for `/dev/null`."""
-    # `core.quotePath=false` still C-quotes a path that holds a quote, a backslash or a control character.
+    # Git ends the field with a tab when the path holds a space. `core.quotePath=false` still C-quotes a path
+    # that holds a quote, a backslash or a control character.
+    field = field.removesuffix('\t')
     if field.startswith('"'):
         field = codecs.escape_decode(field[1:-1])[0].decode('utf-8', 'replace')
     return field.removeprefix(prefix) if field.startswith(prefix) else ''
