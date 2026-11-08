@@ -2511,16 +2511,19 @@ def _response_entries(message: ModelResponse, images: list[BinaryContent | Image
                 if part.content:
                     entries.append({'summary': part.content})
             case FilePart():
-                if images is None:
-                    raise UserError(
-                        'Files are not supported by this model: a file in the message history cannot be sent to it.'
-                    )
-                entries.append({'assistant': _image_label(part.content, images, 'An assistant response')})
+                entries.append(_file_part_entry(part, images))
             case SpeechPart():  # pragma: no cover
                 raise _unconverted_speech_part_error()
             case _:
                 assert_never(part)
     return entries
+
+
+def _file_part_entry(part: FilePart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
+    """Map a file the model produced to a history entry."""
+    if images is None:
+        raise UserError('Files are not supported by this model: a file in the message history cannot be sent to it.')
+    return {'assistant': _image_label(part.content, images, 'An assistant response')}
 
 
 def _map_messages(

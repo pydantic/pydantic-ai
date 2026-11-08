@@ -238,16 +238,7 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:
                 and _probabilities_fit(answer)
             )
         case ScoreQuestion():
-            levels = set(range(len(question.criteria)))
-            return (
-                isinstance(answer, ScoreAnswer)
-                and answer.probabilities.keys() == levels
-                and (not answer.legend or answer.legend.keys() == levels)
-                and isfinite(answer.score)
-                and 0 <= answer.score <= len(question.criteria) - 1
-                and _probabilities_fit(answer)
-                and _score_fits_probabilities(question, answer)
-            )
+            return isinstance(answer, ScoreAnswer) and _score_answer_fits(question, answer)
         case _:
             assert_never(question)
 
@@ -265,8 +256,17 @@ def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
     )
 
 
-def _score_fits_probabilities(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
-    """Whether a score answer's score is one its probabilities could produce."""
+def _score_answer_fits(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
+    """Whether a score answer rates the rubric's levels, and its score is one its probabilities could produce."""
+    levels = set(range(len(question.criteria)))
+    if not (
+        answer.probabilities.keys() == levels
+        and (not answer.legend or answer.legend.keys() == levels)
+        and isfinite(answer.score)
+        and 0 <= answer.score <= len(question.criteria) - 1
+        and _probabilities_fit(answer)
+    ):
+        return False
     # A displayed score and its probabilities may each be rounded, or carry float error. Check
     # whether any distribution within their intervals could produce that score, using at least
     # Jev's two decimals and never less than the float tolerance.

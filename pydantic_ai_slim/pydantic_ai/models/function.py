@@ -385,9 +385,9 @@ class FunctionStreamedResponse(StreamedResponse):
             case DeltaToolCall():
                 yield from self._map_tool_call_delta(index, delta)
             case NativeToolCallPart():
-                yield self._map_native_tool_call(index, delta)
+                yield from self._map_native_tool_call(index, delta)
             case NativeToolReturnPart():
-                yield self._map_native_tool_return(index, delta)
+                yield from self._map_native_tool_return(index, delta)
             case _:
                 assert_never(delta)
 
@@ -413,17 +413,17 @@ class FunctionStreamedResponse(StreamedResponse):
             tool_call_id=delta.tool_call_id,
         )
 
-    def _map_native_tool_call(self, index: int, part: NativeToolCallPart) -> ModelResponseStreamEvent:
+    def _map_native_tool_call(self, index: int, part: NativeToolCallPart) -> Iterator[ModelResponseStreamEvent]:
         if content := part.args_as_json_str():  # pragma: no branch
             response_tokens = _estimate_string_tokens(content)
             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-        return self._parts_manager.handle_part(vendor_part_id=index, part=part)
+        yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
-    def _map_native_tool_return(self, index: int, part: NativeToolReturnPart) -> ModelResponseStreamEvent:
+    def _map_native_tool_return(self, index: int, part: NativeToolReturnPart) -> Iterator[ModelResponseStreamEvent]:
         if content := part.model_response_str():  # pragma: no branch
             response_tokens = _estimate_string_tokens(content)
             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-        return self._parts_manager.handle_part(vendor_part_id=index, part=part)
+        yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def close_stream(self) -> None:
         # FunctionModel has no underlying connection to close.
