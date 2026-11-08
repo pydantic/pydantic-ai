@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -10,10 +11,13 @@ from typing_extensions import TypedDict
 
 SCRIPT = Path(__file__).with_name('gather-pydantic-ai-review-context.sh')
 DOUWEBOT_SCRIPT = Path(__file__).with_name('gather-review-context.sh')
-# Answers the gatherer's GitHub calls for a PR with no comments, threads or linked issues.
+# Answers the gatherer's GitHub calls for a PR with no comments, threads or linked issues,
+# listing its changed files from `$PR_FILES`.
 FAKE_GH = """#!/usr/bin/env bash
 case "$*" in
   *graphql*) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+  */files*--jq*) jq -r "${@: -1}" "$PR_FILES" ;;
+  */files*) cat "$PR_FILES" ;;
   *--jq*) ;;
   'pr view'*) echo '{"baseRefName":"main"}' ;;
   *) echo '[]' ;;
@@ -159,10 +163,22 @@ def _git(repo: Path, env: dict[str, str], *args: str) -> None:
     subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
 
 
-def _gathered_diffs(tmp_path: Path, *, script: Path, gitattributes: str, in_ci: bool) -> tuple[Path, Path]:
-    """Gather review context for a PR that changes a method, a Markdown file and a binary.
+def _write_files(root: Path, files: Mapping[str, str | bytes]) -> None:
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding='utf-8')
 
-    Returns the head repository and the per-file diff directory.
+
+def _gather(
+    tmp_path: Path, *, script: Path, base: Mapping[str, str | bytes], pr: Mapping[str, str | bytes], in_ci: bool
+) -> tuple[Path, Path]:
+    """Gather review context for a PR that writes `pr` over a `main` branch holding `base`.
+
+    Returns the head repository and the review-context directory.
     """
     head = tmp_path / 'head'
     head.mkdir()
@@ -170,8 +186,10 @@ def _gathered_diffs(tmp_path: Path, *, script: Path, gitattributes: str, in_ci: 
     bin_dir.mkdir()
     (bin_dir / 'gh').write_text(FAKE_GH, encoding='utf-8')
     (bin_dir / 'gh').chmod(0o755)
+    files_json = tmp_path / 'files.json'
     env = {key: value for key, value in os.environ.items() if key != 'GITHUB_ACTIONS'} | {
         'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
+        'PR_FILES': str(files_json),
         'GIT_CONFIG_GLOBAL': os.devnull,
         'GIT_CONFIG_NOSYSTEM': '1',
         'GIT_AUTHOR_NAME': 'test',
@@ -183,8 +201,46 @@ def _gathered_diffs(tmp_path: Path, *, script: Path, gitattributes: str, in_ci: 
         'GIT_CONFIG_KEY_0': f'url.{head}.insteadOf',
         'GIT_CONFIG_VALUE_0': 'https://github.com/owner/repo.git',
     }
-    module = head / 'family.py'
-    module.write_text(
+    _write_files(head, base)
+    _git(head, env, 'init', '-q', '-b', 'main')
+    _git(head, env, 'add', '.')
+    _git(head, env, 'commit', '-qm', 'base')
+    _git(head, env, 'checkout', '-qb', 'pr')
+    _write_files(head, pr)
+    _git(head, env, 'add', '.')
+    _git(head, env, 'commit', '-qm', 'pr')
+    changed = subprocess.run(
+        ['git', 'diff', '--name-only', '-z', 'main', 'HEAD'], cwd=head, env=env, check=True, capture_output=True
+    ).stdout.decode()
+    files: list[FileChange] = [
+        {'filename': name, 'additions': 1, 'deletions': 0} for name in changed.split('\0') if name
+    ]
+    files_json.write_text(json.dumps(files), encoding='utf-8')
+
+    work = tmp_path / 'work'
+    work.mkdir()
+    # douwebot's gatherer runs from the base checkout; CI Review's runs inside the PR checkout.
+    if script == DOUWEBOT_SCRIPT:
+        cwd, location, context = work, {'PR_HEAD_DIR': str(head)}, work / '.github/.review-context'
+    else:
+        cwd, location, context = head, {'GITHUB_WORKSPACE': str(work)}, work / '.review-context'
+    result = subprocess.run(
+        ['bash', str(script), '1', 'owner/repo'],
+        cwd=cwd,
+        env=env | location | ({'GITHUB_ACTIONS': 'true'} if in_ci else {}),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return head, context
+
+
+def _gathered_diffs(tmp_path: Path, *, script: Path, gitattributes: str, in_ci: bool) -> tuple[Path, Path]:
+    """Gather review context for a PR that changes a method, a Markdown file and a binary.
+
+    Returns the head repository and the per-file diff directory.
+    """
+    family = (
         'class Model:\n'
         '    def first(self):\n'
         "        marker = 'first'\n"
@@ -194,40 +250,21 @@ def _gathered_diffs(tmp_path: Path, *, script: Path, gitattributes: str, in_ci: 
         '\n'
         '\n'
         '    def second(self):\n'
-        '        return 2\n',
-        encoding='utf-8',
+        '        return 2\n'
     )
-    notes = head / 'NOTES.md'
-    notes.write_text('first line\n', encoding='utf-8')
-    logo = head / 'logo.png'
-    logo.write_bytes(b'\x89PNG\x00\x01')
-    _git(head, env, 'init', '-q', '-b', 'main')
-    _git(head, env, 'add', '.')
-    _git(head, env, 'commit', '-qm', 'base')
-    _git(head, env, 'checkout', '-qb', 'pr')
-    module.write_text(module.read_text(encoding='utf-8').replace('return 2', 'return 3'), encoding='utf-8')
-    notes.write_text('first line\nsecond line\n', encoding='utf-8')
-    logo.write_bytes(b'\x89PNG\x00\x02')
-    (head / '.gitattributes').write_text(gitattributes, encoding='utf-8')
-    _git(head, env, 'add', '.')
-    _git(head, env, 'commit', '-qm', 'pr')
-
-    work = tmp_path / 'work'
-    work.mkdir()
-    # douwebot's gatherer runs from the base checkout; CI Review's runs inside the PR checkout.
-    if script == DOUWEBOT_SCRIPT:
-        cwd, location, diffs = work, {'PR_HEAD_DIR': str(head)}, work / '.github/.review-context/diff'
-    else:
-        cwd, location, diffs = head, {'GITHUB_WORKSPACE': str(work)}, work / '.review-context/diff'
-    result = subprocess.run(
-        ['bash', str(script), '1', 'owner/repo'],
-        cwd=cwd,
-        env=env | location | ({'GITHUB_ACTIONS': 'true'} if in_ci else {}),
-        capture_output=True,
-        text=True,
+    head, context = _gather(
+        tmp_path,
+        script=script,
+        base={'family.py': family, 'NOTES.md': 'first line\n', 'logo.png': b'\x89PNG\x00\x01'},
+        pr={
+            'family.py': family.replace('return 2', 'return 3'),
+            'NOTES.md': 'first line\nsecond line\n',
+            'logo.png': b'\x89PNG\x00\x02',
+            '.gitattributes': gitattributes,
+        },
+        in_ci=in_ci,
     )
-    assert result.returncode == 0, result.stderr
-    return head, diffs
+    return head, context / 'diff'
 
 
 def test_douwebot_diff_in_ci_ignores_a_pr_marking_python_as_binary(tmp_path: Path):
@@ -267,3 +304,34 @@ def test_ci_review_diff_stops_at_the_changed_method(tmp_path: Path):
 
     assert 'return 3' in diff
     assert "marker = 'first'" not in diff
+
+
+@pytest.mark.parametrize('script', [DOUWEBOT_SCRIPT, SCRIPT], ids=['douwebot', 'ci-review'])
+def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script: Path):
+    """Every changed file gets its own readable diff name, so no path can overwrite another file's diff."""
+    paths = [
+        'pydantic_ai_slim/pydantic_ai/_ssrf.py',
+        # Each pair below shared one diff name when `/` became `__` and leading dots were stripped,
+        # or would share one if `%` were left unescaped.
+        'pydantic_ai_slim__pydantic_ai___ssrf.py',
+        '.github/ci.yml',
+        'github/ci.yml',
+        'docs/a.md',
+        'docs%2Fa.md',
+    ]
+    _, context = _gather(
+        tmp_path, script=script, base={'README.md': ''}, pr={path: f'{path}\n' for path in paths}, in_ci=False
+    )
+
+    rows = [row.split('\t') for row in (context / 'changed-files.txt').read_text(encoding='utf-8').splitlines()]
+    assert {path: diff for path, _, diff in rows} == {
+        'pydantic_ai_slim/pydantic_ai/_ssrf.py': 'diff/pydantic_ai_slim%2Fpydantic_ai%2F_ssrf.py.diff',
+        'pydantic_ai_slim__pydantic_ai___ssrf.py': 'diff/pydantic_ai_slim__pydantic_ai___ssrf.py.diff',
+        '.github/ci.yml': 'diff/%2Egithub%2Fci.yml.diff',
+        'github/ci.yml': 'diff/github%2Fci.yml.diff',
+        'docs/a.md': 'diff/docs%2Fa.md.diff',
+        'docs%2Fa.md': 'diff/docs%252Fa.md.diff',
+    }
+    assert {path: (context / diff).read_text(encoding='utf-8').splitlines()[0] for path, _, diff in rows} == {
+        path: f'diff --git a/{path} b/{path}' for path in paths
+    }

@@ -224,10 +224,12 @@ fi | awk -v dir="$CTX/diff" '
 
     skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
     if (!skip) {
-      # Sanitize path: replace / with __, strip leading dots to avoid hidden files
+      # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
+      # non-hidden name that no other path shares.
       safe = fname
-      gsub(/\//, "__", safe)
-      sub(/^\.+/, "", safe)
+      gsub(/%/, "%25", safe)
+      gsub(/\//, "%2F", safe)
+      sub(/^\./, "%2E", safe)
       outfile = dir "/" safe ".diff"
     }
   }
@@ -322,7 +324,7 @@ done
 # List of ALL changed files with change counts + diff file paths
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
-  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("/"; "__") | gsub("^\\.+"; "")).diff"' \
+  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("%"; "%25") | gsub("/"; "%2F") | sub("^\\."; "%2E")).diff"' \
   | while IFS=$'\t' read -r fname counts diffname; do
     if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
       printf '%s\t%s\n' "$fname" "$counts"
