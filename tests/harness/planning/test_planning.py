@@ -139,21 +139,23 @@ class FunctionToolWrappingDurability(RecordingDurability):
 async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
     durability: type[RecordingDurability] | None, expected: bool
 ) -> None:
-    """Concurrent plan tools in workflow code would interleave their recorded store steps by timing."""
+    """Workflow tools run alone, and dependency updates are always serialized."""
     sequential: dict[str, bool] = {}
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         sequential.update({tool.name: tool.sequential for tool in info.function_tools})
         return ModelResponse(parts=[TextPart('done')])
 
-    capabilities: list[AbstractCapability[None]] = [Planning[None]()]
+    capabilities: list[AbstractCapability[None]] = [Planning[None](enable_subtasks=True)]
     if durability is not None:
         capabilities.append(durability())
     agent = Agent(FunctionModel(respond), name='sequential_plan', deps_type=type(None), capabilities=capabilities)
 
     await agent.run('plan')
 
-    assert sequential and set(sequential.values()) == {expected}
+    assert sequential
+    assert sequential['set_dependency']
+    assert all(value is expected for name, value in sequential.items() if name != 'set_dependency')
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):

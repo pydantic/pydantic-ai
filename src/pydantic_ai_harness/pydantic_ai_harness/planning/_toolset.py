@@ -507,9 +507,20 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         reject_unknown_tool_names(descriptions, offered, field='descriptions')
         selected = offered if capability.tools is None else set(capability.tools)
 
-        def register(name: str, function: ToolFuncContext[AgentDepsT, ...], default_description: str) -> None:
+        def register(
+            name: str,
+            function: ToolFuncContext[AgentDepsT, ...],
+            default_description: str,
+            *,
+            sequential: bool = False,
+        ) -> None:
             if name in selected:
-                self.add_function(function, name=name, description=descriptions.get(name, default_description))
+                self.add_function(
+                    function,
+                    name=name,
+                    description=descriptions.get(name, default_description),
+                    sequential=sequential,
+                )
 
         # Registration order is the order the model sees the tools in.
         register('write_plan', self.write_plan, WRITE_PLAN_DESCRIPTION)
@@ -519,7 +530,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         register('update_task_statuses', self.update_task_statuses, UPDATE_TASK_STATUSES_DESCRIPTION)
         register('remove_task', self.remove_task, REMOVE_TASK_DESCRIPTION)
         register('add_subtask', self.add_subtask, ADD_SUBTASK_DESCRIPTION)
-        register('set_dependency', self.set_dependency, SET_DEPENDENCY_DESCRIPTION)
+        # Each dependency update reads and writes the full dependency list. Keep
+        # concurrent calls from overwriting one another with stale snapshots.
+        register('set_dependency', self.set_dependency, SET_DEPENDENCY_DESCRIPTION, sequential=True)
         register('get_available_tasks', self.get_available_tasks, GET_AVAILABLE_TASKS_DESCRIPTION)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
