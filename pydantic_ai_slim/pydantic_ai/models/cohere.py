@@ -106,11 +106,12 @@ except ImportError as _import_error:
 import httpx
 
 LatestCohereModelNames = Literal[
-    'c4ai-aya-expanse-32b',
-    'c4ai-aya-expanse-8b',
-    'command-nightly',
-    'command-r-08-2024',
+    'command-a-plus-05-2026',
+    'command-a-reasoning-08-2025',
+    'command-a-vision-07-2025',
+    'command-a-03-2025',
     'command-r-plus-08-2024',
+    'command-r-08-2024',
     'command-r7b-12-2024',
 ]
 """Latest Cohere models."""

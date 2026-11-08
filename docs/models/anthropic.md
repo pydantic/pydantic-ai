@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[anthropic]"
 
 To use [Anthropic](https://anthropic.com) through their API, go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) to generate an API key.
 
-`AnthropicModelName` contains a list of available Anthropic models.
+`AnthropicModelName` lists the latest Anthropic models for autocomplete. Any other model id the API accepts works too.
 
 ## Environment variable
 

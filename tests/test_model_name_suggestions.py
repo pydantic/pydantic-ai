@@ -56,34 +56,34 @@ class Case:
 CASES = [
     Case(
         provider='openai-responses',
-        model_name='gpt-5.2-proo',
-        expected_request=('gpt-5.2-proo',),
+        model_name='gpt-5.6-sool',
+        expected_request=('gpt-5.6-sool',),
         expected_body=snapshot(
             {
-                'message': 'The model `gpt-5.2-proo` does not exist or you do not have access to it.',
+                'message': 'The model `gpt-5.6-sool` does not exist or you do not have access to it.',
                 'type': 'invalid_request_error',
                 'param': None,
                 'code': 'model_not_found',
             }
         ),
         expected_status_code=404,
-        expected_suggestion='openai:gpt-5.2-pro',
+        expected_suggestion='openai:gpt-5.6-sol',
         marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
     ),
     Case(
         provider='openai-chat',
-        model_name='gpt-5.2-proo',
-        expected_request=('gpt-5.2-proo',),
+        model_name='gpt-5.6-sool',
+        expected_request=('gpt-5.6-sool',),
         expected_body=snapshot(
             {
-                'message': 'The model `gpt-5.2-proo` does not exist or you do not have access to it.',
+                'message': 'The model `gpt-5.6-sool` does not exist or you do not have access to it.',
                 'type': 'invalid_request_error',
                 'param': None,
                 'code': 'model_not_found',
             }
         ),
         expected_status_code=404,
-        expected_suggestion='openai:gpt-5.2-pro',
+        expected_suggestion='openai:gpt-5.6-sol',
         marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
     ),
     Case(
@@ -103,19 +103,19 @@ CASES = [
     ),
     Case(
         provider='google',
-        model_name='gemini-3.6-flahs',
-        expected_request=('/v1beta/models/gemini-3.6-flahs:generateContent',),
+        model_name='gemini-3.8-flahs',
+        expected_request=('/v1beta/models/gemini-3.8-flahs:generateContent',),
         expected_body=snapshot(
             {
                 'error': {
                     'code': 404,
-                    'message': 'models/gemini-3.6-flahs is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
+                    'message': 'models/gemini-3.8-flahs is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
                     'status': 'NOT_FOUND',
                 }
             }
         ),
         expected_status_code=404,
-        expected_suggestion='google:gemini-3.6-flash',
+        expected_suggestion='google:gemini-3.8-flash',
         marks=(pytest.mark.skipif(not google_imports(), reason='google not installed'),),
     ),
     Case(
@@ -144,19 +144,19 @@ CASES = [
     ),
     Case(
         provider='groq',
-        model_name='llama-3.3-70b-versatlie',
-        expected_request=('llama-3.3-70b-versatlie',),
+        model_name='openai/gpt-oss-120bb',
+        expected_request=('openai/gpt-oss-120bb',),
         expected_body=snapshot(
             {
                 'error': {
-                    'message': 'The model `llama-3.3-70b-versatlie` does not exist or you do not have access to it.',
+                    'message': 'The model `openai/gpt-oss-120bb` does not exist or you do not have access to it.',
                     'type': 'invalid_request_error',
                     'code': 'model_not_found',
                 }
             }
         ),
         expected_status_code=404,
-        expected_suggestion='groq:llama-3.3-70b-versatile',
+        expected_suggestion='groq:openai/gpt-oss-120b',
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
 ]
@@ -240,8 +240,8 @@ async def test_inferred_model_name_suggestion(allow_model_requests: None, openai
     env.set('OPENAI_API_KEY', openai_api_key)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await Agent('openai:gpt-5.2-proo').run('hello')
+        await Agent('openai:gpt-5.6-sool').run('hello')
 
-    assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.2-pro'?")
+    assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.6-sol'?")
     assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None
