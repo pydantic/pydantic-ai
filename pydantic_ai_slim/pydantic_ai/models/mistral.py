@@ -152,12 +152,13 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
         error = None
     code = error.get('code') if _utils.is_str_dict(error) else None
     error_type = error.get('type') if _utils.is_str_dict(error) else None
-    # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+    # Mistral sends its numeric error codes as strings; `'3051'` covers `invalid_request_invalid_args` in general,
+    # including context window overflows (`'... too large for model with N maximum context length'`).
     code = str(code) if isinstance(code, str | int) else None
     message = error.get('message') if _utils.is_str_dict(error) else None
     category = (
         ModelContextWindowExceededError
-        if code == '3051'
+        if code == '3051' and isinstance(message, str) and 'maximum context length' in message.lower()
         else _model_errors.http_status_category(e.status_code, message)
     )
     return ModelHTTPError.for_category(
