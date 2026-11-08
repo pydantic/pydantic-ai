@@ -244,6 +244,30 @@ def _normalize_model_name(model_name: str) -> str:
     return re.sub(r'^[a-z]{2,}\.(?=(?:gemini|gemma)-)', '', normalized)
 
 
+def _resolve_thinking_levels(
+    model_name: str,
+    *,
+    is_pro: bool,
+    is_image_model: bool,
+    supports_thinking_level: bool,
+) -> tuple[frozenset[GoogleThinkingLevel] | None, bool]:
+    """Resolve documented `thinking_level` values and whether `MINIMAL` is supported."""
+    is_non_image_pro = is_pro and not is_image_model
+    if not supports_thinking_level:
+        return None, not is_non_image_pro
+    default_levels = frozenset(('LOW', 'MEDIUM', 'HIGH')) if is_non_image_pro else None
+    levels = next(
+        (
+            candidate
+            for prefix, candidate in _MODEL_THINKING_LEVELS
+            if model_name.startswith(prefix) and not (prefix == 'gemini-3-pro' and is_image_model)
+        ),
+        default_levels,
+    )
+    supports_minimal = not is_non_image_pro and (levels is None or 'MINIMAL' in levels)
+    return levels, supports_minimal
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     model_name = _normalize_model_name(model_name)
@@ -281,17 +305,11 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = supports_thinking and is_pro
-    thinking_levels = (
-        next(
-            (
-                levels
-                for prefix, levels in _MODEL_THINKING_LEVELS
-                if model_name.startswith(prefix) and not (prefix == 'gemini-3-pro' and is_image_model)
-            ),
-            frozenset(('LOW', 'MEDIUM', 'HIGH')) if is_pro and not is_image_model else None,
-        )
-        if google_supports_thinking_level
-        else None
+    thinking_levels, supports_minimal_thinking_level = _resolve_thinking_levels(
+        model_name,
+        is_pro=is_pro,
+        is_image_model=is_image_model,
+        supports_thinking_level=google_supports_thinking_level,
     )
     # `default_cache_retention` is intentionally left unset (None): Gemini's implicit caching (the default,
     # applied automatically) documents no retention window — only explicit `CachedContent` has a
@@ -310,8 +328,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_modern_gemini,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
         google_supports_thinking_level=google_supports_thinking_level,
-        google_supports_minimal_thinking_level=not (is_pro and not is_image_model)
-        and (thinking_levels is None or 'MINIMAL' in thinking_levels),
+        google_supports_minimal_thinking_level=supports_minimal_thinking_level,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
     )
