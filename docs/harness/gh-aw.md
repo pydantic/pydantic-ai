@@ -301,10 +301,8 @@ Post your triage as a single comment on that issue.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode.
   It appends the checkout to `sys.path`, after installed packages, only for an imported target
-  that is not importable without it, such as `my_agent:agent`. It looks the target up without
-  importing anything, so it may also append the checkout for a target that lookup misses, such
-  as one in a package whose `__init__.py` changes `__path__` (a legacy `pkgutil`-style namespace
-  package, for example) or in namespace package portions inside a zip file.
+  whose top-level name nothing installed has, such as `my_agent:agent`. A checkout target whose
+  top-level name is also installed fails with `ModuleNotFoundError`.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue

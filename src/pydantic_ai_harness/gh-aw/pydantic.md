@@ -140,10 +140,9 @@ engine:
       import json
       import os
       import sys
-      from collections.abc import Sequence
       from datetime import datetime, timezone
       from fnmatch import fnmatchcase
-      from importlib.machinery import ModuleSpec
+      from importlib.util import find_spec
       from pathlib import Path
 
       import pydantic_core
@@ -367,51 +366,6 @@ engine:
               _emit('session.result', result)
 
 
-      def _find_spec_without_importing(module_name: str) -> ModuleSpec | None:
-          # Importing a parent package would run its code and leave it in sys.modules, where it would decide
-          # what the target is imported from once the checkout is appended. So a parent that is not imported
-          # yet is not imported here: the sys.meta_path finders search its spec's submodule_search_locations,
-          # where the import would search its __path__. A parent whose __init__.py changes __path__, such as a
-          # legacy pkgutil-style namespace package, searches other locations only once it runs, so a target
-          # found only there counts as missing, and the checkout is appended after installed packages.
-          parent_name, _, _ = module_name.rpartition('.')
-          search_path: Sequence[str] | None = None
-          if parent_name:
-              parent = sys.modules.get(parent_name)
-              if parent is None:
-                  parent_spec = _find_spec_without_importing(parent_name)
-                  search_path = None if parent_spec is None else parent_spec.submodule_search_locations
-              elif hasattr(parent, '__path__'):
-                  search_path = parent.__path__
-              if search_path is None:
-                  return None
-          return _find_spec_on_meta_path(module_name, search_path)
-
-
-      def _find_spec_on_meta_path(module_name: str, search_path: Sequence[str] | None) -> ModuleSpec | None:
-          parent_name, _, tail = module_name.rpartition('.')
-          # The import system skips a finder without find_spec, except on Python 3.11, which asks its
-          # find_module.
-          finders = (finder for finder in sys.meta_path if hasattr(finder, 'find_spec'))
-          specs = (finder.find_spec(module_name, search_path) for finder in finders)
-          try:
-              return next(filter(None, specs), None)
-          except KeyError as error:  # Python < 3.15
-              if search_path is None or error.args != (parent_name,):
-                  raise
-          except ModuleNotFoundError as error:  # Python >= 3.15
-              if search_path is None or error.name != parent_name:
-                  raise
-          # PathFinder found only namespace package portions, and the namespace path it returns reads the
-          # parent from sys.modules, raising KeyError (ModuleNotFoundError from Python 3.15) while the parent
-          # is not imported. The portions are the directories named like the package in the parent's
-          # locations, so portions in a zip file are not found.
-          spec = ModuleSpec(module_name, None, is_package=True)
-          portions = (os.path.join(location, tail) for location in search_path)
-          spec.submodule_search_locations = [portion for portion in portions if os.path.isdir(portion)]
-          return spec
-
-
       _configured_agent = os.environ.get('PAI_AGENT')
       agent: Agent[object, object]
       if not _configured_agent:
@@ -431,15 +385,12 @@ engine:
               raise ValueError(
                   f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
               )
-          # The checkout joins sys.path only for a target that lives there, and after installed packages:
-          # the agent imports some dependencies after this point, and a checkout module must not replace one.
-          # Only the whole module name tells: a regular package anywhere on sys.path takes precedence over
-          # namespace package portions. A target that is itself only a namespace package (no origin) holds
-          # no agent, so it counts as missing.
-          if _module_name not in sys.modules:
-              _spec = _find_spec_without_importing(_module_name)
-              if _spec is None or _spec.origin is None:
-                  sys.path.append(os.getcwd())
+          # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
+          # top-level name: the agent imports some dependencies after this point, and a checkout module must not
+          # replace one. A checkout target whose top-level name is also installed is not found.
+          _top_level = _module_name.partition('.')[0]
+          if _top_level not in sys.modules and find_spec(_top_level) is None:
+              sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
@@ -652,10 +603,9 @@ engine:
         // path is trusted in-process configuration: Python can import from it at
         // startup, before the recorder protects its signing key.
         //
-        // The wrapper appends the checkout only for an imported PAI_AGENT that it
-        // cannot find without it (_find_spec_without_importing), so packages
-        // installed on sys.path keep precedence. One an import hook provides,
-        // such as a setuptools editable install, can lose to a checkout package.
+        // The wrapper appends the checkout to sys.path, after installed packages,
+        // only when nothing installed has an imported PAI_AGENT's top-level name.
+        // A checkout target whose top-level name is also installed is not found.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow

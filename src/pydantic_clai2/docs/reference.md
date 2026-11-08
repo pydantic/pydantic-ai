@@ -3184,16 +3184,11 @@ clai2 -a my_agents:reviewer -p "Review the staged diff"
 ```
 
 `--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
-instance instead of CLAI's default agent. When the module is not otherwise
-importable, CLAI appends the launch directory to `sys.path`, after installed
-packages, so a module next to where you start CLAI resolves without installing it.
-A module or regular package with the same top-level name installed on `sys.path`
-wins over the launch directory, but one an import hook provides, such as a
-setuptools editable install, can lose to a package there. CLAI looks the module up
-without importing anything, so it may also append the launch directory for a
-module that lookup misses, such as one in a package whose `__init__.py` changes
-`__path__` (a legacy `pkgutil`-style namespace package, for example) or in
-namespace package portions inside a zip file. `ATTR` must
+instance instead of CLAI's default agent. CLAI appends the launch directory to
+`sys.path`, after installed packages, so a module next to where you start CLAI
+resolves without installing it. It does so only when nothing installed has the
+module's top-level name, so a module there whose top-level name is also installed
+fails with "module not found". `ATTR` must
 name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
