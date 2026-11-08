@@ -246,22 +246,28 @@ The status blocks merge only while the `main` ruleset lists `Security Review` as
 - `detect` runs `security_review_checks.py` on the head's `git diff`, read as data, and starts one
   review job per selected check. A check selects the files under its trigger paths, and can also
   select a file whose changed lines match its diff tokens. The `general` check reviews every changed
-  source, workflow and configuration file that no selected check owns by path. A change to
+  source, workflow and configuration file that no selected check owns by path. The
+  `tests-and-dependencies` check owns tests, cassettes, dependency manifests and lockfiles, and holds
+  them to the repository's testing and dependency rules rather than the security rubric. A change to
   documentation or agent instructions only selects nothing and passes.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The model sees only its check's diffs. The check's `max_steps` and `max_minutes` end a
-  review as `INCOMPLETE`. Token totals are recorded and never capped. A vulnerability that already
+  review as `INCOMPLETE`; the defaults are permissive starting values, to be tuned down from recorded
+  runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN` set, OpenCode exports its
+  own spans and logs over OTLP, and the runner exports one span per review with its outcome, steps,
+  tokens and duration. OpenCode's spans carry no prompt or completion text and no token counts. A vulnerability that already
   exists on the base branch goes only to the private triage Slack webhook. Result artifacts are
   public, so they carry no private report.
 - `publish` validates every finding against its check's files. When there are findings, it posts one
-  `COMMENT` review with the receipt `<!-- security-review run=… head=… -->`, which douwebot's clean
-  approval gate does not count as a douwebot finding. A `critical` or `high` finding, an
+  `COMMENT` review with each check's usage and the receipt `<!-- security-review run=… head=… -->`,
+  which douwebot's clean approval gate does not count as a douwebot finding. The job summary always
+  carries the usage table. A `critical` or `high` finding, an
   `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
 - A `User` with write access applies `security-review:accepted` to pass the current head despite its
   findings. A push removes the label and reviews the new head. Rerunning the review replaces an
   acceptance; apply the label again.
-- A draft is reviewed when it is marked ready. A merge group gets success without a review.
+- Drafts are reviewed like any other pull request. A merge group gets success without a review.
 
 To add a check, add a `SpecialistCheck` entry in `security_review_checks.py` and its prompt
 fragment in `.github/security-review/prompts/`. The workflow needs no change. Like `bots.yml`, a

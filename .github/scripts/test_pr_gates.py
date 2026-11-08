@@ -681,7 +681,14 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
 
 def test_security_review_receipt_does_not_count_as_douwebot_finding():
     result = CheckResult(
-        check='general', files=['a.py'], outcome='COMPLETE', findings=[], coverage='Reviewed a.py.', steps=1, tokens=1
+        check='general',
+        files=['a.py'],
+        outcome='COMPLETE',
+        findings=[],
+        coverage='Reviewed a.py.',
+        steps=1,
+        tokens=1,
+        seconds=1,
     )
     parent = review(8, body=json.loads(security_review_payload([result], HEAD, 30, inline=True))['body'])
     comment = review_gates.ReviewComment(

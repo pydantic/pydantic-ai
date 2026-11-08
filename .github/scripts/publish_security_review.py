@@ -46,6 +46,7 @@ class CheckResult(BaseModel):
     steps: int
     tokens: int
     """Telemetry only: input, output, reasoning and cache tokens summed over every step."""
+    seconds: int
 
 
 class Actor(BaseModel):
@@ -59,7 +60,6 @@ class LivePullRequest(BaseModel):
     """The live state an event's payload can no longer vouch for."""
 
     state: Literal['open', 'closed']
-    draft: bool
     head: Commit
     user: Actor
     labels: list[Label]
@@ -109,9 +109,6 @@ def gate(github: SecurityGitHub, env: Mapping[str, str]) -> bool:
     # An acceptance covers only the head it was given for.
     if action == 'synchronize' and ACCEPTED_LABEL in labels:
         github.remove_label(ACCEPTED_LABEL)
-    if pull.draft:
-        print('Draft PR: the review starts when it is marked ready for review.')
-        return False
     author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
     if action == 'labeled' and label == RUN_LABEL and author_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
@@ -170,6 +167,7 @@ def review_payload(results: list[CheckResult], head: str, run_id: int, *, inline
     body = '## Security Review\n\n' + '\n'.join(
         f'- `{result.check}` ({result.outcome.lower()}): {result.coverage}' for result in results
     )
+    body += '\n\n<details><summary>Usage</summary>\n\n' + usage_table(results) + '\n\n</details>'
     comments: list[dict[str, object]] = []
     for result in results:
         for finding in result.findings:
@@ -207,20 +205,19 @@ def publish(github: SecurityGitHub, env: Mapping[str, str]) -> None:
             raise GateError('GitHub rejected the review with its findings in the body.')
         url = review_url
     github.status(head, state, description, url)
-    summary = '\n'.join(
-        [
-            f'## {CONTEXT}: {state}',
-            description,
-            '',
-            '| check | outcome | findings | steps | tokens |',
-            '|---|---|---|---|---|',
-            *(f'| {r.check} | {r.outcome} | {len(r.findings)} | {r.steps} | {r.tokens:,} |' for r in ordered),
-        ]
-    )
+    summary = f'## {CONTEXT}: {state}\n\n{description}\n\n{usage_table(ordered)}'
     print(summary)
     if summary_path := env.get('GITHUB_STEP_SUMMARY'):
         with open(summary_path, 'a', encoding='utf-8') as file:
             file.write(summary + '\n')
+
+
+def usage_table(results: list[CheckResult]) -> str:
+    """Each check's steps, tokens and duration, for tuning its budget."""
+    rows = [
+        f'| `{r.check}` | {r.outcome} | {len(r.findings)} | {r.steps} | {r.tokens:,} | {r.seconds} |' for r in results
+    ]
+    return '\n'.join(['| check | outcome | findings | steps | tokens | seconds |', '|---|---|---|---|---|---|', *rows])
 
 
 def run_url(env: Mapping[str, str]) -> str:

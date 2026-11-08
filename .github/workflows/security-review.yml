@@ -7,7 +7,7 @@ name: Security Review
 
 on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] -- runs only default-branch code; the head is read as data by a model without write tools
-    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
+    types: [opened, reopened, synchronize, edited, labeled]
   # Every head is reviewed before admission; report success on the merge-group SHA.
   merge_group:
     types: [checks_requested]
@@ -156,8 +156,10 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only this key
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only this key and the Logfire token
           TRIAGE_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }} # zizmor: ignore[secrets-outside-env] -- only the default-branch runner reads it; OpenCode never does
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- a write-only ingest token; OpenCode exports with it, and has no tool that reads its environment
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
       # Artifacts on this repository are public; the result holds only publishable fields.

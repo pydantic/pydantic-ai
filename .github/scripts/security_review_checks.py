@@ -11,7 +11,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SecurityCheck:
     """One check. Its prompt fragment is `.github/security-review/prompts/<name>.md`."""
 
@@ -19,13 +19,16 @@ class SecurityCheck:
     title: str
     scope: str
     """Completes "This check covers …" in the shared prompt."""
-    max_steps: int
+    security_rubric: bool = True
+    """Put `security.md`, the vulnerability rubric, before the check's own fragment."""
+    # Permissive starting values: tune them down from the steps and durations each review records.
+    max_steps: int = 100
     """At this step OpenCode stops offering tools, and the review ends `INCOMPLETE`."""
-    max_minutes: int
+    max_minutes: int = 25
     """After this many minutes the runner stops the review and reports it `INCOMPLETE`."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SpecialistCheck(SecurityCheck):
     """A check selected by the files it owns, and optionally by tokens in other files' changed lines."""
 
@@ -48,8 +51,6 @@ class ChangedFile:
         return any(pattern.fullmatch(path) for path in (self.path, self.previous_path) if path)
 
 
-# The maintainer has not set the review budgets yet. A zero budget fails every review.
-BUDGET_PENDING = 0
 # Checkout, context gathering and tool setup run before a review's own clock starts.
 SETUP_MINUTES = 10
 
@@ -57,8 +58,6 @@ GENERAL = SecurityCheck(
     name='general',
     title='General vulnerability review',
     scope='every changed source, workflow and configuration file that no other security check owns',
-    max_steps=BUDGET_PENDING,
-    max_minutes=BUDGET_PENDING,
 )
 
 SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
@@ -66,8 +65,6 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='url-fetch',
         title='URL fetch and egress',
         scope='URL fetching, downloads, provider file references and browser egress',
-        max_steps=BUDGET_PENDING,
-        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
             r'|capabilities/(web_fetch|file_understanding)\.py|realtime/_utils\.py)'
@@ -83,8 +80,6 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='ui',
         title='UI adapters and local web UI',
         scope="the UI adapters' client/server trust boundary and CLAI 2's local web control UI",
-        max_steps=BUDGET_PENDING,
-        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(ui/.*|messages\.py)'
             r'|src/pydantic_clai2/(web-ui/.*|pydantic_clai2/builtin_plugins/web/.*|pydantic_clai2/cli/web\.py'
@@ -97,8 +92,6 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='telemetry',
         title='Telemetry',
         scope='instrumentation, spans, logs and the content controls on them',
-        max_steps=BUDGET_PENDING,
-        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_instrumentation|_otel_messages|capabilities/instrumentation'
             r'|models/instrumented|embeddings/instrumented|images/instrumented|realtime/_instrumentation)\.py'
@@ -112,11 +105,19 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         name='sandboxes',
         title='Sandboxes and Code Mode',
         scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
-        max_steps=BUDGET_PENDING,
-        max_minutes=BUDGET_PENDING,
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
             r'(bubblewrap_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+        ),
+    ),
+    SpecialistCheck(
+        name='tests-and-dependencies',
+        title='Tests and dependencies',
+        scope='test changes, cassettes, dependency manifests and lockfiles',
+        security_rubric=False,
+        paths=re.compile(
+            r'tests/.*|(.*/)?(pyproject\.toml|uv\.lock|package-lock\.json)'
+            r'|\.github/scripts/[^/]*\.lock|\.github/aw/actions-lock\.json'
         ),
     ),
 )
@@ -141,7 +142,8 @@ _CONTENT = (
     '*/AGENTS.md',
     '*/CLAUDE.md',
 )
-_NOT_GENERAL = re.compile(r'tests/.*|.*/cassettes/.*|(.*/)?uv\.lock|\.github/workflows/.*\.lock\.yml')
+# Compiled from a workflow source that the general check reviews.
+_GENERATED = re.compile(r'\.github/workflows/.*\.lock\.yml')
 
 
 def is_content(path: str) -> bool:
@@ -153,7 +155,7 @@ def is_content(path: str) -> bool:
 
 def _general_reviews(file: ChangedFile) -> bool:
     paths = [path for path in (file.path, file.previous_path) if path]
-    return any(not is_content(path) and not _NOT_GENERAL.fullmatch(path) for path in paths)
+    return any(not is_content(path) and not _GENERATED.fullmatch(path) for path in paths)
 
 
 def select(files: list[ChangedFile]) -> dict[str, list[str]]:

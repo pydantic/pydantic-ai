@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from douwebot_opencode_result import final_text
 from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
@@ -25,6 +30,8 @@ MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
 INSTRUCTION_DIRECTORIES = frozenset({'.claude', '.agents', 'agent_docs', '.opencode'})
+LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
+_HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
@@ -46,6 +53,7 @@ class Usage:
     steps: int = 0
     tokens: int = 0
     stopped: bool = False
+    seconds: int = 0
 
 
 def strip_instructions(head: Path) -> None:
@@ -61,7 +69,7 @@ def strip_instructions(head: Path) -> None:
                 (Path(directory) / name).unlink()
 
 
-def write_context(check: str, files: list[str], workspace: Path) -> Path:
+def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str) -> Path:
     """Copy only this check's diffs and file list next to the PR details."""
     context = workspace / '.github' / '.security-review' / check
     (context / 'diff').mkdir(parents=True)
@@ -69,17 +77,50 @@ def write_context(check: str, files: list[str], workspace: Path) -> Path:
     unseen = set(files)
     rows: list[str] = []
     for row in (workspace / REVIEW_CONTEXT / 'changed-files.txt').read_text(encoding='utf-8').splitlines():
-        fields = row.split('\t')
-        if fields[0] not in unseen or len(fields) != 3:
+        path, counts, *diff = row.split('\t')
+        if path not in unseen:
             continue
-        unseen.remove(fields[0])
-        rows.append(row)
-        shutil.copy(workspace / REVIEW_CONTEXT / fields[2], context / fields[2])
+        unseen.remove(path)
+        if diff:
+            shutil.copy(workspace / REVIEW_CONTEXT / diff[0], context / diff[0])
+        else:
+            # The shared context leaves out `uv.lock` and cassette diffs, which only some checks read.
+            diff = ['diff/' + re.sub(r'^\.+', '', path.replace('/', '__')) + '.diff']
+            (context / diff[0]).write_text(_annotated_diff(workspace / 'pr-head', base, head, path), encoding='utf-8')
+        rows.append('\t'.join([path, counts, diff[0]]))
     # The context lists files from the PR files API, which stops at 3,000; an unlisted file would go unreviewed.
     if unseen:
         raise ValueError(f'The review context has no diff for {sorted(unseen)}')
     (context / 'changed-files.txt').write_text('\n'.join(rows) + '\n', encoding='utf-8')
     return context
+
+
+def _annotated_diff(repository: Path, base: str, head: str, path: str) -> str:
+    """Number the changed lines of one file's diff the way the shared context does, for inline comments."""
+    patch = subprocess.run(
+        ['git', '-C', str(repository), 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '-U0']
+        + [f'{base}...{head}', '--', path],
+        check=True,
+        capture_output=True,
+        text=True,
+        errors='replace',
+    ).stdout
+    lines: list[str] = []
+    old = new = 0
+    in_hunk = False
+    for line in patch.splitlines():
+        if hunk := _HUNK.match(line):
+            old, new, in_hunk = int(hunk[1]), int(hunk[2]), True
+            lines.append(line)
+        elif in_hunk and line.startswith('+'):
+            lines.append(f'NL:{new} {line}')
+            new += 1
+        elif in_hunk and line.startswith('-'):
+            lines.append(f'OL:{old} {line}')
+            old += 1
+        else:
+            lines.append(line)
+    return '\n'.join(lines) + '\n'
 
 
 def build_prompt(check: SecurityCheck, context: Path, workspace: Path, *, pr_number: int, repository: str) -> str:
@@ -92,7 +133,10 @@ def build_prompt(check: SecurityCheck, context: Path, workspace: Path, *, pr_num
         '{context_dir}': context.relative_to(workspace).as_posix(),
         '{max_steps}': str(check.max_steps),
         '{max_findings}': str(MAX_FINDINGS),
-        '{check_fragment}': (workspace / PROMPTS / f'{check.name}.md').read_text(encoding='utf-8').strip(),
+        '{check_fragment}': '\n\n'.join(
+            (workspace / PROMPTS / f'{name}.md').read_text(encoding='utf-8').strip()
+            for name in (['security'] if check.security_rubric else []) + [check.name]
+        ),
         '{schema}': json.dumps(ModelResult.model_json_schema(), separators=(',', ':')),
     }
     prompt = (workspace / PROMPTS / 'shared.md').read_text(encoding='utf-8')
@@ -119,33 +163,35 @@ def run_opencode(
 ) -> Usage:
     """Stream the event log to `output`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
-    process = subprocess.Popen(
+    started = time.monotonic()
+    with subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=cwd, env=env, encoding='utf-8'
-    )
+    ) as process:
 
-    def stop() -> None:
-        usage.stopped = True
-        process.kill()
+        def stop() -> None:
+            usage.stopped = True
+            process.kill()
 
-    timer = threading.Timer(minutes * 60, stop)
-    timer.start()
-    try:
-        assert process.stdin is not None and process.stdout is not None
-        process.stdin.write(prompt)
-        process.stdin.close()
-        with output.open('w', encoding='utf-8') as log:
-            for line in process.stdout:
-                log.write(line)
-                tokens = step_tokens(line) if line.strip() else None
-                if tokens is None:
-                    continue
-                usage.steps += 1
-                usage.tokens += tokens
-        returncode = process.wait()
-    finally:
-        timer.cancel()
-    if not usage.stopped and returncode:
-        raise subprocess.CalledProcessError(returncode, command)
+        timer = threading.Timer(minutes * 60, stop)
+        timer.start()
+        try:
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(prompt)
+            process.stdin.close()
+            with output.open('w', encoding='utf-8') as log:
+                for line in process.stdout:
+                    log.write(line)
+                    tokens = step_tokens(line) if line.strip() else None
+                    if tokens is None:
+                        continue
+                    usage.steps += 1
+                    usage.tokens += tokens
+            process.wait()
+        finally:
+            timer.cancel()
+    usage.seconds = round(time.monotonic() - started)
+    if not usage.stopped and process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command)
     return usage
 
 
@@ -181,6 +227,7 @@ def check_result(check: SecurityCheck, files: list[str], stream: Path, usage: Us
         coverage=coverage,
         steps=usage.steps,
         tokens=usage.tokens,
+        seconds=usage.seconds,
     ), private_report
 
 
@@ -192,6 +239,42 @@ def report_privately(webhook: str, check: str, pr_number: int, repository: str, 
     )
     with urllib.request.urlopen(request, timeout=30):
         pass
+
+
+def export_span(endpoint: str, token: str, result: CheckResult, attributes: Mapping[str, str], started: int) -> None:
+    """Send one span per review to Logfire: OpenCode's own spans carry no model, token or step counts."""
+    values = {
+        **attributes,
+        'security_review.outcome': result.outcome,
+        'security_review.findings': len(result.findings),
+        'security_review.steps': result.steps,
+        'security_review.tokens': result.tokens,
+        'security_review.seconds': result.seconds,
+    }
+    span = {
+        'traceId': secrets.token_hex(16),
+        'spanId': secrets.token_hex(8),
+        'name': f'Security Review {result.check}',
+        'kind': 1,
+        'startTimeUnixNano': str(started),
+        'endTimeUnixNano': str(time.time_ns()),
+        'attributes': [
+            {'key': key, 'value': {'intValue': str(value)} if isinstance(value, int) else {'stringValue': value}}
+            for key, value in values.items()
+        ],
+    }
+    resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'security-review'}}]}
+    body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': __name__}, 'spans': [span]}]}]}
+    request = urllib.request.Request(
+        f'{endpoint}/v1/traces',
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json', 'Authorization': token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            pass
+    except OSError as error:
+        print(f'::warning::Could not export the review span: {error}')
 
 
 def main() -> None:
@@ -207,11 +290,21 @@ def main() -> None:
     strip_instructions(head)
     check_symlinks(workspace, skip_pr_head=True)
     check_symlinks(head)
-    context = write_context(check.name, files, workspace)
+    context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
     prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
     api_key = env['OPENCODE_API_KEY']
     if not api_key:
         raise ValueError('OPENCODE_API_KEY is empty')
+    token = env.get('LOGFIRE_TOKEN', '')
+    endpoint = (env.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
+    attributes = {
+        'security_review.check': check.name,
+        'github.repository': repository,
+        'github.pr_number': str(pr_number),
+        'github.head_sha': env['HEAD_SHA'],
+        'github.run_id': env['GITHUB_RUN_ID'],
+    }
+    started = time.time_ns()
     stream = runner_temp / f'security-review-{check.name}.ndjson'
     with tempfile.TemporaryDirectory(dir=runner_temp, prefix='security-review-opencode-') as temp:
         temp_root = Path(temp)
@@ -226,9 +319,21 @@ def main() -> None:
             'XDG_CACHE_HOME': str(temp_root / 'cache'),
             'OPENCODE_API_KEY': api_key,
         }
+        if token:
+            # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
+            # or completion text, so these attributes tie them to this review.
+            opencode_env |= {
+                'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
+                'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
+                'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
+            }
         command = ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', 'reviewer', '--format', 'json']
         usage = run_opencode(command, prompt, cwd=workspace, env=opencode_env, output=stream, minutes=check.max_minutes)
     result, private_report = check_result(check, files, stream, usage)
+    if token:
+        export_span(endpoint, token, result, attributes, started)
+    else:
+        print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:
         if not (webhook := env.get('TRIAGE_WEBHOOK_URL', '')):
             raise ValueError('The review produced a private report, but TRIAGE_WEBHOOK_URL is empty')
@@ -237,7 +342,8 @@ def main() -> None:
     output.mkdir(exist_ok=True)
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(
-        f'{check.name}: {result.outcome}, {len(result.findings)} findings, {usage.steps} steps, {usage.tokens:,} tokens'
+        f'{check.name}: {result.outcome}, {len(result.findings)} findings, {usage.steps} steps, '
+        f'{usage.tokens:,} tokens, {usage.seconds} s'
     )
 
 

@@ -21,7 +21,7 @@ def _file(path: str, *lines: str, previous: str = '') -> ChangedFile:
 
 def test_every_check_has_a_prompt_fragment() -> None:
     """A config entry without its prompt would start a review with no instructions."""
-    assert sorted(path.stem for path in PROMPTS.glob('*.md') if path.stem != 'shared') == sorted(
+    assert sorted(path.stem for path in PROMPTS.glob('*.md') if path.stem not in {'shared', 'security'}) == sorted(
         check.name for check in CHECKS
     )
 
@@ -41,11 +41,23 @@ def test_content_only_change_selects_nothing() -> None:
 
 @pytest.mark.parametrize(
     'path',
-    ['tests/test_agent.py', 'tests/models/cassettes/test_x/y.yaml', 'uv.lock', '.github/workflows/ci.lock.yml'],
+    [
+        'tests/test_agent.py',
+        'tests/models/cassettes/test_x/y.yaml',
+        'uv.lock',
+        'pydantic_ai_slim/pyproject.toml',
+        '.github/scripts/pydantic-ai-runner.lock',
+        'tests/ui_roundtrip/package-lock.json',
+    ],
 )
-def test_general_skips_tests_and_generated_files(path: str) -> None:
-    """Tests and generated files ship nothing a user runs, and would spend the review budget."""
-    assert select([_file(path)]) == {}
+def test_tests_and_dependencies_check_owns_tests_and_locks(path: str) -> None:
+    """A tests-only or dependency-only pull request is reviewed against the testing and dependency rules."""
+    assert select([_file(path)]) == {'tests-and-dependencies': [path]}
+
+
+def test_compiled_workflow_lock_selects_nothing() -> None:
+    """The general check reviews the workflow source the lock is compiled from."""
+    assert select([_file('.github/workflows/ci.lock.yml')]) == {}
 
 
 def test_general_reviews_source_and_workflows() -> None:

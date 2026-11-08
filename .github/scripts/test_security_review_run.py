@@ -6,6 +6,7 @@ import dataclasses
 import json
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def test_context_holds_only_this_checks_files(tmp_path: Path) -> None:
     (context / 'diff' / 'a.py.diff').write_text('NL:1 a')
     (context / 'diff' / 'b.py.diff').write_text('NL:1 b')
     (context / 'changed-files.txt').write_text('a.py\t+1 -0\tdiff/a.py.diff\nb.py\t+1 -0\tdiff/b.py.diff\n')
-    written = write_context('general', ['a.py'], tmp_path)
+    written = write_context('general', ['a.py'], tmp_path, base='base', head='head')
     assert (written / 'changed-files.txt').read_text() == 'a.py\t+1 -0\tdiff/a.py.diff\n'
     assert [path.name for path in (written / 'diff').iterdir()] == ['a.py.diff']
 
@@ -69,7 +70,37 @@ def test_context_fails_closed_on_a_file_without_its_diff(tmp_path: Path) -> None
     (context / 'pr-details.json').write_text('{}')
     (context / 'changed-files.txt').write_text('')
     with pytest.raises(ValueError, match=r'a\.py'):
-        write_context('general', ['a.py'], tmp_path)
+        write_context('general', ['a.py'], tmp_path, base='base', head='head')
+
+
+def _git(repository: Path, *args: str) -> str:
+    return subprocess.run(
+        ['git', '-C', str(repository), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_context_numbers_a_lock_diff_the_shared_context_leaves_out(tmp_path: Path) -> None:
+    """The tests and dependencies check reads `uv.lock` and cassette changes that douwebot's context skips."""
+    head = tmp_path / 'pr-head'
+    head.mkdir()
+    _git(head, 'init', '-q', '-b', 'main')
+    _git(head, 'config', 'user.email', 'test@example.com')
+    _git(head, 'config', 'user.name', 'Test')
+    (head / 'uv.lock').write_text('a = 1\nb = 2\nc = 3\n')
+    _git(head, 'add', '.')
+    _git(head, 'commit', '-q', '-m', 'base')
+    base = _git(head, 'rev-parse', 'HEAD')
+    (head / 'uv.lock').write_text('a = 1\nb = 20\nc = 3\n')
+    _git(head, 'commit', '-q', '-am', 'head')
+    context = tmp_path / '.github' / '.review-context'
+    context.mkdir(parents=True)
+    (context / 'pr-details.json').write_text('{}')
+    (context / 'changed-files.txt').write_text('uv.lock\t+1 -1\n')
+    written = write_context('tests-and-dependencies', ['uv.lock'], tmp_path, base=base, head='HEAD')
+    assert (written / 'changed-files.txt').read_text() == 'uv.lock\t+1 -1\tdiff/uv.lock.diff\n'
+    diff = (written / 'diff' / 'uv.lock.diff').read_text()
+    assert diff.endswith('@@ -2 +2 @@ a = 1\nOL:2 -b = 2\nNL:2 +b = 20\n')
+    assert '\n--- a/uv.lock\n+++ b/uv.lock\n' in diff
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
@@ -80,6 +111,7 @@ def test_prompt_fills_every_placeholder(check: SecurityCheck) -> None:
     assert not re.search(r'\{[a-z_]+\}', prompt)
     assert '.github/.security-review/' + check.name in prompt
     assert prompt.rstrip().endswith('}')
+    assert ('### Classes to examine in every check' in prompt) is check.security_rubric
 
 
 def _step(tokens: int) -> str:
@@ -93,7 +125,7 @@ def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
     usage = run_opencode(
         ['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, output=tmp_path / 'out', minutes=5
     )
-    assert usage == Usage(steps=2, tokens=2 * (2 * 10**9 + 1))
+    assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
 
 
 def test_time_budget_stops_the_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

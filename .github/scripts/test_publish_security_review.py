@@ -56,9 +56,8 @@ class PostedReview(BaseModel):
 class FakeGitHub:
     """Live pull request state, permissions and the writes a gate or publisher made."""
 
-    author: Actor = MAINTAINER
+    author: Actor = field(default_factory=lambda: MAINTAINER)
     labels: list[str] = field(default_factory=list[str])
-    draft: bool = False
     head: str = HEAD
     labeled_by: Actor | None = None
     permissions: dict[str, str] = field(default_factory=lambda: {'maintainer': 'write', 'contributor': 'read'})
@@ -70,7 +69,6 @@ class FakeGitHub:
     def pull_request(self) -> LivePullRequest:
         return LivePullRequest(
             state='open',
-            draft=self.draft,
             head=Commit(sha=self.head),
             user=self.author,
             labels=[Label(name=name) for name in self.labels],
@@ -181,9 +179,9 @@ def test_push_removes_the_acceptance_and_reviews_again() -> None:
     assert github.removed == [ACCEPTED_LABEL]
 
 
-@pytest.mark.parametrize('github', [FakeGitHub(head='c' * 40), FakeGitHub(draft=True)], ids=['moved', 'draft'])
-def test_stale_or_draft_head_writes_nothing(github: FakeGitHub) -> None:
-    """A newer event decides a moved head; a draft is reviewed when it is ready."""
+def test_moved_head_writes_nothing() -> None:
+    """The event for the new head decides it."""
+    github = FakeGitHub(head='c' * 40)
     assert not gate(github, ENV)
     assert github.statuses == []
 
@@ -202,6 +200,7 @@ def _result(check: str, *severities: str, outcome: str = 'COMPLETE') -> CheckRes
             'coverage': 'Reviewed a.py.',
             'steps': 4,
             'tokens': 1000,
+            'seconds': 60,
         }
     )
 
@@ -250,6 +249,7 @@ def test_findings_are_one_review_bound_to_the_run_and_head(tmp_path: Path) -> No
     marker = MARKER.search(review.body)
     assert marker is not None and (marker[1], marker[2]) == ('100', HEAD)
     assert [comment['path'] for comment in review.comments] == ['a.py']
+    assert '| `general` | COMPLETE | 1 | 4 | 1,000 | 60 |' in review.body
     assert github.statuses == [
         (HEAD, 'failure', 'Blocking findings: general', 'https://github.com/o/r/pull/1#pullrequestreview-1')
     ]
