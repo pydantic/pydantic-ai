@@ -33,7 +33,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets import FunctionToolset
 
-from .bash import BashScopes, bash, scoped_bash
+from .bash import bash
 from .edit import edit_file
 from .exit_plan_mode import exit_plan_mode
 from .glob import glob_search
@@ -65,7 +65,6 @@ __all__ = [
     'MUTATING_TOOLS',
     'CLAUDE_CODE_TOOL_NAMES',
     'READ_ONLY_SUBAGENT_TOOLS',
-    'BashScopes',
     'bash',
     'build_claude_code_toolset',
     'edit_file',
@@ -75,7 +74,6 @@ __all__ = [
     'list_dir',
     'multi_edit',
     'read_file',
-    'scoped_bash',
     'todo_write',
     'write_file',
 ]
@@ -113,26 +111,18 @@ MUTATING_TOOLS = frozenset({'Bash', 'Write', 'Edit', 'MultiEdit'})
 READ_ONLY_SUBAGENT_TOOLS = frozenset({'Read', 'Grep', 'Glob', 'LS', 'TodoWrite', 'ExitPlanMode'})
 
 
-def build_claude_code_toolset(
-    *, task: TaskCallable | None = None, bash_scopes: BashScopes | None = None
-) -> FunctionToolset[object]:
+def build_claude_code_toolset(*, task: TaskCallable | None = None) -> FunctionToolset[object]:
     """Build the shim's Claude Code tool `FunctionToolset`.
 
     Pass `task=` to register the sub-agent dispatcher as an additional
     tool named `Task`. Sub-agent toolsets call this with `task=None` so
-    sub-agents can't spawn their own sub-agents. Pass `bash_scopes=` to limit
-    `Bash` to the commands scoped `Bash(...)` grants allow.
+    sub-agents can't spawn their own sub-agents.
 
     Filter for permission mode / allow-list with `.filtered(predicate)`
     on the returned toolset (see `select_claude_code_toolset` in the main
     shim).
     """
-    tools: list[Tool[object]] = [
-        Tool(
-            scoped_bash(bash_scopes) if name == 'Bash' and bash_scopes is not None else fn, name=name, description=desc
-        )
-        for name, fn, desc in _BASE_TOOLS
-    ]
+    tools: list[Tool[object]] = [Tool(fn, name=name, description=desc) for name, fn, desc in _BASE_TOOLS]
     if task is not None:
         tools.append(
             Tool(
