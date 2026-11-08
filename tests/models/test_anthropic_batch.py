@@ -29,7 +29,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, get_user_agent
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
@@ -153,27 +153,32 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
     assert 'api.anthropic.com' not in request.group
 
 
-@pytest.mark.parametrize(
-    'headers',
-    [
-        pytest.param({'X-Tenant': 'a'}, id='custom'),
-        # A batch is created with our user-agent alone, so the caller's would be replaced, in any spelling.
-        pytest.param({'User-Agent': 'support-bot/1.0'}, id='User-Agent'),
-        pytest.param({'user-agent': 'support-bot/1.0'}, id='user-agent'),
-        pytest.param({'USER-AGENT': 'support-bot/1.0'}, id='USER-AGENT'),
-    ],
-)
-async def test_anthropic_batch_rejects_per_request_headers(headers: dict[str, str]) -> None:
+async def test_anthropic_batch_rejects_per_request_headers() -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
-    with pytest.raises(
-        UserError,
-        match=(
-            r'^Anthropic Message Batches do not support per-request `extra_headers`; set them on the client, except a '
-            r"user-agent, which a batch always sends as Pydantic AI's\.$"
-        ),
-    ):
-        await model.batch_encode(_request('item1', {'extra_headers': headers}))
+    with pytest.raises(UserError, match='do not support per-request `extra_headers`'):
+        await model.batch_encode(_request('item1', {'extra_headers': {'X-Tenant': 'a'}}))
+
+
+@pytest.mark.parametrize('header_name', ['User-Agent', 'user-agent', 'USER-AGENT'])
+async def test_anthropic_batch_ignores_a_per_request_user_agent(allow_model_requests: None, header_name: str) -> None:
+    """A batch is created with our user-agent alone, so a caller's is ignored, in any spelling."""
+    api = _FakeBatchAPI()
+    user_agents: list[list[str]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        user_agents.append([value.decode() for name, value in request.headers.raw if name.lower() == b'user-agent'])
+        return api.handle(request)
+
+    client = AsyncAnthropic(api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    plain = await model.batch_encode(_request())
+    request = await model.batch_encode(_request(settings={'extra_headers': {header_name: 'support-bot/1.0'}}))
+    assert (request.body, request.group) == (plain.body, plain.group)
+
+    await model.batch_create([request])
+    assert user_agents == [[get_user_agent()]]
 
 
 @pytest.mark.parametrize('status', ['expired', 'canceled'])
