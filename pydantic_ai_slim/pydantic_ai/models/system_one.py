@@ -140,44 +140,12 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         """The system / model provider."""
         return self._provider.name
 
-    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:  # noqa: C901
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/systemone` endpoint."""
         if request.images:
             raise UserError('System One does not support image input.')
-        body: dict[str, object] = {
-            'state': request.state,
-            'model': self._model_name,
-            'questions': {name: _wire(question) for name, question in request.questions.items()},
-        }
-        if (temperature := model_settings.get('temperature')) is not None:
-            body['temperature'] = temperature
-        if (extra_body := model_settings.get('extra_body')) is not None:
-            if not isinstance(extra_body, Mapping):
-                raise UserError(f'`extra_body` must be a mapping to send it to the System One API; got {extra_body!r}.')
-            body.update(cast('Mapping[str, object]', extra_body))
-        questions = request.questions
-        if extra_body is not None and 'questions' in extra_body:
-            try:
-                questions = _questions_adapter.validate_python(body['questions'])
-            except ValidationError as e:
-                raise UserError(f'Cannot validate the `extra_body.questions` override: {e}') from e
-
-        timeout = model_settings.get('timeout')
-        url = f'{self.base_url}/systemone' if self.base_url.endswith('/v1') else f'{self.base_url}/v1/systemone'
-        try:
-            headers = httpx2.Headers(model_settings.get('extra_headers') or {})
-            if self._api_key is not None and 'Authorization' not in headers:
-                headers['Authorization'] = f'Bearer {self._api_key}'
-            http_request = self.client.build_request(
-                'POST',
-                url,
-                json=body,
-                headers=headers,
-                timeout=httpx2.USE_CLIENT_DEFAULT if timeout is None else to_httpx2_timeout(timeout),
-            )
-        except (TypeError, ValueError) as e:
-            # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
-            raise UserError(f'Could not send this request to the System One API: {e}') from e
+        body, questions = self._request_body(request, model_settings)
+        http_request = self._build_request(body, model_settings)
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
@@ -204,46 +172,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             )
         for name, question in questions.items():
             answer = parsed.answers[name]
-            if isinstance(question, NoulQuestion):
-                valid = isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
-            elif isinstance(question, ChoiceQuestion):
-                valid = (
-                    isinstance(answer, ChoiceAnswer)
-                    and answer.choice in question.criteria
-                    and answer.probabilities.keys() == question.criteria.keys()
-                )
-            elif isinstance(question, ScoreQuestion):
-                levels = set(range(len(question.criteria)))
-                valid = (
-                    isinstance(answer, ScoreAnswer)
-                    and answer.probabilities.keys() == levels
-                    and (not answer.legend or answer.legend.keys() == levels)
-                    and isfinite(answer.score)
-                    and 0 <= answer.score <= len(question.criteria) - 1
-                )
-            else:
-                assert_never(question)
-            if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
-                probabilities = answer.probabilities.values()
-                # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
-                # covers the float error of a backend that sends them unrounded.
-                valid = (
-                    valid
-                    and isfinite(answer.confidence)
-                    and 0 <= answer.confidence <= 1
-                    and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
-                    and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
-                )
-                if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                    # A displayed score and its probabilities may each be rounded, or carry float error. Check
-                    # whether any distribution within their intervals could produce that score, using at least
-                    # Jev's two decimals and never less than the float tolerance.
-                    probabilities_by_level: list[float] = [
-                        answer.probabilities[level] for level in range(len(question.criteria))
-                    ]
-                    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
-                    valid = _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
-            if not valid:
+            if not _answer_fits(question, answer):
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',
                     response.text,
@@ -253,6 +182,97 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             model_name=parsed.model,
             usage=RequestUsage(input_tokens=parsed.usage.input_tokens, output_tokens=parsed.usage.output_tokens),
         )
+
+    def _request_body(
+        self, request: DecisionRequest, model_settings: DecisionModelSettings
+    ) -> tuple[dict[str, object], dict[str, DecisionQuestion]]:
+        """The JSON body to send, and the questions it asks, which an `extra_body` can override."""
+        body: dict[str, object] = {
+            'state': request.state,
+            'model': self._model_name,
+            'questions': {name: _wire(question) for name, question in request.questions.items()},
+        }
+        if (temperature := model_settings.get('temperature')) is not None:
+            body['temperature'] = temperature
+        if (extra_body := model_settings.get('extra_body')) is not None:
+            if not isinstance(extra_body, Mapping):
+                raise UserError(f'`extra_body` must be a mapping to send it to the System One API; got {extra_body!r}.')
+            body.update(cast('Mapping[str, object]', extra_body))
+        questions = request.questions
+        if extra_body is not None and 'questions' in extra_body:
+            try:
+                questions = _questions_adapter.validate_python(body['questions'])
+            except ValidationError as e:
+                raise UserError(f'Cannot validate the `extra_body.questions` override: {e}') from e
+        return body, questions
+
+    def _build_request(self, body: dict[str, object], model_settings: DecisionModelSettings) -> httpx2.Request:
+        timeout = model_settings.get('timeout')
+        url = f'{self.base_url}/systemone' if self.base_url.endswith('/v1') else f'{self.base_url}/v1/systemone'
+        try:
+            headers = httpx2.Headers(model_settings.get('extra_headers') or {})
+            if self._api_key is not None and 'Authorization' not in headers:
+                headers['Authorization'] = f'Bearer {self._api_key}'
+            return self.client.build_request(
+                'POST',
+                url,
+                json=body,
+                headers=headers,
+                timeout=httpx2.USE_CLIENT_DEFAULT if timeout is None else to_httpx2_timeout(timeout),
+            )
+        except (TypeError, ValueError) as e:
+            # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
+            raise UserError(f'Could not send this request to the System One API: {e}') from e
+
+
+def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:
+    """Whether the API's `answer` is a valid answer to `question`."""
+    match question:
+        case NoulQuestion():
+            return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+        case ChoiceQuestion():
+            return (
+                isinstance(answer, ChoiceAnswer)
+                and answer.choice in question.criteria
+                and answer.probabilities.keys() == question.criteria.keys()
+                and _probabilities_fit(answer)
+            )
+        case ScoreQuestion():
+            levels = set(range(len(question.criteria)))
+            return (
+                isinstance(answer, ScoreAnswer)
+                and answer.probabilities.keys() == levels
+                and (not answer.legend or answer.legend.keys() == levels)
+                and isfinite(answer.score)
+                and 0 <= answer.score <= len(question.criteria) - 1
+                and _probabilities_fit(answer)
+                and _score_fits_probabilities(question, answer)
+            )
+        case _:
+            assert_never(question)
+
+
+def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
+    """Whether an answer's confidence and probabilities are probabilities, and its probabilities sum to one."""
+    probabilities = answer.probabilities.values()
+    # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
+    # covers the float error of a backend that sends them unrounded.
+    return (
+        isfinite(answer.confidence)
+        and 0 <= answer.confidence <= 1
+        and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
+        and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
+    )
+
+
+def _score_fits_probabilities(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
+    """Whether a score answer's score is one its probabilities could produce."""
+    # A displayed score and its probabilities may each be rounded, or carry float error. Check
+    # whether any distribution within their intervals could produce that score, using at least
+    # Jev's two decimals and never less than the float tolerance.
+    probabilities_by_level: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
+    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
+    return _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
 
 
 @dataclass(kw_only=True)
