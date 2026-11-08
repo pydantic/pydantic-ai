@@ -75,10 +75,40 @@ class _IssueEvent(BaseModel):
     label: _EventLabel | None = None
 
 
+class PullFile(BaseModel):
+    """One file of the pull request's diff. GitHub omits `patch` when the diff is too large to show."""
+
+    filename: str
+    patch: str = ''
+
+
+_HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+
+
+def _changed_lines(patch: str) -> set[tuple[str, int]]:
+    """The lines a patch adds, as `RIGHT`, and removes, as `LEFT`."""
+    changed: set[tuple[str, int]] = set()
+    old = new = 0
+    for line in patch.splitlines():
+        if hunk := _HUNK.match(line):
+            old, new = int(hunk[1]), int(hunk[2])
+        elif line.startswith('+'):
+            changed.add(('RIGHT', new))
+            new += 1
+        elif line.startswith('-'):
+            changed.add(('LEFT', old))
+            old += 1
+        elif not line.startswith('\\'):
+            old += 1
+            new += 1
+    return changed
+
+
 class ReviewChecksGitHub(Protocol):
     """The GitHub reads and writes the gate and the publisher need."""
 
     def pull_request(self) -> LivePullRequest: ...
+    def pull_files(self) -> list[PullFile]: ...
     def permission(self, login: str) -> str: ...
     def labeler(self, label: str) -> Actor | None: ...
     def remove_label(self, label: str) -> None: ...
@@ -193,6 +223,13 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
         github.status(head, 'failure', 'Could not select the checks for this head; rerun the workflow.', url)
         return
     results = load_results(Path(env['RESULTS_DIR']), checks)
+    # Findings are public, and one on a line the pull request did not change can describe a weakness it did not add.
+    changed = {file.filename: _changed_lines(file.patch) for file in github.pull_files()}
+    for check, result in results.items():
+        kept = [f for f in result.findings if (f.side, f.line) in changed.get(f.path, set())]
+        if dropped := len(result.findings) - len(kept):
+            print(f'{check}: dropped {dropped} findings outside the changed lines.')
+        results[check] = result.model_copy(update={'findings': kept})
     state, description = verdict(checks, results)
     ordered = [results[check] for check in checks if check in results]
     if any(result.findings for result in ordered):
@@ -227,6 +264,7 @@ def run_url(env: Mapping[str, str]) -> str:
 
 _CHECKS = TypeAdapter(list[str])
 _EVENT_PAGES = TypeAdapter(list[list[_IssueEvent]])
+_FILE_PAGES = TypeAdapter(list[list[PullFile]])
 _PERMISSION = TypeAdapter(dict[str, object])
 
 
@@ -239,6 +277,10 @@ class ReviewChecksGhCli(GhCli):
 
     def pull_request(self) -> LivePullRequest:
         return LivePullRequest.model_validate_json(self._api(self._pull))
+
+    def pull_files(self) -> list[PullFile]:
+        pages = _FILE_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
+        return [file for page in pages for file in page]
 
     def permission(self, login: str) -> str:
         """Fail closed: an account the endpoint cannot resolve, such as an app, has no write access."""

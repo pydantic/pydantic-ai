@@ -237,7 +237,7 @@ def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usag
 
 
 def report_privately(webhook: str, check: str, pr_number: int, repository: str, report: str) -> None:
-    """Send a vulnerability that already exists on the base branch to the private triage channel."""
+    """Send a vulnerability that already exists on the default branch to the private triage channel."""
     text = f'PR Review Check ({check}) on {repository}#{pr_number} found a pre-existing issue:\n\n{report}'
     request = urllib.request.Request(
         webhook, data=json.dumps({'text': text}).encode(), headers={'Content-Type': 'application/json'}

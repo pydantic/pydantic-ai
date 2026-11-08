@@ -21,6 +21,7 @@ from publish_pr_review_checks import (
     CheckResult,
     CommitStatus,
     LivePullRequest,
+    PullFile,
     ReviewFinding,
     gate,
     publish,
@@ -62,9 +63,13 @@ class FakeGitHub:
     labeled_by: Actor | None = None
     permissions: dict[str, str] = field(default_factory=lambda: {'maintainer': 'write', 'contributor': 'read'})
     reject_inline: bool = False
+    files: list[PullFile] = field(default_factory=lambda: [PullFile(filename='a.py', patch='@@ -3 +3 @@\n-old = 1\n+fixed = 1')])
     statuses: list[tuple[str, CommitStatus, str, str]] = field(default_factory=list[tuple[str, CommitStatus, str, str]])
     reviews: list[PostedReview] = field(default_factory=list[PostedReview])
     removed: list[str] = field(default_factory=list[str])
+
+    def pull_files(self) -> list[PullFile]:
+        return self.files
 
     def pull_request(self) -> LivePullRequest:
         return LivePullRequest(
@@ -298,3 +303,26 @@ def test_review_payload_prefixes_each_finding_with_its_check() -> None:
     """A reader can tell which check raised a finding and how severe it is."""
     payload = json.loads(review_payload([_result('url-fetch', 'critical')], HEAD, 5, inline=True))
     assert payload['comments'][0]['body'] == '**critical** · `url-fetch` security check\n\nFix.'
+
+
+def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A finding on a line the pull request did not change could disclose a weakness it did not add."""
+    findings = [
+        ReviewFinding.model_validate({'path': 'a.py', 'line': line, 'side': side, 'severity': 'high', 'body': body})
+        for line, side, body in [(3, 'RIGHT', 'Added.'), (2, 'LEFT', 'Removed.'), (4, 'RIGHT', 'Context.')]
+    ]
+    result = _result('general').model_copy(update={'findings': findings})
+    github = FakeGitHub(files=[PullFile(filename='a.py', patch='@@ -2,2 +3,2 @@\n-old = 1\n+new = 1\n context = 1')])
+    publish(github, _publish_env(tmp_path, result))
+    [review] = github.reviews
+    assert [(comment['line'], comment['side']) for comment in review.comments] == [(3, 'RIGHT'), (2, 'LEFT')]
+    assert 'Context.' not in review.body
+    assert 'general: dropped 1 findings outside the changed lines.' in capsys.readouterr().out
+
+
+def test_findings_outside_the_changed_lines_do_not_fail_the_status(tmp_path: Path) -> None:
+    """Dropped findings leave the verdict; a file without a shown diff keeps none."""
+    github = FakeGitHub(files=[PullFile(filename='a.py')])
+    publish(github, _publish_env(tmp_path, _result('general', 'high')))
+    assert github.reviews == []
+    assert [status[1] for status in github.statuses] == ['success']

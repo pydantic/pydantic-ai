@@ -244,6 +244,6 @@ A configuration-dependent report needs explicit deployment assumptions. For libr
 
 Update this document in the PR that adds an input path, transfers authority, changes a trust or disclosure default, or changes an execution backend's guarantee. Keep option-level details in their canonical component documentation.
 
-When the new input path accepts client input, the same PR extends the `Pydantic AI UI Security Review` workflow to it. Add the path's source files to the `detect` step's path list in [`.github/workflows/pydantic-ai-ui-security-review.md`](.github/workflows/pydantic-ai-ui-security-review.md), and recompile its lock file.
+When the new input path accepts client input, fetches a URL, exports telemetry, or changes an execution backend, the same PR extends the matching check in the `PR Review Checks` workflow: add the path to that check's trigger paths in [`.github/scripts/pr_review_checks.py`](.github/scripts/pr_review_checks.py).
 
 For a change crossing a boundary, trace the incoming value to its authorization or validation and trace the outgoing value to its audience. Include a regression test for the specific control. Review adapter protocols, local/provider transports, execution backends, and cancellation or recovery paths that share the affected mechanism.

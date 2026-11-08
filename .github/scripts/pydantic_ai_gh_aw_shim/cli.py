@@ -312,7 +312,7 @@ ATTENTION_REQUEST_LIMIT = 50
 SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 CI_REVIEW_WORKFLOW = 'CI Review'
-REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW, 'Pydantic AI UI Security Review'})
+REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW})
 
 
 def _is_attention_run() -> bool:

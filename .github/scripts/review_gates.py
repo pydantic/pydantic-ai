@@ -195,6 +195,7 @@ def douwebot_approval(
                 or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
                 for workflow in (
                     'pydantic/pydantic-ai/pydantic-ai-pr-review',
+                    # Retired, but an open PR's head can still carry its comments.
                     'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
                 )
             ):

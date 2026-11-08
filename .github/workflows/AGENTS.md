@@ -28,14 +28,6 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
-It never owns the merge-gate verdict.
-
-A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
-variable skips this review, and the skipped check reports as success. Separate branch names with
-commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
-left in the list also exempts any later branch with that name, compared case-insensitively.
-
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
@@ -65,12 +57,11 @@ one threat-detection pass outside the agent slot. The shim withholds `noop` from
 `CI Review` model, so this step writes the run's only `noop`. Keep `safe-outputs.noop`
 enabled for it.
 
-Both review workflows require a formal review from this run on the reviewed head.
-Their shim completion validator rejects placeholder noops and missing-data signals alone.
+`CI Review` requires a formal review from this run on the reviewed head.
+Its shim completion validator rejects placeholder noops and missing-data signals alone.
 After safe outputs, the [host verifier](shared/review-publication.md) checks GitHub for the exact workflow marker, run URL and head.
 A missing publication fails the workflow and marks the current PR head with its failure label.
 A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
-UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, and
 allows one `engine` across a workflow and its imports. `CI Review` therefore inlines the
@@ -123,10 +114,10 @@ and because the compiler makes custom jobs depend on `activation`, the named job
 agent skip with it. A job skipped by `if:` reports as success, so the whole thing goes
 green while never having run.
 
-That is not hypothetical: `pydantic-ai-ui-security-review` shipped this way and its agent
-never fired once, reporting false-green on every PR (#6766). Both it and
-`pydantic-ai-pr-review` now carry the prompt-body reference and a comment saying why.
-After changing either, check the recompiled lock: `activation.needs` must list the job,
+That is not hypothetical: the former `pydantic-ai-ui-security-review` shipped this way and its
+agent never fired once, reporting false-green on every PR (#6766). `pydantic-ai-pr-review`
+carries the prompt-body reference and a comment saying why. After changing it, check the
+recompiled lock: `activation.needs` must list the job,
 and the job itself must **not** have `needs: activation`.
 
 # A PR that edits `bots.yml` cannot test its own change
@@ -243,13 +234,14 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
 - `gate` reads the author's repository permission. An app, or an author without `write` or `admin`,
   gets a failing "Awaiting maintainer" status until a `User` with write access applies
   `pr-review-checks:run`. The label stays valid across pushes; the gate checks who applied it last.
-- `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one
-  review job per selected check. A check selects the files under its trigger paths, and can also
-  select a file whose changed lines match its diff tokens. The `general` check reviews every changed
-  source, workflow and configuration file that no selected check owns by path. The
-  `tests-and-dependencies` check owns tests, cassettes, dependency manifests and lockfiles, and holds
-  them to the repository's testing and dependency rules rather than the security rubric. A change only
-  to the documentation and agent instructions `is_content` lists selects nothing and passes; files
+- `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one review
+  job per selected check. A check selects the files under its trigger paths, and can also select a
+  file whose changed lines match its diff tokens. The `general` check reviews every changed source,
+  workflow and configuration file that no selected check owns by path. The `tests-and-dependencies`
+  check owns tests, cassettes, dependency manifests and lockfiles, and holds them to the
+  repository's testing and dependency rules rather than the security rubric. The `general` check
+  also reviews `THREAT_MODEL.md` and every `AGENTS.md` and `CLAUDE.md`, even when another check owns
+  them. A change only to the documentation `is_content` lists selects nothing and passes; files
   under `.github/` always get a review, except a generated `*.lock.yml`, whose `.md` source the
   `general` check reviews.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
@@ -260,13 +252,14 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
-  and no token counts. A vulnerability that already exists on the base branch goes only to the
+  and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook. Result artifacts are public, so they carry no private report.
-- `publish` validates every finding against its check's files. When there are findings, it posts one
-  `COMMENT` review with each check's usage and the receipt `<!-- pr-review-checks run=… head=… -->`,
-  which douwebot's clean approval gate does not count as a douwebot finding. The job summary always
-  carries the usage table. A `critical` or `high` finding, an
-  `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
+- `publish` validates every finding against its check's files, and drops a finding on a line the
+  pull request did not add or remove, from the review and the verdict, counting it in the job log.
+  When there are findings, it posts one `COMMENT` review with each check's usage and the receipt
+  `<!-- pr-review-checks run=… head=… -->`, which douwebot's clean approval gate does not count as a
+  douwebot finding. The job summary always carries the usage table. A `critical` or `high` finding,
+  an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
 - A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
   findings. A push removes the label and reviews the new head. Rerunning the review replaces an
   acceptance; apply the label again.
@@ -467,10 +460,6 @@ without `recovery_issue`. This input never closes an incident.
 For **CI Review**, provide `aw_context` as JSON with `item_type` set to
 `pull_request` and `item_number` set to the PR number. Verify the fresh run executed
 the agent and model.
-
-For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
-Manual dispatch does not provide `github.event.pull_request.number`, which this
-workflow requires to run its agent and publish results.
 
 For workflow incidents, and task incidents the hourly run does not retire, inspect the
 affected host stage and output, link that evidence to the incident, and close it manually.

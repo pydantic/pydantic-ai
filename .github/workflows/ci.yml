@@ -314,7 +314,6 @@ jobs:
           .github/scripts/test_publish_pr_review_checks.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
-          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
