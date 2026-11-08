@@ -158,7 +158,7 @@ _ZOMBIE_GROUP_SCRIPT = """[ "$(uname -s 2> /dev/null)" = Darwin ] || exit 1
 members=$(ps -A -o pgid= -o stat=) || exit 1
 echo "$members" | while read -r group state; do [ "$group" != "$1" ] || case $state in Z*) ;; *) exit 1 ;; esac; done
 """
-"""Exit 0 on macOS when `ps` lists no member of process group `$1` but zombies: macOS refuses any signal to such a group.
+"""Exit 0 on macOS when `ps` lists no live member of process group `$1`: macOS refuses any signal to a group of zombies.
 
 Without `setsid` the wrapper is left to `launchd` once the launcher exits, so between the wrapper's exit and its reap
 the job's group holds only zombies. A group `ps` no longer lists was reaped after the signal. Linux signals a group of

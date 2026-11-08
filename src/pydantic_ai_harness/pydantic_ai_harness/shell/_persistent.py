@@ -193,7 +193,7 @@ async def run_persistent_command(
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
     except BaseException as error:
-        # A cancelled or failed call cannot hand back its handles, so nothing is left running.
+        # A cancelled or failed call cannot hand back its handles, so it stops the job it started.
         await _stop_failed_call(job, error)
         raise
     return result
