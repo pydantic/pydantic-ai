@@ -1,8 +1,10 @@
 """`clai2 --agent MODULE:ATTR`: resolution, CLI wiring, and the session-only plugin switch-off."""
 
+import importlib
 import io
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from rich.console import Console
@@ -64,22 +66,28 @@ def test_import_agent_leaves_sys_path_alone_for_an_importable_module(
     assert str(fixture_module) not in sys.path
 
 
+@pytest.mark.parametrize(
+    'package',
+    ['clai_agent_flag_installed_namespace', 'clai_agent_flag_installed_namespace.nested'],
+    ids=['namespace-package', 'nested-namespace-package'],
+)
 def test_import_agent_leaves_sys_path_alone_for_a_target_in_an_installed_namespace_package(
-    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch, package: str
 ) -> None:
     """A regular package anywhere on `sys.path` takes precedence over namespace portions, even an earlier one."""
     installed = tmp_path_factory.mktemp('installed')
-    (installed / 'clai_agent_flag_installed_namespace').mkdir()
-    (installed / 'clai_agent_flag_installed_namespace' / 'agents.py').write_text(
+    package_directory = installed.joinpath(*package.split('.'))
+    package_directory.mkdir(parents=True)
+    (package_directory / 'agents.py').write_text(
         'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
     )
     (fixture_module / 'clai_agent_flag_installed_namespace').mkdir()
     (fixture_module / 'clai_agent_flag_installed_namespace' / '__init__.py').write_text('')
     monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
-    for name in ('clai_agent_flag_installed_namespace', 'clai_agent_flag_installed_namespace.agents'):
+    for name in ('clai_agent_flag_installed_namespace', package, f'{package}.agents'):
         monkeypatch.delitem(sys.modules, name, raising=False)
 
-    assert isinstance(import_agent('clai_agent_flag_installed_namespace.agents:agent'), Agent)
+    assert isinstance(import_agent(f'{package}.agents:agent'), Agent)
     assert str(fixture_module) not in sys.path
 
 
@@ -111,6 +119,68 @@ def test_import_agent_resolves_a_launch_directory_target_beside_an_installed_nam
 
     assert isinstance(import_agent('clai_agent_flag_namespace.agents:agent'), Agent)
     assert sys.path[-1] == str(fixture_module)
+
+
+def package_modules_at_import(monkeypatch: pytest.MonkeyPatch, module_name: str) -> list[list[str]]:
+    """Record, each time `module_name` is imported, which modules of its top-level package are already loaded."""
+    top_level = module_name.partition('.')[0]
+    recorded: list[list[str]] = []
+    import_module = importlib.import_module
+
+    def record_and_import(name: str, package: str | None = None) -> ModuleType:
+        if name == module_name:
+            recorded.append(sorted(loaded for loaded in sys.modules if loaded.partition('.')[0] == top_level))
+        return import_module(name, package)
+
+    monkeypatch.setattr(importlib, 'import_module', record_and_import)
+    return recorded
+
+
+def test_import_agent_resolves_a_nested_launch_directory_target_beside_installed_packages(
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed regular subpackage of an installed namespace package yields with it to a launch directory package."""
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_nested' / 'sub').mkdir(parents=True)
+    (installed / 'clai_agent_flag_nested' / 'sub' / '__init__.py').write_text('')
+    package = fixture_module / 'clai_agent_flag_nested'
+    (package / 'sub').mkdir(parents=True)
+    (package / '__init__.py').write_text('')
+    (package / 'sub' / '__init__.py').write_text('')
+    (package / 'sub' / 'agents.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('clai_agent_flag_nested', 'clai_agent_flag_nested.sub', 'clai_agent_flag_nested.sub.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    loaded_before_import = package_modules_at_import(monkeypatch, 'clai_agent_flag_nested.sub.agents')
+
+    assert isinstance(import_agent('clai_agent_flag_nested.sub.agents:agent'), Agent)
+    assert loaded_before_import == [[]]
+    assert sys.modules['clai_agent_flag_nested.sub.agents'].__file__ == str(package / 'sub' / 'agents.py')
+
+
+def test_import_agent_prefers_an_installed_regular_package_to_the_launch_directory(
+    fixture_module: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed regular package with the target's top-level name wins, though only the launch directory has it."""
+    installed = tmp_path_factory.mktemp('installed')
+    (installed / 'clai_agent_flag_regular').mkdir()
+    (installed / 'clai_agent_flag_regular' / '__init__.py').write_text('')
+    (fixture_module / 'clai_agent_flag_regular').mkdir()
+    (fixture_module / 'clai_agent_flag_regular' / '__init__.py').write_text('')
+    (fixture_module / 'clai_agent_flag_regular' / 'agents.py').write_text(
+        'from pydantic_ai import Agent\nfrom pydantic_ai.models.test import TestModel\nagent = Agent(TestModel())\n'
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('clai_agent_flag_regular', 'clai_agent_flag_regular.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    loaded_before_import = package_modules_at_import(monkeypatch, 'clai_agent_flag_regular.agents')
+
+    with pytest.raises(ImportError, match=r"module 'clai_agent_flag_regular\.agents' not found"):
+        import_agent('clai_agent_flag_regular.agents:agent')
+    assert loaded_before_import == [[]]
+    assert sys.modules['clai_agent_flag_regular'].__file__ == str(installed / 'clai_agent_flag_regular' / '__init__.py')
 
 
 @pytest.mark.parametrize(

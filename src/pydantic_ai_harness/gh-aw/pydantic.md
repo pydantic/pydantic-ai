@@ -137,12 +137,13 @@ engine:
       // The wrapper loads the gateway's MCP servers with the same public loader
       // and adds them as a dynamic toolset so agent-defined toolsets remain active.
       const AGENT_MODULE = `import importlib
-      import importlib.util
       import json
       import os
       import sys
+      from collections.abc import Sequence
       from datetime import datetime, timezone
       from fnmatch import fnmatchcase
+      from importlib.machinery import ModuleSpec
       from pathlib import Path
 
       import pydantic_core
@@ -366,6 +367,43 @@ engine:
               _emit('session.result', result)
 
 
+      def _find_spec_without_importing(module_name: str) -> ModuleSpec | None:
+          # Importing a parent package would run its code and leave it in sys.modules, where it would decide
+          # what the target is imported from once the checkout is appended. So a parent that is not imported
+          # yet is not imported here: the sys.meta_path finders search its spec's submodule_search_locations,
+          # where the import would search its __path__. A legacy pkgutil-style namespace package adds its
+          # other portions to __path__ only when its __init__.py runs, so a target in one of those counts as
+          # missing, and the checkout is appended after installed packages.
+          parent_name, _, _ = module_name.rpartition('.')
+          search_path: Sequence[str] | None = None
+          if parent_name:
+              parent = sys.modules.get(parent_name)
+              if parent is None:
+                  parent_spec = _find_spec_without_importing(parent_name)
+                  search_path = None if parent_spec is None else parent_spec.submodule_search_locations
+              elif hasattr(parent, '__path__'):
+                  search_path = parent.__path__
+              if search_path is None:
+                  return None
+          return _find_spec_on_meta_path(module_name, search_path)
+
+
+      def _find_spec_on_meta_path(module_name: str, search_path: Sequence[str] | None) -> ModuleSpec | None:
+          parent_name, _, tail = module_name.rpartition('.')
+          specs = (finder.find_spec(module_name, search_path) for finder in sys.meta_path)
+          try:
+              return next((spec for spec in specs if spec is not None), None)
+          except KeyError as error:
+              if search_path is None or error.args != (parent_name,):
+                  raise
+          # PathFinder found only namespace package portions, and ties the namespace path it returns to the
+          # parent in sys.modules. The portions are the directories named like the package in the parent's.
+          spec = ModuleSpec(module_name, None, is_package=True)
+          portions = (os.path.join(location, tail) for location in search_path)
+          spec.submodule_search_locations = [portion for portion in portions if os.path.isdir(portion)]
+          return spec
+
+
       _configured_agent = os.environ.get('PAI_AGENT')
       agent: Agent[object, object]
       if not _configured_agent:
@@ -389,29 +427,11 @@ engine:
           # the agent imports some dependencies after this point, and a checkout module must not replace one.
           # Only the whole module name tells: a regular package anywhere on sys.path takes precedence over
           # namespace package portions. A target that is itself only a namespace package (no origin) holds
-          # no agent, so it counts as missing. find_spec raises for an imported module without a spec, such
-          # as __main__, and finding a submodule imports its parent packages, as importing it would.
+          # no agent, so it counts as missing.
           if _module_name not in sys.modules:
-              _parts = _module_name.split('.')
-              _unimported_parents = [
-                  _name for _name in ('.'.join(_parts[:_end]) for _end in range(1, len(_parts))) if _name not in sys.modules
-              ]
-              try:
-                  _spec = importlib.util.find_spec(_module_name)
-              except ModuleNotFoundError as _error:
-                  if _error.name is None or not (
-                      _module_name == _error.name or _module_name.startswith(f'{_error.name}.')
-                  ):
-                      raise
-                  _spec = None
+              _spec = _find_spec_without_importing(_module_name)
               if _spec is None or _spec.origin is None:
                   sys.path.append(os.getcwd())
-                  # Forget the namespace packages the lookup imported, so a regular package of the same name
-                  # in the checkout takes precedence over them, as it would have without the lookup.
-                  for _name in _unimported_parents:
-                      _parent = sys.modules.get(_name)
-                      if _parent is not None and _parent.__spec__ is not None and _parent.__spec__.origin is None:
-                          del sys.modules[_name]
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
@@ -624,8 +644,9 @@ engine:
         // path is trusted in-process configuration: Python can import from it at
         // startup, before the recorder protects its signing key.
         //
-        // The wrapper appends the checkout only for an imported PAI_AGENT that is
-        // not importable without it, so installed packages keep precedence.
+        // The wrapper appends the checkout only for an imported PAI_AGENT that it
+        // cannot find without it (_find_spec_without_importing), so installed
+        // packages keep precedence.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow

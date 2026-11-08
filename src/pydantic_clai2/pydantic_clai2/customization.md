@@ -690,7 +690,11 @@ To chat with an Agent instance you already have, skip the launcher and run
 clai2 --agent MODULE:ATTR (or -a), for example
 clai2 --agent pydantic_ai.main:my_cool_agent. When the module is not otherwise
 importable, CLAI appends the launch directory to sys.path, after installed
-packages, so a module next to where you start CLAI resolves without installing it. ATTR must
+packages, so a module next to where you start CLAI resolves without installing it.
+An installed module or regular package with the same top-level name wins over the
+launch directory. CLAI finds the module without importing anything, so it may also
+append the launch directory for a module in a legacy pkgutil-style namespace
+package. ATTR must
 name an Agent instance, not a class or factory; the agent runs with deps=None.
 For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and

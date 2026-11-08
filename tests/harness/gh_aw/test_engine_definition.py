@@ -539,23 +539,27 @@ def test_wrapper_imports_a_custom_agent_once(tmp_path: Path, monkeypatch: pytest
     assert import_log.read_text(encoding='utf-8') == 'imported\n'
 
 
+@pytest.mark.parametrize(
+    'package',
+    ['gh_aw_test_installed_namespace', 'gh_aw_test_installed_namespace.nested'],
+    ids=['namespace-package', 'nested-namespace-package'],
+)
 def test_wrapper_imports_a_target_in_an_installed_namespace_package_without_the_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package: str
 ) -> None:
     """A regular package anywhere on `sys.path` takes precedence over namespace portions, even an earlier one."""
-    installed = tmp_path / 'site-packages' / 'gh_aw_test_installed_namespace'
-    installed.mkdir(parents=True)
-    (installed / 'agents.py').write_text(
+    installed = tmp_path / 'site-packages'
+    package_directory = installed.joinpath(*package.split('.'))
+    package_directory.mkdir(parents=True)
+    (package_directory / 'agents.py').write_text(
         "from pydantic_ai import Agent\nagent = Agent(name='installed')\n", encoding='utf-8'
     )
     checkout_package = tmp_path / 'workspace' / 'gh_aw_test_installed_namespace'
     checkout_package.mkdir(parents=True)
     (checkout_package / '__init__.py').write_text('', encoding='utf-8')
-    invocation = launch(
-        tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'gh_aw_test_installed_namespace.agents:agent'}
-    )
-    monkeypatch.setattr(sys, 'path', [str(installed.parent), *sys.path])
-    for name in ('gh_aw_test_installed_namespace', 'gh_aw_test_installed_namespace.agents'):
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': f'{package}.agents:agent'})
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('gh_aw_test_installed_namespace', package, f'{package}.agents'):
         monkeypatch.delitem(sys.modules, name, raising=False)
 
     module = import_generated_agent(invocation, monkeypatch)
@@ -597,6 +601,79 @@ def test_wrapper_imports_a_checkout_target_beside_an_installed_namespace_package
     agent = getattr(module, 'agent')
     assert isinstance(agent, Agent)
     assert agent.name == 'namespace'
+
+
+def package_modules_at_import(monkeypatch: pytest.MonkeyPatch, module_name: str) -> list[list[str]]:
+    """Record, each time `module_name` is imported, which modules of its top-level package are already loaded."""
+    top_level = module_name.partition('.')[0]
+    recorded: list[list[str]] = []
+    import_module = importlib.import_module
+
+    def record_and_import(name: str, package: str | None = None) -> ModuleType:
+        if name == module_name:
+            recorded.append(sorted(loaded for loaded in sys.modules if loaded.partition('.')[0] == top_level))
+        return import_module(name, package)
+
+    monkeypatch.setattr(importlib, 'import_module', record_and_import)
+    return recorded
+
+
+def test_wrapper_imports_a_nested_checkout_target_beside_installed_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed regular subpackage of an installed namespace package yields with it to a checkout package."""
+    installed = tmp_path / 'site-packages'
+    (installed / 'gh_aw_test_nested' / 'sub').mkdir(parents=True)
+    (installed / 'gh_aw_test_nested' / 'sub' / '__init__.py').write_text('', encoding='utf-8')
+    checkout_package = tmp_path / 'workspace' / 'gh_aw_test_nested'
+    (checkout_package / 'sub').mkdir(parents=True)
+    (checkout_package / '__init__.py').write_text('', encoding='utf-8')
+    (checkout_package / 'sub' / '__init__.py').write_text('', encoding='utf-8')
+    (checkout_package / 'sub' / 'agents.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='checkout')\n", encoding='utf-8'
+    )
+    invocation = launch(
+        tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'gh_aw_test_nested.sub.agents:agent'}
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    for name in ('gh_aw_test_nested', 'gh_aw_test_nested.sub', 'gh_aw_test_nested.sub.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    loaded_before_import = package_modules_at_import(monkeypatch, 'gh_aw_test_nested.sub.agents')
+
+    module = import_generated_agent(invocation, monkeypatch)
+
+    agent = getattr(module, 'agent')
+    assert isinstance(agent, Agent)
+    assert agent.name == 'checkout'
+    assert loaded_before_import == [[]]
+
+
+@pytest.mark.usefixtures('event_output')
+def test_wrapper_prefers_an_installed_regular_package_to_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed regular package with the target's top-level name wins, though only the checkout has the target."""
+    installed = tmp_path / 'site-packages' / 'gh_aw_test_regular'
+    installed.mkdir(parents=True)
+    (installed / '__init__.py').write_text('', encoding='utf-8')
+    checkout_package = tmp_path / 'workspace' / 'gh_aw_test_regular'
+    checkout_package.mkdir(parents=True)
+    (checkout_package / '__init__.py').write_text('', encoding='utf-8')
+    (checkout_package / 'agents.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='checkout')\n", encoding='utf-8'
+    )
+    invocation = launch(
+        tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'gh_aw_test_regular.agents:agent'}
+    )
+    monkeypatch.setattr(sys, 'path', [str(installed.parent), *sys.path])
+    for name in ('gh_aw_test_regular', 'gh_aw_test_regular.agents'):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    loaded_before_import = package_modules_at_import(monkeypatch, 'gh_aw_test_regular.agents')
+
+    with pytest.raises(ModuleNotFoundError, match=r"No module named 'gh_aw_test_regular\.agents'"):
+        import_generated_agent(invocation, monkeypatch)
+    assert loaded_before_import == [[]]
+    assert sys.modules['gh_aw_test_regular'].__file__ == str(installed / '__init__.py')
 
 
 @pytest.mark.parametrize(
