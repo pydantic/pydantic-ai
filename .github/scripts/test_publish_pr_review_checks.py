@@ -322,6 +322,14 @@ def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: py
     assert 'general: dropped 1 findings outside the changed lines.' in capsys.readouterr().out
 
 
+def test_a_separator_inside_a_line_keeps_the_line_numbers(tmp_path: Path) -> None:
+    """Git ends a line only at LF, so a CR or Unicode separator in an added line must not shift the next ones."""
+    github = FakeGitHub(files=[PullFile(filename='a.py', patch='@@ -0,0 +1,3 @@\n+s = 1\n+t = "\u2028x\ry"\n+u = 3')])
+    publish(github, _publish_env(tmp_path, _result('general', 'high')))
+    [review] = github.reviews
+    assert [(comment['line'], comment['side']) for comment in review.comments] == [(3, 'RIGHT')]
+
+
 @pytest.mark.parametrize(
     'files',
     [[PullFile(filename='a.py', patch='@@ -9 +9 @@\n-old = 9\n+new = 9')], [PullFile(filename='a.py')], []],

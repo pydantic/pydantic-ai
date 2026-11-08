@@ -128,7 +128,7 @@ def _git(repository: Path, *args: str) -> str:
 
 
 def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None:
-    """Reads changes from git, including removed lines of a deleted file, lines that look like headers, and quoted or spaced paths."""
+    """Reads changes from git, including removed lines of a deleted file, lines that look like headers, separators inside a line, and quoted or spaced paths."""
     repository = tmp_path / 'repo'
     repository.mkdir()
     _git(repository, 'init', '-q', '-b', 'main')
@@ -142,7 +142,7 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
     base = _git(repository, 'rev-parse', 'HEAD')
     _git(repository, 'mv', 'old.py', 'new.py')
     (repository / 'gone.py').unlink()
-    (repository / 'kept.py').write_text('x = 1\n++ b/fake\n')
+    (repository / 'kept.py').write_text('x = 1\n++ b/fake\nsep = "\u2028diff --git a/z b/z\r+++ b/docs/z.md"\n')
     (repository / 'quo"te.py').write_text('quoted = 1\n')
     (repository / 'with space.py').write_text('spaced = 1\n')
     (repository / 'quo"te space.py').write_text('both = 1\n')
@@ -153,7 +153,9 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
 
     assert files['new.py'] == ChangedFile('new.py', 'old.py', ())
     assert files['gone.py'] == ChangedFile('gone.py', '', ('await safe_download(url)',))
-    assert files['kept.py'] == ChangedFile('kept.py', '', ('++ b/fake',))
+    assert files['kept.py'] == ChangedFile(
+        'kept.py', '', ('++ b/fake', 'sep = "\u2028diff --git a/z b/z\r+++ b/docs/z.md"')
+    )
     assert files['quo"te.py'] == ChangedFile('quo"te.py', '', ('quoted = 1',))
     assert files['with space.py'] == ChangedFile('with space.py', '', ('spaced = 1',))
     assert files['quo"te space.py'] == ChangedFile('quo"te space.py', '', ('both = 1',))

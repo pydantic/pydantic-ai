@@ -225,13 +225,14 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
             previous, path = '', fields[index + 1]
             index += 2
         files[path] = ChangedFile(path, previous if code.startswith('R') else '', ())
-    patch = subprocess.run(
-        [*git, *diff, '--text', '-U0'], check=True, capture_output=True, text=True, errors='replace'
-    ).stdout
+    # Git ends a line only at LF. Text mode and `splitlines` would also split at CR and Unicode separators inside a line.
+    patch = subprocess.run([*git, *diff, '--text', '-U0'], check=True, capture_output=True).stdout.decode(
+        errors='replace'
+    )
     lines: dict[str, list[str]] = {}
     in_header = False
     old_path = new_path = ''
-    for line in patch.splitlines():
+    for line in patch.split('\n'):
         if line.startswith('diff --git '):
             in_header, old_path, new_path = True, '', ''
         elif in_header and line.startswith('--- '):

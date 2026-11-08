@@ -89,7 +89,8 @@ def _changed_lines(patch: str) -> set[tuple[str, int]]:
     """The lines a patch adds, as `RIGHT`, and removes, as `LEFT`."""
     changed: set[tuple[str, int]] = set()
     old = new = 0
-    for line in patch.splitlines():
+    # Git ends a line only at LF. `splitlines` would also split at CR and Unicode separators inside a line.
+    for line in patch.split('\n'):
         if hunk := _HUNK.match(line):
             old, new = int(hunk[1]), int(hunk[2])
         elif line.startswith('+'):

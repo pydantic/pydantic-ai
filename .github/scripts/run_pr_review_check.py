@@ -108,13 +108,12 @@ def _annotated_diff(repository: Path, base: str, head: str, path: str) -> str:
         + [f'{base}...{head}', '--', path],
         check=True,
         capture_output=True,
-        text=True,
-        errors='replace',
-    ).stdout
+    ).stdout.decode(errors='replace')
     lines: list[str] = []
     old = new = 0
     in_hunk = False
-    for line in patch.splitlines():
+    # Git ends a line only at LF. Text mode and `splitlines` would also split at CR and Unicode separators inside a line.
+    for line in patch.removesuffix('\n').split('\n'):
         if hunk := _HUNK.match(line):
             old, new, in_hunk = int(hunk[1]), int(hunk[2]), True
             lines.append(line)

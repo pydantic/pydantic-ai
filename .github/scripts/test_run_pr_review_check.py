@@ -104,8 +104,9 @@ def test_context_numbers_diffs_the_shared_context_leaves_out(tmp_path: Path) -> 
     _git(head, 'add', '.')
     _git(head, 'commit', '-q', '-m', 'base')
     base = _git(head, 'rev-parse', 'HEAD')
+    # A CR or Unicode separator inside a line must not start another diff line.
     for path in paths:
-        (head / path).write_text(f'a = 1\nb = 20\nc = {path}\n')
+        (head / path).write_text(f'a = 1\nb = "\u2028+\r+"\nc = {path}!\n')
     _git(head, 'commit', '-q', '-am', 'head')
     context = tmp_path / '.github' / '.review-context'
     context.mkdir(parents=True)
@@ -118,8 +119,10 @@ def test_context_numbers_diffs_the_shared_context_leaves_out(tmp_path: Path) -> 
         'tests/cassettes/a__b.yaml\t+1 -1\tdiff/omitted/tests%2Fcassettes%2Fa__b.yaml.diff\n'
     )
     for path in paths:
-        diff = (written / 'diff' / 'omitted' / (quote(path, safe='') + '.diff')).read_text()
-        assert diff.endswith('@@ -2 +2 @@ a = 1\nOL:2 -b = 2\nNL:2 +b = 20\n')
+        diff = (written / 'diff' / 'omitted' / (quote(path, safe='') + '.diff')).read_bytes().decode()
+        assert diff.endswith(
+            f'@@ -2,2 +2,2 @@ a = 1\nOL:2 -b = 2\nOL:3 -c = {path}\nNL:2 +b = "\u2028+\r+"\nNL:3 +c = {path}!\n'
+        )
         assert f'\n--- a/{path}\n+++ b/{path}\n' in diff
 
 
