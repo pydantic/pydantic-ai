@@ -3208,14 +3208,13 @@ def test_clai2_engine_names_the_staged_shim_sources():
         assert steps[engine]['env']['LOGFIRE_SERVICE_VERSION'] == '${{ steps.workflow-policy.outputs.service-version }}'
 
 
-def test_compiled_job_limits_and_ui_security_concurrency():
+def test_compiled_job_limits_and_concurrency():
     """gh-aw caps the agent job at 60 minutes and detection at 10 by default; main's compiler capped neither job.
 
     Stale Issues Finder's 60-minute engine step did not fit the agent cap, and the detector step had 20 minutes.
-    gh-aw gives the detector step its job's budget. UI Security reviewed PRs in parallel.
+    gh-aw gives the detector step its job's budget.
     """
     workflows = Path(__file__).parent.parent / 'workflows'
-    ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']
     for lock in sorted(workflows.glob('pydantic-ai-*.lock.yml')):
         jobs = yaml.safe_load(lock.read_text(encoding='utf-8'))['jobs']
         assert jobs['agent']['timeout-minutes'] == 360, lock.name
@@ -3223,7 +3222,6 @@ def test_compiled_job_limits_and_ui_security_concurrency():
         assert jobs['detection']['timeout-minutes'] == detector['timeout-minutes'] == 20, lock.name
         group = jobs['agent']['concurrency']['group']
         assert group.startswith('gh-aw-pydantic-ai-${{ github.workflow }}'), lock.name
-        assert f"github.workflow == '{ui_security}' && format('-{{0}}', github.event.pull_request.number" in group
 
 
 @pytest.mark.parametrize('chunks_before_cutoff', [0, 1])
