@@ -2446,22 +2446,27 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
 
 @pytest.mark.parametrize('header', ['anthropic-beta', 'Anthropic-Beta', 'ANTHROPIC-BETA'])
 @pytest.mark.parametrize(
-    'anthropic_betas,expected',
+    'value,anthropic_betas,expected',
     [
-        pytest.param([], ['custom-feature-1'], id='header-only'),
+        pytest.param('custom-feature-1', [], ['custom-feature-1'], id='header-only'),
         pytest.param(
-            ['interleaved-thinking-2025-05-14'], ['custom-feature-1,interleaved-thinking-2025-05-14'], id='with-setting'
+            'custom-feature-1',
+            ['interleaved-thinking-2025-05-14'],
+            ['custom-feature-1,interleaved-thinking-2025-05-14'],
+            id='with-setting',
         ),
+        # Outside the declared type, but what an unset environment variable reads as.
+        pytest.param(None, ['interleaved-thinking-2025-05-14'], ['interleaved-thinking-2025-05-14'], id='no-value'),
     ],
 )
 async def test_anthropic_beta_extra_header_merges_in_any_spelling(
-    allow_model_requests: None, header: str, anthropic_betas: list[str], expected: list[str]
+    allow_model_requests: None, header: str, value: str | None, anthropic_betas: list[str], expected: list[str]
 ):
     """An `anthropic-beta` in `extra_headers` merges with the other betas whatever the spelling of its name.
 
     The SDK folds header names case-insensitively, so a per-request `Anthropic-Beta` would replace the header it
     builds from `betas` and drop every other beta. The claim is the header the request carries, not how the API
-    answers it, so a mock transport stands in for six recordings.
+    answers it, so a mock transport stands in for nine recordings.
     """
     headers: list[httpx2.Headers] = []
 
@@ -2486,7 +2491,9 @@ async def test_anthropic_beta_extra_header_merges_in_any_spelling(
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
         # A small `max_tokens` keeps the request non-streaming, so the canned body above answers it.
         settings = AnthropicModelSettings(
-            extra_headers={header: 'custom-feature-1'}, anthropic_betas=anthropic_betas, max_tokens=16
+            extra_headers={header: value},  # pyright: ignore[reportArgumentType]
+            anthropic_betas=anthropic_betas,
+            max_tokens=16,
         )
         await Agent(model).run('Hello', model_settings=settings)
 

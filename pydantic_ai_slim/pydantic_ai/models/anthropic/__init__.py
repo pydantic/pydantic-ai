@@ -1886,7 +1886,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return {
             stripped_beta
             for name in names
-            for beta in extra_headers.pop(name).split(',')
+            # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
+            if (header := extra_headers.pop(name))
+            for beta in header.split(',')
             if (stripped_beta := beta.strip())
         }
 
