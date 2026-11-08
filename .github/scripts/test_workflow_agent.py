@@ -276,14 +276,18 @@ async def test_ci_review_withholds_noop_and_non_publishing_outputs(
         assert all('safeoutputs_noop' not in tools for tools in offered)
 
 
-async def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(
+async def test_safe_output_past_its_limit_is_answered_and_no_longer_offered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """gh-aw rejects a `noop` past its per-run limit; with one tool retry, the second rejection ended the run."""
+    """gh-aw rejects a `noop` past its per-run limit; with one tool retry, the second rejection ended the run.
+
+    UI Security Review's model kept calling `noop` past its limit while it stayed offered, until the run's deadline.
+    """
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
     sink = tmp_path / 'safeoutputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     noop_returns: list[str] = []
+    noop_offered: list[bool] = []
 
     def noop(message: str) -> str:
         if sink.exists():
@@ -293,7 +297,7 @@ async def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(
         return 'ok'
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
+        noop_offered.append(any(tool_def.name == 'safeoutputs_noop' for tool_def in info.function_tools))
         noop_returns.extend(
             str(part.content)
             for part in messages[-1].parts
@@ -317,6 +321,8 @@ async def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(
         ]
         * 2
     )
+    # A call from memory is still answered after the first rejection stops offering the tool.
+    assert noop_offered == [True, True, False, False]
 
 
 @pytest.mark.parametrize(
