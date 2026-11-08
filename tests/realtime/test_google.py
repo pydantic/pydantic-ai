@@ -1418,6 +1418,25 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
+async def test_silent_turn_after_tool_result_completes_the_gemini_lifecycle() -> None:
+    """A usage-only tool-call response must not consume the answer's silent terminal."""
+    conn = _conn(_RecordingSession())
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    lifecycle.frame_for(
+        [
+            ToolCall(tool_call_id='c1', tool_name='save', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+
+    await conn.send(ToolResult(tool_call_id='c1', output='saved'))
+    lifecycle.take_pending()
+    frame = lifecycle.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+
+    assert frame[-1] == ResponseDone()
+    assert lifecycle._unanswered == []  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 async def test_send_tool_result_async_scheduling_without_a_profile(async_tool_calls: bool) -> None:
     """A connection built without a profile schedules async results exactly as it did before the flag."""

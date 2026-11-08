@@ -1559,7 +1559,21 @@ class _TypedTurn:
     sending: bool = True
 
 
-class _CutOffLifecycle(InferredLifecycle):
+class _GeminiLifecycle(InferredLifecycle):
+    """The inferred lifecycle of a Gemini Live connection.
+
+    Gemini does not emit a separate terminal for the response that made a blocking tool call. Its usage
+    report closes that response instead, and the terminal after the tool result belongs to the answer that
+    follows. Clear that usage marker once the result is actually sent so a silent answer terminal is not
+    mistaken for the already-closed tool-call response.
+    """
+
+    def tool_result_sent(self) -> None:
+        """The provider accepted a tool result, so the next terminal may end its answer."""
+        self._ended_by_usage = None
+
+
+class _CutOffLifecycle(_GeminiLifecycle):
     """The inferred lifecycle of a Gemini Live model that cuts its reply off for an input that reaches it mid-generation.
 
     See `GoogleRealtimeModelProfile.google_input_cuts_off_reply`.
@@ -1717,7 +1731,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `frames()`).
         cuts_off = cast('GoogleRealtimeModelProfile', self._profile).get('google_input_cuts_off_reply', False)
-        self._lifecycle = (_CutOffLifecycle if cuts_off else InferredLifecycle)(transcribes=input_transcription_enabled)
+        self._lifecycle = (_CutOffLifecycle if cuts_off else _GeminiLifecycle)(transcribes=input_transcription_enabled)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1904,6 +1918,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         else:
             await self._session.send_tool_response(function_responses=function_response)
+        self._lifecycle.tool_result_sent()
         self._tool_calls.pop(content.tool_call_id, None)
 
     async def _tool_result_media(
