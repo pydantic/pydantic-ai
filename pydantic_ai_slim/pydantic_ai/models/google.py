@@ -517,11 +517,13 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
     """Move a user-agent the caller set in `headers`, in any spelling, to where it replaces the client's.
 
     The SDK merges per-request headers into the client's by exact name, and adds its label only to a lowercase
-    `user-agent`. So the caller's value goes under `user-agent`, the one line on a client that has no other
-    spelling, and under each other spelling the client has. aiohttp folds those into the last one, the SDK's
-    `user-agent`. h11 rejects surrounding whitespace, which the SDK's label no longer covers on another spelling,
-    and the label would leave an empty value with a trailing space, so an empty value sends the client's
-    `user-agent` without our label instead.
+    `user-agent`. So the caller's value, with several spellings joined into one, goes under `user-agent`, the one
+    line on a client that has no other spelling, and under each other spelling the client has. aiohttp folds those
+    into the last one, the SDK's `user-agent`.
+
+    The value is stripped because h11 rejects surrounding whitespace, and only the `user-agent` line gets the SDK's
+    label in front of it. An empty value sends the client's `user-agent` without our label instead, because the SDK
+    would prefix its label to it and leave a trailing space.
 
     Returns whether the caller set one.
     """

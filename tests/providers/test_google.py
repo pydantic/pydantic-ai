@@ -253,6 +253,7 @@ async def test_google_sends_one_user_agent(allow_model_requests: None, provider_
         ({'user-agent': 'support-bot'}, ['google-genai support-bot']),
         ({'USER-AGENT': 'support-bot'}, ['google-genai support-bot']),
         ({'User-Agent': ''}, ['google-genai']),
+        ({'User-Agent': 'a', 'user-agent': 'b'}, ['google-genai a b']),
     ],
 )
 async def test_google_extra_headers_user_agent_replaces_ours(
@@ -263,7 +264,8 @@ async def test_google_extra_headers_user_agent_replaces_ours(
 ) -> None:
     """A user-agent in `extra_headers` replaces ours in any spelling, on the one line google-genai adds its label to.
 
-    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects.
+    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects. Several
+    spellings join into one value.
     """
     requests: list[httpx2.Request] = []
 
