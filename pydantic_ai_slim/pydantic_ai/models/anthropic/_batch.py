@@ -84,8 +84,11 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
     prepared = await model._prepare_messages_create(request.messages, settings, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
     if prepared.extra_headers != {'User-Agent': get_user_agent()}:
         # A batch is created with our `User-Agent` alone, so no other per-request header can be honored, a user-agent
-        # of the caller's in any spelling included.
-        raise UserError('Anthropic Message Batches do not support per-request `extra_headers`; set them on the client.')
+        # of the caller's in any spelling included. Creating it replaces a client-level user-agent too.
+        raise UserError(
+            'Anthropic Message Batches do not support per-request `extra_headers`; set them on the client, except a '
+            "user-agent, which a batch always sends as Pydantic AI's."
+        )
 
     params = model._messages_create_params(  # pyright: ignore[reportPrivateUsage]
         request.messages,

@@ -168,7 +168,10 @@ async def test_anthropic_batch_rejects_per_request_headers(headers: dict[str, st
 
     with pytest.raises(
         UserError,
-        match=r'^Anthropic Message Batches do not support per-request `extra_headers`; set them on the client\.$',
+        match=(
+            r'^Anthropic Message Batches do not support per-request `extra_headers`; set them on the client, except a '
+            r"user-agent, which a batch always sends as Pydantic AI's\.$"
+        ),
     ):
         await model.batch_encode(_request('item1', {'extra_headers': headers}))
 

@@ -1,7 +1,8 @@
 """A beta in the Anthropic client's `default_headers` goes out with the betas Pydantic AI sends.
 
-Mocked at the HTTP transport rather than recorded: the claim is about the `anthropic-beta` header each SDK client
-sends, which the cassette hooks strip, and Bedrock, Vertex AI and Foundry can't be recorded here.
+Mocked at the HTTP transport rather than captured with `request_capture`, whose client needs a recording to answer:
+Bedrock, Vertex AI and Foundry can't be recorded here, and the claim is about the header lines each SDK client sends,
+which no response bears on.
 """
 
 from __future__ import annotations as _annotations
