@@ -147,7 +147,7 @@ never waits for it forever.
 A command can take write permission away from its job directory, as `chmod -R a-w .` in the workspace does. Stopping
 the watcher and publishing both create files there, so once the command exits, the wrapper gives the directory's owner
 write permission back; a directory that is still writable costs only the `-w` test, a shell builtin. Nothing else the
-command changed is restored, so a jobs directory it made read-only keeps `Job.cleanup` from removing the job. A stop
+command changed is restored, so a jobs directory it made read-only keeps `Job.cleanup` from removing the job directory. A stop
 signal that lands while `chmod` runs ends it, as `chmod` runs with default signal handling, and the directory stays
 read-only: no exit status is published.
 

@@ -2143,9 +2143,17 @@ class TestReadOnlyJobDirectory:
     async def test_stop_reports_a_job_directory_it_cannot_remove(self, writable_after: Path) -> None:
         ts = _shell_toolset(writable_after)
         command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), 'chmod -R a-w .'))
-        await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
+        job = await _job(ts, _ctx(writable_after), command_id)
+        await _wait_for_exit(job.pid)
         result = await ts.stop_command(_ctx(writable_after), command_id)
-        assert result.splitlines()[-3:] == ['[stopped]', '[exit code: 0]', '[job files not removed: permission denied]']
+        assert result.splitlines()[-3:] == [
+            '[stopped]',
+            '[exit code: 0]',
+            '[job directory not removed: permission denied]',
+        ]
+        # The job directory is writable again, so its files go; the read-only jobs directory keeps it.
+        assert list(Path(job.directory).iterdir()) == []
+        assert 'unknown command ID' in await ts.check_command(_ctx(writable_after), command_id)
 
     async def test_a_read_only_workspace_still_fails_the_stop(self, shell_dir: Path) -> None:
         ts = _shell_toolset(shell_dir)

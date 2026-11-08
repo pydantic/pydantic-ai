@@ -561,7 +561,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             raise
         except PermissionError:
             # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
-            parts.append('[job files not removed: permission denied]')
+            parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
 
 
