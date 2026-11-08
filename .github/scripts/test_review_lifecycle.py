@@ -100,7 +100,7 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         'RUN_URL': RUN_URL,
         'FAILED': 'false',
         'FAILURE_LABEL': 'ci-review-failed',
-        'REVIEW_MARKER': f'<!-- gh-aw-workflow-call-id: {REPO}/pydantic-ai-pr-review -->',
+        'REVIEW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'WORKFLOW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'EVENT_NAME': 'pull_request',
         'LABEL_NAME': 'final-review',
@@ -284,7 +284,7 @@ def test_compiled_publication_job_binds_each_workflow(workflow: str):
     assert env['FAILURE_LABEL'] == 'ci-review-failed'
     assert env['GH_TOKEN'] == '${{ github.token }}'
     assert env['RUN_URL'] == '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-    assert job['needs'] == ['agent', 'eligibility', 'safe_outputs']
+    assert job['needs'] == ['agent', 'detection', 'eligibility', 'safe_outputs']
     assert job['if'] == "(!cancelled()) && needs.agent.result != 'skipped'"
     assert job['permissions'] == {'pull-requests': 'write'}
     assert job['runs-on'] == 'ubuntu-slim'
