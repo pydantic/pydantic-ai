@@ -35,6 +35,39 @@ def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
                 raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
 
 
+def read_only_config(*, steps: int | None = None) -> dict[str, object]:
+    """Allow only the read, grep and glob tools, and only the OpenCode Go provider."""
+    # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
+    # lexically, so check_symlinks also rejects links that could escape either checkout.
+    permissions: list[dict[str, str]] = [
+        {'action': '*', 'resource': '*', 'effect': 'deny'},
+        *({'action': action, 'resource': '*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
+    ]
+    policies: list[dict[str, str]] = [
+        {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'provider.use', 'resource': 'opencode-go', 'effect': 'allow'},
+        {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'mcp.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
+        *({'action': 'tool.use', 'resource': f'{action}:*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
+    ]
+    reviewer: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
+    if steps is not None:
+        reviewer['steps'] = steps
+    return {
+        'plugins': ['-opencode.browser'],
+        'snapshots': False,
+        'default_agent': 'reviewer',
+        'permissions': permissions,
+        'agents': {
+            'reviewer': reviewer,
+            'title': {'model': MODEL},
+            'compaction': {'model': MODEL},
+        },
+        'policies': policies,
+    }
+
+
 def main() -> None:
     """Run the reviewer and save its event stream for validation."""
     workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
@@ -62,32 +95,7 @@ def main() -> None:
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
     )
     runner_temp = Path(os.environ['RUNNER_TEMP'])
-    # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
-    # lexically, so check_symlinks above also rejects links that could escape either checkout.
-    permissions: list[dict[str, str]] = [
-        {'action': '*', 'resource': '*', 'effect': 'deny'},
-        *({'action': action, 'resource': '*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
-    ]
-    policies: list[dict[str, str]] = [
-        {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
-        {'action': 'provider.use', 'resource': 'opencode-go', 'effect': 'allow'},
-        {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'},
-        {'action': 'mcp.use', 'resource': '*', 'effect': 'deny'},
-        {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
-        *({'action': 'tool.use', 'resource': f'{action}:*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
-    ]
-    config: dict[str, object] = {
-        'plugins': ['-opencode.browser'],
-        'snapshots': False,
-        'default_agent': 'reviewer',
-        'permissions': permissions,
-        'agents': {
-            'reviewer': {'mode': 'primary', 'permissions': permissions},
-            'title': {'model': MODEL},
-            'compaction': {'model': MODEL},
-        },
-        'policies': policies,
-    }
+    config = read_only_config()
 
     with tempfile.TemporaryDirectory(dir=runner_temp, prefix='douwebot-opencode-') as temp:
         temp_root = Path(temp)
