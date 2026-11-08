@@ -184,7 +184,7 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
     """Post the findings and the final status for the head this run reviewed."""
     head = env['HEAD_SHA']
     url = run_url(env)
-    checks: list[str] = _CHECKS.validate_json(env['SECURITY_CHECKS'] or '[]')
+    checks: list[str] = _CHECKS.validate_json(env['REVIEW_CHECKS'] or '[]')
     pull = github.pull_request()
     if pull.state != 'open' or pull.head.sha != head:
         print('PR closed or moved while it was reviewed; the event for its new head decides.')

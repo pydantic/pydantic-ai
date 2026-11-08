@@ -118,9 +118,10 @@ jobs:
       pull-requests: read
       actions: read
     steps:
-      - name: Checkout base ref
+      - name: Checkout trusted default-branch runner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Checkout PR head
@@ -135,12 +136,12 @@ jobs:
 
       - name: Gather PR context
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${DEFAULT_BRANCH}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
@@ -209,5 +210,17 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           DETECT_RESULT: ${{ needs.detect.result }}
-          SECURITY_CHECKS: ${{ needs.detect.outputs.checks }}
+          REVIEW_CHECKS: ${{ needs.detect.outputs.checks }}
           RESULTS_DIR: ${{ runner.temp }}/pr-review-checks-result
+
+      # A publisher error must not leave the gate's pending status on the head.
+      - name: Fail the status when publishing fails
+        if: failure()
+        run: >-
+          gh api "repos/${REPO}/statuses/${HEAD_SHA}" -f context='PR Review Checks' -f state=failure
+          -f description='The publisher failed; see the run.' -f target_url="${RUN_URL}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

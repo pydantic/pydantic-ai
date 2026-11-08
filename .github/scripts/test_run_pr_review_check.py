@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,14 @@ def test_invalid_answer_under_the_budget_fails(tmp_path: Path, text: str) -> Non
     """A malformed answer, or a finding on a file this check does not own, is a reviewer error."""
     with pytest.raises(ValueError):
         check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=1))
+
+
+def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
+    """A validation error repeats its input, and job logs on this repository are public."""
+    stream = _stream(tmp_path, '{"private_report": "pre-existing issue"')
+    with pytest.raises(ValueError) as error:
+        check_result(CHECK, ['a.py'], stream, Usage(steps=1))
+    assert 'pre-existing issue' not in ''.join(traceback.format_exception(error.value))
 
 
 def test_private_report_never_reaches_the_publishable_result(tmp_path: Path) -> None:

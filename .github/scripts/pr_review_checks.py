@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import re
 import subprocess
@@ -182,6 +183,14 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
     return selected
 
 
+def _patch_path(field: str, prefix: str) -> str:
+    """A patch header's path without its `a/` or `b/` prefix, or '' for `/dev/null`."""
+    # `core.quotePath=false` still C-quotes a path that holds a quote, a backslash or a control character.
+    if field.startswith('"'):
+        field = codecs.escape_decode(field[1:-1])[0].decode('utf-8', 'replace')
+    return field.removeprefix(prefix) if field.startswith(prefix) else ''
+
+
 def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
     """Read the pull request's changes from git, so no file-count API cap can hide one."""
     git = ['git', '-C', str(repository), '-c', 'core.quotePath=false']
@@ -214,9 +223,9 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
         if line.startswith('diff --git '):
             in_header, old_path, new_path = True, '', ''
         elif in_header and line.startswith('--- '):
-            old_path = line.removeprefix('--- a/') if line.startswith('--- a/') else ''
+            old_path = _patch_path(line[4:], 'a/')
         elif in_header and line.startswith('+++ '):
-            new_path = line.removeprefix('+++ b/') if line.startswith('+++ b/') else old_path
+            new_path = _patch_path(line[4:], 'b/') or old_path
         elif line.startswith('@@'):
             in_header = False
         elif not in_header and new_path and line[:1] in ('+', '-'):

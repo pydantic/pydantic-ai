@@ -147,7 +147,11 @@ def build_prompt(check: ReviewCheck, context: Path, workspace: Path, *, pr_numbe
 
 def step_tokens(line: str) -> int | None:
     """Return the tokens a `step_finish` event reports, or None for any other event."""
-    event = _EVENT.validate_json(line)
+    try:
+        event = _EVENT.validate_json(line)
+    except ValidationError:
+        # A validation error repeats its input, a stream line can hold model text, and job logs are public.
+        raise ValueError('OpenCode wrote an invalid stream event') from None
     if event.get('type') != 'step_finish':
         return None
     part = _EVENT.validate_python(event.get('part'))
@@ -208,7 +212,8 @@ def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usag
             result = ModelResult.model_validate_json(final_text(stream))
         except (ValueError, ValidationError):
             if not at_step_budget:
-                raise
+                # The error would repeat the answer, private report included, into the public job log.
+                raise ValueError('The review answer does not match its schema') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             if outside := sorted({finding.path for finding in result.findings} - set(files)):

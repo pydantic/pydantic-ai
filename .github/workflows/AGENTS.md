@@ -252,13 +252,14 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   documentation or agent instructions only selects nothing and passes.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
-  deleted. The model sees only its check's diffs. The check's `max_steps` and `max_minutes` end a
-  review as `INCOMPLETE`; the defaults are permissive starting values, to be tuned down from recorded
-  runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN` set, OpenCode exports its
-  own spans and logs over OTLP, and the runner exports one span per review with its outcome, steps,
-  tokens and duration. OpenCode's spans carry no prompt or completion text and no token counts. A vulnerability that already
-  exists on the base branch goes only to the private triage Slack webhook. Result artifacts are
-  public, so they carry no private report.
+  deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts,
+  so the model can trace callers. The check's `max_steps` and `max_minutes` end a review as
+  `INCOMPLETE`; the defaults are permissive starting values, to be tuned down from recorded runs.
+  Token totals are recorded and never capped. With `LOGFIRE_TOKEN` set, OpenCode exports its own
+  spans and logs over OTLP, and the runner exports one span per review with its outcome, steps,
+  tokens and duration. OpenCode's spans carry no prompt or completion text and no token counts. A
+  vulnerability that already exists on the base branch goes only to the private triage Slack
+  webhook. Result artifacts are public, so they carry no private report.
 - `publish` validates every finding against its check's files. When there are findings, it posts one
   `COMMENT` review with each check's usage and the receipt `<!-- pr-review-checks run=… head=… -->`,
   which douwebot's clean approval gate does not count as a douwebot finding. The job summary always

@@ -234,7 +234,7 @@ def _publish_env(tmp_path: Path, *results: CheckResult) -> dict[str, str]:
         (tmp_path / f'{result.check}.json').write_text(result.model_dump_json())
     return {
         **ENV,
-        'SECURITY_CHECKS': json.dumps([result.check for result in results]),
+        'REVIEW_CHECKS': json.dumps([result.check for result in results]),
         'DETECT_RESULT': 'success',
         'RESULTS_DIR': str(tmp_path),
     }
@@ -283,7 +283,7 @@ def test_finding_outside_the_checks_files_fails(tmp_path: Path) -> None:
 def test_failed_selection_fails_the_status(tmp_path: Path) -> None:
     """A head whose checks could not be selected is not reviewed, so it cannot pass."""
     github = FakeGitHub()
-    publish(github, {**_publish_env(tmp_path), 'DETECT_RESULT': 'failure', 'SECURITY_CHECKS': ''})
+    publish(github, {**_publish_env(tmp_path), 'DETECT_RESULT': 'failure', 'REVIEW_CHECKS': ''})
     assert _states(github) == [(HEAD, 'failure')]
 
 
