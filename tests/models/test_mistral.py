@@ -4063,25 +4063,36 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
 
 
 @pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
-async def test_large4_adjustable_reasoning_sends_reasoning_effort_high(
-    allow_model_requests: None, model_name: str
+@pytest.mark.parametrize(
+    'thinking, expected_reasoning_effort',
+    [
+        (False, 'low'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        (True, 'high'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+        ('max', 'high'),
+    ],
+)
+async def test_large4_requested_efforts_map_to_closest_supported_level(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
-    """Large 4 ids behave like the Small 4/Medium 3.5 ids: `thinking=True` maps to `reasoning_effort='high'`."""
+    """Large 4 accepts `'low'`/`'medium'`/`'high'`; each requested level maps to the closest supported one."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
     assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected_reasoning_effort
 
 
 @pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
-async def test_large4_thinking_disabled_sends_reasoning_effort_none(
-    allow_model_requests: None, model_name: str
-) -> None:
-    """Large 4 ids behave like the Small 4/Medium 3.5 ids: only `thinking=False` maps to `reasoning_effort='none'`."""
+async def test_large4_thinking_false_sends_reasoning_effort_low(allow_model_requests: None, model_name: str) -> None:
+    """Unlike the Small 4/Medium 3.5 ids, Large 4 cannot turn reasoning off: `thinking=False` sends `'low'`."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -4089,7 +4100,7 @@ async def test_large4_thinking_disabled_sends_reasoning_effort_none(
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=False))
     assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'low'
 
 
 #####################

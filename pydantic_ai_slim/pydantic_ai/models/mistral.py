@@ -217,6 +217,23 @@ enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
 https://docs.mistral.ai/capabilities/reasoning/.
 """
 
+_MISTRAL_LARGE4_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'low', 'medium', 'high']] = {
+    True: 'high',
+    False: 'low',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps the unified `thinking` setting to `reasoning_effort` on Mistral Large 4 (`mistral-large-4` and
+`mistral-large-4-0`).
+
+Large 4 accepts `'low'`, `'medium'`, and `'high'` but cannot turn reasoning off, so `thinking=False` sends
+its lowest effort instead of `'none'`. See https://docs.mistral.ai/capabilities/reasoning/.
+"""
+
 
 class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request."""
@@ -669,16 +686,19 @@ class MistralModel(Model[Mistral]):
     def _translate_thinking(
         self,
         model_request_parameters: ModelRequestParameters,
-    ) -> Literal['none', 'high'] | MistralUnset:
+    ) -> Literal['none', 'low', 'medium', 'high'] | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
         Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
         `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
-        not even for `thinking=False`.
+        not even for `thinking=False`. Mistral Large 4 accepts `low`, `medium`, and `high` but cannot
+        turn reasoning off, so `thinking=False` sends its lowest effort instead of `'none'`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None or self.profile.get('thinking_always_enabled', False):
             return UNSET
+        if self._model_name.startswith('mistral-large-4'):
+            return _MISTRAL_LARGE4_REASONING_EFFORT_MAP[thinking]
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
