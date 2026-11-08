@@ -391,6 +391,27 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
+### Obscurify.ai
+
+[Obscurify.ai](https://obscurify.ai/?utm_source=pydanticai) is a privacy-focused service with an OpenAI-compatible Chat Completions API serving 200+ models named `vendor/model`, such as `deepseek/deepseek-v4-flash` and `z-ai/glm-5.3`. Accounts are a random account number with no email, and prompts and responses are not stored on the server. Get an API key from your [account page](https://obscurify.ai/account) and use `https://obscurify.ai/v1` as the `base_url`. The model names are listed in the [API docs](https://obscurify.ai/api-docs) and at `https://obscurify.ai/v1/models`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+model = OpenAIChatModel(
+    'deepseek/deepseek-v4-flash',
+    provider=OpenAICompatibleProvider(
+        'obscurify',
+        base_url='https://obscurify.ai/v1',
+        api_key='your-obscurify-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
