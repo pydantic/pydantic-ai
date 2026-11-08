@@ -549,7 +549,7 @@ class ImageGenerationTool(AbstractNativeTool):
 
     * OpenAI Responses. Defaults to the provider's image generation model selection.
       Known image generation models include `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`,
-      `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
+      `gpt-image-2`, `gpt-image-1.5`, and `gpt-image-1-mini`.
 
     This selects the underlying image generation model used by the tool; it does
     not change the agent's conversational model.
