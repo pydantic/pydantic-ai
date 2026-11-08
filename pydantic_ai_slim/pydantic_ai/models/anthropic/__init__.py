@@ -1901,7 +1901,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
-        betas: set[str] = set()
+        betas = self._client_default_betas()
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -1927,6 +1927,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
+
+    def _client_default_betas(self) -> set[str]:
+        """The betas in the client's `default_headers`, which a request's own `anthropic-beta` header replaces.
+
+        The legacy Bedrock API reads betas from the request body alone, and the SDK moves only a request's own betas
+        there, so a beta in that client's headers never applies and isn't added.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return set()
+        beta_header = ''
+        for name, value in self.client.default_headers.items():
+            # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
+            if name.lower() == 'anthropic-beta':
+                beta_header = value if isinstance(value, str) else ''
+        return {stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())}
 
     def _message_betas(
         self,

@@ -793,6 +793,7 @@ class MockAnthropic:
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
+    default_headers: dict[str, str] = field(default_factory=dict[str, str])
 
     @property
     def timeout(self) -> Any:

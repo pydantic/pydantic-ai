@@ -153,11 +153,24 @@ async def test_anthropic_batch_request_carries_the_messages_params_without_secre
     assert 'api.anthropic.com' not in request.group
 
 
-async def test_anthropic_batch_rejects_per_request_headers() -> None:
+@pytest.mark.parametrize(
+    'headers',
+    [
+        pytest.param({'X-Tenant': 'a'}, id='custom'),
+        # A batch is created with our user-agent alone, so the caller's would be replaced, in any spelling.
+        pytest.param({'User-Agent': 'support-bot/1.0'}, id='User-Agent'),
+        pytest.param({'user-agent': 'support-bot/1.0'}, id='user-agent'),
+        pytest.param({'USER-AGENT': 'support-bot/1.0'}, id='USER-AGENT'),
+    ],
+)
+async def test_anthropic_batch_rejects_per_request_headers(headers: dict[str, str]) -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
-    with pytest.raises(UserError, match='do not support per-request `extra_headers`'):
-        await model.batch_encode(_request('item1', {'extra_headers': {'X-Tenant': 'a'}}))
+    with pytest.raises(
+        UserError,
+        match=r'^Anthropic Message Batches do not support per-request `extra_headers`; set them on the client\.$',
+    ):
+        await model.batch_encode(_request('item1', {'extra_headers': headers}))
 
 
 @pytest.mark.parametrize('status', ['expired', 'canceled'])
@@ -573,6 +586,30 @@ async def test_anthropic_batches_are_grouped_by_beta_flags(allow_model_requests:
     ] == [
         (('plain',), 'message-batches-2024-09-24'),
         (('beta',), 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+    ]
+
+
+@pytest.mark.parametrize('header_name', ['anthropic-beta', 'Anthropic-Beta'])
+async def test_anthropic_batch_is_created_with_the_client_default_betas(
+    allow_model_requests: None, header_name: str
+) -> None:
+    """The create request's `anthropic-beta` header replaces the client's, so it carries the client's betas too."""
+    api = _FakeBatchAPI(results=[{}, {}])
+    client = AsyncAnthropic(
+        api_key='test-key',
+        default_headers={header_name: 'b-client'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)),
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    await model.batch_create([await model.batch_encode(_request('plain'))])
+    await model.batch_create(
+        [await model.batch_encode(_request('beta', AnthropicModelSettings(anthropic_betas=['b-setting'])))]
+    )
+
+    assert [betas for _, betas in api.created] == [
+        'b-client,message-batches-2024-09-24',
+        'b-client,b-setting,message-batches-2024-09-24',
     ]
 
 
