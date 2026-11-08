@@ -51,7 +51,7 @@ with try_import() as mcp_import_successful:
     # The generated wrapper imports `pydantic_ai.mcp` from inside the running loop, and the first import of
     # `jsonschema` that pulls in walks a package directory. Do it here, where collection has no loop running,
     # so a test that runs alone doesn't trip the blocking-call detector.
-    import pydantic_ai.mcp  # noqa: F401
+    import pydantic_ai.mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
