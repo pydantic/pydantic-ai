@@ -242,7 +242,6 @@ OpenAI image-model landmines:
 - **Probe `quality` with a valid `size`.** The Images API validates `size` before `quality`. An unknown `quality` returns the same `low, medium, high, auto` list for every model, so it tells you nothing. Only a request that passes size validation shows the per-model rejection: `The model 'gpt-image-2' does not support quality 'xhigh'.`
 - **Probe geometry with out-of-bounds sizes.** The API rejects a size before it generates anything. When the new model rejects each boundary size with the same message as a known family, add its ids to that family's tuple in `images/_openai_geometry.py`.
 - **A model page's "Responses: Not supported" means the top-level `model`.** GPT Image 2.6 pages say it, yet the Responses `image_generation` tool accepts both 2.6 ids. Probe the tool with `tool_choice={'type': 'image_generation'}` before deciding `ImageGenerationModelName`.
-- **A new `quality` value goes in every copy of the quality `Literal`.** The copies are `ImageGenerationTool.quality`, the `ImageGeneration` capability field, `__init__` and `from_spec`, and `OpenAIImageGenerationSettings.openai_quality`. `tests/test_capability_spec.py` snapshots the first two.
 
 ### Anthropic
 

@@ -23,6 +23,7 @@ __all__ = (
     'ImageGenerationTool',
     'ImageAspectRatio',
     'ImageSize',
+    'ImageQuality',
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
@@ -48,6 +49,9 @@ The direct image API takes the wider
 
 ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
 """Supported sizes for image generation tools."""
+
+ImageQuality = Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
+"""Supported quality settings for OpenAI image generation."""
 
 ImageGenerationModelName = (
     Literal[
@@ -583,7 +587,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Supports 0 to 3.
     """
 
-    quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] = 'auto'
+    quality: ImageQuality = 'auto'
     """The quality of the generated image.
 
     Supported by:

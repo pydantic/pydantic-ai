@@ -28,6 +28,7 @@ from pydantic_ai.native_tools import (
     ImageAspectRatio,
     ImageGenerationModelName,
     ImageGenerationTool,
+    ImageQuality,
     ImageSize,
 )
 from pydantic_ai.profiles import ModelProfile
@@ -274,7 +275,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
-    quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None
+    quality: ImageQuality | None
     """Quality of the generated image.
 
     Supported by: OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
@@ -349,7 +350,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -622,7 +623,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,

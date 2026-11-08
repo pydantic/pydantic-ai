@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPE
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.models._decode_errors import check_json_response, map_decode_errors
+from pydantic_ai.native_tools import ImageQuality
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -87,7 +88,7 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     different concepts for pixel sizes, aspect ratios, and resolution tiers.
     """
 
-    openai_quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
+    openai_quality: ImageQuality
     """GPT Image quality setting. `gpt-image-2` and earlier models reject `xhigh` and `max`."""
 
     openai_background: Literal['transparent', 'opaque', 'auto']
