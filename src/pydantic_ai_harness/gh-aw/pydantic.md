@@ -386,8 +386,9 @@ engine:
                   f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
               )
           # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
-          # top-level name: the agent imports some dependencies after this point, and a checkout module must not
-          # replace one. A checkout target whose top-level name is also installed is not found.
+          # top-level name, because the agent imports some dependencies after this point. Then an installed module
+          # or regular package wins, but a namespace package nothing has imported yet can lose to a checkout
+          # package. A checkout target whose top-level name is also installed is not found.
           _top_level = _module_name.partition('.')[0]
           if _top_level not in sys.modules and find_spec(_top_level) is None:
               sys.path.append(os.getcwd())

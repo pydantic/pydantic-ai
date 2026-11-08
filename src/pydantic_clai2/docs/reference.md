@@ -3187,8 +3187,9 @@ clai2 -a my_agents:reviewer -p "Review the staged diff"
 instance instead of CLAI's default agent. CLAI appends the launch directory to
 `sys.path`, after installed packages, so a module next to where you start CLAI
 resolves without installing it. It does so only when nothing installed has the
-module's top-level name, so a module there whose top-level name is also installed
-fails with "module not found". `ATTR` must
+module's top-level name. A module there whose top-level name is also installed
+resolves against the installed package instead, so it usually fails with "module
+not found". `ATTR` must
 name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are

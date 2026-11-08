@@ -157,8 +157,9 @@ Some details to know.
   default composition, an imported `PAI_AGENT`, or a spec. The wrapper appends the
   checkout to `sys.path`, after installed packages, only for an imported target whose
   top-level name nothing installed has, such as `my_agent:agent` above. A checkout target
-  whose top-level name is also installed fails with `ModuleNotFoundError`. Gateway tools
-  and recording apply in every mode.
+  whose top-level name is also installed resolves against the installed package instead,
+  so it usually fails with `ModuleNotFoundError`. Gateway tools and recording apply in
+  every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install
   step and the agent, so a `--user` install lands in the same `$HOME/.local` the

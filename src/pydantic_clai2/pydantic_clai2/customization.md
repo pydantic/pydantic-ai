@@ -691,8 +691,9 @@ clai2 --agent MODULE:ATTR (or -a), for example
 clai2 --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
 sys.path, after installed packages, so a module next to where you start CLAI
 resolves without installing it. It does so only when nothing installed has the
-module's top-level name, so a module there whose top-level name is also installed
-fails with "module not found". ATTR must
+module's top-level name. A module there whose top-level name is also installed
+resolves against the installed package instead, so it usually fails with "module
+not found". ATTR must
 name an Agent instance, not a class or factory; the agent runs with deps=None.
 For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and

@@ -13,8 +13,9 @@ def import_agent(path: str) -> AbstractAgent[None, object]:
 
     The launch directory is appended to `sys.path`, after installed packages, only when nothing installed has the
     module's top-level name, so a module there resolves without installing it and an installed agent's later
-    imports cannot resolve to it. A launch directory module whose top-level name is also installed fails with
-    "module not found". (`python -m pydantic_clai2` already puts it first, as for any script.)
+    imports cannot resolve to it. A launch directory module whose top-level name is also installed resolves
+    against the installed package instead, so it usually fails with "module not found".
+    (`python -m pydantic_clai2` already puts it first, as for any script.)
     The agent runs with `deps=None`.
     """
     module_name, _, attr = path.partition(':')

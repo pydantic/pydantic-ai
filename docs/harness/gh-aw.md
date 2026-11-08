@@ -302,7 +302,8 @@ Post your triage as a single comment on that issue.
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode.
   It appends the checkout to `sys.path`, after installed packages, only for an imported target
   whose top-level name nothing installed has, such as `my_agent:agent`. A checkout target whose
-  top-level name is also installed fails with `ModuleNotFoundError`.
+  top-level name is also installed resolves against the installed package instead, so it usually
+  fails with `ModuleNotFoundError`.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue

@@ -1920,7 +1920,8 @@ class TestLauncherProgram:
         sys_path: list[str] = json.loads(runtime_path.read_text(encoding='utf-8'))
         if pai_agent == 'checkout_agent:agent':
             # The target needs the checkout, which is trusted agent code here: it comes after installed
-            # packages, so only a module nothing installs resolves to it.
+            # packages, so an installed module or regular package wins, but a namespace package nothing has
+            # imported yet can lose to a checkout package.
             assert str(workspace) in sys_path
             assert checkout_imports.read_text(encoding='utf-8') == 'gh_aw_test_optional_dependency\n'
         else:
