@@ -157,7 +157,7 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
     message = error.get('message') if _utils.is_str_dict(error) else None
     category = (
         ModelContextWindowExceededError
-        if code == '3051'
+        if code == '3051' and isinstance(message, str) and 'maximum context length' in message.lower()
         else _model_errors.http_status_category(e.status_code, message)
     )
     return ModelHTTPError.for_category(

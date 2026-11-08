@@ -892,6 +892,27 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-invalid-argument',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': "reasoning_effort none is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_REJECTED,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3051',
+            'provider_error_type': 'invalid_request_invalid_args',
+        },
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),

@@ -4364,3 +4364,26 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     assert tags == snapshot(
         [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )
+
+
+def test_mistral_map_status_error_3051() -> None:
+    from types import SimpleNamespace
+    from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelRequestRejectedError
+    from pydantic_ai.models.mistral import _map_status_error
+
+    err_invalid = SimpleNamespace(
+        status_code=400,
+        body='{"object": "error", "message": "reasoning_effort none is not supported for this model", "type": "invalid_request_invalid_args", "param": null, "code": "3051", "raw_status_code": 400}',
+        headers={},
+    )
+    mapped_invalid = _map_status_error(err_invalid, 'mistral-large-latest')  # type: ignore[arg-type]
+    assert isinstance(mapped_invalid, ModelRequestRejectedError)
+    assert not isinstance(mapped_invalid, ModelContextWindowExceededError)
+
+    err_ctx = SimpleNamespace(
+        status_code=400,
+        body='{"object": "error", "message": "Prompt contains 150004 tokens and 0 draft tokens, too large for model with 131072 maximum context length", "type": "invalid_request_invalid_args", "param": null, "code": "3051"}',
+        headers={},
+    )
+    mapped_ctx = _map_status_error(err_ctx, 'mistral-large-latest')  # type: ignore[arg-type]
+    assert isinstance(mapped_ctx, ModelContextWindowExceededError)
