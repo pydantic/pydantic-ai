@@ -1312,7 +1312,7 @@ def _record_command(args: argparse.Namespace) -> int:
         os.environ.get('PYDANTIC_AI_TASK_KEY', ''),
         os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', ''),
     )
-    result = parse_run_result(args.agent_log, run_attempt)
+    result = parse_run_result(args.agent_session, run_attempt)
     if result is None or (result.workflow, result.task_key, result.trigger_event) != identity:
         print('No terminal agent result matches this run; recording none')
         return 0
@@ -1583,7 +1583,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument('--output', type=Path, default=Path('provider-health.json'))
     check.set_defaults(handler=_check_command)
     record = commands.add_parser('record', help='record the terminal agent result on the host after inference')
-    record.add_argument('--agent-log', type=Path, required=True)
+    record.add_argument('--agent-session', type=Path, required=True)
     record.add_argument('--output', type=Path, required=True)
     record.set_defaults(handler=_record_command)
     monitor = commands.add_parser('monitor', help='reconcile a completed agent workflow or provider recovery')

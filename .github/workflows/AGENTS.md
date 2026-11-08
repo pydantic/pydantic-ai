@@ -354,11 +354,11 @@ these host steps. The agent container gets no Z.AI credential beyond the engine'
 
 The monitor reads a run's terminal result from a record the agent job writes on the host,
 not from the agent's own output. After inference, `shared/provider-health.md` runs the
-controller the recheck fetched, as `record`, outside the agent container. That step adds
-`run-result.json` to the `provider-health` artifact. The record keeps the failure kind the
-runner reported. It marks a provider-scope kind confirmed only when the step's own Z.ai
-check observes the same condition: the credential rejected with HTTP 401 or 403, or the
-plan's quota exhausted. Without a valid record, because the run predates this step or the
+controller the recheck fetched, as `record`, outside the agent container. That step reads
+the engine's terminal `session.result` from `agent-session.jsonl` and adds `run-result.json`
+to the `provider-health` artifact. The record keeps the failure kind the runner reported.
+It marks a provider-scope kind confirmed only when the step's own Z.ai check observes the
+same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted. Without a valid record, because the run predates this step or the
 step failed, the monitor reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted

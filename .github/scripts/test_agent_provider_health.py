@@ -1308,8 +1308,12 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         workflow, task_key, trigger_event, 1, health.Failure('plan_limit', 429, None)
     )
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('exhausted', '2026-10-01T17:00:00Z'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    # The host record reads the same metadata from the engine's terminal session record.
+    agent_session = tmp_path / 'agent-session.jsonl'
+    terminal = {'status': 'failure', 'metadata': {'provider_health': result_event['provider_health']}}
+    agent_session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
     run_result = tmp_path / 'run-result.json'
-    assert health.main(['record', '--agent-log', str(agent_artifact), '--output', str(run_result)]) == 0
+    assert health.main(['record', '--agent-session', str(agent_session), '--output', str(run_result)]) == 0
 
     health_artifact = tmp_path / 'provider-health.json'
     _write_health(
@@ -2335,23 +2339,27 @@ _CREDENTIAL_REJECTED = health.Quota('unknown', diagnostic='http_error', http_sta
 _PLAN_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
 
 
-def _agent_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: BaseException | None
-) -> Path:
-    """Write the shim's terminal result for a scheduled run to `agent-stdio.log`, as the agent step does."""
+def _agent_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException | None) -> Path:
+    """Write the engine's terminal `session.result` for a scheduled run, with the metadata the workflow agent records."""
     workflow, task_key, trigger_event = _SCHEDULED_RUN
     monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    shim.emit_result('agent run finished', usage=None, session_id='s', is_error=error is not None, error=error)
-    log = tmp_path / 'agent' / 'agent-stdio.log'
-    log.parent.mkdir()
-    log.write_text(capsys.readouterr().out)
-    return log
+    provider_health = shim.provider_health()
+    if error is not None:
+        provider_health['failure'] = shim.failure_details(error)
+    terminal = {'status': 'failure' if error else 'success', 'metadata': {'provider_health': provider_health}}
+    session = tmp_path / 'agent' / 'agent-session.jsonl'
+    session.parent.mkdir()
+    session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
+    return session
 
 
-def _record(log: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, quota: health.Quota) -> tuple[Path, list[str]]:
+def _record(
+    session: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, quota: health.Quota
+) -> tuple[Path, list[str]]:
     """Run the host-side `record` command with a stubbed Z.ai check, returning the record path and checked keys."""
     probes: list[str] = []
 
@@ -2362,7 +2370,7 @@ def _record(log: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, quota: h
     monkeypatch.setattr(health, '_fetch_zai_quota', probe)
     monkeypatch.setenv('ZAI_API_KEY', 'zai-host-key')
     record = tmp_path / 'provider-health' / 'run-result.json'
-    assert health.main(['record', '--agent-log', str(log), '--output', str(record)]) == 0
+    assert health.main(['record', '--agent-session', str(session), '--output', str(record)]) == 0
     return record, probes
 
 
@@ -2401,12 +2409,11 @@ def test_record_confirms_a_provider_failure_only_when_its_own_zai_check_observes
     confirmed: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The host record keeps the reported kind and confirms it only from the host's own Z.ai check."""
-    log = _agent_log(tmp_path, monkeypatch, capsys, error)
+    session = _agent_session(tmp_path, monkeypatch, error)
 
-    record, probes = _record(log, tmp_path, monkeypatch, quota)
+    record, probes = _record(session, tmp_path, monkeypatch, quota)
 
     assert probes == ['zai-host-key']
     kind = 'plan_limit' if error.status_code == 429 else 'authentication'
@@ -2435,32 +2442,31 @@ def test_record_skips_the_zai_check_for_a_result_without_a_provider_claim(
     failure: dict[str, object] | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Results that cannot open a provider incident keep their kind without spending a Z.ai request."""
-    log = _agent_log(tmp_path, monkeypatch, capsys, error)
+    session = _agent_session(tmp_path, monkeypatch, error)
 
-    record, probes = _record(log, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
 
     assert probes == []
     data = json.loads(record.read_text())
     assert (data['failure'], data['provider_confirmed']) == (failure, False)
 
 
-@pytest.mark.parametrize('mismatch', ['missing-log', 'other-attempt', 'other-task'])
+@pytest.mark.parametrize('mismatch', ['missing-session', 'other-attempt', 'other-task'])
 def test_record_writes_nothing_without_a_result_for_this_run(
     mismatch: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The host records only a result that carries this run's identity."""
-    log = _agent_log(tmp_path, monkeypatch, capsys, _zai_error(401, '1000'))
-    if mismatch == 'missing-log':
-        log.unlink()
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    if mismatch == 'missing-session':
+        session.unlink()
     elif mismatch == 'other-attempt':
         monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
     else:
         monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'another-task')
 
-    record, probes = _record(log, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
 
     assert not record.exists()
     assert probes == []
@@ -2468,7 +2474,7 @@ def test_record_writes_nothing_without_a_result_for_this_run(
 
 
 def _monitor_scheduled_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, agent_log: Path, run_result: Path | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, agent_session: Path, run_result: Path | None
 ) -> FakeGitHub:
     workflow, task_key, trigger_event = _SCHEDULED_RUN
     health_artifact = tmp_path / 'provider-health' / 'provider-health.json'
@@ -2502,7 +2508,7 @@ def _monitor_scheduled_run(
     ]
     if run_result is not None:
         args += ['--run-result', str(run_result)]
-    assert health.main(['monitor', *args, '--agent-artifact', str(agent_log.parent)]) == 0
+    assert health.main(['monitor', *args, '--agent-artifact', str(agent_session.parent)]) == 0
     return client
 
 
@@ -2521,13 +2527,12 @@ def test_provider_incident_opens_only_from_a_host_confirmed_record(
     confirmed: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A genuine provider failure still blocks every workflow; an unconfirmed one stays with its workflow."""
-    log = _agent_log(tmp_path, monkeypatch, capsys, error)
-    record, _ = _record(log, tmp_path, monkeypatch, quota if confirmed else health.Quota('healthy'))
+    session = _agent_session(tmp_path, monkeypatch, error)
+    record, _ = _record(session, tmp_path, monkeypatch, quota if confirmed else health.Quota('healthy'))
 
-    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_log=log, run_result=record)
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=record)
 
     [issue] = client.issues
     marker = _marker_from_body(issue.body)
@@ -2558,22 +2563,21 @@ def test_an_agent_written_result_cannot_open_a_provider_incident_without_host_co
     record: str | dict[str, object] | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Without a valid host record, the agent artifact still types the failure but never confirms a provider."""
-    log = _agent_log(tmp_path, monkeypatch, capsys, _zai_error(401, '1000'))
-    event = json.loads(log.read_text())
-    event['provider_health']['provider_confirmed'] = True
-    log.write_text(json.dumps(event) + '\n')
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    event = json.loads(session.read_text())
+    event['data']['metadata']['provider_health']['provider_confirmed'] = True
+    session.write_text(json.dumps(event) + '\n')
     run_result = tmp_path / 'provider-health' / 'run-result.json'
     if record is not None:
         # Start from a record the host confirmed, then make it one the monitor cannot validate.
-        run_result, _ = _record(log, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+        run_result, _ = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
         confirmed = json.loads(run_result.read_text())
         assert confirmed['provider_confirmed'] is True
         run_result.write_text(record if isinstance(record, str) else json.dumps({**confirmed, **record}))
 
-    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_log=log, run_result=run_result)
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=run_result)
 
     [issue] = client.issues
     assert _marker_from_body(issue.body) == health.IncidentMarker(

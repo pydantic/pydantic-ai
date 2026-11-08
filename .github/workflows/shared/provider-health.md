@@ -86,9 +86,9 @@ pre-agent-steps:
       echo "::error::Provider health blocked inference at agent start: ${REASON}"
       exit 1
 # The monitor trusts only a terminal result written outside the agent container. After inference, the
-# controller fetched above reads the agent's result on the host, confirms a provider-wide failure with its own
-# Z.ai check, and adds the record to the `provider-health` artifact. `-I` ignores user site-packages and
-# `PYTHON*` variables.
+# controller fetched above reads the engine's terminal session record on the host, confirms a provider-wide
+# failure with its own Z.ai check, and adds the record to the `provider-health` artifact. `-I` ignores user
+# site-packages and `PYTHON*` variables.
 post-steps:
   - name: Record the terminal agent result on the host
     if: always() && steps.agent_start_health.outputs.ready == 'true'
@@ -101,7 +101,7 @@ post-steps:
       PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
     run: |
       python3 -I "$RUNNER_TEMP/provider-health/agent_provider_health.py" record \
-        --agent-log /tmp/gh-aw/agent-stdio.log \
+        --agent-session /tmp/gh-aw/agent-session.jsonl \
         --output "$RUNNER_TEMP/provider-health/run-result.json"
   - name: Add the host-recorded agent result to the health decision artifact
     if: always() && steps.agent_start_health.outputs.ready == 'true'

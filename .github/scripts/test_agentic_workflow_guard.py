@@ -1926,7 +1926,7 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
 _RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
 _RECORD_RUN = (
     'python3 -I "$RUNNER_TEMP/provider-health/agent_provider_health.py" record \\\n'
-    '  --agent-log /tmp/gh-aw/agent-stdio.log \\\n'
+    '  --agent-session /tmp/gh-aw/agent-session.jsonl \\\n'
     '  --output "$RUNNER_TEMP/provider-health/run-result.json"\n'
 )
 
