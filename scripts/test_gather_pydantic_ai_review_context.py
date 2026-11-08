@@ -163,18 +163,26 @@ def _git(repo: Path, env: dict[str, str], *args: str) -> None:
     subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
 
 
-def _write_files(root: Path, files: Mapping[str, str | bytes]) -> None:
+def _write_files(root: Path, files: Mapping[str, str | bytes | None]) -> None:
+    """Write each file, or delete it when its content is `None`."""
     for name, content in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
+        if content is None:
+            path.unlink()
+        elif isinstance(content, bytes):
             path.write_bytes(content)
         else:
             path.write_text(content, encoding='utf-8')
 
 
 def _gather(
-    tmp_path: Path, *, script: Path, base: Mapping[str, str | bytes], pr: Mapping[str, str | bytes], in_ci: bool
+    tmp_path: Path,
+    *,
+    script: Path,
+    base: Mapping[str, str | bytes],
+    pr: Mapping[str, str | bytes | None],
+    in_ci: bool,
 ) -> tuple[Path, Path]:
     """Gather review context for a PR that writes `pr` over a `main` branch holding `base`.
 
@@ -309,7 +317,7 @@ def test_ci_review_diff_stops_at_the_changed_method(tmp_path: Path):
 @pytest.mark.parametrize('script', [DOUWEBOT_SCRIPT, SCRIPT], ids=['douwebot', 'ci-review'])
 def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script: Path):
     """Every changed file gets its own readable diff name, so no path can overwrite another file's diff."""
-    paths = [
+    added = [
         'pydantic_ai_slim/pydantic_ai/_ssrf.py',
         # Each pair below shared one diff name when `/` became `__` and leading dots were stripped,
         # or would share one if `%` were left unescaped.
@@ -318,9 +326,19 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'github/ci.yml',
         'docs/a.md',
         'docs%2Fa.md',
+        # These read as `src.py` and `new.py` when the path was cut after the last ` b/` of `diff --git a/... b/...`.
+        'src.py',
+        'z b/src.py',
+        'new.py',
     ]
+    renamed = {'q b/new.py': 'old.py'}
+    kept = 'kept\n' * 5
     _, context = _gather(
-        tmp_path, script=script, base={'README.md': ''}, pr={path: f'{path}\n' for path in paths}, in_ci=False
+        tmp_path,
+        script=script,
+        base={'README.md': '', 'old.py': kept},
+        pr={path: f'{path}\n' for path in added} | {'old.py': None, 'q b/new.py': kept},
+        in_ci=False,
     )
 
     rows = [row.split('\t') for row in (context / 'changed-files.txt').read_text(encoding='utf-8').splitlines()]
@@ -331,7 +349,11 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'github/ci.yml': 'diff/github%2Fci.yml.diff',
         'docs/a.md': 'diff/docs%2Fa.md.diff',
         'docs%2Fa.md': 'diff/docs%252Fa.md.diff',
+        'src.py': 'diff/src.py.diff',
+        'z b/src.py': 'diff/z b%2Fsrc.py.diff',
+        'new.py': 'diff/new.py.diff',
+        'q b/new.py': 'diff/q b%2Fnew.py.diff',
     }
     assert {path: (context / diff).read_text(encoding='utf-8').splitlines()[0] for path, _, diff in rows} == {
-        path: f'diff --git a/{path} b/{path}' for path in paths
+        path: f'diff --git a/{renamed.get(path, path)} b/{path}' for path in [*added, *renamed]
     }

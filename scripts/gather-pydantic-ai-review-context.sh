@@ -286,17 +286,20 @@ if [ -n "$MERGE_BASE" ]; then
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '
-  /^diff --git/ {
-    # Close previous file to avoid running out of file descriptors
-    if (outfile) close(outfile)
-    outfile = ""
-
-    # Extract new (b/) filename from "diff --git a/path b/path"
-    # Uses b/ side so renamed files match the GitHub API .filename field
-    fname = $0
-    sub(/^.* b\//, "", fname)
-
-    skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
+  # Names the held file from its new (b/) path, so renamed files match the
+  # GitHub API .filename field, then writes its held lines. "diff --git" alone
+  # is ambiguous: a crafted "z b/src.py" reads as "src.py". A rename or copy
+  # names its new path in the extended header; any other header repeats one
+  # path P as "a/P b/P", so P is its first half.
+  function open_held(    rest, n, i) {
+    if (fname == "") {
+      rest = substr(held[1], 12)
+      n = (length(rest) - 5) / 2
+      if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
+          && substr(rest, 3, n) == substr(rest, n + 6))
+        fname = substr(rest, 3, n)
+    }
+    skip = (fname == "" || fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
       # non-hidden name that no other path shares.
@@ -305,9 +308,29 @@ fi | awk -v dir="$CTX/diff" '
       gsub(/\//, "%2F", safe)
       sub(/^\./, "%2E", safe)
       outfile = dir "/" safe ".diff"
+      for (i = 1; i <= nheld; i++) print held[i] > outfile
     }
+    nheld = 0
   }
+
+  /^diff --git / {
+    if (nheld) open_held()
+    # Close previous file to avoid running out of file descriptors
+    if (outfile) close(outfile)
+    outfile = ""
+    fname = ""
+    nheld = 1
+    held[1] = $0
+    next
+  }
+  nheld && /^(rename|copy) to / { fname = $0; sub(/^(rename|copy) to /, "", fname) }
+  nheld && /^(old mode|new mode|deleted file mode|new file mode|copy from|copy to|rename from|rename to|similarity index|dissimilarity index|index) / {
+    held[++nheld] = $0
+    next
+  }
+  nheld { open_held() }
   !skip && outfile { print > outfile }
+  END { if (nheld) open_held() }
 '
 
 # Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
