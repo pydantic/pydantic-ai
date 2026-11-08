@@ -2907,6 +2907,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
+        # At the start of the step, before the request joins history and before `wrap_model_request`: a step a
+        # wrapper answers from a cache still counts in `usage.requests`, so it must not get past `request_limit`
+        # either, and a request the limit stops was never sent, so it doesn't belong in the run's messages.
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
@@ -2972,9 +2977,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
         self.last_request_context = request_context
-        # At the start of the step, before `wrap_model_request`: a step a wrapper answers from a
-        # cache still counts in `usage.requests`, so it must not get past `request_limit` either.
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
     def _resolve_step_model_settings(

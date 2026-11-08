@@ -86,6 +86,17 @@ def test_retry_limit() -> None:
         test_agent.run_sync('Hello', usage_limits=UsageLimits(request_limit=1))
 
 
+def test_request_limit_leaves_no_unsent_request_in_history() -> None:
+    """A request the limit stopped before sending is not in the run's messages, and not marked complete."""
+    test_agent = Agent(TestModel())
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UsageLimitExceeded, match=re.escape('The next request would exceed the request_limit of 0')):
+            test_agent.run_sync('Hello', usage_limits=UsageLimits(request_limit=0))
+
+    assert messages == []
+
+
 async def test_streamed_text_limits() -> None:
     m = TestModel()
 
