@@ -181,7 +181,8 @@ safe-outputs:
             const log = read(path.join(directory, 'detection.log'));
             // Read only step counters: the stream's text is model-authored.
             const steps = read(path.join(process.env.RUNNER_TEMP, 'gh-aw-opencode-detector.ndjson'))
-              .split('\n').filter(line => line.startsWith('{"type":"step_finish"')).map(line => JSON.parse(line).part);
+              .split('\n').filter(line => line.includes('"step_finish"')).map(line => JSON.parse(line))
+              .filter(event => event.type === 'step_finish').map(event => event.part);
             const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
             const verdictText = read(path.join(directory, 'detection_result.json'));
             const verdict = verdictText ? JSON.parse(verdictText) : null;

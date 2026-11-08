@@ -68,6 +68,18 @@ test('OpenCode step usage is summed without model-authored text', async () => {
   assert.equal(JSON.stringify(spans).includes('private text'), false);
 });
 
+test('step usage does not depend on event key order or quoted event names', async () => {
+  const { type, ...rest } = JSON.parse(stepFinish(780, 204, 0, 0));
+  const spans = await report({
+    [streamPath]: [
+      JSON.stringify({ ...rest, type }),
+      JSON.stringify({ type: 'text', part: { text: 'a "step_finish" mention' } }),
+    ].join('\n'),
+  });
+  assert.equal(spans[0].attributes['gh-aw.detector.requests'], 1);
+  assert.equal(spans[0].attributes['gh-aw.detector.usage.output_tokens'], 204);
+});
+
 test('an invalid report keeps its usage and status reason', async () => {
   const spans = await report({
     [streamPath]: stepFinish(780, 204, 0, 0) + '\n',
