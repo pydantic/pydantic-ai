@@ -22,7 +22,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceError
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,
@@ -502,6 +502,30 @@ class TestLifecycle:
             await shell(tmp_path, {'command': 'sleep 60', 'mode': mode, 'timeout': 0.01})
         await wait_for_exit(jobs[0].pid)
         assert not Path(jobs[0].directory).exists()
+
+    async def test_a_failed_stop_keeps_the_calls_own_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed call stops its command before re-raising. A stop that fails too must not take the place of the
+        # call's own error, and leaves the job's directory, as a failed `stop_command` does.
+        jobs: list[Job] = []
+        kill = Job.kill
+
+        async def fail(job: Job) -> int | None:
+            jobs.append(job)
+            raise RuntimeError('result read failed')
+
+        async def refused_kill(self: Job) -> None:
+            await kill(self)
+            raise WorkspaceError('kill: Operation not permitted')
+
+        monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', fail)
+        monkeypatch.setattr(Job, 'kill', refused_kill)
+        with pytest.raises(RuntimeError, match='result read failed') as raised:
+            await shell(tmp_path, {'command': 'sleep 60', 'timeout': 0.01})
+        assert raised.value.__notes__ == ['Cleaning up the command also failed: kill: Operation not permitted']
+        await wait_for_exit(jobs[0].pid)
+        assert Path(jobs[0].directory).exists()
 
     @pytest.mark.parametrize('command', ['sleep 60', 'true'])
     async def test_cancelled_finalization_terminates_process(

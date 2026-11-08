@@ -9,6 +9,7 @@ import posixpath
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
@@ -1713,7 +1714,10 @@ _KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 
 
 class _RecordingKill(LocalWorkspaceBackend):
-    """A local backend that records every argv command and can answer the signal command itself."""
+    """A local backend that records every argv command and can answer the signal command itself.
+
+    With an answer for the signal command, the check `Job` runs after a refused group signal runs as on macOS on any OS.
+    """
 
     def __init__(self, working_dir: str | Path, *, kill_result: CommandResult | None = None) -> None:
         super().__init__(working_dir)
@@ -1732,6 +1736,8 @@ class _RecordingKill(LocalWorkspaceBackend):
             self.argv.append(list(command))
             if self.kill_result is not None and command[:3] == ['sh', '-c', _KILL_SCRIPT]:
                 return self.kill_result
+            if self.kill_result is not None and command[:2] == ['sh', '-c']:
+                command = [*command[:2], command[2].replace('"$(uname -s 2> /dev/null)"', 'Darwin'), *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1889,6 +1895,47 @@ class TestSignalling:
             backend.kill_result = None
             await job.kill()
             await job.cleanup()
+
+    async def test_a_refused_signal_to_a_lone_wrapper_raises(self, shell_dir: Path) -> None:
+        # A lone zombie takes a signal, so only a refused group signal is checked for zombies.
+        backend = _RecordingKill(
+            shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
+        )
+        job = Job(
+            workspace=Workspace(backend), directory=str(shell_dir / 'job'), pid=os.getpid(), pgid=None, combined=True
+        )
+        with pytest.raises(WorkspaceError, match='Operation not permitted'):
+            await job.kill()
+        assert [argv[:3] for argv in backend.argv] == [['sh', '-c', _KILL_SCRIPT]]
+
+    async def test_a_group_left_with_only_zombies_is_stopped(self, shell_dir: Path) -> None:
+        # Between a wrapper's exit and its reap, the job's process group holds only zombies, and macOS refuses
+        # a signal to such a group with EPERM, where Linux answers 0. The test holds that state open with a
+        # zombie of its own, and answers each signal as macOS does.
+        backend = _RecordingKill(
+            shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
+        )
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo done'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        zombie = subprocess.Popen(['true'], start_new_session=True)
+        try:
+            with anyio.fail_after(10):
+                while (
+                    not (await anyio.run_process(['ps', '-o', 'stat=', '-p', str(zombie.pid)]))
+                    .stdout.strip()
+                    .startswith(b'Z')
+                ):
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+            (Path(job.directory) / 'handle').write_text(f'{job.pid} {zombie.pid}\n')
+            assert await ts.stop_command(ctx, command_id) == '[stdout]\ndone\n\n[stopped]\n[exit code: 0]'
+        finally:
+            zombie.wait()
+        assert not Path(job.directory).exists()
 
 
 async def _wait_for_exit(pid: int) -> None:

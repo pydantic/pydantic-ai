@@ -163,6 +163,17 @@ _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 directory may be gone).
 """
 
+_ZOMBIE_GROUP_SCRIPT = """[ "$(uname -s 2> /dev/null)" = Darwin ] || exit 1
+members=$(ps -A -o pgid= -o stat=) || exit 1
+echo "$members" | while read -r group state; do [ "$group" != "$1" ] || case $state in Z*) ;; *) exit 1 ;; esac; done
+"""
+"""Exit 0 on macOS when `ps` lists no live member of process group `$1`: macOS refuses any signal to a group of zombies.
+
+Without `setsid` the wrapper is left to `launchd` once the launcher exits, so between the wrapper's exit and its reap
+the job's group holds only zombies. A group `ps` no longer lists was reaped after the signal. Linux signals a group of
+zombies, so elsewhere this exits 1 and the refusal stands.
+"""
+
 _REQUIRED_TOOLS = ('mv', 'base64')
 """Executables the job files need: the wrapper publishes its status with `mv`, and logs are read back through `base64`."""
 
@@ -419,7 +430,8 @@ class Job:
 
         The shell's `kill` builtin sends it, so no `kill` executable is needed: slim images
         such as Debian's ship none. A failure other than "no such process" raises, rather than
-        reporting a job stopped that may still be running.
+        reporting a job stopped that may still be running, unless `_ZOMBIE_GROUP_SCRIPT` finds
+        the group holds only zombies.
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
@@ -430,6 +442,12 @@ class Job:
             return True
         if 'no such process' in result.stderr.lower():
             return False
+        if self.pgid is not None:
+            check = await self.workspace.run(
+                ['sh', '-c', _ZOMBIE_GROUP_SCRIPT, 'sh', str(self.pgid)], timeout=CONTROL_TIMEOUT
+            )
+            if check.exit_code == 0:
+                return False
         raise WorkspaceError(result.stderr.strip() or f'Unable to send SIG{name} to job {self.pid}.')
 
     async def cleanup(self) -> None:
