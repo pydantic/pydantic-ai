@@ -1016,6 +1016,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-5-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5-5',
+                        'gateway/bedrock:global.moonshotai.kimi-k3',
+                        'gateway/bedrock:global.moonshotai.kimi-k3.1',
                         'gateway/bedrock:global.openai.gpt-5.6-luna',
                         'gateway/bedrock:global.openai.gpt-5.6-sol',
                         'gateway/bedrock:global.openai.gpt-5.6-terra',
