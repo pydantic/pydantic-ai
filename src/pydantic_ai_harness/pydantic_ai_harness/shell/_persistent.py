@@ -18,6 +18,7 @@ import anyio
 
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
@@ -191,10 +192,21 @@ async def run_persistent_command(
         )
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
-    except BaseException:
+    except BaseException as error:
         # A cancelled or failed call cannot hand back its handles, so nothing is left running.
-        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-            await job.kill()
-            await job.cleanup()
+        await _stop_failed_call(job, error)
         raise
     return result
+
+
+async def _stop_failed_call(job: Job, error: BaseException) -> None:
+    """Stop and remove the job of a call that is raising `error`.
+
+    A stop that fails too is noted on `error` rather than replacing it, and leaves the job's directory.
+    """
+    with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+        try:
+            await job.kill()
+            await job.cleanup()
+        except (WorkspaceError, OSError) as stop_error:
+            error.add_note(f'Stopping the command also failed: {stop_error}')

@@ -1713,7 +1713,10 @@ _KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 
 
 class _RecordingKill(LocalWorkspaceBackend):
-    """A local backend that records every argv command and can answer the signal command itself."""
+    """A local backend that records every argv command and can answer the signal command itself.
+
+    With an answer for the signal command, the check `Job` runs after a refused group signal runs as on macOS on any OS.
+    """
 
     def __init__(self, working_dir: str | Path, *, kill_result: CommandResult | None = None) -> None:
         super().__init__(working_dir)
@@ -1732,6 +1735,8 @@ class _RecordingKill(LocalWorkspaceBackend):
             self.argv.append(list(command))
             if self.kill_result is not None and command[:3] == ['sh', '-c', _KILL_SCRIPT]:
                 return self.kill_result
+            if self.kill_result is not None:
+                command = [*command[:2], command[2].replace('"$(uname -s 2> /dev/null)"', 'Darwin'), *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 

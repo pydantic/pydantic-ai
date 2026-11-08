@@ -535,8 +535,9 @@ class TestLifecycle:
 
         monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', fail)
         monkeypatch.setattr(Job, 'kill', refused_kill)
-        with pytest.raises(RuntimeError, match='result read failed'):
+        with pytest.raises(RuntimeError, match='result read failed') as raised:
             await shell(tmp_path, {'command': 'sleep 60', 'timeout': 0.01})
+        assert raised.value.__notes__ == ['Stopping the command also failed: kill: Operation not permitted']
         await wait_for_exit(jobs[0].pid)
         assert Path(jobs[0].directory).exists()
 
