@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -89,7 +90,7 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     @agent.on_event(FileChangeRequestEvent)
     async def refuse(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
         if conflict:
-            path.write_text('external\n')
+            await anyio.to_thread.run_sync(path.write_text, 'external\n')
         else:
             event.cancel('not approved')
 

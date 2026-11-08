@@ -51,8 +51,8 @@ never from `github.event`. For the safe outputs specifically that means frontmat
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
 
-The `CI Review` agent job queues in the engine concurrency group its own
-`engine.concurrency` sets (`queue: max`), so one review runs at a time across all PRs.
+The `CI Review` agent job queues in the engine concurrency group that
+`shared/engine-zai.md` sets (`queue: max`), so one review runs at a time across all PRs.
 `eligibility` and `provider_health` can therefore decide hours before the model starts.
 Provider health is checked again at agent start; see [Z.AI provider health](#zai-provider-health). The pre-agent step
 `Skip a PR that closed or moved on while queued` writes a `noop` to safe outputs when the
@@ -66,16 +66,17 @@ one threat-detection pass outside the agent slot. The shim withholds `noop` from
 enabled for it.
 
 Both review workflows require a formal review from this run on the reviewed head.
-Their shim completion validator rejects placeholder noops and missing-data signals alone.
+Their completion validator rejects placeholder noops and missing-data signals alone.
 After safe outputs, the [host verifier](shared/review-publication.md) checks GitHub for the exact workflow marker, run URL and head.
 A missing publication fails the workflow and marks the current PR head with its failure label.
 A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
 UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.
 
-gh-aw drops its default agent group for a workflow with `pull_request*` triggers, and
-allows one `engine` across a workflow and its imports. `CI Review` therefore inlines the
-`shared/engine-zai.md` engine instead of importing it, to set `engine.concurrency`. Keep
-the two in step.
+gh-aw drops its default agent group for a workflow with `pull_request*` triggers, so
+`shared/engine-zai.md` sets `engine.concurrency` for every importer: one agent run at a
+time per workflow, and one per PR for `Pydantic AI UI Security Review`. A workflow cannot override it. gh-aw allows one `engine` across a
+workflow and its imports, and strict mode rejects secrets in a workflow's own
+`engine.env`.
 
 ## What confines `CI Review` to same-repo PRs
 
@@ -249,11 +250,26 @@ approval current.
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
+Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1), which ships AWF v0.29.7.
+It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
+after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
+`shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
+`shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.64.0. Keep each workflow's
+root engine block model-only; the shared import owns identity and credentials.
+`stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
+settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
+passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
+`shared/engine-zai.md` also sets the agent job to GitHub's 360-minute maximum and detection to 20 minutes;
+gh-aw would otherwise cap them at 60 and 10.
+The public engine ignores `tools:` allowlists, and gh-aw rejects `bash: []` or a command list for it.
+`NO_SHELL_WORKFLOWS` in `pydantic_ai_gh_aw_shim/agent.py` withholds the shell by workflow name; mark each
+such source with a comment naming that set. Every other workflow gets an unrestricted shell.
+
 - **Never hand-edit a `*.lock.yml`.** It is generated — the header says so. Manual edits are silently overwritten on the next recompile, and until then the running workflow diverges from its source.
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
 
   ```
-  gh aw compile
+  gh aw compile --action-mode action --action-tag v1.2.1
   ```
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
@@ -272,6 +288,8 @@ A fresh read-only Task must assess the actual diff, template exemption and scope
 Typos, broken links and small documentation improvements may omit an issue; nontrivial changes need an existing aligned issue assigned to the workflow actor, or noop.
 For non-exempt proposals, host validation checks frozen issue identity, open state, assignment, cited maintainer authority and closing reference.
 It also checks staged evidence and binds the review to the candidate, task and PR metadata; semantic classification belongs to the mandatory reviewer.
+The agent job records the approved proposal in its `weekly-ce-audit` artifact.
+The publication job publishes a pull request only when the ingested request equals that approved proposal.
 Local Task evidence is an execution check, not attestation against a compromised coordinator.
 
 The separate PR publication job uses the existing Docs app and retains protected-file review.
@@ -469,8 +487,9 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
-| `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
-| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
+| `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy or Z.ai credential exclusion | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
+| `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
+| `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |
 | `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
