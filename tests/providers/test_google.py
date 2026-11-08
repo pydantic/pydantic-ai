@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, cast
@@ -22,8 +23,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError
-    from pydantic_ai.models import infer_model
-    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models import get_user_agent, infer_model
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -226,6 +227,73 @@ async def test_google_server_timeout_header_respects_caller(allow_model_requests
         await agent.run('What is the capital of France?')
 
     assert [request.headers.get_list('X-Server-Timeout') for request in requests] == [['90'], []]
+
+
+async def test_google_sends_one_user_agent(allow_model_requests: None, provider_factory: GoogleProviderFactory) -> None:
+    """google-genai adds its label to a lowercase `user-agent`; any other casing goes out as a second header."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(get_user_agent())
+
+
+@pytest.mark.parametrize(
+    'user_agent_header,expected',
+    [
+        ('User-Agent', ['google-genai', 'support-bot']),
+        ('user-agent', ['google-genai support-bot', 'pydantic-ai']),
+        ('USER-AGENT', ['google-genai', 'pydantic-ai', 'support-bot']),
+    ],
+)
+async def test_google_extra_headers_user_agent_goes_out_as_given(
+    allow_model_requests: None, provider_factory: GoogleProviderFactory, user_agent_header: str, expected: list[str]
+) -> None:
+    """A user-agent in `extra_headers` goes out as given, and only the exact spelling `User-Agent` replaces ours."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    settings: GoogleModelSettings = {'extra_headers': {user_agent_header: 'support-bot'}}
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    user_agents = [
+        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value).replace(get_user_agent(), 'pydantic-ai')
+        for value in requests[0].headers.get_list('user-agent')
+    ]
+    assert user_agents == expected
+
+
+@pytest.mark.parametrize('vertexai', [False, True], ids=['google', 'google-cloud'])
+async def test_google_keeps_user_built_client_user_agent(allow_model_requests: None, vertexai: bool) -> None:
+    """A user-agent the user sets on their own client goes out on the same line as ours."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        http_options = HttpOptions(httpx_async_client=http_client, headers={'user-agent': 'my-app'})
+        client = Client(vertexai=vertexai, api_key='test-key', http_options=http_options)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(f' my-app {get_user_agent()}')
 
 
 def test_google_provider_client_headers_have_no_server_timeout(provider_factory: GoogleProviderFactory) -> None:
