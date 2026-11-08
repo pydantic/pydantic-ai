@@ -44,15 +44,12 @@ __all__ = [
 KnownImageGenerationModelName = TypeAliasType(
     'KnownImageGenerationModelName',
     Literal[
-        'google-cloud:gemini-2.5-flash-image',
         'google-cloud:gemini-3-pro-image',
         'google-cloud:gemini-3.1-flash-image',
         'google-cloud:gemini-3.1-flash-lite-image',
-        'google:gemini-2.5-flash-image',
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
         'google:gemini-3.1-flash-lite-image',
-        'openai:gpt-image-1',
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',

@@ -172,38 +172,22 @@ _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
 _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
 LatestGoogleModelNames = Literal[
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-preview-09-2025',
-    'gemini-2.5-flash-image',
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-pro',
-    'gemini-3-flash-preview',
-    'gemini-3-pro-image',
-    'gemini-3-pro-image-preview',
-    'gemini-3-pro-preview',
-    'gemini-3.1-flash-image',
-    'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-flash-lite-image',
-    'gemini-3.1-pro-preview',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.6-flash',
-    'gemini-3.7-flash',
-    'gemini-3.8-flash',
     'gemini-4-argon',
+    'gemini-3.1-pro-preview',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+    'gemini-3.1-flash-lite-image',
 ]
-"""Latest Gemini models."""
+"""Latest Gemini models: per line, the newest model of the newest generation and of the previous one."""
 
 GoogleModelName = str | LatestGoogleModelNames
 """Possible Gemini model names.
 
-Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too,
+as a `str`.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
