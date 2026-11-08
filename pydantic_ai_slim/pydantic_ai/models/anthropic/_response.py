@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from typing import Any, assert_never
+from typing import Any, Literal, assert_never
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -164,7 +164,7 @@ def iteration_usage_details(iterations: BetaIterationsUsage) -> dict[str, int]:
     return details
 
 
-def iteration_totals(kind: str, iterations: Sequence[object]) -> dict[str, int]:
+def iteration_totals(kind: Literal['compaction', 'advisor'], iterations: Sequence[object]) -> dict[str, int]:
     """The count of one kind of iteration, as `<kind>_iterations`, and its token totals, as `<kind>_<key>`."""
     totals: dict[str, int] = {f'{kind}_iterations': len(iterations)}
     for key in _COMPACTION_TOKEN_KEYS:
