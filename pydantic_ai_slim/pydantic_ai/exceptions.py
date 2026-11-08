@@ -636,7 +636,8 @@ class ModelAPIError(AgentRunError):
     """The provider's machine-readable error code, if it sent one.
 
     For example `'rate_limit_exceeded'` or `'context_length_exceeded'` (OpenAI), `'ThrottlingException'` (Bedrock),
-    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral).
+    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral, used for context window overflows and other
+    invalid arguments).
     """
 
     provider_error_type: str | None
