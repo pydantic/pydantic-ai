@@ -1164,9 +1164,8 @@ class GoogleModel(Model[Client]):
         elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
             server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
             headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
-        # The SDK adds its label only to a lowercase `user-agent`, and a per-request one replaces the client's own
-        # in its case-sensitive merge. With no user-agent from the caller, carry over a value the user set on a
-        # client they built, and add ours unless the client has it.
+        # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
+        # a value the user set on a client they built, and add ours unless the client has it.
         client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
         client_user_agent = client_headers.get('user-agent', '')
         if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
