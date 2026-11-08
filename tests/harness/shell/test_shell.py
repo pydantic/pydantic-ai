@@ -1735,7 +1735,7 @@ class _RecordingKill(LocalWorkspaceBackend):
             self.argv.append(list(command))
             if self.kill_result is not None and command[:3] == ['sh', '-c', _KILL_SCRIPT]:
                 return self.kill_result
-            if self.kill_result is not None:
+            if self.kill_result is not None and command[:2] == ['sh', '-c']:
                 command = [*command[:2], command[2].replace('"$(uname -s 2> /dev/null)"', 'Darwin'), *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
@@ -1894,6 +1894,18 @@ class TestSignalling:
             backend.kill_result = None
             await job.kill()
             await job.cleanup()
+
+    async def test_a_refused_signal_to_a_lone_wrapper_raises(self, shell_dir: Path) -> None:
+        # A lone zombie takes a signal, so only a refused group signal is checked for zombies.
+        backend = _RecordingKill(
+            shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
+        )
+        job = Job(
+            workspace=Workspace(backend), directory=str(shell_dir / 'job'), pid=os.getpid(), pgid=None, combined=True
+        )
+        with pytest.raises(WorkspaceError, match='Operation not permitted'):
+            await job.kill()
+        assert [argv[:3] for argv in backend.argv] == [['sh', '-c', _KILL_SCRIPT]]
 
     async def test_a_group_left_with_only_zombies_is_stopped(self, shell_dir: Path) -> None:
         # Between a wrapper's exit and its reap, the job's process group holds only zombies, and macOS refuses
