@@ -1889,8 +1889,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
         and ensuring `User-Agent` is set.
         """
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = self._extra_headers_with_user_agent(model_settings)
 
         betas: set[str] = set()
 
@@ -1960,6 +1959,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas.add(_MID_CONVERSATION_EFFORT_BETA)
 
         return betas, extra_headers
+
+    @staticmethod
+    def _extra_headers_with_user_agent(model_settings: AnthropicModelSettings) -> dict[str, str]:
+        """A copy of the `extra_headers` setting, with our `User-Agent` unless it has a user-agent in any spelling."""
+        extra_headers = dict(model_settings.get('extra_headers', {}))
+        if all(name.lower() != 'user-agent' for name in extra_headers):
+            extra_headers['User-Agent'] = get_user_agent()
+        return extra_headers
 
     def _messages_use_anthropic_uploaded_file(self, messages: list[ModelMessage]) -> bool:
         """Whether any normalized message contains an Anthropic-hosted `UploadedFile`.

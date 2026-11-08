@@ -1947,7 +1947,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 extra_headers = dict(model_settings.get('extra_headers', {}))
-                extra_headers.setdefault('User-Agent', get_user_agent())
+                if all(name.lower() != 'user-agent' for name in extra_headers):
+                    extra_headers['User-Agent'] = get_user_agent()
 
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
@@ -4668,7 +4669,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[dict[str, str], _ResponsesTimeout]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        if all(name.lower() != 'user-agent' for name in extra_headers):
+            extra_headers['User-Agent'] = get_user_agent()
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
