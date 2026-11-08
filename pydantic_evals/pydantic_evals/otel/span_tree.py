@@ -214,14 +214,15 @@ class SpanNode:
     def _filter_descendants(
         self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None
     ) -> Iterator[SpanNode]:
-        stack = list(self.children)
+        # Pushed in reverse so `pop()` visits each node's children in their own order, which is start order.
+        stack = list(reversed(self.children))
         while stack:
             node = stack.pop()
             if node.matches(predicate):
                 yield node
             if stop_recursing_when is not None and node.matches(stop_recursing_when):
                 continue
-            stack.extend(node.children)
+            stack.extend(reversed(node.children))
 
     # -------------------------------------------------------------------------
     # Ancestor queries (DFS "up" the chain)
