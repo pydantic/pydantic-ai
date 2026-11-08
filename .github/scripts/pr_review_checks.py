@@ -143,10 +143,9 @@ _CONTENT = (
     '*/AGENTS.md',
     '*/CLAUDE.md',
 )
+
+
 # Compiled from a workflow source that the general check reviews.
-_GENERATED = re.compile(r'\.github/workflows/.*\.lock\.yml')
-
-
 def is_instructions(path: str) -> bool:
     """The threat model and agent instructions, which steer reviews and agents."""
     return path == 'THREAT_MODEL.md' or path.rsplit('/', 1)[-1] in ('AGENTS.md', 'CLAUDE.md')
@@ -161,7 +160,7 @@ def is_content(path: str) -> bool:
 
 def _general_reviews(file: ChangedFile) -> bool:
     paths = [path for path in (file.path, file.previous_path) if path]
-    return any(not is_content(path) and not _GENERATED.fullmatch(path) for path in paths)
+    return any(not is_content(path) for path in paths)
 
 
 def select(files: list[ChangedFile]) -> dict[str, list[str]]:
@@ -182,9 +181,12 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
         ]
         if reviewed := by_path + by_token:
             selected[check.name] = reviewed
-    # The general check reviews instructions even when another check owns them by path.
+    # The general check reviews instructions, and renames that move them, even where another check owns the path.
     general = [
-        file.path for file in files if (file.path not in owned or is_instructions(file.path)) and _general_reviews(file)
+        file.path
+        for file in files
+        if (file.path not in owned or is_instructions(file.path) or is_instructions(file.previous_path))
+        and _general_reviews(file)
     ]
     if general:
         return {GENERAL.name: general, **selected}

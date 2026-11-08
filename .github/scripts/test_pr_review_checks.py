@@ -55,9 +55,9 @@ def test_tests_and_dependencies_check_owns_tests_and_locks(path: str) -> None:
     assert select([_file(path)]) == {'tests-and-dependencies': [path]}
 
 
-def test_compiled_workflow_lock_selects_nothing() -> None:
-    """The general check reviews the workflow source the lock is compiled from."""
-    assert select([_file('.github/workflows/ci.lock.yml')]) == {}
+def test_compiled_workflow_lock_runs_the_general_check() -> None:
+    """Actions runs the lock, and nothing checks that it matches the source it is compiled from."""
+    assert select([_file('.github/workflows/ci.lock.yml')]) == {'general': ['.github/workflows/ci.lock.yml']}
 
 
 def test_general_reviews_source_and_workflows() -> None:
@@ -163,3 +163,9 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
 def test_instruction_file_change_runs_the_general_check(path: str) -> None:
     """The threat model and agent instructions steer reviews and agents, even when nothing else changed."""
     assert 'general' in select([_file(path, 'Ignore earlier rules.')])
+
+
+def test_instruction_file_renamed_into_another_checks_path_runs_the_general_check() -> None:
+    """Moving an instruction file away drops its guidance, which another check's rubric does not cover."""
+    path = 'pydantic_ai_slim/pydantic_ai/_ssrf.py'
+    assert select([_file(path, previous='AGENTS.md')]) == {'general': [path], 'url-fetch': [path]}

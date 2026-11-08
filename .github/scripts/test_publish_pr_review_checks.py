@@ -63,7 +63,9 @@ class FakeGitHub:
     labeled_by: Actor | None = None
     permissions: dict[str, str] = field(default_factory=lambda: {'maintainer': 'write', 'contributor': 'read'})
     reject_inline: bool = False
-    files: list[PullFile] = field(default_factory=lambda: [PullFile(filename='a.py', patch='@@ -3 +3 @@\n-old = 1\n+fixed = 1')])
+    files: list[PullFile] = field(
+        default_factory=lambda: [PullFile(filename='a.py', patch='@@ -3 +3 @@\n-old = 1\n+fixed = 1')]
+    )
     statuses: list[tuple[str, CommitStatus, str, str]] = field(default_factory=list[tuple[str, CommitStatus, str, str]])
     reviews: list[PostedReview] = field(default_factory=list[PostedReview])
     removed: list[str] = field(default_factory=list[str])
@@ -321,8 +323,23 @@ def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: py
 
 
 def test_findings_outside_the_changed_lines_do_not_fail_the_status(tmp_path: Path) -> None:
-    """Dropped findings leave the verdict; a file without a shown diff keeps none."""
-    github = FakeGitHub(files=[PullFile(filename='a.py')])
+    """Dropped findings leave the verdict, and so does a finding on a file the pull request only renamed."""
+    for file in [
+        PullFile(filename='a.py', changes=2, patch='@@ -9 +9 @@\n-old = 9\n+new = 9'),
+        PullFile(filename='a.py'),
+    ]:
+        github = FakeGitHub(files=[file])
+        publish(github, _publish_env(tmp_path, _result('general', 'high')))
+        assert github.reviews == []
+        assert [status[1] for status in github.statuses] == ['success']
+
+
+@pytest.mark.parametrize(
+    'files', [[PullFile(filename='a.py', changes=5000)], []], ids=['patch omitted', 'file unlisted']
+)
+def test_blocking_finding_without_a_patch_makes_its_check_incomplete(tmp_path: Path, files: list[PullFile]) -> None:
+    """GitHub omits a large file's patch and caps its file listing; neither may turn a blocking finding into a pass."""
+    github = FakeGitHub(files=files)
     publish(github, _publish_env(tmp_path, _result('general', 'high')))
     assert github.reviews == []
-    assert [status[1] for status in github.statuses] == ['success']
+    assert [status[1:3] for status in github.statuses] == [('failure', 'Incomplete: general')]

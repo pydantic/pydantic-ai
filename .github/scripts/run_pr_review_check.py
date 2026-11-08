@@ -62,7 +62,12 @@ def strip_instructions(head: Path) -> None:
         if '.git' in directories:
             directories.remove('.git')
         for name in [name for name in directories if name in INSTRUCTION_DIRECTORIES]:
-            shutil.rmtree(Path(directory) / name)
+            path = Path(directory) / name
+            # `os.walk` lists a symlinked directory here, and `rmtree` refuses one.
+            if path.is_symlink():
+                path.unlink()
+            else:
+                shutil.rmtree(path)
             directories.remove(name)
         for name in files:
             if name in INSTRUCTION_NAMES:
@@ -72,7 +77,7 @@ def strip_instructions(head: Path) -> None:
 def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str) -> Path:
     """Copy only this check's diffs and file list next to the PR details."""
     context = workspace / '.github' / '.pr-review-checks' / check
-    (context / 'diff').mkdir(parents=True)
+    (context / 'diff' / 'omitted').mkdir(parents=True)
     shutil.copy(workspace / REVIEW_CONTEXT / 'pr-details.json', context / 'pr-details.json')
     unseen = set(files)
     rows: list[str] = []
@@ -84,8 +89,9 @@ def write_context(check: str, files: list[str], workspace: Path, *, base: str, h
         if diff:
             shutil.copy(workspace / REVIEW_CONTEXT / diff[0], context / diff[0])
         else:
-            # The shared context leaves out `uv.lock` and cassette diffs, which only some checks read.
-            diff = ['diff/' + re.sub(r'^\.+', '', path.replace('/', '__')) + '.diff']
+            # The shared context leaves out `uv.lock` and cassette diffs, which only some checks read. A directory
+            # of their own and a reversible name keep two paths from writing one diff file.
+            diff = ['diff/omitted/' + quote(path, safe='') + '.diff']
             (context / diff[0]).write_text(_annotated_diff(workspace / 'pr-head', base, head, path), encoding='utf-8')
         rows.append('\t'.join([path, counts, diff[0]]))
     # The context lists files from the PR files API, which stops at 3,000; an unlisted file would go unreviewed.

@@ -125,6 +125,8 @@ pkg:core	pydantic-ai-slim, pydantic-ai and examples (pydantic_ai_slim/, examples
 pkg:evals	pydantic-evals (pydantic_evals/)
 pkg:graph	pydantic-graph (pydantic_graph/)
 pkg:harness	pydantic-ai-harness (src/pydantic_ai_harness)
+pr-review-checks:accepted	Maintainer override: pass PR Review Checks on the current head despite blocking findings
+pr-review-checks:run	Maintainer approval to run PR Review Checks on a PR from an author without write access
 prefect
 probable-spam	Likely spam or package-promotion issue; needs maintainer review before engagement.
 provider-mapping-sweep

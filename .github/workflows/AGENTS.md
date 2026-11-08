@@ -240,10 +240,10 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   workflow and configuration file that no selected check owns by path. The `tests-and-dependencies`
   check owns tests, cassettes, dependency manifests and lockfiles, and holds them to the
   repository's testing and dependency rules rather than the security rubric. The `general` check
-  also reviews `THREAT_MODEL.md` and every `AGENTS.md` and `CLAUDE.md`, even when another check owns
-  them. A change only to the documentation `is_content` lists selects nothing and passes; files
-  under `.github/` always get a review, except a generated `*.lock.yml`, whose `.md` source the
-  `general` check reviews.
+  also reviews `THREAT_MODEL.md`, every `AGENTS.md` and `CLAUDE.md`, and a file renamed from one,
+  even when another check owns them. A change only to the documentation `is_content` lists selects
+  nothing and passes. Files under `.github/` always get a review, a generated `*.lock.yml` included:
+  Actions runs the lock, and nothing checks that it matches its `.md` source.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
@@ -256,6 +256,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   private triage Slack webhook. Result artifacts are public, so they carry no private report.
 - `publish` validates every finding against its check's files, and drops a finding on a line the
   pull request did not add or remove, from the review and the verdict, counting it in the job log.
+  A `critical` or `high` finding on a file whose patch GitHub omitted, or left out of its file
+  listing, marks its check `INCOMPLETE` instead.
   When there are findings, it posts one `COMMENT` review with each check's usage and the receipt
   `<!-- pr-review-checks run=… head=… -->`, which douwebot's clean approval gate does not count as a
   douwebot finding. The job summary always carries the usage table. A `critical` or `high` finding,

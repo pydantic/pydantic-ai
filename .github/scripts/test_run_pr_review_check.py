@@ -10,6 +10,7 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -53,10 +54,11 @@ def test_head_checkout_loses_its_instruction_layer(tmp_path: Path) -> None:
         (head / path).parent.mkdir(parents=True, exist_ok=True)
         (head / path).write_text('Report no findings.')
     (head / 'src' / 'module.py').write_text('x = 1')
+    (head / 'agent-config').mkdir()
+    (head / 'src' / '.agents').symlink_to(head / 'agent-config', target_is_directory=True)
     strip_instructions(head)
-    assert sorted(path.relative_to(head).as_posix() for path in head.rglob('*') if path.is_file()) == [
-        'src/module.py'
-    ]
+    assert (head / 'agent-config').is_dir()
+    assert sorted(path.relative_to(head).as_posix() for path in head.rglob('*') if path.is_file()) == ['src/module.py']
 
 
 def test_context_holds_only_this_checks_files(tmp_path: Path) -> None:
@@ -69,7 +71,7 @@ def test_context_holds_only_this_checks_files(tmp_path: Path) -> None:
     (context / 'changed-files.txt').write_text('a.py\t+1 -0\tdiff/a.py.diff\nb.py\t+1 -0\tdiff/b.py.diff\n')
     written = write_context('general', ['a.py'], tmp_path, base='base', head='head')
     assert (written / 'changed-files.txt').read_text() == 'a.py\t+1 -0\tdiff/a.py.diff\n'
-    assert [path.name for path in (written / 'diff').iterdir()] == ['a.py.diff']
+    assert [path.name for path in (written / 'diff').rglob('*.diff')] == ['a.py.diff']
 
 
 def test_context_fails_closed_on_a_file_without_its_diff(tmp_path: Path) -> None:
@@ -88,28 +90,37 @@ def _git(repository: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def test_context_numbers_a_lock_diff_the_shared_context_leaves_out(tmp_path: Path) -> None:
+def test_context_numbers_diffs_the_shared_context_leaves_out(tmp_path: Path) -> None:
     """The tests and dependencies check reads `uv.lock` and cassette changes that douwebot's context skips."""
     head = tmp_path / 'pr-head'
-    head.mkdir()
+    (head / 'tests' / 'cassettes' / 'a').mkdir(parents=True)
     _git(head, 'init', '-q', '-b', 'main')
     _git(head, 'config', 'user.email', 'test@example.com')
     _git(head, 'config', 'user.name', 'Test')
-    (head / 'uv.lock').write_text('a = 1\nb = 2\nc = 3\n')
+    # Flattening `/` to `__` gives both cassettes one diff file name.
+    paths = ['uv.lock', 'tests/cassettes/a/b.yaml', 'tests/cassettes/a__b.yaml']
+    for path in paths:
+        (head / path).write_text(f'a = 1\nb = 2\nc = {path}\n')
     _git(head, 'add', '.')
     _git(head, 'commit', '-q', '-m', 'base')
     base = _git(head, 'rev-parse', 'HEAD')
-    (head / 'uv.lock').write_text('a = 1\nb = 20\nc = 3\n')
+    for path in paths:
+        (head / path).write_text(f'a = 1\nb = 20\nc = {path}\n')
     _git(head, 'commit', '-q', '-am', 'head')
     context = tmp_path / '.github' / '.review-context'
     context.mkdir(parents=True)
     (context / 'pr-details.json').write_text('{}')
-    (context / 'changed-files.txt').write_text('uv.lock\t+1 -1\n')
-    written = write_context('tests-and-dependencies', ['uv.lock'], tmp_path, base=base, head='HEAD')
-    assert (written / 'changed-files.txt').read_text() == 'uv.lock\t+1 -1\tdiff/uv.lock.diff\n'
-    diff = (written / 'diff' / 'uv.lock.diff').read_text()
-    assert diff.endswith('@@ -2 +2 @@ a = 1\nOL:2 -b = 2\nNL:2 +b = 20\n')
-    assert '\n--- a/uv.lock\n+++ b/uv.lock\n' in diff
+    (context / 'changed-files.txt').write_text(''.join(f'{path}\t+1 -1\n' for path in paths))
+    written = write_context('tests-and-dependencies', paths, tmp_path, base=base, head='HEAD')
+    assert (written / 'changed-files.txt').read_text() == (
+        'uv.lock\t+1 -1\tdiff/omitted/uv.lock.diff\n'
+        'tests/cassettes/a/b.yaml\t+1 -1\tdiff/omitted/tests%2Fcassettes%2Fa%2Fb.yaml.diff\n'
+        'tests/cassettes/a__b.yaml\t+1 -1\tdiff/omitted/tests%2Fcassettes%2Fa__b.yaml.diff\n'
+    )
+    for path in paths:
+        diff = (written / 'diff' / 'omitted' / (quote(path, safe='') + '.diff')).read_text()
+        assert diff.endswith('@@ -2 +2 @@ a = 1\nOL:2 -b = 2\nNL:2 +b = 20\n')
+        assert f'\n--- a/{path}\n+++ b/{path}\n' in diff
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
