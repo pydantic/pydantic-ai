@@ -114,16 +114,45 @@ def test_context_numbers_diffs_the_shared_context_leaves_out(tmp_path: Path) -> 
     (context / 'changed-files.txt').write_text(''.join(f'{path}\t+1 -1\n' for path in paths))
     written = write_context('tests-and-dependencies', paths, tmp_path, base=base, head='HEAD')
     assert (written / 'changed-files.txt').read_text() == (
-        'uv.lock\t+1 -1\tdiff/omitted/uv.lock.diff\n'
-        'tests/cassettes/a/b.yaml\t+1 -1\tdiff/omitted/tests%2Fcassettes%2Fa%2Fb.yaml.diff\n'
-        'tests/cassettes/a__b.yaml\t+1 -1\tdiff/omitted/tests%2Fcassettes%2Fa__b.yaml.diff\n'
+        'uv.lock\t+1 -1\tdiff/git/uv.lock.diff\n'
+        'tests/cassettes/a/b.yaml\t+1 -1\tdiff/git/tests%2Fcassettes%2Fa%2Fb.yaml.diff\n'
+        'tests/cassettes/a__b.yaml\t+1 -1\tdiff/git/tests%2Fcassettes%2Fa__b.yaml.diff\n'
     )
     for path in paths:
-        diff = (written / 'diff' / 'omitted' / (quote(path, safe='') + '.diff')).read_bytes().decode()
+        diff = (written / 'diff' / 'git' / (quote(path, safe='') + '.diff')).read_bytes().decode()
         assert diff.endswith(
             f'@@ -2,2 +2,2 @@ a = 1\nOL:2 -b = 2\nOL:3 -c = {path}\nNL:2 +b = "\u2028+\r+"\nNL:3 +c = {path}!\n'
         )
         assert f'\n--- a/{path}\n+++ b/{path}\n' in diff
+
+
+def test_context_regenerates_a_diff_another_path_overwrote(tmp_path: Path) -> None:
+    """A crafted root-level file whose flattened name matches a source file's cannot stand in for that file's diff."""
+    head = tmp_path / 'pr-head'
+    (head / 'pydantic_ai_slim' / 'pydantic_ai').mkdir(parents=True)
+    _git(head, 'init', '-q', '-b', 'main')
+    _git(head, 'config', 'user.email', 'test@example.com')
+    _git(head, 'config', 'user.name', 'Test')
+    source, decoy = 'pydantic_ai_slim/pydantic_ai/_ssrf.py', 'pydantic_ai_slim__pydantic_ai___ssrf.py'
+    (head / source).write_text('allow_private = False\n')
+    _git(head, 'add', '.')
+    _git(head, 'commit', '-q', '-m', 'base')
+    base = _git(head, 'rev-parse', 'HEAD')
+    (head / source).write_text('allow_private = True\n')
+    (head / decoy).write_text('harmless = 1\n')
+    _git(head, 'add', '.')
+    _git(head, 'commit', '-q', '-m', 'head')
+    context = tmp_path / '.github' / '.review-context'
+    (context / 'diff').mkdir(parents=True)
+    (context / 'pr-details.json').write_text('{}')
+    shared = f'diff/{decoy}.diff'
+    (context / shared).write_text('NL:1 +harmless = 1\n')
+    (context / 'changed-files.txt').write_text(f'{source}\t+1 -1\t{shared}\n{decoy}\t+1 -0\t{shared}\n')
+    written = write_context('url-fetch', [source], tmp_path, base=base, head='HEAD')
+    regenerated = 'diff/git/' + quote(source, safe='') + '.diff'
+    assert (written / 'changed-files.txt').read_text() == f'{source}\t+1 -1\t{regenerated}\n'
+    assert (written / regenerated).read_text().endswith('OL:1 -allow_private = False\nNL:1 +allow_private = True\n')
+    assert not (written / shared).exists()
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)

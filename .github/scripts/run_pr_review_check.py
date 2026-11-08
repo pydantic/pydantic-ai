@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,21 +78,25 @@ def strip_instructions(head: Path) -> None:
 def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str) -> Path:
     """Copy only this check's diffs and file list next to the PR details."""
     context = workspace / '.github' / '.pr-review-checks' / check
-    (context / 'diff' / 'omitted').mkdir(parents=True)
+    (context / 'diff' / 'git').mkdir(parents=True)
     shutil.copy(workspace / REVIEW_CONTEXT / 'pr-details.json', context / 'pr-details.json')
     unseen = set(files)
     rows: list[str] = []
-    for row in (workspace / REVIEW_CONTEXT / 'changed-files.txt').read_text(encoding='utf-8').splitlines():
-        path, counts, *diff = row.split('\t')
+    listed = [
+        row.split('\t') for row in (workspace / REVIEW_CONTEXT / 'changed-files.txt').read_text('utf-8').splitlines()
+    ]
+    # The shared context flattens `/` to `__` in diff names, so a crafted path can overwrite another file's diff.
+    shared_names = Counter(fields[2] for fields in listed if len(fields) > 2)
+    for path, counts, *diff in listed:
         if path not in unseen:
             continue
         unseen.remove(path)
-        if diff:
+        if diff and shared_names[diff[0]] == 1:
             shutil.copy(workspace / REVIEW_CONTEXT / diff[0], context / diff[0])
         else:
-            # The shared context leaves out `uv.lock` and cassette diffs, which only some checks read. A directory
-            # of their own and a reversible name keep two paths from writing one diff file.
-            diff = ['diff/omitted/' + quote(path, safe='') + '.diff']
+            # The shared context also leaves out `uv.lock` and cassette diffs, which only some checks read. A
+            # directory of their own and a reversible name keep two paths from writing one diff file.
+            diff = ['diff/git/' + quote(path, safe='') + '.diff']
             (context / diff[0]).write_text(_annotated_diff(workspace / 'pr-head', base, head, path), encoding='utf-8')
         rows.append('\t'.join([path, counts, diff[0]]))
     # The context lists files from the PR files API, which stops at 3,000; an unlisted file would go unreviewed.
