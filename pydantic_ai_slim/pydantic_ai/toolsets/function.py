@@ -724,8 +724,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         )
         self.add_tool(tool)
         # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
-        tool.requires_approval = requires_approval
-        return tool
+        stored_tool = self.tools[tool.name]
+        stored_tool.requires_approval = requires_approval
+        return stored_tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
@@ -738,6 +739,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+        # Keep the caller's Tool independent from this toolset's defaults. A Tool is commonly
+        # shared between an Agent and one or more toolsets, and applying defaults in place lets
+        # one registration silently change the behavior of every other holder.
+        tool = replace(tool)
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
         if self.requires_approval:

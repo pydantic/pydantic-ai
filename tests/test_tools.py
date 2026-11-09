@@ -2167,6 +2167,51 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
     }
 
 
+def test_function_toolset_does_not_mutate_tools_shared_with_other_holders():
+    """Toolset defaults must not leak into a Tool registered elsewhere."""
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'done'
+
+    shared = Tool(my_tool)
+    deferred = FunctionToolset(
+        [shared],
+        max_retries=4,
+        requires_approval=True,
+        metadata={'source': 'deferred'},
+    )
+    standalone = FunctionToolset([shared])
+
+    deferred_tool = deferred.tools['my_tool']
+    standalone_tool = standalone.tools['my_tool']
+
+    assert deferred_tool is not shared
+    assert standalone_tool is not shared
+    assert deferred_tool.max_retries == 4
+    assert deferred_tool.requires_approval is True
+    assert deferred_tool.metadata == {'source': 'deferred'}
+    assert standalone_tool.max_retries is None
+    assert standalone_tool.requires_approval is False
+    assert standalone_tool.metadata is None
+    assert shared.max_retries is None
+    assert shared.requires_approval is False
+    assert shared.metadata is None
+
+
+def test_function_toolset_add_function_returns_stored_tool_copy():
+    """The Tool returned by add_function is the independently stored instance."""
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'done'
+
+    toolset = FunctionToolset(max_retries=2, requires_approval=True)
+    added = toolset.add_function(my_tool, requires_approval=False)
+
+    assert added is toolset.tools['my_tool']
+    assert added.max_retries == 2
+    assert added.requires_approval is False
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
