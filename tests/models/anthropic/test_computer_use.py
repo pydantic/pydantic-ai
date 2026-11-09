@@ -10,7 +10,7 @@ import pytest
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart, ComputerToolAction
-from pydantic_ai.exceptions import ToolFailed
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, PressKeys
 
@@ -308,6 +309,30 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
 
     (request,) = get_mock_chat_completion_kwargs(client)
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
+
+
+async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
+
+    def every_native_tool(profile: ModelProfile) -> ModelProfile:
+        # A profile that doesn't list its native tools lists every type, `ComputerTool` included.
+        trimmed = profile.copy()
+        trimmed.pop('supported_native_tools', None)
+        return trimmed
+
+    model = AnthropicModel(
+        'claude-3-7-sonnet-latest', provider=AnthropicProvider(anthropic_client=client), profile=every_native_tool
+    )
+    agent = Agent(
+        model,
+        capabilities=[
+            computer_capability(native=False),
+            NativeTool(ComputerTool(display_size=FAKE_DISPLAY_SIZE)),
+            InMemoryProvider().capability(),
+        ],
+    )
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['ComputerTool'\] not supported by this model"):
+        await agent.run('Go.')
 
 
 def test_bedrock_and_foundry_get_the_earlier_beta_tool() -> None:
@@ -670,7 +695,7 @@ async def test_a_result_answers_each_member_call(
         'computer_tool': 'computer_toolset_20260801',
         'computer_action_counts': counts,
     }
-    call = ToolCallPart(
+    call = ComputerCallPart(
         'computer', {'actions': []}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
     )
     history: list[ModelMessage] = [
@@ -709,12 +734,16 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
         ModelRequest.user_text_prompt('Look.'),
         ModelResponse(
             parts=[
-                ToolCallPart(
+                ComputerCallPart(
                     'computer',
                     {'actions': [{'type': 'screenshot'}]},
                     tool_call_id='toolu_1',
                     provider_name='anthropic',
-                    provider_details={'computer_blocks': [block]},
+                    provider_details={
+                        'computer_blocks': [block],
+                        'computer_tool': 'computer_toolset_20260801',
+                        'computer_action_counts': [1],
+                    },
                 )
             ],
             provider_name='anthropic',

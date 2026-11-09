@@ -295,11 +295,13 @@ try:
         without_unanswered_tool_calls,
     )
     from ._computer import (
-        COMPUTER_ACTION_COUNTS,
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
         RETURNS_OUTPUT,
+        ComputerBlock,
+        ComputerReplay,
         NativeComputer,
+        computer_replay,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -1113,8 +1115,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         computer_tool_version = _computer_tool_version_for_client(
             _profile.get('anthropic_computer_tool_version'), client, self.model_name
         )
+        # A profile without its own native tools lists every type, so the version also takes it away.
         if computer_tool_version is not None:
             supported_native_tools = supported_native_tools | {ComputerTool}
+        else:
+            supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -2674,7 +2679,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
         native_computer = self._native_computer(model_request_parameters)
         # Anthropic's computer use tool stands in for the `computer` tool; `NativeComputer.call_part` maps its calls
-        # back. It goes last, after the tools the cache breakpoint below can land on.
+        # back. It goes last, so the tools' cache breakpoint below lands on it.
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
@@ -2887,7 +2892,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, ToolReturnPart):
                 if (call := map_context.computer_calls.get(_guard_tool_call_id(t=request_part))) is not None:
-                    request_context.user_content_params.extend(await self._map_computer_results(request_part, call))
+                    request_context.user_content_params.extend(
+                        await self._map_computer_results(request_part, call, map_context)
+                    )
                 else:
                     request_context.user_content_params.append(
                         await self._map_tool_return_part(request_part, map_context)
@@ -3076,48 +3083,43 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
 
-        tool_result_content: list[beta_tool_result_block_param.Content] = []
-        for item in part.content_items(mode='str', wrap_if_error=False):
-            if isinstance(item, UploadedFile):
-                self._validate_uploaded_file_provider(item)
-                if item.media_type.startswith('image/'):
-                    tool_result_content.append(
-                        BetaImageBlockParam(
-                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
-                            type='image',
-                        )
-                    )
-                elif item.media_type.startswith(('text/', 'application/')):
-                    tool_result_content.append(
-                        with_document_citations(
-                            BetaRequestDocumentBlockParam(
-                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                                type='document',
-                            ),
-                            map_context.include_citations,
-                        )
-                    )
-                else:
-                    raise UserError(
-                        f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
-                        'Only image and document (text/application) types are supported.'
-                    )
-            elif is_multi_modal_content(item):
-                tool_result_content.append(
-                    await self._map_file_to_content_block(
-                        item,  # pyright: ignore[reportArgumentType]
-                        'tool returns',
-                        include_citations=map_context.include_citations,
-                    )
-                )
-            elif isinstance(item, str):  # pragma: no branch
-                tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
+        tool_result_content = [
+            await self._map_tool_result_item(item, map_context)
+            for item in part.content_items(mode='str', wrap_if_error=False)
+        ]
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
             tool_use_id=_guard_tool_call_id(t=part),
             type='tool_result',
             content=tool_result_content or '',
             is_error=part.outcome in ERROR_OUTCOMES,
+        )
+
+    async def _map_tool_result_item(
+        self, item: str | MultiModalContent, map_context: _MapMessagesContext
+    ) -> beta_tool_result_block_param.Content:
+        """One item of a tool result's content as a content block of its `tool_result`."""
+        if isinstance(item, str):
+            return BetaTextBlockParam(text=item, type='text')
+        if isinstance(item, UploadedFile):
+            self._validate_uploaded_file_provider(item)
+            if item.media_type.startswith('image/'):
+                return BetaImageBlockParam(
+                    source=BetaFileImageSourceParam(file_id=item.file_id, type='file'), type='image'
+                )
+            if item.media_type.startswith(('text/', 'application/')):
+                return with_document_citations(
+                    BetaRequestDocumentBlockParam(
+                        source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'), type='document'
+                    ),
+                    map_context.include_citations,
+                )
+            raise UserError(
+                f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                'Only image and document (text/application) types are supported.'
+            )
+        return await self._map_file_to_content_block(
+            item, 'tool returns', include_citations=map_context.include_citations
         )
 
     def _map_model_response(self, message: ModelResponse, map_context: _MapMessagesContext) -> None:
@@ -3198,24 +3200,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         assistant_content_params: list[_AssistantContentBlockParam],
         map_context: _MapMessagesContext,
     ) -> None:
-        details = part.provider_details or {}
-        if (
-            map_context.computer_tool_sent
-            and part.provider_name == self.system
-            and (blocks := details.get('computer_blocks'))
-            # Calls of another computer use tool version go back as plain calls.
-            and details.get('computer_tool') == map_context.computer_tool_sent
-        ):
+        replay = computer_replay(part, self.system) if map_context.computer_tool_sent else None
+        # Calls of another computer use tool version go back as plain calls.
+        if replay is not None and replay['computer_tool'] == map_context.computer_tool_sent:
             # Sent back as the calls they came as; toolset member calls each need their own result.
             toolset: dict[str, Any] = {}
             if map_context.computer_tool_sent == 'computer_toolset_20260801':
-                map_context.computer_calls[_guard_tool_call_id(t=part)] = details
+                map_context.computer_calls[_guard_tool_call_id(t=part)] = replay
                 toolset = {'toolset_name': 'computer'}
             assistant_content_params.extend(
                 BetaToolUseBlockParam(
                     id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
                 )
-                for block in blocks
+                for block in replay['computer_blocks']
             )
         else:
             assistant_content_params.append(
@@ -3814,7 +3811,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return NativeComputer(name, version, computer.display_size) if name is not None else None
 
     async def _map_computer_results(
-        self, part: ToolReturnPart, details: dict[str, Any]
+        self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
@@ -3823,7 +3820,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
         """
 
-        def result(block: dict[str, Any], is_error: bool, *content: beta_tool_result_block_param.Content):
+        def result(block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content):
             return beta_tool_result_block_param.BetaToolResultBlockParam(
                 tool_use_id=block['id'],
                 type='tool_result',
@@ -3833,18 +3830,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         async def content_block(item: str | MultiModalContent) -> beta_tool_result_block_param.Content:
-            if isinstance(item, str):
-                return BetaTextBlockParam(text=item, type='text')
-            # The `computer` tool returns only text and images.
-            image = await self._map_file_to_content_block(cast(BinaryContent, item), 'tool returns')
-            return cast(beta_tool_result_block_param.Content, image)
+            return await self._map_tool_result_item(item, map_context)
 
-        blocks: list[dict[str, Any]] = details['computer_blocks']
+        blocks = replay['computer_blocks']
         if part.outcome != 'success':
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
             return [result(block, True, text) for block in blocks]
         # Each member may have become several actions, such as a key sequence.
-        counts: list[int] = details[COMPUTER_ACTION_COUNTS]
+        counts = replay['computer_action_counts']
         ends = list(itertools.accumulate(counts))
         outcome = part.result if isinstance(part, ComputerReturnPart) else None
         # A result without its outcome, such as one rebuilt by a UI, reads as every call having run, and the last
@@ -4132,7 +4125,7 @@ class _MapMessagesContext:
     rendered_tool_additions: set[str] = field(default_factory=set[str])
     # The `provider_details` of computer calls sent back as toolset member calls, by call ID: their results must be one
     # per member call.
-    computer_calls: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    computer_calls: dict[str, ComputerReplay] = field(default_factory=dict[str, ComputerReplay])
 
 
 @dataclass
