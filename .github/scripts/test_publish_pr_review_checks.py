@@ -179,10 +179,11 @@ def test_acceptance_is_refused(labels: list[str], sender: str, sender_type: str)
     assert github.statuses == []
 
 
-def test_push_removes_the_acceptance_and_reviews_again() -> None:
-    """An acceptance covers only the head it was given for."""
+@pytest.mark.parametrize('action', ['synchronize', 'edited', 'reopened'])
+def test_a_new_review_removes_the_acceptance(action: str) -> None:
+    """An acceptance covers only the status it replaced, so a push or a re-review of the same head ends it."""
     github = FakeGitHub(labels=[ACCEPTED_LABEL])
-    assert gate(github, {**ENV, 'EVENT_ACTION': 'synchronize'})
+    assert gate(github, {**ENV, 'EVENT_ACTION': action})
     assert github.removed == [ACCEPTED_LABEL]
 
 

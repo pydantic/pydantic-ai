@@ -137,13 +137,13 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
             raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
         github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
         return False
-    # An acceptance covers only the head it was given for.
-    if action == 'synchronize' and ACCEPTED_LABEL in labels:
-        github.remove_label(ACCEPTED_LABEL)
     author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
     if action == 'labeled' and label == RUN_LABEL and author_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
         return False
+    # An acceptance covers only the status it replaced, so every new status for the head ends it.
+    if ACCEPTED_LABEL in labels:
+        github.remove_label(ACCEPTED_LABEL)
     if not author_trusted and not _run_label_trusted(github, labels):
         github.status(head, 'failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.', url)
         return False

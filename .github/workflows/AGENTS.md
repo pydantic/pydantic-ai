@@ -266,8 +266,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   douwebot finding. The job summary always carries the usage table. A `critical` or `high` finding,
   an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
 - A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
-  findings. A push removes the label and reviews the new head. Rerunning the review replaces an
-  acceptance; apply the label again.
+  findings. Every event that reviews the head again, a push included, removes the label; apply it
+  again after that review.
 - Drafts are reviewed like any other pull request. A merge group gets success without a review.
 
 To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
