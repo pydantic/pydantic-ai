@@ -1143,6 +1143,21 @@ async def test_or_cannot_be_mixed(span_tree: SpanTree):
     assert str(exc_info.value) == snapshot("Cannot combine 'or_' conditions with other conditions at the same level")
 
 
+async def test_span_query_rejects_unknown_and_empty_conditions():
+    with context_subtree() as tree:
+        with logfire.span('parent'):
+            with logfire.span('child'):
+                pass
+    assert isinstance(tree, SpanTree)
+    parent, child = tree.roots[0], tree.roots[0].children[0]
+
+    with pytest.raises(ValueError, match=r"Unknown SpanQuery field(s): 'name_eq'"):
+        parent.matches({'name_eq': 'parent'})
+    assert not parent.matches({'or_': []})
+    assert parent.matches({'some_child_has': {}})
+    assert not child.matches({'some_child_has': {}})
+
+
 async def test_context_subtree_custom_tracer_provider_without_add_span_processor(mocker: MockerFixture):
     """Test that context_subtree gracefully degrades when the TracerProvider lacks add_span_processor.
 

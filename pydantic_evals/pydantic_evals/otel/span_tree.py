@@ -97,6 +97,9 @@ class SpanQuery(TypedDict, total=False):
     no_ancestor_has: SpanQuery
 
 
+_SPAN_QUERY_FIELDS = frozenset(SpanQuery.__annotations__)
+
+
 @dataclass(repr=False, kw_only=True)
 class SpanNode:
     """A node in the span tree; provides references to parents/children for easy traversal and queries."""
@@ -283,14 +286,19 @@ class SpanNode:
 
     def _matches_query(self, query: SpanQuery) -> bool:
         """Check if the span matches the query conditions."""
+        unknown_fields = set(query) - _SPAN_QUERY_FIELDS
+        if unknown_fields:
+            fields = ', '.join(repr(field) for field in sorted(unknown_fields))
+            raise ValueError(f'Unknown SpanQuery field(s): {fields}')
+
         # Logical combinations
-        if or_ := query.get('or_'):
+        if (or_ := query.get('or_')) is not None:
             if len(query) > 1:
                 raise ValueError("Cannot combine 'or_' conditions with other conditions at the same level")
             return any(self._matches_query(q) for q in or_)
-        if (not_ := query.get('not_')) and self._matches_query(not_):
+        if (not_ := query.get('not_')) is not None and self._matches_query(not_):
             return False
-        if (and_ := query.get('and_')) and not all([self._matches_query(q) for q in and_]):
+        if (and_ := query.get('and_')) is not None and not all(self._matches_query(q) for q in and_):
             return False
         # At this point, all existing ANDs and no existing ORs have passed, so it comes down to this condition
         return (
@@ -346,15 +354,15 @@ class SpanNode:
             return False
         if (max_child_count := query.get('max_child_count')) is not None and len(self.children) > max_child_count:
             return False
-        if (some_child_has := query.get('some_child_has')) and not any(
+        if (some_child_has := query.get('some_child_has')) is not None and not any(
             child._matches_query(some_child_has) for child in self.children
         ):
             return False
-        if (all_children_have := query.get('all_children_have')) and not all(
+        if (all_children_have := query.get('all_children_have')) is not None and not all(
             child._matches_query(all_children_have) for child in self.children
         ):
             return False
-        if (no_child_has := query.get('no_child_has')) and any(
+        if (no_child_has := query.get('no_child_has')) is not None and any(
             child._matches_query(no_child_has) for child in self.children
         ):
             return False
@@ -371,7 +379,7 @@ class SpanNode:
             stop_recursing_when = query.get('stop_recursing_when')
             return (
                 list(self._filter_descendants(lambda _: True, stop_recursing_when))
-                if stop_recursing_when
+                if stop_recursing_when is not None
                 else descendants()
             )
 
@@ -381,15 +389,15 @@ class SpanNode:
             descendants()
         ) > max_descendant_count:
             return False
-        if (some_descendant_has := query.get('some_descendant_has')) and not any(
+        if (some_descendant_has := query.get('some_descendant_has')) is not None and not any(
             descendant._matches_query(some_descendant_has) for descendant in pruned_descendants()
         ):
             return False
-        if (all_descendants_have := query.get('all_descendants_have')) and not all(
+        if (all_descendants_have := query.get('all_descendants_have')) is not None and not all(
             descendant._matches_query(all_descendants_have) for descendant in pruned_descendants()
         ):
             return False
-        if (no_descendant_has := query.get('no_descendant_has')) and any(
+        if (no_descendant_has := query.get('no_descendant_has')) is not None and any(
             descendant._matches_query(no_descendant_has) for descendant in pruned_descendants()
         ):
             return False
@@ -406,7 +414,7 @@ class SpanNode:
             stop_recursing_when = query.get('stop_recursing_when')
             return (
                 list(self._filter_ancestors(lambda _: True, stop_recursing_when))
-                if stop_recursing_when
+                if stop_recursing_when is not None
                 else ancestors()
             )
 
@@ -414,15 +422,15 @@ class SpanNode:
             return False
         if (max_depth := query.get('max_depth')) is not None and len(ancestors()) > max_depth:
             return False
-        if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
+        if (some_ancestor_has := query.get('some_ancestor_has')) is not None and not any(
             ancestor._matches_query(some_ancestor_has) for ancestor in pruned_ancestors()
         ):
             return False
-        if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
+        if (all_ancestors_have := query.get('all_ancestors_have')) is not None and not all(
             ancestor._matches_query(all_ancestors_have) for ancestor in pruned_ancestors()
         ):
             return False
-        if (no_ancestor_has := query.get('no_ancestor_has')) and any(
+        if (no_ancestor_has := query.get('no_ancestor_has')) is not None and any(
             ancestor._matches_query(no_ancestor_has) for ancestor in pruned_ancestors()
         ):
             return False
