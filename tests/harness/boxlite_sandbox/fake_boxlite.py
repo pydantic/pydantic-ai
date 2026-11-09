@@ -14,7 +14,7 @@ import os
 import signal
 import subprocess
 import types
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +55,9 @@ class FakeBoxLite:
         self.commands: list[tuple[str, list[str], dict[str, str], str | None]] = []
         """`(program, args, env, cwd)` for every exec, the backend's own included."""
         self.spawned: list[subprocess.Popen[bytes]] = []
+        self.answer: Callable[[list[str]], tuple[str, str, int] | None] | None = None
+        """When set, answers a command (without the backend's wrapper) instead of running it, unless it returns
+        `None`."""
         self.runtime_error: BaseException | None = None
         """When set, `Boxlite.default()` raises it, like a runtime that can't open."""
         self.create_error: BaseException | None = None
@@ -222,6 +225,11 @@ class FakeHandle:
         self._box.status = 'running'
         if cwd is not None and not Path(cwd).is_dir():
             raise boxlite.InternalError('internal error: spawn_failed: exec process failed: failed to unix syscall')
+        if self._control.answer is not None and (reply := self._control.answer(args[3:])) is not None:
+            # Answered without running it, inside the backend's own wrapper, `/bin/sh -c <script> sh`.
+            stdout, stderr, code = reply
+            args = [*args[:3], 'sh', '-c', 'printf %s "$1"; printf %s "$2" >&2; exit "$3"', 'sh', stdout, stderr]
+            args.append(str(code))
         process = subprocess.Popen(
             [command, *args],
             cwd=self._control.root if cwd is None else cwd,
