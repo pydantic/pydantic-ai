@@ -141,6 +141,18 @@ def test_get_unwrapped_function_name_callable_class():
     )
 
 
+def test_get_unwrapped_function_name_partial_callable_class():
+    """A partial wrapping a callable instance should name the unwrapped instance, not raise."""
+
+    class CallableClass:
+        def __call__(self):
+            pass
+
+    expected = 'test_get_unwrapped_function_name_partial_callable_class.<locals>.CallableClass.__call__'
+    assert get_unwrapped_function_name(partial(CallableClass())) == expected
+    assert get_unwrapped_function_name(partial(partial(CallableClass()))) == expected
+
+
 def test_get_unwrapped_function_name_method():
     """Test get_unwrapped_function_name with method."""
 

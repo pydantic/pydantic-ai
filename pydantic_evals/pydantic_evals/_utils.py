@@ -72,12 +72,13 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             return _unwrap(f.func)
         return f
 
+    unwrapped = _unwrap(func)
     try:
-        return _unwrap(func).__name__
+        return unwrapped.__name__
     except AttributeError as e:
         # Handle instances of types with `__call__` as a method
-        if inspect.ismethod(getattr(func, '__call__', None)):
-            return f'{type(func).__qualname__}.__call__'
+        if inspect.ismethod(getattr(unwrapped, '__call__', None)):
+            return f'{type(unwrapped).__qualname__}.__call__'
         else:
             raise e
 
