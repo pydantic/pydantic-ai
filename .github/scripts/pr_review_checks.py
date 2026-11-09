@@ -72,7 +72,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         scope='URL fetching, downloads, provider file references and browser egress',
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
-            r'|capabilities/(web_fetch|file_understanding)\.py|realtime/_utils\.py)'
+            r'|capabilities/(web_fetch|file_understanding)\.py)'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/(playwright|browser_use)/.*'
             r'|tests/test_(ssrf|web_fetch)\.py'
         ),
@@ -80,6 +80,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
             r'download_item\(|safe_download\(|force_download|allow_local|UploadedFile\(|_CLOUD_METADATA'
         ),
         token_paths=re.compile(r'(pydantic_ai_slim|src)/.*\.py'),
+        # Realtime's message helpers download media, but most changes to them are not about it.
+        joint_paths=re.compile(r'pydantic_ai_slim/pydantic_ai/realtime/_utils\.py'),
     ),
     SpecialistCheck(
         name='ui',

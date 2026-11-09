@@ -87,10 +87,16 @@ def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     assert select([_file(path)]) == {'sandboxes': [path]}
 
 
-def test_joint_path_runs_its_check_and_the_general_check() -> None:
-    """A change to the core message types gets the UI review without losing the general one."""
-    path = 'pydantic_ai_slim/pydantic_ai/messages.py'
-    assert select([_file(path)]) == {'general': [path], 'ui': [path]}
+@pytest.mark.parametrize(
+    ('path', 'check'),
+    [
+        ('pydantic_ai_slim/pydantic_ai/messages.py', 'ui'),
+        ('pydantic_ai_slim/pydantic_ai/realtime/_utils.py', 'url-fetch'),
+    ],
+)
+def test_joint_path_runs_its_check_and_the_general_check(path: str, check: str) -> None:
+    """A module only partly about a check's boundary gets that check's review without losing the general one."""
+    assert select([_file(path)]) == {'general': [path], check: [path]}
 
 
 def test_rename_selects_by_previous_path() -> None:
