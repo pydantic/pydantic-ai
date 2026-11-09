@@ -1,6 +1,6 @@
 # Code Mode
 
-Let the model call your tools from one sandboxed Python program instead of one tool call per model turn.
+Let the model call your tools from one sandboxed Python program instead of a model turn per dependent batch of tool calls.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
@@ -788,8 +788,8 @@ CodeMode(mount=workspace)
 
 **`os_access` -- answer the sandbox's OS calls yourself.** Use it for environment variables, the
 current time, or filesystem behavior you control. Pass a `pydantic_monty` OS implementation
-(`AbstractOS`, such as `OSAccess`) or a callback that decides each call, to inject only needed secrets, pin "now" for reproducible runs, or route file
-access to your own store.
+(`AbstractOS`, such as `OSAccess`) or a callback that decides each call, to inject only needed
+secrets, pin "now" for reproducible runs, or route file access to your own store.
 
 ```python
 from pydantic_monty import NOT_HANDLED, OSAccess

@@ -5,7 +5,7 @@ description: "Let a Pydantic AI agent call its tools from one sandboxed Python s
 
 # Code Mode
 
-Code Mode lets the model call your tools from one sandboxed Python program instead of one tool call per model turn. [`CodeMode`][pydantic_ai_harness.CodeMode] puts them behind a `run_code` tool: the model writes code that calls them as functions, with loops, conditionals, variables, and `asyncio.gather`, and the [Monty](https://github.com/pydantic/monty) sandbox runs it.
+Code Mode lets the model call your tools from one sandboxed Python program instead of a model turn per dependent batch of tool calls. [`CodeMode`][pydantic_ai_harness.CodeMode] puts them behind a `run_code` tool: the model writes code that calls them as functions, with loops, conditionals, variables, and `asyncio.gather`, and the [Monty](https://github.com/pydantic/monty) sandbox runs it.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
