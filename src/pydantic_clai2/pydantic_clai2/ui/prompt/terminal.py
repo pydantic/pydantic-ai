@@ -165,10 +165,12 @@ class Terminal(Generic[DepsT, OutputT]):
             chords={
                 'ctrl-x ctrl-s': lambda: self._shown().speculation.toggle(),
                 'ctrl-b': lambda: self._shown().tasks.promote(),
+                'ctrl-x a': lambda: self._shown().team.key('/team'),
+                'ctrl-t': lambda: self._shown().team.key('/board'),
             },
             pinned=lambda: self._shown().speculation.row(),
             spinner=lambda: self._shown().spinners.active(),
-            panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
+            panel=self._panel,
             queue_changed=lambda: self._shown().live_session.changed(),
         )
         try:
@@ -178,6 +180,12 @@ class Terminal(Generic[DepsT, OutputT]):
         finally:
             self._shown().bind(None)
             self.editor = None
+
+    def _panel(self, glyph: str) -> tuple[str, ...]:
+        """The team's roster, then the other running tasks, then the forks, of the session shown."""
+        shown = self._shown()
+        team = shown.team.rows(glyph)
+        return (*team, *shown.tasks.rows(glyph, members=not team), *shown.forks.rows(glyph))
 
     def _shown(self) -> 'SessionRuntime[DepsT, OutputT]':
         assert self.shown is not None, 'a terminal shows a session from its first `attach`'

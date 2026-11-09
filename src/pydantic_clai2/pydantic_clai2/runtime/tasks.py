@@ -52,9 +52,10 @@ from pydantic_ai_harness.subagents import (
     TaskQuestionEvent,
 )
 from pydantic_ai_harness.teams import Team
-from pydantic_clai2.plugins import TaskInfo, TaskProgress
+from pydantic_clai2.plugins import TaskInfo, TaskProgress, TeamProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
+from pydantic_clai2.runtime.team import Teams, display_name
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -211,9 +212,9 @@ class TaskRouter:
         )
         self.directory = directory
         self._boards: dict[str, ClaimablePlanStore] = {}
-        self.team = Team[object](self.owner, board=self.board)
-        """Every conversation's team, on the turns of a session with `team.enabled`, and its members' turns."""
-        self.owner.claims = self.team.claims
+        self.teams = Teams(self.owner, board=self.board, deliver=self._deliver_team)
+        """Every conversation's team, its feed of changes, and the user's actions on it."""
+        self.owner.claims = self.teams.claims
         self._users = 0
         self._lock = anyio.Lock()
         self._stack = AsyncExitStack()
@@ -228,6 +229,16 @@ class TaskRouter:
                 board = FileClaimablePlanStore(self.directory / 'boards' / f'{name}.json')
             self._boards[conversation_id] = board
         return board
+
+    @property
+    def team(self) -> Team[object]:
+        """Every conversation's team, on the turns of a session with `team.enabled`, and its members' turns."""
+        return self.teams.team
+
+    async def _deliver_team(self, conversation_id: str, progress: TeamProgress) -> None:
+        view = self.view(conversation_id)
+        if view is not None and view.on_team is not None:
+            await view.on_team(progress)
 
     async def run_member(self, record: DelegationTask) -> str:
         """Run a team member's turn in the session it last ran in, or else the one holding its conversation."""
@@ -309,6 +320,7 @@ class TaskRouter:
             self.started.pop(record.id, None)
         if view is not None:
             await view.deliver(update)
+        await self.teams.observe(update)
 
 
 _CLOSED_BEFORE_START = 'This session closed before the task could start.'
@@ -362,6 +374,8 @@ class Tasks:
         self.wake: Callable[[], None] | None = None
         self.run_member: MemberRunner | None = None
         """Runs a turn of a team member of this session's conversation; set by the shell that holds it."""
+        self.on_team: Callable[[TeamProgress], Awaitable[None]] | None = None
+        """Told each change to the team of this session's conversation, in order; set by the shell that holds it."""
 
     def join(self) -> None:
         """Be one of the router's views; again once a closed session is live again, as after a failed `/reload`."""
@@ -500,11 +514,14 @@ class Tasks:
                 return str(exc)
         return f'{len(running)} task(s) moved to background. /tasks to inspect.'
 
-    def rows(self, glyph: str) -> tuple[str, ...]:
+    def rows(self, glyph: str, *, members: bool = True) -> tuple[str, ...]:
+        """The task panel; without `members`, team members are left to the roster."""
         now = time.time()
         rows: list[str] = []
         recent = False
         records = self.records()
+        if not members:
+            records = tuple(record for record in records if record.name is None)
         for depth, record in task_tree(records):
             if record.status == 'finished':
                 if record.finished_at is None or now - record.finished_at > 30:
@@ -741,11 +758,6 @@ class Tasks:
         if len(matches) != 1:
             raise ValueError(f'Task ID {prefix!r} is unknown or ambiguous. Use /tasks.')
         return matches[0]
-
-
-def display_name(agent_name: str) -> str:
-    """An agent type as the user knows it: `general-purpose` for the agent itself."""
-    return 'general-purpose' if agent_name == 'self' else agent_name
 
 
 def _mode(record: DelegationTask) -> str:

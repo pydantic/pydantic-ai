@@ -498,6 +498,12 @@ lead = Agent('test', capabilities=[team])
   stream, owner/host-caused ones (`team.spawn`, `team.send`, `team.stop`, claim hand-backs, state) to
   `observer`. `await team.snapshot(conversation_id)` -> `TeamSnapshot(members, board, messages)`.
 - `owner.claims = team.claims` hands a failed/stopped member's claims back and reports the change.
+- A UI merges three sources into one feed: the lead run's events (an `@on_event(*get_args(TeamEvent))`
+  capability on the lead's run), each member run's (the owner observer's `DelegationTaskEvent.event`), and
+  `observer`'s. `observer` gets no conversation ID: the host knows it for the calls it makes (`spawn`, `send`,
+  `stop`, `observe`, `claims(...).release`), so record it around them, or read a member event's
+  `member.task_id`. Two sources can race (a member starting vs. `spawn_teammate` reporting it), so re-read
+  `snapshot` per event instead of replaying deltas. `clai2`'s `runtime/team.py` does this.
 - `claim`/`release` on a `ClaimablePlanStore` return `BoardChange(item, previous)`, so board events carry the
   before/after of the same atomic step.
 

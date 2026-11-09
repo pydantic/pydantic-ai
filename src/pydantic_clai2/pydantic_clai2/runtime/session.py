@@ -462,6 +462,8 @@ class Session(Generic[DepsT, OutputT]):
         self.delegations: DelegationTasks | None = None
         self.team: Team[DepsT] | None = None
         """The team the agent leads on each turn, with `team.enabled`; it needs `delegations`."""
+        self.team_stream: AgentCapability[DepsT] | None = None
+        """Added beside `team`, to show the team changes the lead's tools make."""
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = summary or ConversationSummary(workspace=self.workspace)
@@ -927,7 +929,9 @@ class Session(Generic[DepsT, OutputT]):
         reports = DelegationReports(
             self.delegations, conversation_id=self.summary.id, priority='asap' if automated else 'when_idle'
         )
-        return [reports] if self.team is None else [reports, self.team]
+        if self.team is None:
+            return [reports]
+        return [reports, self.team] if self.team_stream is None else [reports, self.team, self.team_stream]
 
     async def run_member(self, team: Team[Any], record: DelegationTask) -> str:
         """Run a turn of the team member `record` with this session's agent, plugins and workspace.

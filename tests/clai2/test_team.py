@@ -118,23 +118,23 @@ async def test_a_lead_and_two_teammates_on_their_own_models(tmp_path: Path) -> N
             assert shell.session.team is shell.process.tasks.team
 
             # The user overrides a teammate's model at spawn, and wakes one that went idle.
-            assert await shell.team_command(['spawn carol @test:mid carol: report.']) == 'Started carol on test:mid.'
+            assert await shell.team.command(['spawn carol @test:mid carol: report.']) == 'Started carol on test:mid.'
             (carol,) = [record for record in owner.members(shell.session.summary.id) if record.name == 'carol']
             await member_settles(carol, 1)
             assert carol.output == 'carol ran on mid'
             assert await shell.tasks_command(['resume', 'alice']) == 'Woke teammate alice.'
             await member_settles(alice, 2)
             assert CONTINUE in str(alice.messages)
-            assert 'Message woken for bob.' == await shell.team_command(['msg bob Anything else?'])
+            assert 'Message woken for bob.' == await shell.team.command(['msg bob Anything else?'])
             await member_settles(bob, 2)
             assert shell.editor is not None
             shell.editor.submit('/exit')
 
-    listing = await shell.team_command([])
+    listing = await shell.team.command([])
     assert listing.splitlines() == [
-        'alice (general-purpose) · test:cheap · idle',
-        'bob (general-purpose) · test:mid · idle',
-        'carol (general-purpose) · test:mid · idle',
+        'alice · general-purpose · test:cheap · idle',
+        'bob · general-purpose · test:mid · idle',
+        'carol · general-purpose · test:mid · idle',
     ]
     # One automated lead turn read both first reports, batched; later reports woke it again.
     assert all('<task_output' in report for report in heard) and len(heard) >= 4
@@ -156,17 +156,17 @@ async def test_team_commands_refuse_without_a_team(tmp_path: Path) -> None:
     )
     shell._bind_team()  # pyright: ignore[reportPrivateUsage]
     assert shell.session.team is None
-    assert await shell.team_command([]) == (
+    assert await shell.team.command([]) == (
         'No teammates in this conversation. /team spawn NAME [@MODEL] PROMPT starts one.'
     )
     with pytest.raises(ValueError, match='Teams are off'):
-        await shell.team_command(['spawn alice go'])
+        await shell.team.command(['spawn alice go'])
     with pytest.raises(ValueError, match='Usage'):
-        await shell.team_command(['dance'])
-    assert tuple(shell.complete_team([])) == ('spawn', 'msg')
-    assert tuple(shell.complete_team(['msg', 'bob', ''])) == ()
+        await shell.team.command(['dance'])
+    assert tuple(shell.team.complete([])) == ('list', 'spawn', 'msg', 'stop')
+    assert tuple(shell.team.complete(['msg', 'bob', ''])) == ()
     shell.context.store.add_model(name='test:mid')
-    assert '@test:mid' in tuple(shell.complete_team(['spawn', 'bob', '']))
+    assert '@test:mid' in tuple(shell.team.complete(['spawn', 'bob', '']))
     await shell.forks.close()
 
 
@@ -200,9 +200,9 @@ async def test_spawn_without_a_prompt_is_refused(tmp_path: Path) -> None:
     async with shell.process.tasks.opened(view=shell.tasks) as owner:
         shell.session.delegations = owner
         with pytest.raises(ValueError, match='Usage: /team spawn'):
-            await shell.team_command(['spawn alice @test:mid'])
+            await shell.team.command(['spawn alice @test:mid'])
         # With no model for its type, a teammate runs on the session's model.
-        assert await shell.team_command(['spawn dan dan: hi']) == 'Started dan on the session model.'
+        assert await shell.team.command(['spawn dan dan: hi']) == 'Started dan on the session model.'
         with anyio.fail_after(10):
             await finished.wait()
         (dan,) = owner.members(shell.session.summary.id)

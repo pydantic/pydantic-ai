@@ -15,6 +15,7 @@ from pydantic_clai2.plugins import (
     QueuedInput,
     SessionCatalog,
     TaskCatalog,
+    TeamCatalog,
 )
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
@@ -56,6 +57,10 @@ class HostSession:
     @property
     def tasks(self) -> TaskCatalog | None:
         return self._host.tasks
+
+    @property
+    def team(self) -> TeamCatalog | None:
+        return self._host.team
 
     @property
     def forks(self) -> tuple[ForkInfo, ...]:

@@ -2648,7 +2648,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_team_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2658,9 +2658,9 @@ call `super().__init__(host, settings)` first. Each live session gets its own
 instance unless the class sets `scope = 'process'`; see
 [Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_team_progress`, `on_fork_end`, `on_install_progress`
 
-Ten `async` methods fire outside the agent run, in the shell:
+Eleven `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2672,6 +2672,7 @@ Ten `async` methods fire outside the agent run, in the shell:
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_team_progress` | the current conversation's team changed: a teammate started or changed state, a board item changed, or a message was sent | `event`, `team` | no |
 | `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
 | `on_install_progress` | `/update now` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
@@ -2713,6 +2714,19 @@ waiting for an answer. Its own run's events never reach the main run's hooks: th
 which is the main run for a task the agent delegated directly. It fires for every stream event of
 every running task, down to each text and thinking delta, and the task waits for it, so keep the
 handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
+
+`on_team_progress` receives a `TeamProgress` for each change to the team the session's agent leads,
+while `team.enabled` is on: `event` is the harness `teams` event (`TeammateSpawnedEvent`,
+`TeammateStateEvent`, `BoardItemChangedEvent`, or `TeamMessageEvent`, and any kind a newer harness
+adds to `TeamEvent`), or `None` when the team was only read again, as when CLAI first reads a
+conversation's saved team; `team` is the `TeamSnapshot` after it: the roster, the board, and the
+latest messages. Changes come from three places that no single hook sees: the lead's own tools emit them into
+its run, each teammate's run emits its own, and the task owner or the user (stopping a teammate, an
+action from `/board`) causes the rest outside any run. CLAI merges them into one feed in the order they
+happened; a change a handler causes, such as `host.team.assign`, comes after the one it handles. Two
+changes that happen at once on separate paths, such as a teammate starting and the lead's
+`spawn_teammate` reporting it, may arrive in either order, so read `team` rather than replaying
+events. A failure is printed and the team goes on.
 
 `on_fork_end` receives a `ForkEnd` event once a background `/fork` has ended, right after its
 `on_turn_end`: `fork` is a `ForkInfo` as `/forks` lists it (`id`, `model`, `prompt`, `status` of
@@ -2916,7 +2930,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`, `host.team`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -3021,6 +3035,23 @@ prompt the keyboard does:
   and returns `False` once it has finished, when `prompt` or `resume` is the way to go on, and for a
   team member, which `/team msg NAME TEXT` messages instead. An ID
   from another conversation raises `LookupError`.
+- `self.host.team` is the team the session's agent leads, as `/team` and `/board` show it: a
+  `TeamCatalog`, or `None` while `team.enabled` is off or no task owner runs it (the same times as
+  `host.tasks`). Read it each time. `snapshot()` returns the `TeamSnapshot` as last seen, without
+  reading any store, so it is cheap to call on every repaint: `members` (each a `TeamMember` with
+  its `name`, `task_id`, `agent_name`, pinned `model`, `state`, and `current_task`), `board` (each
+  an `OwnedPlanItem` with its `owner`), and the latest `messages`. A teammate's `state` is a string
+  such as `working`, `idle`, `stopped`, or `failed`; show one you do not know as it is, since newer
+  versions add states. `history(NAME)` is a teammate's messages so far. `await spawn(NAME, PROMPT,
+  model=None)` starts one, as `/team spawn` does; `await send(NAME, TEXT)` sends one your message,
+  which wakes it if idle and returns what happened to it (`running`, `woken`, or `saved`); `await
+  stop(NAME)` stops one until your next message. `await assign(ID, NAME)` hands a pending board item
+  to a teammate and tells it, as the lead's `assign_task` does; `await unclaim(ID)` hands an item
+  in progress back to `pending`; `await cancel(ID)` cancels an item that is not done, which
+  unblocks the items that wait only on it. A teammate still working on an item you unclaim or
+  cancel is told. They raise `LookupError` for a name or item ID the team does not have, and
+  `ValueError` when the board does not allow it, such as assigning an item that is taken or waits
+  on another one.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
@@ -3981,7 +4012,7 @@ What changes for a process-scoped plugin:
   `on_conversation_changed`, `on_command_end`, `on_task_progress`, and the rest reach it
   each time any session fires them. `self.host.live.current()` names that session.
 - **The host follows the session being handled.** `self.host.session_id`, `workspace`,
-  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `tasks`, `team`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
   `host.live.current()`: the session whose moment, command, or agent run is being
   handled. A task started meanwhile, such as a server started from a command, keeps
   that session. Outside one, they act on the session that loaded the plugin, or the
@@ -4016,6 +4047,7 @@ A `LiveSession` is one live session:
 | `status` | its status row |
 | `sessions` | the saved conversations its `/resume` lists |
 | `tasks` | its delegated tasks, or `None` |
+| `team` | the team its agent leads, as its `host.team` is, or `None` |
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `busy` | whether it handles input now (a turn, a command, or the terminal's rewind) or has input queued; check it before replacing its history between turns |

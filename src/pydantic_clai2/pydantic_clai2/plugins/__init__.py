@@ -28,7 +28,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.subagents import DelegationOutcome, DeliveryStatus
+from pydantic_ai_harness.teams import TeamEvent, TeamMember, TeamSnapshot
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
@@ -333,6 +334,11 @@ class LiveSession(Protocol):
         ...
 
     @property
+    def team(self) -> 'TeamCatalog | None':
+        """The team the session's lead runs, while `team.enabled` is on and a task owner runs it."""
+        ...
+
+    @property
     def forks(self) -> 'tuple[ForkInfo, ...]':
         """The session's background `/fork` runs, oldest first, as `/forks` lists them."""
         ...
@@ -553,6 +559,62 @@ class TaskCatalog(Protocol):
         ...
 
 
+class TeamCatalog(Protocol):
+    """The team the current conversation's lead runs, for a plugin that shows or controls it, such as a remote UI.
+
+    The shell's is the one `/team` and `ctrl-t` show. Each change arrives as `on_team_progress`, in the order it
+    happened. A teammate's name or a board item ID from another conversation raises `LookupError`.
+    """
+
+    def snapshot(self) -> TeamSnapshot:
+        """The team as last seen: its members, its board, and its latest messages. Cheap: it reads no store."""
+        ...
+
+    def history(self, name: str) -> list[ModelMessage]:
+        """A teammate's messages: its run's so far while it works, then what it saved."""
+        ...
+
+    async def spawn(self, name: str, prompt: str, *, model: str | None = None) -> TeamMember:
+        """Start a teammate with its first task, as `/team spawn` does, on `model` or its type's default.
+
+        Raises `ValueError` for a name that is invalid or taken.
+        """
+        ...
+
+    async def send(self, name: str, text: str) -> DeliveryStatus:
+        """Send a teammate the user's `text`, which it reads at its next model request; an idle one wakes.
+
+        It clears a stop the user made. Raises `ValueError` for blank text.
+        """
+        ...
+
+    async def stop(self, name: str) -> None:
+        """Stop a teammate as the user; only the user's next message wakes it."""
+        ...
+
+    async def assign(self, item_id: str, name: str) -> None:
+        """Hand a pending board item to a teammate, and tell it, as the lead's `assign_task` does.
+
+        Raises `ValueError` for an item that is taken, done, or waiting on another item.
+        """
+        ...
+
+    async def unclaim(self, item_id: str) -> None:
+        """Hand a board item in progress back to `pending`, so any teammate can claim it.
+
+        A teammate still working on it is told. Raises `ValueError` for an item not in progress.
+        """
+        ...
+
+    async def cancel(self, item_id: str) -> None:
+        """Cancel a board item that is not done, unblocking the items that wait only on it.
+
+        A teammate still working on it is told. Raises `ValueError` for an item that is done, or that waits on
+        another item.
+        """
+        ...
+
+
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
 
@@ -650,6 +712,21 @@ class TaskProgress:
     """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
     `sub_agents` task events, such as `TaskQuestionEvent`; `None` when only the task changed, such as when it
     started, finished, or began waiting for an answer."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamProgress:
+    """The current conversation's team changed: a teammate started or changed state, the board, or a message.
+
+    Changes arrive in the order they happened, whether the lead's run, a teammate's run, the task owner, or
+    the user caused them.
+    """
+
+    event: TeamEvent | None
+    """What changed, as harness `teams` reports it, such as `TeammateStateEvent` or `BoardItemChangedEvent`;
+    `None` when the team was only read again, as when the shell first reads a conversation's team."""
+    team: TeamSnapshot
+    """The team as it is now, after the change."""
 
 
 ForkStatus = Literal['running', 'done', 'failed', 'cancelled']
@@ -888,6 +965,7 @@ HostEvent = (
     | CommandEnd
     | PluginLoadFailed
     | TaskProgress
+    | TeamProgress
     | ForkEnd
     | InstallProgress
 )
@@ -930,6 +1008,7 @@ class PluginHost(Generic[DepsT]):
         setting: Callable[[str], JsonValue] | None = None,
         plugins: PluginCatalog | None = None,
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
+        team: Callable[[], TeamCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         live: LiveSessions | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
@@ -945,7 +1024,7 @@ class PluginHost(Generic[DepsT]):
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
-        is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
+        is what `/plugins` manages; `tasks` returns what `/tasks` shows, `team` what `/team` shows, and `workspace` the session's
         directory, each read each time, as the properties of the same names are. `live` is given to a
         process-scoped plugin's host only. `default_model` resolves the model a new session starts with,
         and `default_model_name` names it without building it.
@@ -980,6 +1059,7 @@ class PluginHost(Generic[DepsT]):
         self.plugins = plugins
         """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
         self._tasks = tasks
+        self._team = team
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
@@ -988,7 +1068,7 @@ class PluginHost(Generic[DepsT]):
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
-        Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
+        Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`, `team`,
         `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
         session whose moment, command, or run is being handled, else the session that loaded it (once
         that one has closed, the oldest live session). Its other attributes, such as `conversation` and
@@ -1025,6 +1105,14 @@ class PluginHost(Generic[DepsT]):
         shell have none.
         """
         return self._tasks()
+
+    @property
+    def team(self) -> TeamCatalog | None:
+        """The team the session's lead runs, as `/team` shows it; `None` while `team.enabled` is off.
+
+        Like `tasks`, it needs the shell's task owner, which only its stock agent has while its prompt is open.
+        """
+        return self._team()
 
     def submit_prompt(self, text: str, /) -> None:
         """Run `text` as the next turn, as if typed at the prompt but without echoing it.
@@ -1382,6 +1470,9 @@ class Plugin(Generic[SettingsT, DepsT]):
         keep it cheap: the task waits for it.
         """
 
+    async def on_team_progress(self, event: TeamProgress) -> None:
+        """The current conversation's team changed: a teammate, the board, or a message. See `PluginHost.team`."""
+
     async def on_fork_end(self, event: ForkEnd) -> None:
         """A background `/fork` finished, failed, or was cancelled."""
 
@@ -1424,6 +1515,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
     TaskProgress: 'on_task_progress',
+    TeamProgress: 'on_team_progress',
     ForkEnd: 'on_fork_end',
     InstallProgress: 'on_install_progress',
 }

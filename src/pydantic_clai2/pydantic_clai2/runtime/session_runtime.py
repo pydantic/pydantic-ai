@@ -4,7 +4,7 @@ import asyncio
 import math
 import sys
 from collections import deque
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -72,7 +72,7 @@ from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
-from pydantic_clai2.runtime.forks import Forks, parse_fork_args
+from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
@@ -87,7 +87,8 @@ from pydantic_clai2.runtime.session import (
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, display_name, question_row, resume_prompt
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
+from pydantic_clai2.runtime.team_shell import ShellTeam
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
@@ -496,6 +497,7 @@ def create_shell(
         sessions=sessions,
         setting=context.setting,
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
+        team=lambda: shell.team.catalog if shell.team_enabled() else None,
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
@@ -581,10 +583,19 @@ def create_shell(
     commands.register(
         Command(
             name='team',
-            description='List teammates, or start or message one: /team [spawn NAME [@MODEL] PROMPT | msg NAME TEXT]',
-            handler=shell.team_command,
-            complete=shell.complete_team,
+            description='Your teammates: /team [list | spawn NAME [@MODEL] PROMPT | msg NAME TEXT | stop NAME]',
+            handler=shell.team.command,
+            complete=shell.team.complete,
             raw=True,
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='board',
+            description="The team's shared board: /board [list | assign ID NAME | unclaim ID | cancel ID]",
+            handler=shell.team.board_command,
+            complete=shell.team.complete_board,
             during_turn=True,
         )
     )
@@ -717,6 +728,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
+    team: ShellTeam = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
     """`Permissions` for `run.permissions`, read on each tool call, and its denial of last resort; kept across runs."""
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
@@ -888,6 +900,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             show_task_models=lambda: self.context.settings.task_models,
         )
         self.tasks.run_member = self.run_member
+        self.team = ShellTeam(
+            tasks=self.tasks,
+            enabled=self.team_enabled,
+            interactive=lambda: self.editor is not None,
+            fire=self.loader.fire,
+            send_input=self.send_input,
+            models=self.context.store.models,
+            team_models=lambda: self.context.settings.team_models,
+        )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
             console=self.console,
@@ -969,49 +990,17 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.session.plugins = self.run_plugins()
         return await self.session.run_member(self.process.tasks.team, record)
 
+    def team_enabled(self) -> bool:
+        """Whether this session leads a team: `team.enabled` is on, and its agent delegates through the task owner."""
+        return self.context.settings.team and self.session.delegations is not None
+
     def _bind_team(self) -> None:
         """Lead a team on this session's turns when `team.enabled` is on, with the configured teammate models."""
-        settings = self.context.settings
-        team = self.process.tasks.team
-        team.models = settings.team_models
-        self.session.team = team if settings.team and self.session.delegations is not None else None
-
-    async def team_command(self, args: list[str]) -> str:
-        """`/team`: list the teammates, `spawn NAME [@MODEL] PROMPT`, or `msg NAME TEXT`."""
-        text = args[0].strip() if args else ''
-        conversation_id = self.session.summary.id
-        team = self.process.tasks.team
-        if not text:
-            members = (await team.snapshot(conversation_id)).members
-            if not members:
-                return 'No teammates in this conversation. /team spawn NAME [@MODEL] PROMPT starts one.'
-            return '\n'.join(
-                f'{member.name} ({display_name(member.agent_name)}) · {member.model or "session model"} · {member.state}'
-                + (f' · #{member.current_task}' if member.current_task else '')
-                for member in members
-            )
-        action, _, rest = text.partition(' ')
-        name, _, rest = rest.strip().partition(' ')
-        if action == 'spawn' and name:
-            if not self.context.settings.team or self.session.delegations is None:
-                raise ValueError('Teams are off. /set team.enabled true turns them on.')
-            model, prompt = parse_fork_args(rest.strip())
-            if not prompt:
-                raise ValueError('Usage: /team spawn NAME [@MODEL] PROMPT')
-            member = await team.spawn(conversation_id, name=name, prompt=prompt, model=model)
-            return f'Started {member.name} on {member.model or "the session model"}.'
-        if action == 'msg' and name and rest.strip():
-            sent = await team.send(conversation_id, to=name, text=rest.strip())
-            return f'Message {sent.status} for {name}.'
-        raise ValueError('Usage: /team [spawn NAME [@MODEL] PROMPT | msg NAME TEXT]')
-
-    def complete_team(self, args: list[str]) -> Iterable[str]:
-        """Suggest the subcommands, then saved models as `@model` after a spawn's name."""
-        if len(args) <= 1:
-            return ('spawn', 'msg')
-        if args[0] == 'spawn' and len(args) == 3:
-            return tuple(f'@{name}' for name in self.context.store.models())
-        return ()
+        teams = self.process.tasks.teams
+        teams.team.models = self.context.settings.team_models
+        enabled = self.team_enabled()
+        self.session.team = teams.team if enabled else None
+        self.session.team_stream = teams.stream if enabled else None
 
     async def prompt_task(self, record: DelegationTask, text: str) -> None:
         """Resume `record` with `text` as the user's message, outside the conversation, with this session's plugins.

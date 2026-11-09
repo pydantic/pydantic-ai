@@ -58,6 +58,7 @@ from pydantic_clai2.plugins import (
     SessionStart,
     SidePanel,
     TaskCatalog,
+    TeamCatalog,
     TurnStart,
     bare_screen,
     collect,
@@ -196,6 +197,7 @@ class SessionPlugins(Generic[DepsT]):
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
+        team: Callable[[], TeamCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         running: Callable[[], bool] = lambda: False,
         queued: Callable[[], int] = lambda: 0,
@@ -217,7 +219,7 @@ class SessionPlugins(Generic[DepsT]):
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
+        `team`, `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `inputs` the prompt holding the input that waits for it, `queued` how much waits
         when there is no prompt, `forks` lists its background `/fork` runs, and `live_id` names the session in `host.live`, by default a new ID.
         """
@@ -241,6 +243,7 @@ class SessionPlugins(Generic[DepsT]):
         self._sessions = sessions
         self._setting = setting
         self._tasks = tasks
+        self._team = team
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
@@ -274,6 +277,7 @@ class SessionPlugins(Generic[DepsT]):
             setting=setting,
             plugins=self,
             tasks=tasks,
+            team=team,
             workspace=workspace,
             resolve_model=resolve_model,
             model_settings=model_settings,
@@ -554,6 +558,7 @@ class SessionPlugins(Generic[DepsT]):
             setting=(lambda key: here().setting(key)) if process and setting else setting,
             plugins=_HerePlugins(lambda: self._process.here(self)) if process else self,
             tasks=(lambda: here().tasks) if process else self._tasks,
+            team=(lambda: here().team) if process else self._team,
             workspace=(lambda: here().workspace) if process else self._workspace,
             live=self._process.live if process else None,
             default_model=self._default_model,

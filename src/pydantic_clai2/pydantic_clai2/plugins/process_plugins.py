@@ -45,6 +45,7 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     SessionEndReason,
     TaskCatalog,
+    TeamCatalog,
 )
 from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
@@ -195,6 +196,11 @@ class LiveRuntime:
     def tasks(self) -> TaskCatalog | None:
         """The session's delegated tasks."""
         return self._host.tasks
+
+    @property
+    def team(self) -> TeamCatalog | None:
+        """The team the session's lead runs."""
+        return self._host.team
 
     @property
     def forks(self) -> tuple[ForkInfo, ...]:

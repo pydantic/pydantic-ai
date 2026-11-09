@@ -48,7 +48,8 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
-| `/team [spawn NAME [@MODEL] PROMPT \| msg NAME TEXT]` | List the conversation's teammates, start one on a model, or message one (`team.enabled`) |
+| `/team [list \| spawn NAME [@MODEL] PROMPT \| msg NAME TEXT \| stop NAME]` | Open the team roster (Ctrl+X A), or list, start, message, or stop a teammate (`team.enabled`) |
+| `/board [list \| assign ID NAME \| unclaim ID \| cancel ID]` | Open the team's shared board (Ctrl+T), or list it, or assign, unclaim, or cancel an item (`team.enabled`) |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
@@ -2184,13 +2185,44 @@ Each teammate runs on its own model: the one its spawn names, else `team.models`
 `/set team.models '{"general-purpose": "PROVIDER:MODEL"}'`), else the session's model. It keeps that model
 across idle, wake and restart, and `/team` and `/tasks` show it.
 
-- **`/team`** lists the teammates with their type, model, state, and the board item each holds.
+While a team works, a roster sits above the prompt, in place of the teammates' task rows:
+
+```text
+team 1 working · 1 idle · board 1/2 ✓
+⠋ alice general-purpose · PROVIDER:MODEL · 12s · write_file #2 Write the limerick
+✓ bob general-purpose · session model · idle
+ctrl-x a team · ctrl-t board
+```
+
+It starts with a summary: how many teammates are in each state, and how much of the board is done. Each
+teammate's row shows its name, type, model, and state; a working one also shows how long its turn has
+run, its last action, and the board item it holds. A state CLAI does not know yet shows with a `•`. With
+more than four teammates, the idle ones fold into one `N idle` count.
+
+- **Ctrl+X A** or **`/team`** opens the roster. Enter opens a teammate's live transcript, which follows
+  its run as it streams; **`m`** there, or in the roster, asks for a message to send it, and **`x`**
+  stops it. **`b`** opens the board, and Esc goes back.
+- **Ctrl+T** or **`/board`** opens the shared board, sorted by status as it opens, with each item's
+  status, owner, and `⛓ blocked by #3, #5` for the items it still waits for. It updates as teammates
+  claim and finish items, and an item keeps its row meanwhile, so a key acts on the item you see
+  highlighted. **`a`** assigns the highlighted item to a
+  teammate you pick, which hears so and wakes if idle; **`u`** unclaims an item in progress, back to
+  pending; **`c`** cancels an item that is not done, which unblocks the items that wait only on it. A
+  teammate still working on an item you unclaim or cancel is told. Enter opens the owner's transcript.
+  The board follows the same rules as the agents' own board tools: only a pending item that waits on
+  nothing can be assigned.
+- **`/team list`** and **`/board list`** print the roster and the board instead, as `/team` and
+  `/board` do where no terminal can show a menu.
 - **`/team spawn NAME [@MODEL] PROMPT`** starts a teammate yourself, on `MODEL` if given.
 - **`/team msg NAME TEXT`** sends a teammate your message; an idle one wakes to read it.
+  **`/team stop NAME`** stops one until your next message.
+- **`/board assign ID NAME`**, **`/board unclaim ID`**, and **`/board cancel ID`** act as `a`, `u`,
+  and `c` do.
 - **`/tasks resume NAME`** wakes an idle or stopped teammate with your word to continue, and
   **`/tasks stop NAME`** stops one; a teammate's name works wherever `/tasks` takes an ID.
 
-The board is saved beside the tasks, in `<database-name>.tasks/boards/`. With teams off, nothing changes.
+The board is saved beside the tasks, in `<database-name>.tasks/boards/`. With teams off, nothing changes:
+no roster or board shows, and Ctrl+X A and Ctrl+T only say how to turn teams on.
 
 Task metadata and independent histories are stored beside the session database
 in `<database-name>.tasks/`. Each database has its own task directory; in-memory
