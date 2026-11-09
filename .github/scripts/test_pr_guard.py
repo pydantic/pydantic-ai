@@ -274,11 +274,21 @@ def test_guard_rules_on_the_pull_request(case: Case, tmp_path: Path):
 
 
 @requires_tools
-def test_a_self_filed_issue_gets_the_assignment_explanation(tmp_path: Path):
-    _, actions = _run_guard(Case(id='self-filed', closed=True), tmp_path)
+@pytest.mark.parametrize(
+    ('issue_author', 'explanation'),
+    [
+        (CONTRIBUTOR, 'No maintainer has done so on {issue_link} yet, so this PR has been closed automatically.'),
+        ('reporter', 'This PR has been closed automatically because {issue_link} is not assigned to you.'),
+    ],
+    ids=['self-filed-issue', 'someone-elses-issue'],
+)
+def test_the_assignment_close_comment_names_what_the_pr_is_waiting_for(
+    issue_author: str, explanation: str, tmp_path: Path
+):
+    _, actions = _run_guard(Case(id='unassigned', closed=True, issue_author=issue_author), tmp_path)
 
     issue_link = f'[issue #{ISSUE_NUMBER}](https://github.com/{REPO}/issues/{ISSUE_NUMBER})'
-    assert f'{issue_link} is not assigned to you' in actions[0]['body']
+    assert explanation.format(issue_link=issue_link) in actions[0]['body']
 
 
 @requires_tools

@@ -368,9 +368,15 @@ jobs:
                     echo "${PR_AUTHOR} opened issue #${ISSUE_NUM} and a maintainer has engaged on it; not requiring assignment."
                   else
                     echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
-                    COMMENT=$(printf '%s\n\n%s' \
-                      "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
-                      "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    if [ "$PR_AUTHOR" = "$ISSUE_AUTHOR" ]; then
+                      COMMENT=$(printf '%s\n\n%s' \
+                        "Thanks for the contribution! Before a PR for an issue you opened can stay open, a maintainer needs to have commented on the issue, labeled it or assigned it, so changes are discussed before code is written." \
+                        "No maintainer has done so on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) yet, so this PR has been closed automatically. Once one has, reopen this PR.")
+                    else
+                      COMMENT=$(printf '%s\n\n%s' \
+                        "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
+                        "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    fi
                     gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
                     gh pr close "$PR_NUMBER" --repo "$REPO"
                     exit 0
