@@ -104,10 +104,10 @@ from .. import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
-    get_user_agent,
 )
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
@@ -1914,8 +1914,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
         and ensuring `User-Agent` is set.
         """
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
         betas: set[str] = set()
 
