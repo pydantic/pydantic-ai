@@ -107,11 +107,11 @@ result['value']  # not result.value
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and
 reads them by subscript on its own.
 
-Sub-agents cannot pause for [tool
+Sub-agent runs cannot pause for [tool
 approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or a [pending model
-response](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits). These
-output types are omitted from the catalog; returning `DeferredToolRequests` or
-`PendingModelResponse` raises `RuntimeError`. Pending requests are cancelled best effort; a batch is
+response](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits). The
+catalog omits `DeferredToolRequests` and `PendingModelResponse`; a sub-agent run that ends with
+either raises `RuntimeError` in the script. Pending requests are cancelled best effort; a batch is
 cancelled only when no other request in it is waiting.
 
 ## A complete, runnable example
@@ -300,7 +300,7 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 ```
 
 `max_duration_secs` counts sandbox execution time, excluding waits for sub-agents. There is no
-default duration cap. A CPU-bound loop that never calls a sub-agent bypasses agent budgets and
+default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and
 blocks the workflow thread under Temporal. Set `max_duration_secs` to stop such loops. A partial
 limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the
 separate 10 MiB print cap remains.
