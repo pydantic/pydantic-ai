@@ -3829,9 +3829,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 toolset_name='computer',
             )
 
-        async def content_block(item: str | MultiModalContent) -> beta_tool_result_block_param.Content:
-            return await self._map_tool_result_item(item, map_context)
-
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
@@ -3854,8 +3851,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if metadata.get('changed') or (screen is None and not known):
             # Not an outcome of these calls, such as text a guardrail returned instead, or a call changed before it
             # ran: each call gets the summary rather than `OK`, and the last one the rest.
-            summary = await content_block(content[0])
-            rest = [await content_block(item) for item in content[1:]]
+            summary = await self._map_tool_result_item(content[0], map_context)
+            rest = [await self._map_tool_result_item(item, map_context) for item in content[1:]]
             return [
                 result(block, False, summary, *(rest if index == len(blocks) - 1 else []))
                 for index, block in enumerate(blocks)
@@ -3865,14 +3862,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         for index, (block, count) in enumerate(zip(blocks, counts)):
             start = ends[index] - count
             if ends[index] <= performed:
-                returned = [await content_block(outputs.pop(0))] if block['name'] in RETURNS_OUTPUT and outputs else []
+                returned = (
+                    [await self._map_tool_result_item(outputs.pop(0), map_context)]
+                    if block['name'] in RETURNS_OUTPUT and outputs
+                    else []
+                )
                 if index == last_ran and isinstance(screen, str):
                     # The screenshot was left out of this request: the call gets the text saying why.
                     text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
                     results.append(result(block, False, BetaTextBlockParam(text=text, type='text'), *returned))
                 elif index == last_ran and screen is not None:
                     ok = BetaTextBlockParam(text='OK' if known else str(content[0]), type='text')
-                    results.append(result(block, False, ok, *returned, await content_block(screen)))
+                    results.append(
+                        result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
+                    )
                 else:
                     results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
             elif start <= performed and error is not None:
