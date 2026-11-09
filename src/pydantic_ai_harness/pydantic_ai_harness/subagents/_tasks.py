@@ -260,6 +260,7 @@ class DelegationTasks:
                     record = await _read(path)
                     if record.status == 'running':
                         await self._settle_interrupted(record)
+                        await self.save(record)
                     self.records[record.id] = record
                 self._check_ancestry()
             yield self
@@ -276,9 +277,11 @@ class DelegationTasks:
                 )
 
     async def _drain(self) -> None:
-        """Cancel every worker, wait for all of them at once, then settle and save the children that never ran."""
-        for worker in self._workers.values():
-            worker.cancel()
+        """Cancel running workers, wait for all of them at once, then settle and save the children that never ran."""
+        for task_id, worker in self._workers.items():
+            # A worker whose run ended is saving its record, which a cancellation would cut short.
+            if self.records[task_id].status == 'running':
+                worker.cancel()
         if self._workers:
             # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
             await asyncio.wait(self._workers.values())
