@@ -1,5 +1,6 @@
 """The opt-in `shell` tool: commands that outlive the run, with a bounded foreground wait."""
 
+import contextlib
 import json
 import os
 import shlex
@@ -21,7 +22,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceError
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,
@@ -377,6 +378,33 @@ class TestShellTool:
         assert recorder.finished.total_lines == 0
         assert recorder.output == ''
 
+    async def test_supervisor_exits_after_its_job_directory_is_removed(self, tmp_path: Path) -> None:
+        # With nowhere to create `watch.stop`, the supervisor must still stop its log watcher rather than wait on it.
+        output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        try:
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
+
+    async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path) -> None:
+        # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop. A job started with `TERM` ignored never
+        # receives it: the loss `dash` causes only when the signal arrives before the watcher resets its inherited trap.
+        previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        try:
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
+
     async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
         toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()
         assert toolset is not None
@@ -474,6 +502,30 @@ class TestLifecycle:
             await shell(tmp_path, {'command': 'sleep 60', 'mode': mode, 'timeout': 0.01})
         await wait_for_exit(jobs[0].pid)
         assert not Path(jobs[0].directory).exists()
+
+    async def test_a_failed_stop_keeps_the_calls_own_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed call stops its command before re-raising. A stop that fails too must not take the place of the
+        # call's own error, and leaves the job's directory, as a failed `stop_command` does.
+        jobs: list[Job] = []
+        kill = Job.kill
+
+        async def fail(job: Job) -> int | None:
+            jobs.append(job)
+            raise RuntimeError('result read failed')
+
+        async def refused_kill(self: Job) -> None:
+            await kill(self)
+            raise WorkspaceError('kill: Operation not permitted')
+
+        monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', fail)
+        monkeypatch.setattr(Job, 'kill', refused_kill)
+        with pytest.raises(RuntimeError, match='result read failed') as raised:
+            await shell(tmp_path, {'command': 'sleep 60', 'timeout': 0.01})
+        assert raised.value.__notes__ == ['Cleaning up the command also failed: kill: Operation not permitted']
+        await wait_for_exit(jobs[0].pid)
+        assert Path(jobs[0].directory).exists()
 
     @pytest.mark.parametrize('command', ['sleep 60', 'true'])
     async def test_cancelled_finalization_terminates_process(
