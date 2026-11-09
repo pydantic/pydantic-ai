@@ -1223,8 +1223,7 @@ async def test_close_drains_many_children_concurrently(
         async def save(self, record: DelegationTask) -> None:
             if self.closing:
                 saved.append(record.id)
-                if record.conversation_id == 'old':
-                    # Re-saving history, as a drain that saves every record does, never finishes in time.
+                if record.conversation_id == 'old':  # pragma: no cover -- only a drain that re-saves history gets here.
                     await anyio.sleep_forever()
                 if len(saved) == 48:
                     all_saving.set()
