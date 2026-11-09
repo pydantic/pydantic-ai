@@ -426,18 +426,22 @@ class ModelRequestParameters:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
     def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
-        """The name of the first function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], or `None` if there is none.
+        """The name of the first function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
 
         A model adapter uses it to find the tool that runs a native tool's calls, through
-        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called.
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] answers the same for
-        instructions and tools.
+        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called. Like
+        that rule, it leaves out deferred tools, unlike
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which names a tool for
+        instructions and tool results.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
         """
         kind_id = _tool_kind_id(kind)
-        return next((tool_def.name for tool_def in self.function_tools if tool_def.tool_kind == kind_id), None)
+        return next(
+            (t.name for t in self.function_tools if t.tool_kind == kind_id and not t.defer_loading),
+            None,
+        )
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:

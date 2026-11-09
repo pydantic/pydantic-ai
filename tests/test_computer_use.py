@@ -94,7 +94,9 @@ def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
 
 def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
     computer = ComputerTool(display_size=(1280, 800))
-    params = _prepare(ModelRequestParameters(function_tools=[_computer_tool_def()], native_tools=[computer]))
+    # A deferred tool of the kind can't run the calls, so the one that isn't deferred does.
+    deferred = ToolDefinition(name='deferred_computer', tool_kind=COMPUTER_KIND, defer_loading=True)
+    params = _prepare(ModelRequestParameters(function_tools=[deferred, _computer_tool_def()], native_tools=[computer]))
     assert params.native_tools == [computer]
     assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
     assert params.tool_name_for_kind('computer_use.other') is None
