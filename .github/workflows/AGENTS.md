@@ -152,9 +152,8 @@ outside the org is a supply-chain change rather than an ordinary code review —
 maintainer carries legitimate ones forward in their own PR (#7024 is the case that
 prompted the guard).
 
-**Its job, `.github Directory Guard`, is the merge gate for `.github/`.** Code-owner review is
-not required on `main`, so this check is the only automated block on such a merge. It blocks only
-once the `main` ruleset lists it as a required status check; until then it is advisory.
+**Its job, `.github Directory Guard`, is the merge gate for `.github/`.** It blocks only once the
+`main` ruleset lists it as a required status check; until then it is advisory.
 
 A required check must also report on every merge group, or the queue waits until the check times
 out. The guard therefore runs on `merge_group` and passes there without reading anything: each PR
