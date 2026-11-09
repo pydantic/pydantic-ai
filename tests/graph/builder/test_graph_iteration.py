@@ -172,6 +172,22 @@ async def test_iter_next_task_property():
         assert next_task is not None
 
 
+async def test_iter_next_task_preserves_empty_task_sequence():
+    """An empty map result is not the same as an unstarted graph."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def step(ctx: StepContext[IterState, None, None]) -> int:
+        return 1
+
+    g.add(g.edge_from(g.start_node).to(step), g.edge_from(step).to(g.end_node))
+    graph = g.build()
+
+    async with graph.iter(state=IterState()) as run:
+        run.override_next([])
+        assert run.next_task == []
+
+
 async def test_iter_with_map():
     """Test iteration with map operations."""
     g = GraphBuilder(state_type=IterState, output_type=list[int])
