@@ -138,7 +138,7 @@ no telemetry spans; core already traces the tool call.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen. The app gets a
-  `DisplayRestartedEvent` from displays that report restarts.
+  `DisplayRestartedEvent` from displays that report restarts, such as the Docker sandbox's desktop.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.

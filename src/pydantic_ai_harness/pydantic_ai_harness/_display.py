@@ -72,7 +72,8 @@ class ManagedDisplay:
     display, and an action whose own call launched one refuses to run: the windows it was meant for are gone.
 
     `screen_key` names the screen it shows, so `ComputerUse` runs in one process on one screen take turns at it,
-    whichever workspace they reach it through, such as a sandbox's ref.
+    whichever workspace they reach it through, such as a sandbox's ref. `restart_count` counts the new displays
+    launched after one was running, for [`SupportsRestartCount`][pydantic_ai.workspaces.SupportsRestartCount].
     """
 
     def __init__(
@@ -86,15 +87,24 @@ class ManagedDisplay:
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
         self._starts = 0
+        self._ran = False
+        self._restarts = 0
 
     @property
     def screen_key(self) -> object | None:
         """A hashable name for the screen this display shows, or `None` until it's known."""
         return self._screen_key()
 
+    @property
+    def restart_count(self) -> int:
+        """How many new displays were launched after one had been running."""
+        return self._restarts
+
     def started_fresh(self) -> None:
         """Record that `start` launched a new display, without the windows that were open before."""
         self._starts += 1
+        if self._ran:
+            self._restarts += 1
 
     async def _driver_or_start(self) -> DisplayDriver:
         """The running display's driver, starting the display unless it's running."""
@@ -102,6 +112,7 @@ class ManagedDisplay:
         async with self._lock:
             if self._driver is None:
                 self._driver = await self._start()
+                self._ran = True
             return self._driver
 
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
