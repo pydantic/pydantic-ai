@@ -350,7 +350,9 @@ class ModelSettings(TypedDict, total=False):
       sent. That includes an instruction change appended mid-conversation, by a dynamic
       instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
       An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
-      prefix once, at that request, and keeps it stable from then on.
+      prefix once, at that request, and keeps it stable from then on, as long as the stored history keeps that
+      system prompt. A UI adapter's frontend doesn't send it back (AG-UI, Vercel AI), so there the sentence drops
+      out of the next turn and the prefix changes every turn: use `'always'`.
     - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
       conversations that never need it.
     - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the

@@ -252,7 +252,7 @@ How it reaches the model depends on the provider:
 
     Without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they follow all three.
 
-The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting picks when that sentence is added. `'when_needed'`, the default, works as described above. `'always'` adds it on every request from the first, so the cached prefix never changes, at the cost of the sentence on conversations that never need it. `'never'` leaves it out, for an application that explains the tag in its own system prompt; models then follow a `<system>`-tagged change less reliably. The escaping of `<system>` tags in user and tool text doesn't depend on it.
+The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting picks when that sentence is added. `'when_needed'`, the default, works as described above. `'always'` adds it on every request from the first, so the cached prefix never changes, at the cost of the sentence on conversations that never need it. Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: their frontends don't send mid-conversation system prompts back, so with `'when_needed'` the sentence drops out of the next turn's standing prompt and the cached prefix changes every turn. `'never'` leaves it out, for an application that explains the tag in its own system prompt; models then follow a `<system>`-tagged change less reliably. The escaping of `<system>` tags in user and tool text doesn't depend on it.
 
 ```python {title="framing_announcement.py"}
 from pydantic_ai import Agent

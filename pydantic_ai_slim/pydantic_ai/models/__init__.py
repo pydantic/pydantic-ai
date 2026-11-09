@@ -4013,7 +4013,8 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     (`framing_announcement='when_needed'`) is added from the first request whose history has a mid-conversation
     system prompt, and to every request after it, even once a request-scoped prompt that triggered it is no longer
     sent. An agent that never sends one pays nothing for it, and one that does changes its cache prefix once, at that
-    request, and keeps it stable from then on. It goes ahead of the first request's opening system prompts, which
+    request, and keeps it stable from then on, as long as the history keeps that prompt: a UI adapter's frontend doesn't
+    send it back, so UI apps should use `'always'`. It goes ahead of the first request's opening system prompts, which
     every adapter lifts into the provider's system field ahead of the instructions, so the operator's own text, from
     `system_prompt` or `instructions`, keeps the last word: with the sentence after the operator's prompt, Gemini acted
     more often on requests quoted in a tool result that an operator instruction seemed to cover.
