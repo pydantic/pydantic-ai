@@ -3639,10 +3639,7 @@ async def test_openai_responses_model_web_search_tool_without_external_access(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ) -> None:
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        model,
-        capabilities=[NativeTool(WebSearchTool(external_web_access=False))],
-    )
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(external_web_access=False))])
 
     result = await agent.run('Search the web for the year the Eiffel Tower opened to the public. Reply with the year.')
 
