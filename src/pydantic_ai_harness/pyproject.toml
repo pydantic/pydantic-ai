@@ -62,9 +62,10 @@ logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{
 render = ["render>=1.6.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
-# 1.0.9 is the first release with the streaming `sandbox.commands.start()` (its `grpc` extra), which the backend
-# runs every command through. Capped below 2, the SDK's next major.
-kubernetes = ["k8s-agent-sandbox[async,grpc]>=1.0.9,<2"]
+# 1.0.10, the newest release, is the one the backend is verified against; 1.0.9 was the first with the streaming
+# `sandbox.commands.start()` (its `grpc` extra) the backend runs every command through. Capped below 2, the SDK's
+# next major.
+kubernetes = ["k8s-agent-sandbox[async,grpc]>=1.0.10,<2"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
 # boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.2.20 added
 # `machines.fs` and an `AuthenticationError` that means only refused or missing credentials.

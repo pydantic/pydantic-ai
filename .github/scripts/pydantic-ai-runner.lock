@@ -16,6 +16,7 @@ exclude-newer-span = "P7D"
 pillow = "2026-10-16T22:19:00Z"
 prefect = "2026-10-21T03:46:00Z"
 pydantic-monty-runtime = false
+k8s-agent-sandbox = "2026-11-06T18:47:00Z"
 pydantic-handlebars = false
 pydantic-extra-types = false
 pydantic = false
@@ -1164,7 +1165,7 @@ requires-dist = [
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
     { name = "json-repair", marker = "extra == 'repair-tool-arguments'", specifier = ">=0.58.0" },
     { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
-    { name = "k8s-agent-sandbox", extras = ["async", "grpc"], marker = "extra == 'kubernetes'", specifier = ">=1.0.9,<2" },
+    { name = "k8s-agent-sandbox", extras = ["async", "grpc"], marker = "extra == 'kubernetes'", specifier = ">=1.0.10,<2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },

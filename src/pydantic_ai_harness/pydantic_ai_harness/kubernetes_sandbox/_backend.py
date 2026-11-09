@@ -1,7 +1,8 @@
 """A [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
 SDK assumptions verified 2026-11-02 against `k8s-agent-sandbox` 1.0.9, sandboxd from agent-sandbox
-v1.0.7, and a kind cluster running the v1.0.7 controller:
+v1.0.7, and a kind cluster running the v1.0.7 controller, and re-checked 2026-11-09 against SDK 1.0.10
+(none of the calls below changed) and the v1.0.10 controller:
 
 * `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool`, waits until it is
   Ready, and deletes the claim it named if that fails or is cancelled once (it awaits the delete
