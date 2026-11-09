@@ -257,6 +257,25 @@ def x11_display(
     return display
 
 
+_START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
+
+
+def desktop_display(
+    backend: SupportsCommands,
+    size: tuple[int, int] | None,
+    where: Callable[[], str],
+    *,
+    screen_key: Callable[[], object | None],
+) -> ManagedDisplay | None:
+    """A sandbox's display on a plain Xvfb at `size`, or `None` when it has no desktop.
+
+    For a sandbox with no desktop image of its own, which `start_x_server` provisions on first use.
+    """
+    if size is None:
+        return None
+    return x11_display(backend, size, _START_DESKTOP, where, screen_key=screen_key)
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 

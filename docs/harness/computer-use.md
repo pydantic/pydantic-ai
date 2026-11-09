@@ -45,6 +45,7 @@ in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 | `DockerSandbox(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 | [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop) | An E2B cloud sandbox |
+| [`ModalSandbox(desktop=True)`](modal-sandbox.md#give-the-agent-a-desktop) | A Modal cloud sandbox |
 
 To give your own sandbox a screen, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display).
@@ -140,7 +141,7 @@ no telemetry spans; core already traces the tool call.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](../durable_execution/temporal.md#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen. The app gets a
-  `DisplayRestartedEvent` from displays that report restarts: the Docker, Daytona and E2B sandbox desktops.
+  `DisplayRestartedEvent` from displays that report restarts, as every sandbox desktop in the harness does.
 - [Instrumentation](../logfire.md#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](advisor.md) forwards every screenshot; Anthropic refuses one past 600 images.

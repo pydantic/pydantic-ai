@@ -152,6 +152,32 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even when setup or the run fails. If the task is cancelled while Modal is still creating the sandbox, `backend.ref` is still `None` there, and the sandbox Modal goes on to create keeps running; its ID is logged at `WARNING` (see [Telemetry](#telemetry)), so terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(desktop=True), Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it. The default image includes Xvfb, `xdotool` and `scrot`; install the apps you want the agent to use, such as `xterm` or a browser, in your own `image`.
+
+A custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. On Debian or Ubuntu, the first use of the display installs any of those four that's missing with `apt-get`, as root or with passwordless `sudo`, which can take a minute; add them to the image to skip it.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
+
 ## Clean up
 
 The sandbox keeps running, and billing, after the run ends. Pydantic AI never terminates it. Terminate it with the ref you stored:
@@ -209,6 +235,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), ho
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
