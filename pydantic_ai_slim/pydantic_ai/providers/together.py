@@ -8,6 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._family import vendor_family_model_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
@@ -22,6 +23,11 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+
+def _gpt_oss_only_profile(model_name: str) -> ModelProfile | None:
+    """Together's only OpenAI chat models are gpt-oss; other `openai/*` ids keep Together's defaults."""
+    return harmony_model_profile(model_name) if model_name.startswith('gpt-oss') else None
 
 
 class TogetherProvider(_OpenAISDKProvider):
@@ -41,7 +47,7 @@ class TogetherProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        profile = vendor_family_model_profile(model_name)
+        profile = vendor_family_model_profile(model_name, overrides={'openai': _gpt_oss_only_profile})
         if model_name.lower().startswith('deepseek-ai/deepseek-v4-'):
             # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
             # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the

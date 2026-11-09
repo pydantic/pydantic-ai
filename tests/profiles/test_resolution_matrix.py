@@ -942,16 +942,10 @@ def test_gateway_gpt_oss_inline_defs():
         }
     )
 
-    # Other OpenAI ids keep the OpenAI family profile on Together and each other gateway's defaults.
+    # Other OpenAI ids keep each gateway's defaults.
     assert _normalize(TogetherProvider.model_profile('openai/whisper-large-v3')) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_json_schema_output': True,
-            'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
-            'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
-            ),
             'may_tokenize_special_tokens_in_content': True,
         }
     )
