@@ -40,7 +40,7 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
-from .._framing import neutralize_voice_tag
+from .._framing import TOOL_RESULT_TAG, neutralize_voice_tag, wrap
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -55,7 +55,13 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, computer_tool_name
+from ..computer_use import (
+    _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
+    COMPUTER_KIND,
+    ComputerCallPart,
+    ComputerResult,
+    ComputerReturnPart,
+)
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
@@ -118,6 +124,7 @@ from ..native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageAspectRatio,
     ImageGenerationTool,
@@ -3599,6 +3606,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+        # Providers say which models take the native computer tool, which only the Responses API sends.
+        if profile.get('openai_supports_computer_tool', False):
+            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported | {ComputerTool}))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -3624,7 +3635,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset(
-            {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
+            {
+                WebSearchTool,
+                CodeExecutionTool,
+                FileSearchTool,
+                MCPServerTool,
+                ImageGenerationTool,
+                ToolSearchTool,
+                ComputerTool,
+            }
         )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
@@ -3706,7 +3725,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         # Before trimming, as in `_build_responses_request_params`: an output acknowledges its call's checks.
-        calls = _tool_calls_by_id(messages)
+        calls = _computer_calls_by_id(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'),
             messages,
@@ -4115,7 +4134,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             elif isinstance(item, ResponseCompactionItem):
                 items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):
-                if computer_name := computer_tool_name(model_request_parameters):
+                if computer_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND):
                     call_id = _response_tool_call_id(item.call_id, call_id_scope)
                     items.append(_map_computer_call(item, computer_name, call_id, self.system))
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
@@ -4390,7 +4409,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
         # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
-        calls = _tool_calls_by_id(messages)
+        calls = _computer_calls_by_id(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -4942,7 +4961,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
-        # The `computer` tool is sent as OpenAI's native computer tool, whose calls `_map_computer_call` maps back.
+        # A `ComputerTool` is sent in place of the `computer` tool, whose calls `_map_computer_call` maps back.
         computer_name = self._native_computer_name(model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
@@ -5009,11 +5028,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ]
         return tools, tool_choice
 
-    def _native_computer_name(self, model_request_parameters: ModelRequestParameters) -> str | None:
-        """The `computer` tool's name when this model takes it as OpenAI's native computer tool."""
-        if not self.profile.get('openai_supports_computer_tool', False):
+    @staticmethod
+    def _native_computer_name(model_request_parameters: ModelRequestParameters) -> str | None:
+        """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
+        if not any(isinstance(tool, ComputerTool) for tool in model_request_parameters.native_tools):
             return None
-        return computer_tool_name(model_request_parameters)
+        return model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
 
     def _get_native_tools(  # noqa: C901
         self, model_request_parameters: ModelRequestParameters
@@ -5108,6 +5128,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         "provider-managed), `strategy='keywords'` (local keyword matching), or "
                         'a callable strategy.'
                     )
+            elif isinstance(tool, ComputerTool):
+                pass  # sent in place of the `computer` tool, by `_get_tools`
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -5340,7 +5362,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
-        calls: dict[str, ToolCallPart] | None = None,
+        calls: dict[str, ComputerCallPart] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -5436,16 +5458,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         call_id = _provider_response_tool_call_id(call_id, response_id)
+                        computer_call = (calls or {}).get(part.tool_call_id)
                         if call_id in computer_call_ids or (
                             # A call not replayed here is in the stored response (`previous_response_id` or a
                             # conversation), where this model made it as a `computer_call`.
-                            computer_is_native
-                            and part.tool_kind == COMPUTER_KIND.id
-                            and call_id not in replayed_call_ids
+                            computer_is_native and computer_call is not None and call_id not in replayed_call_ids
                         ):
-                            openai_messages.extend(
-                                _map_computer_call_output(part, call_id, (calls or {}).get(part.tool_call_id))
-                            )
+                            openai_messages.extend(_map_computer_call_output(part, call_id, computer_call))
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -6825,7 +6844,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                     if isinstance(chunk.item, responses.ResponseComputerToolCall) and (
-                        computer_name := computer_tool_name(self.model_request_parameters)
+                        computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
                     ):
                         call_id = _response_tool_call_id(
                             chunk.item.call_id,
@@ -8371,12 +8390,13 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _map_computer_call(
     item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
-) -> ToolCallPart:
+) -> ComputerCallPart:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
     actions = item.actions if item.actions is not None else ([item.action] if item.action else [])
     provider_details: dict[str, Any] = {'computer_call': item.model_dump(mode='json', exclude_none=True)}
     if item.pending_safety_checks:
-        provider_details[SAFETY_CHECKS] = [
+        # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved.
+        provider_details[_SAFETY_CHECKS] = [
             check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
         ]
     # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
@@ -8393,7 +8413,7 @@ def _map_computer_call(
             or [{'type': 'screenshot'}]
         }
     )
-    return ToolCallPart(
+    return ComputerCallPart(
         tool_name,
         args,
         tool_call_id=tool_call_id,
@@ -8403,39 +8423,37 @@ def _map_computer_call(
     )
 
 
-def _tool_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
-    """Each tool call in the history, by tool call ID, so a `computer` output can read its call."""
+def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ComputerCallPart]:
+    """Each `computer` call in the history, by tool call ID, so its output can read it."""
     return {
         part.tool_call_id: part
         for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
-        if isinstance(part, ToolCallPart)
+        if isinstance(part, ComputerCallPart)
     }
 
 
-def _needs_summary(metadata: Any) -> bool:
+def _needs_summary(result: ComputerResult | None) -> bool:
     """Whether a `computer` result needs its text beside the screenshot: the image alone would say the call ran.
 
-    A result without metadata, such as one a UI rebuilt, may describe a failure. A call that failed or was changed
+    A result without its outcome, such as one a UI rebuilt, may describe a failure. A call that failed or was changed
     before it ran says so in its text.
     """
-    if not isinstance(metadata, dict):
-        return True
-    result = cast(ComputerResult, metadata)
-    return 'error' in result or bool(result.get('changed'))
+    return result is None or 'error' in result or bool(result.get('changed'))
 
 
 def _map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
+    part: ToolReturnPart, call_id: str, call: ComputerCallPart | None
 ) -> list[responses.ResponseInputItemParam]:
-    """A `computer` result as a `computer_call_output`, followed by a user message when it needs more than an image.
+    """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
     The API needs a screenshot in every output, so a result without one sends a blank image instead. The call's
     safety checks are acknowledged only when it ran, which means it was approved.
     """
-    # The last image is the screen after the call.
-    image = next((file for file in reversed(part.files) if isinstance(file, BinaryImage)), None)
+    # A failed or denied call is a base part, without a screenshot.
+    computer_return = part if isinstance(part, ComputerReturnPart) else None
+    image = computer_return.screenshot if computer_return else None
     output: responses.response_input_param.ComputerCallOutput = {
         'type': 'computer_call_output',
         'call_id': call_id,
@@ -8448,12 +8466,14 @@ def _map_computer_call_output(
         },
     }
     details = (call.provider_details if call else None) or {}
-    if part.outcome == 'success' and (safety_checks := details.get(SAFETY_CHECKS)):
+    if computer_return and (safety_checks := details.get(_SAFETY_CHECKS)):
         output['acknowledged_safety_checks'] = safety_checks
     items: list[responses.ResponseInputItemParam] = [output]
-    if image is None or part.outcome != 'success' or _needs_summary(part.metadata):
-        # The output can only carry an image: say what didn't run, or why the image is blank.
+    if image is None or computer_return is None or _needs_summary(computer_return.result):
+        # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's
+        # result, so it is framed as one on the user channel, as for any tool result that can't go natively.
         texts = [item for item in part.content_items() if isinstance(item, str)]
         note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)
-        items.append(responses.EasyInputMessageParam(role='user', content=note))
+        framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+        items.append(responses.EasyInputMessageParam(role='user', content=framed))
     return items

@@ -3,13 +3,13 @@
 from __future__ import annotations as _annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.computer_use import COMPUTER_KIND, DISPLAY_SIZE, ComputerToolAction
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart, ComputerToolAction
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     BinaryImage,
@@ -24,12 +24,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import Click, PressKeys
 
 from ...conftest import try_import
-from ...workspace_fakes import InMemoryProvider, computer_toolset
+from ...workspace_fakes import FAKE_DISPLAY_SIZE, InMemoryProvider, computer_capability
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -67,7 +67,7 @@ NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
 
 def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
-    return Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(**settings)])
+    return Agent(model, capabilities=[computer_capability(), provider.capability(**settings)])
 
 
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
@@ -151,7 +151,9 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)]).run('Go.')
+    await Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)], capabilities=[NativeTool(COMPUTER_TOOL)]).run(
+        'Go.'
+    )
 
     _, second = get_mock_chat_completion_kwargs(client)
     # The call may have acted before it failed, so no member may claim it didn't: each carries the text.
@@ -207,7 +209,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     )
     client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
-    agent = Agent(model, toolsets=[computer_toolset(display_size=(1280, 800))], capabilities=[provider.capability()])
+    agent = Agent(model, capabilities=[computer_capability(display_size=(1280, 800)), provider.capability()])
     await agent.run('Go.')
 
     assert provider.actions == [Click(x=5, y=6)]
@@ -273,10 +275,12 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     computer = ToolDefinition(
-        name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer', defer_loading=True
+        name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id, defer_loading=True
     )
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(function_tools=[computer, note], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=[computer, note], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
     await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
 
     (request,) = get_mock_chat_completion_kwargs(client)
@@ -287,19 +291,20 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
 
 
 @pytest.mark.parametrize(
-    'model_name, toolset',
+    'model_name, native',
     [
-        pytest.param('claude-sonnet-4-6', computer_toolset(), id='an-earlier-tool-without-the-display-size'),
+        pytest.param('claude-3-7-sonnet-latest', True, id='a-model-without-a-computer-use-tool'),
         # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
-        pytest.param('claude-sonnet-5-5', computer_toolset(native=False), id='a-tool-that-opts-out'),
+        pytest.param('claude-sonnet-5-5', False, id='a-tool-that-opts-out'),
     ],
 )
-async def test_the_computer_tool_stays_a_function_without_the_display_size_or_when_it_opts_out(
-    allow_model_requests: None, model_name: str, toolset: FunctionToolset[Any]
+async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when_it_opts_out(
+    allow_model_requests: None, model_name: str, native: bool
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
-    await Agent(model, toolsets=[toolset], capabilities=[InMemoryProvider().capability()]).run('Go.')
+    capabilities = [computer_capability(native=native), InMemoryProvider().capability()]
+    await Agent(model, capabilities=capabilities).run('Go.')
 
     (request,) = get_mock_chat_completion_kwargs(client)
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
@@ -468,7 +473,9 @@ def _stream(*blocks: Any) -> list[Any]:
     return events
 
 
-COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
+COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
+
+COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
 
 
 async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
@@ -480,7 +487,7 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
         BetaTextBlock(text='Now the other field.', type='text'),
         _tool_use('toolu_3', 'key', {'text': 'Return'}),
     ]
-    params = ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True)
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
     prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
 
     whole_client = MockAnthropic.create_mock(_turn(*blocks))
@@ -514,7 +521,9 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
         ]
     )
     # The call stays where the first member was, so it runs before any call that came after it.
-    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [ToolCallPart, TextPart]
+    assert (
+        [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [ComputerCallPart, TextPart]
+    )
     starts = [
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     ]
@@ -530,8 +539,7 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
         call('toolu_1', {'action': 'left_click', 'coordinate': [5, 6]}),
         call('toolu_2', {'action': 'screenshot'}),
     ]
-    computer = replace(COMPUTER, metadata={DISPLAY_SIZE: (1280, 800)})
-    params = ModelRequestParameters(function_tools=[computer], allow_text_output=True)
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
     prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
 
     whole_client = MockAnthropic.create_mock(_turn(*blocks))
@@ -567,7 +575,7 @@ async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_
     model = AnthropicModel(
         'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
     )
-    params = ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True)
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
     async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
         async for _ in stream:
             pass
@@ -581,7 +589,9 @@ async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_request
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(function_tools=[COMPUTER, note], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER, note], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
 
     await model.request([ModelRequest.user_text_prompt('Go.')], {'tool_choice': ['computer']}, params)
 
@@ -666,9 +676,19 @@ async def test_a_result_answers_each_member_call(
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Go.'),
         ModelResponse(parts=[call], provider_name='anthropic'),
-        ModelRequest(parts=[ToolReturnPart('computer', content, tool_call_id='toolu_1', metadata=metadata)]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer', content, tool_call_id='toolu_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
+                )
+            ]
+        ),
     ]
-    await model.request(history, None, ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True))
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
 
     (body,) = get_mock_chat_completion_kwargs(client)
     sent = body['messages'][-1]['content']
@@ -681,7 +701,9 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
     other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(function_tools=[COMPUTER, note, other], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER, note, other], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
     block: dict[str, Any] = {'id': 'toolu_1', 'name': 'screenshot', 'input': {}}
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Look.'),

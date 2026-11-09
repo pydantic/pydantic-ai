@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any, cast
 
@@ -27,13 +27,19 @@ from pydantic_ai import (
     UserError,
 )
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools, ProcessHistory, SelectModel
-from pydantic_ai.computer_use import NATIVE_TOOL, SAFETY_CHECKS
+from pydantic_ai.computer_use import (
+    _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
+    COMPUTER_KIND,
+    ComputerCallPart,
+    SafetyCheck,
+)
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -51,7 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.compaction import ClampOversizedMessages
-from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayRestartedEvent
 from pydantic_ai_harness.computer_use._capability import (
     _changed,  # pyright: ignore[reportPrivateUsage]
     _grid,  # pyright: ignore[reportPrivateUsage]
@@ -92,7 +98,15 @@ def _scripted(
             return ModelResponse(parts=[ToolCallPart(tool, {'actions': calls[made]})])
         return ModelResponse(parts=[TextPart('done')])
 
-    return FunctionModel(respond, profile=profile)
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        (part,) = respond(messages, info).parts
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+        else:
+            assert isinstance(part, TextPart)
+            yield part.content
+
+    return FunctionModel(respond, stream_function=stream, profile=profile)
 
 
 def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
@@ -306,7 +320,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
                 return ModelResponse(parts=[TextPart('done')])
             call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
-            call.provider_details = {SAFETY_CHECKS: [check]}
+            # As the OpenAI adapter records a `computer_call`'s pending safety checks.
+            call.provider_details = {_SAFETY_CHECKS: [check]}
             return ModelResponse(parts=[call])
 
         agent = Agent(
@@ -317,7 +332,11 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         paused = await agent.run('Go.')
         assert isinstance(paused.output, DeferredToolRequests)
         (approval,) = paused.output.approvals
-        assert approval.provider_details == {SAFETY_CHECKS: [check]}
+        # What an app shows the person deciding.
+        assert isinstance(approval, ComputerCallPart)
+        assert approval.safety_checks == [
+            SafetyCheck(code='malicious_instructions', message='The page asks for a password.')
+        ]
         assert provider.actions == []
 
         resumed = await agent.run(
@@ -432,9 +451,11 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         self, native: bool
     ) -> None:
         seen: list[ToolDefinition] = []
+        natives: list[AbstractNativeTool] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.extend(info.function_tools)
+            natives.extend(info.model_request_parameters.native_tools)
             return ModelResponse(parts=[TextPart('done')])
 
         earlier_screen = [
@@ -444,10 +465,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 parts=[
                     ToolReturnPart(
                         'computer',
-                        'Ran 1 action.',
+                        ['Ran 1 action.', SCREENSHOT],
                         'c1',
-                        metadata={'screenshot_size': (1920, 1080)},
-                        tool_kind='computer',
+                        metadata={'performed': 1, 'screenshot_size': (1920, 1080)},
+                        tool_kind=COMPUTER_KIND.id,
                     )
                 ]
             ),
@@ -457,11 +478,44 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
-        assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
-        # For providers whose native tool declares it: the display as it is now, not the last screenshot's size.
-        assert (tool.metadata or {}).get('display_size') == (1280, 800)
-        # With `native=False`, model adapters keep it a function tool; otherwise they may send their native one.
-        assert (tool.metadata or {}).get(NATIVE_TOOL, True) is native
+        assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
+        # A model with a native computer tool sends it in this tool's place, declaring the display as it is now, not
+        # the last screenshot's size. With `native=False`, every model gets the function tool.
+        assert natives == ([ComputerTool(display_size=(1280, 800), optional=True)] if native else [])
+
+    async def test_each_call_emits_what_it_did_and_whether_the_display_restarted(
+        self, durability: list[AbstractCapability[Any]]
+    ) -> None:
+        class RestartingDisplay(DisplayOnlyBackend):
+            """Restarts while it acts, as a display whose process stopped is restarted."""
+
+            restart_count = 0
+
+            async def act(self, action: ComputerAction) -> None:
+                self.restart_count += 1
+                await super().act(action)
+
+        display = RestartingDisplay(InMemoryProvider().backend(None))
+
+        class SuppliesDisplay(AbstractCapability[Any]):
+            def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> RestartingDisplay:
+                return display
+
+        model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
+        agent = Agent(
+            model, name='computer', capabilities=[SuppliesDisplay(), ComputerUse(settle_seconds=0), *durability]
+        )
+        async with agent.run_stream_events('Go.') as stream:
+            events = [e async for e in stream if isinstance(e, ActionsPerformedEvent | DisplayRestartedEvent)]
+            messages = stream.all_messages()
+        # Once each, even when the call is a durable unit.
+        assert [type(e) for e in events] == [ActionsPerformedEvent, ActionsPerformedEvent, DisplayRestartedEvent]
+        first, second = events[0], events[1]
+        assert isinstance(first, ActionsPerformedEvent) and isinstance(second, ActionsPerformedEvent)
+        assert (first.performed, first.error, first.screenshot_size) == (1, None, (1280, 800))
+        # The history keeps the restart too, for code reading it later.
+        restarted = [part.metadata.get('display_restarted') for part in _returns(messages)]
+        assert restarted == [None, True]
 
     @pytest.mark.parametrize(
         'workspace',

@@ -353,12 +353,18 @@ agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(req
 
 Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
 `settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `keep_screenshots=None` (send at
-least the newest N images, dropping older ones 25 at a time; history keeps all), `native=True` (`False` sends this
-tool to every model instead of Claude's or OpenAI's own, for example so GPT can zoom).
+least the newest N images, dropping older ones 25 at a time; history keeps all), `native=True` (adds a
+`ComputerTool` so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model,
+for example so GPT can zoom).
+
+Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
+(`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
+tool name. Each finished call emits `ActionsPerformedEvent` (`performed`, `error`, `screenshot_size`), and
+`DisplayRestartedEvent` when the display restarted during it, in the `computer_use` namespace.
 
 Gotchas:
 
-- A call whose `provider_details` carries safety checks (OpenAI) needs approval even without
+- A call with `safety_checks` (OpenAI) needs approval even without
   `requires_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
   flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
