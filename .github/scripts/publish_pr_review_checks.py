@@ -42,6 +42,8 @@ class CheckResult(BaseModel):
     files: list[str]
     outcome: Literal['COMPLETE', 'INCOMPLETE']
     findings: list[ReviewFinding]
+    dropped: dict[Severity, int]
+    """How many findings of each severity the review job left out for sitting off the changed lines."""
     coverage: str
     steps: int
     tokens: int
@@ -224,15 +226,16 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
         github.status(head, 'failure', 'Could not select the checks for this head; rerun the workflow.', url)
         return
     results = load_results(Path(env['RESULTS_DIR']), checks)
-    # Findings are public, and one on a line the pull request did not change can describe a weakness it did not add.
+    # The review job already left out findings off git's changed lines. GitHub's patches are what an inline
+    # comment lands on, so a finding on a file whose patch GitHub omitted is dropped here too.
     changed = {file.filename: _changed_lines(file.patch) for file in github.pull_files()}
     for check, result in results.items():
         outside = [f for f in result.findings if (f.side, f.line) not in changed.get(f.path, set())]
-        if outside:
-            print(f'{check}: dropped {len(outside)} findings outside the changed lines.')
+        if dropped := len(outside) + sum(result.dropped.values()):
+            print(f'{check}: dropped {dropped} findings outside the changed lines.')
         update: dict[str, object] = {'findings': [f for f in result.findings if f not in outside]}
         # A blocking finding placed on an unchanged line, or on a file whose patch GitHub omitted, must not pass.
-        if any(f.severity in BLOCKING for f in outside):
+        if any(f.severity in BLOCKING for f in outside) or not BLOCKING.isdisjoint(result.dropped):
             update['outcome'] = 'INCOMPLETE'
         results[check] = result.model_copy(update=update)
     state, description = verdict(checks, results)

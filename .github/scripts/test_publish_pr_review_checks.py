@@ -205,6 +205,7 @@ def _result(check: str, *severities: str, outcome: str = 'COMPLETE') -> CheckRes
             'files': ['a.py'],
             'outcome': outcome,
             'findings': findings,
+            'dropped': {},
             'coverage': 'Reviewed a.py.',
             'steps': 4,
             'tokens': 1000,
@@ -348,3 +349,18 @@ def test_a_dropped_finding_fails_the_status_only_when_blocking(
     publish(github, _publish_env(tmp_path, _result('general', severity)))
     assert github.reviews == []
     assert [status[1:3] for status in github.statuses] == [expected]
+
+
+@pytest.mark.parametrize(
+    ('severity', 'expected'),
+    [('high', ('failure', 'Incomplete: general')), ('medium', ('success', 'Reviewed by general.'))],
+)
+def test_a_finding_the_review_job_dropped_fails_the_status_only_when_blocking(
+    tmp_path: Path, severity: str, expected: tuple[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The public artifact carries only the severity of a finding off the changed lines; a blocking one must not pass."""
+    github = FakeGitHub()
+    publish(github, _publish_env(tmp_path, _result('general').model_copy(update={'dropped': {severity: 1}})))
+    assert github.reviews == []
+    assert [status[1:3] for status in github.statuses] == [expected]
+    assert 'general: dropped 1 findings outside the changed lines.' in capsys.readouterr().out

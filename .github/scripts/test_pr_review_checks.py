@@ -128,7 +128,7 @@ def _git(repository: Path, *args: str) -> str:
 
 
 def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None:
-    """Reads changes from git, including removed lines of a deleted file, lines that look like headers, separators inside a line, and quoted or spaced paths."""
+    """Reads changes and their line positions from git, including removed lines of a deleted file, lines that look like headers, separators inside a line, and quoted or spaced paths."""
     repository = tmp_path / 'repo'
     repository.mkdir()
     _git(repository, 'init', '-q', '-b', 'main')
@@ -151,14 +151,18 @@ def test_changed_files_reads_renames_deletions_and_lines(tmp_path: Path) -> None
 
     files = {file.path: file for file in changed_files(repository, base, 'HEAD')}
 
+    added = frozenset({('RIGHT', 1)})
     assert files['new.py'] == ChangedFile('new.py', 'old.py', ())
-    assert files['gone.py'] == ChangedFile('gone.py', '', ('await safe_download(url)',))
+    assert files['gone.py'] == ChangedFile('gone.py', '', ('await safe_download(url)',), frozenset({('LEFT', 1)}))
     assert files['kept.py'] == ChangedFile(
-        'kept.py', '', ('++ b/fake', 'sep = "\u2028diff --git a/z b/z\r+++ b/docs/z.md"')
+        'kept.py',
+        '',
+        ('++ b/fake', 'sep = "\u2028diff --git a/z b/z\r+++ b/docs/z.md"'),
+        frozenset({('RIGHT', 2), ('RIGHT', 3)}),
     )
-    assert files['quo"te.py'] == ChangedFile('quo"te.py', '', ('quoted = 1',))
-    assert files['with space.py'] == ChangedFile('with space.py', '', ('spaced = 1',))
-    assert files['quo"te space.py'] == ChangedFile('quo"te space.py', '', ('both = 1',))
+    assert files['quo"te.py'] == ChangedFile('quo"te.py', '', ('quoted = 1',), added)
+    assert files['with space.py'] == ChangedFile('with space.py', '', ('spaced = 1',), added)
+    assert files['quo"te space.py'] == ChangedFile('quo"te space.py', '', ('both = 1',), added)
 
 
 @pytest.mark.parametrize(

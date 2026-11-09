@@ -47,6 +47,8 @@ class ChangedFile:
     path: str
     previous_path: str
     changed_lines: tuple[str, ...]
+    positions: frozenset[tuple[str, int]] = frozenset()
+    """Where those lines sit, as `('RIGHT', new line)` for an added line and `('LEFT', old line)` for a removed one."""
 
     def matches(self, pattern: re.Pattern[str]) -> bool:
         return any(pattern.fullmatch(path) for path in (self.path, self.previous_path) if path)
@@ -201,6 +203,9 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
     return selected
 
 
+HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+
+
 def _patch_path(field: str, prefix: str) -> str:
     """A patch header's path without its `a/` or `b/` prefix, or '' for `/dev/null`."""
     # Git ends the field with a tab when the path holds a space. `core.quotePath=false` still C-quotes a path
@@ -238,8 +243,10 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
         errors='replace'
     )
     lines: dict[str, list[str]] = {}
+    positions: dict[str, set[tuple[str, int]]] = {}
     in_header = False
     old_path = new_path = ''
+    old = new = 0
     for line in patch.split('\n'):
         if line.startswith('diff --git '):
             in_header, old_path, new_path = True, '', ''
@@ -247,11 +254,26 @@ def changed_files(repository: Path, base: str, head: str) -> list[ChangedFile]:
             old_path = _patch_path(line[4:], 'a/')
         elif in_header and line.startswith('+++ '):
             new_path = _patch_path(line[4:], 'b/') or old_path
-        elif line.startswith('@@'):
-            in_header = False
+        elif hunk := HUNK.match(line):
+            in_header, old, new = False, int(hunk[1]), int(hunk[2])
         elif not in_header and new_path and line[:1] in ('+', '-'):
             lines.setdefault(new_path, []).append(line[1:])
-    return [ChangedFile(file.path, file.previous_path, tuple(lines.get(file.path, ()))) for file in files.values()]
+            # `-U0` leaves no context lines, so each hunk holds only added and removed lines.
+            if line[0] == '+':
+                positions.setdefault(new_path, set()).add(('RIGHT', new))
+                new += 1
+            else:
+                positions.setdefault(new_path, set()).add(('LEFT', old))
+                old += 1
+    return [
+        ChangedFile(
+            file.path,
+            file.previous_path,
+            tuple(lines.get(file.path, ())),
+            frozenset(positions.get(file.path, ())),
+        )
+        for file in files.values()
+    ]
 
 
 def check_named(name: str) -> ReviewCheck:

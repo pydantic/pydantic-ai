@@ -21,9 +21,9 @@ from urllib.parse import quote
 
 from douwebot_opencode_result import final_text
 from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
-from publish_pr_review_checks import CheckResult, ReviewFinding
+from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from pr_review_checks import INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
+from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 
 PROMPTS = Path('.github/pr-review-checks/prompts')
 REVIEW_CONTEXT = Path('.github/.review-context')
@@ -31,7 +31,6 @@ MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
-_HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 
 _EVENT = TypeAdapter(dict[str, object])
@@ -120,7 +119,7 @@ def _annotated_diff(repository: Path, base: str, head: str, path: str) -> str:
     in_hunk = False
     # Git ends a line only at LF. Text mode and `splitlines` would also split at CR and Unicode separators inside a line.
     for line in patch.removesuffix('\n').split('\n'):
-        if hunk := _HUNK.match(line):
+        if hunk := HUNK.match(line):
             old, new, in_hunk = int(hunk[1]), int(hunk[2]), True
             lines.append(line)
         elif in_hunk and line.startswith('+'):
@@ -210,10 +209,18 @@ def run_opencode(
     return usage
 
 
-def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usage) -> tuple[CheckResult, str]:
+def check_result(
+    check: ReviewCheck,
+    files: list[str],
+    stream: Path,
+    usage: Usage,
+    *,
+    changed: Mapping[str, frozenset[tuple[str, int]]],
+) -> tuple[CheckResult, str]:
     """Validate the model's result; a spent budget is an incomplete review, never a crash."""
     outcome: Literal['COMPLETE', 'INCOMPLETE'] = 'INCOMPLETE'
     findings: list[ReviewFinding] = []
+    dropped: Counter[Severity] = Counter()
     private_report = ''
     at_step_budget = usage.steps >= check.max_steps
     if usage.stopped:
@@ -229,7 +236,14 @@ def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usag
         else:
             if outside := sorted({finding.path for finding in result.findings} - set(files)):
                 raise ValueError(f'{len(outside)} findings name files outside this check')
-            findings, coverage, private_report = result.findings, result.coverage, result.private_report
+            # The result artifact is public, and a finding on a line the pull request did not change can describe a
+            # weakness it did not add. Only its severity leaves this job, so the publisher can fail a blocking one.
+            for finding in result.findings:
+                if (finding.side, finding.line) in changed.get(finding.path, frozenset()):
+                    findings.append(finding)
+                else:
+                    dropped[finding.severity] += 1
+            coverage, private_report = result.coverage, result.private_report
             # OpenCode withdraws the tools at the step budget, so a review that reached it may have stopped short.
             if at_step_budget:
                 coverage = f'Review reached its step budget of {check.max_steps}. {coverage}'
@@ -240,6 +254,7 @@ def check_result(check: ReviewCheck, files: list[str], stream: Path, usage: Usag
         files=files,
         outcome=outcome,
         findings=findings,
+        dropped=dict(dropped),
         coverage=coverage,
         steps=usage.steps,
         tokens=usage.tokens,
@@ -302,7 +317,8 @@ def main() -> None:
     workspace = Path(env['GITHUB_WORKSPACE']).resolve(strict=True)
     runner_temp = Path(env['RUNNER_TEMP'])
     head = workspace / 'pr-head'
-    files = select(changed_files(head, env['BASE_SHA'], env['HEAD_SHA']))[check.name]
+    changes = changed_files(head, env['BASE_SHA'], env['HEAD_SHA'])
+    files = select(changes)[check.name]
     strip_instructions(head)
     check_symlinks(workspace, skip_pr_head=True)
     check_symlinks(head)
@@ -347,7 +363,8 @@ def main() -> None:
             }
         command = ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', 'reviewer', '--format', 'json']
         usage = run_opencode(command, prompt, cwd=workspace, env=opencode_env, output=stream, minutes=check.max_minutes)
-    result, private_report = check_result(check, files, stream, usage)
+    changed = {change.path: change.positions for change in changes}
+    result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
         export_span(endpoint, token, result, attributes, started)
     else:
@@ -360,7 +377,8 @@ def main() -> None:
     output.mkdir(exist_ok=True)
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(
-        f'{check.name}: {result.outcome}, {len(result.findings)} findings, {usage.steps} steps, '
+        f'{check.name}: {result.outcome}, {len(result.findings)} findings, '
+        f'{sum(result.dropped.values())} dropped outside the changed lines, {usage.steps} steps, '
         f'{usage.tokens:,} tokens, {usage.seconds} s'
     )
 

@@ -30,6 +30,7 @@ from run_pr_review_check import (
 
 CHECK = dataclasses.replace(GENERAL, max_steps=3, max_minutes=5)
 WORKSPACE = Path(__file__).parents[2]
+CHANGED = {'a.py': frozenset({('RIGHT', 3)})}
 
 
 def _stream(tmp_path: Path, text: str) -> Path:
@@ -211,19 +212,21 @@ def test_time_budget_stops_the_review(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(run_pr_review_check.threading, 'Timer', ImmediateTimer)
     usage = run_opencode(['sh', '-c', 'sleep 30'], '', cwd=tmp_path, env={}, output=tmp_path / 'out', minutes=5)
     assert usage.stopped
-    result, _ = check_result(CHECK, ['a.py'], tmp_path / 'out', usage)
+    result, _ = check_result(CHECK, ['a.py'], tmp_path / 'out', usage, changed=CHANGED)
     assert (result.outcome, result.coverage) == ('INCOMPLETE', 'Review stopped at its time budget of 5 minutes.')
 
 
 def test_complete_review_keeps_the_models_outcome(tmp_path: Path) -> None:
     """A review that finished under its step budget reports what the model found."""
-    result, private_report = check_result(CHECK, ['a.py'], _stream(tmp_path, _result('a.py')), Usage(steps=2))
+    result, private_report = check_result(
+        CHECK, ['a.py'], _stream(tmp_path, _result('a.py')), Usage(steps=2), changed=CHANGED
+    )
     assert (result.outcome, [f.path for f in result.findings], private_report) == ('COMPLETE', ['a.py'], '')
 
 
 def test_review_at_its_step_budget_is_incomplete(tmp_path: Path) -> None:
     """OpenCode withdraws the tools at the step budget, so the review cannot claim it finished."""
-    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, _result('a.py')), Usage(steps=3))
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, _result('a.py')), Usage(steps=3), changed=CHANGED)
     assert result.outcome == 'INCOMPLETE'
     assert [finding.path for finding in result.findings] == ['a.py']
     assert result.coverage.startswith('Review reached its step budget of 3.')
@@ -231,7 +234,7 @@ def test_review_at_its_step_budget_is_incomplete(tmp_path: Path) -> None:
 
 def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> None:
     """A model cut off by its budget gets an incomplete review, not a crashed job."""
-    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, 'Still reading.'), Usage(steps=3))
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, 'Still reading.'), Usage(steps=3), changed=CHANGED)
     assert (result.outcome, result.findings) == ('INCOMPLETE', [])
 
 
@@ -239,7 +242,7 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
 def test_invalid_answer_under_the_budget_fails(tmp_path: Path, text: str) -> None:
     """A malformed answer, or a finding on a file this check does not own, is a reviewer error."""
     with pytest.raises(ValueError) as error:
-        check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=1))
+        check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=1), changed=CHANGED)
     assert 'elsewhere.py' not in str(error.value)
 
 
@@ -247,7 +250,7 @@ def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
     """A validation error repeats its input, and job logs on this repository are public."""
     stream = _stream(tmp_path, '{"private_report": "pre-existing issue"')
     with pytest.raises(ValueError) as error:
-        check_result(CHECK, ['a.py'], stream, Usage(steps=1))
+        check_result(CHECK, ['a.py'], stream, Usage(steps=1), changed=CHANGED)
     assert 'pre-existing issue' not in ''.join(traceback.format_exception(error.value))
 
 
@@ -270,6 +273,18 @@ def test_private_report_never_reaches_the_publishable_result(tmp_path: Path) -> 
     """Artifacts on this repository are public, so a pre-existing vulnerability goes only to the runner."""
     answer = json.loads(_result())
     answer['private_report'] = 'pre-existing issue'
-    result, private_report = check_result(CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1))
+    result, private_report = check_result(
+        CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1), changed=CHANGED
+    )
     assert private_report == 'pre-existing issue'
+    assert 'pre-existing issue' not in result.model_dump_json()
+
+
+@pytest.mark.parametrize('severity', ['high', 'medium'])
+def test_finding_off_the_changed_lines_never_reaches_the_result(tmp_path: Path, severity: str) -> None:
+    """Artifacts on this repository are public, so only the severity of a finding on an unchanged line leaves the job."""
+    answer = json.loads(_result('a.py', 'a.py'))
+    answer['findings'][1] |= {'line': 9, 'severity': severity, 'body': 'pre-existing issue'}
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1), changed=CHANGED)
+    assert ([(f.line, f.severity) for f in result.findings], result.dropped) == ([(3, 'high')], {severity: 1})
     assert 'pre-existing issue' not in result.model_dump_json()
