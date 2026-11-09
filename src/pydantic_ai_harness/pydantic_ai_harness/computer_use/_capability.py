@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_che
 
 import anyio
 import anyio.lowlevel
-from pydantic import Field, TypeAdapter
+from pydantic import Field, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
 )
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import AbstractModel, Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import ComputerTool
@@ -128,6 +128,16 @@ response without the record, such as one from before it existed, is read in the 
 
 _ACTIONS = TypeAdapter(list[ComputerToolAction])
 
+
+class _SpaceRecord(TypedDict):
+    """What a response records about the coordinates its `computer` calls are in, under `_CALL_SPACE`."""
+
+    coordinate_grid: int | None
+    screenshot_size: tuple[int, int] | None
+
+
+_SPACE_RECORD = TypeAdapter(_SpaceRecord)
+
 _CALL_POLICY = StepPolicy(repeatable=False, timeout=900)
 """A `computer` call acts, so under durable execution it runs at most once, with time for 20 actions that each
 wait or hold for up to 30 seconds."""
@@ -181,7 +191,7 @@ class _HasScreenKey(Protocol):
         ...
 
 
-def _models(model: Any) -> list[Model]:
+def _models(model: AbstractModel) -> list[Model]:
     """The models that may answer a request to `model`.
 
     That's the model itself, a `FallbackModel`'s models, or, for a wrapper without a profile of its own, those of the
@@ -198,13 +208,13 @@ def _models(model: Any) -> list[Model]:
     return [model]
 
 
-def _grid(model: Any) -> int | None:
+def _grid(model: AbstractModel) -> int | None:
     # Any of the models may answer, so they point on a grid only when every one of them uses the same one.
     grids = {answering.profile.get('computer_use_coordinate_grid') for answering in _models(model)}
     return grids.pop() if len(grids) == 1 else None
 
 
-def _screenshot_limit(model: Any) -> tuple[int, int] | None:
+def _screenshot_limit(model: AbstractModel) -> tuple[int, int] | None:
     """The largest screenshot every model that may answer takes, as `(longest side, pixel count)`."""
     limits = [
         limit for answering in _models(model) if (limit := answering.profile.get('computer_use_screenshot_limit'))
@@ -302,10 +312,6 @@ def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tupl
 class _Call:
     """One `computer` call's coordinate space and how it maps to the display."""
 
-    grid: int | None
-    """The grid the model pointed on, if any."""
-    changed: list[ComputerToolAction] | None = None
-    """The actions to run, in the model's coordinates, when they differ from the ones it asked for."""
     space: tuple[int, int] | None = None
     """The model's coordinate space, once the display size has been read."""
     display: tuple[int, int] | None = None
@@ -406,11 +412,11 @@ def _recorded_space(response: ModelResponse) -> tuple[int | None, tuple[int, int
 
     A screenshot size of `None` means the model had seen no screenshot, so it pointed in display pixels.
     """
-    record = (response.metadata or {}).get(_CALL_SPACE)
-    if not is_str_dict(record):
+    try:
+        record = _SPACE_RECORD.validate_python((response.metadata or {}).get(_CALL_SPACE))
+    except ValidationError:
         return None
-    size = record.get('screenshot_size')
-    return record.get('coordinate_grid'), (size[0], size[1]) if size else None
+    return record['coordinate_grid'], record['screenshot_size']
 
 
 def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
@@ -660,7 +666,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
         restarts = _restarts_before(ctx)
-        call = _Call(plan.grid, changed=plan.changed)
+        call = _Call()
         if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
             # Also starts a display that stopped, so a restart is known before anything acts.
             call.display = await _display_size(ctx)
@@ -691,9 +697,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
-        if call.changed is not None:
+        if plan.changed is not None:
             result['changed'] = True
-            summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
+            summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(plan.changed).decode()}.')
         if error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:
@@ -717,7 +723,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if _restarted(ctx, restarts):
             result['display_restarted'] = True
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
-        summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
+        summary.append('Screenshot attached.' if plan.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result)
 
@@ -799,10 +805,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         name = request_context.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
         if not any(isinstance(part, ToolCallPart) and part.tool_name == name for part in response.parts):
             return response
-        record = {
-            'coordinate_grid': _grid(request_context.model),
-            'screenshot_size': _last_screenshot_size(request_context.messages),
-        }
+        record = _SpaceRecord(
+            coordinate_grid=_grid(request_context.model),
+            screenshot_size=_last_screenshot_size(request_context.messages),
+        )
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
 
 
@@ -832,8 +838,10 @@ def _how_many_to_drop(sizes: list[int], keep: int | None) -> int:
     if (total := sum(sizes)) > _MAX_SCREENSHOT_BYTES:
         step = _MAX_SCREENSHOT_BYTES // 2
         target = total // step * step - step // 2
-        # `target` is below `total`, so some screenshot takes the running total past it.
-        drop = max(drop, next(index for index, dropped in enumerate(accumulate(sizes)) if dropped > target))
+        # `target` is below `total`, so some screenshot takes the running total past it. Dropping through that one
+        # leaves at most `total - target`.
+        crossing = next(index for index, dropped in enumerate(accumulate(sizes)) if dropped > target)
+        drop = max(drop, crossing + 1)
     return min(drop, count - 1)
 
 
