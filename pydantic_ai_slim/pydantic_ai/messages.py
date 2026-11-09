@@ -4159,6 +4159,13 @@ class FilePart:
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __post_init__(self) -> None:
+        # Direct dataclass construction bypasses the `AfterValidator` on `content`.
+        # Apply the same narrowing here so image files returned by custom models are
+        # treated consistently with files loaded through `ModelMessagesTypeAdapter`.
+        if type(self.content) is BinaryContent:
+            self.content = BinaryContent.narrow_type(self.content)
+
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)

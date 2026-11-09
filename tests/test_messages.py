@@ -1452,6 +1452,11 @@ And then, call the 'hello_world' tool\
         ]
     )
 
+    direct_image_response = ModelResponse(
+        parts=[FilePart(content=BinaryContent(data=b'raw-image', media_type='image/png'))]
+    )
+    assert direct_image_response.images == [BinaryImage(data=b'raw-image', media_type='image/png')]
+
 
 def test_image_url_validation_with_optional_identifier():
     image_url_ta = TypeAdapter(ImageUrl)
