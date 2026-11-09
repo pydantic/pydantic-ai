@@ -7,12 +7,12 @@
 pyproject.toml            @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
-# CI config
-/.github/workflows/       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
-/.github/actions/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
-/.github/scripts/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+# Build and lint config
 /.pre-commit-config.yaml  @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /Makefile                 @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+
+# GitHub config: workflows, actions, scripts and everything else under `.github/`
+/.github/                 @dsfaccini
 
 # Durable runtime: the durable-execution base and the Temporal, DBOS and Prefect engines
 /pydantic_ai_slim/pydantic_ai/durable_exec/                            @DouweM @adtyavrdhn
@@ -29,5 +29,6 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /src/pydantic_ai_harness/pydantic_ai_harness/subagents/_capability.py  @DouweM @adtyavrdhn
 /src/pydantic_ai_harness/pydantic_ai_harness/subagents/_toolset.py     @DouweM @adtyavrdhn
 
-# This file. Unowned, a PR could drop an owner and the next PR change that path unreviewed.
-/.github/CODEOWNERS       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+# This file, after `/.github/` because the last matching pattern wins.
+# The durable owners review it too, so no PR drops them from a path unseen.
+/.github/CODEOWNERS       @DouweM @adtyavrdhn @dsfaccini

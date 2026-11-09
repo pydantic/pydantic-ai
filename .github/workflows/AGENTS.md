@@ -235,11 +235,13 @@ branch-selectable dispatch to this privileged workflow. Workflows and scripts re
 
 # Code owners approve dependency, CI config and durable runtime changes
 
-`.github/CODEOWNERS` owns two scopes:
+`.github/CODEOWNERS` owns three scopes:
 
-- **Dependency and CI config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
-  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.github/workflows/`, `.github/actions/`,
-  `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and `CODEOWNERS` itself.
+- **Dependency and build config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
+  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.pre-commit-config.yaml` and `Makefile`.
+- **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
+  rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
+  too, so the durable runtime owners see every ownership change.
 - **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
   only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
   engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
@@ -253,8 +255,9 @@ Owners** on; check `gh api repos/pydantic/pydantic-ai/rules/branches/main` befor
 With **Dismiss stale pull request approvals when new commits are pushed** also on in that rule,
 GitHub keeps the approval current, so no workflow has to.
 
-- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
-  to someone else's PR can still approve that push.
+- A PR's author cannot approve it, so an owner's own PR needs another owner. `.github/` has one
+  owner, so no code owner can approve that owner's own `.github/` PR. An owner who pushes to
+  someone else's PR can still approve that push.
 - GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
   current owners.
 
