@@ -1,8 +1,7 @@
-import asyncio
 import inspect
 from collections.abc import Generator
 from importlib.util import find_spec
-from threading import Event, Thread
+from threading import Thread
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -12,8 +11,6 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from .._inline_snapshot import snapshot
 from ..conftest import undrivable_event_loop
-
-READINESS_WAIT_TIMEOUT = 300
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -51,55 +48,6 @@ def test_get_event_loop_in_thread():
     thread = Thread(target=get_and_close_event_loop)
     thread.start()
     thread.join()
-
-
-def test_get_event_loop_closes_the_open_loops_it_installed_when_the_worker_thread_exits():
-    """A loop the thread closed is replaced and forgotten; one left open, even if no longer current, is closed."""
-    loops: list[asyncio.AbstractEventLoop] = []
-
-    def install_loops() -> None:
-        closed_by_the_thread = get_event_loop()
-        closed_by_the_thread.close()
-        no_longer_current = get_event_loop()
-        asyncio.set_event_loop(None)
-        current = get_event_loop()
-        assert get_event_loop() is current
-        loops.extend([closed_by_the_thread, no_longer_current, current])
-        assert not any(loop.is_closed() for loop in loops[1:])
-
-    thread = Thread(target=install_loops)
-    thread.start()
-    thread.join(READINESS_WAIT_TIMEOUT)
-    assert not thread.is_alive()
-
-    assert [loop.is_closed() for loop in loops] == [True, True, True]
-
-
-def test_get_event_loop_leaves_a_loop_another_thread_runs_open_when_its_thread_exits():
-    """A loop handed to another thread to run is that thread's to close."""
-    loops: list[asyncio.AbstractEventLoop] = []
-    installed, running = Event(), Event()
-
-    def install_loop_and_exit_once_it_runs() -> None:
-        loops.append(get_event_loop())
-        installed.set()
-        assert running.wait(READINESS_WAIT_TIMEOUT)
-
-    installer = Thread(target=install_loop_and_exit_once_it_runs)
-    installer.start()
-    assert installed.wait(READINESS_WAIT_TIMEOUT)
-    (loop,) = loops
-    loop.call_soon_threadsafe(running.set)
-    runner = Thread(target=loop.run_forever)
-    runner.start()
-    installer.join(READINESS_WAIT_TIMEOUT)
-    assert not installer.is_alive()
-
-    assert not loop.is_closed()
-    loop.call_soon_threadsafe(loop.stop)
-    runner.join(READINESS_WAIT_TIMEOUT)
-    assert not runner.is_alive()
-    loop.close()
 
 
 def test_infer_obj_name():

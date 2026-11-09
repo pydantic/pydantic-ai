@@ -421,9 +421,16 @@ async def test_run_sync_token_cancel_from_another_thread():
         raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
-    run_thread = asyncio.create_task(
-        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
-    )
+
+    def run_sync_and_close_its_loop() -> None:
+        try:
+            Agent(FunctionModel(model_function)).run_sync('hello', cancellation_token=token)
+        finally:
+            # `run_sync` sets a new event loop on this worker thread that nothing else closes. Left open, it is
+            # finalized in a later test, where it can raise `ValueError: Invalid file descriptor: -1`.
+            asyncio.get_event_loop().close()
+
+    run_thread = asyncio.create_task(asyncio.to_thread(run_sync_and_close_its_loop))
     await asyncio.to_thread(started.wait)
     token.cancel()
 

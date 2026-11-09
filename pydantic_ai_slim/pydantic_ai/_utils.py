@@ -54,7 +54,6 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import (
     AbstractSpan,
-    new_thread_event_loop,
     run_until_complete as _graph_run_until_complete,
 )
 from pydantic_graph.exceptions import UnsupportedEventLoopError
@@ -1285,7 +1284,8 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = None
 
     if event_loop is None or event_loop.is_closed():
-        event_loop = new_thread_event_loop()
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
     return event_loop
 
 
