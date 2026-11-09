@@ -511,6 +511,11 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # durable capability operations persist their results through them.
     ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
     ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    # Prefect resolves each result path synchronously. On Windows, `Path.resolve()` calls `os.getcwd()` even
+    # for absolute paths, and on Python < 3.13 it also stats the path; both calls are internal to Prefect's
+    # result persistence and cannot be offloaded by the durable capability wrapper.
+    ('os.getcwd', 'prefect/filesystems.py', '_resolve_path'),
+    ('os.stat', 'prefect/filesystems.py', '_resolve_path'),
     # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
