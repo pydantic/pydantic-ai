@@ -56,9 +56,14 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.IPv6Network('fc00::/7'),  # Unique local address
     ipaddress.IPv6Network('fec0::/10'),  # Site-local, deprecated by RFC 3879
     # IPv6 IANA-reserved / special-purpose ranges
+    ipaddress.IPv6Network('::ffff:0:0:0/96'),  # IPv4-translated (RFC 2765, obsoleted), inside IETF-reserved ::/8
     ipaddress.IPv6Network('100::/64'),  # Discard prefix (RFC 6666)
+    ipaddress.IPv6Network('100:0:0:1::/64'),  # Dummy prefix (RFC 9780)
     ipaddress.IPv6Network('2001::/32'),  # Teredo tunneling (RFC 4380)
+    ipaddress.IPv6Network('2001:2::/48'),  # Benchmarking (RFC 5180)
     ipaddress.IPv6Network('2001:db8::/32'),  # Documentation (RFC 3849)
+    ipaddress.IPv6Network('3fff::/20'),  # Documentation (RFC 9637)
+    ipaddress.IPv6Network('5f00::/16'),  # Segment Routing (SRv6) SIDs (RFC 9602)
     ipaddress.IPv6Network('ff00::/8'),  # Multicast (RFC 4291)
 )
 
