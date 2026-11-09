@@ -34,7 +34,8 @@ async def test_a_desktop_sandbox_has_the_display_programs_and_drives_its_display
 
     assert result.output == '{"computer":"1280x800"}'
     image = fake_modal.create_kwargs[-1]['image']
-    assert isinstance(image, FakeImage) and {'xvfb', 'xdotool', 'scrot'} <= set(image.apt_packages)
+    assert isinstance(image, FakeImage)
+    assert image.apt_packages == ('git', 'ripgrep', 'xvfb', 'xdotool', 'scrot', 'x11-utils')
     assert len(display.starts) == 1
     assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
     # A plain command gets `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
