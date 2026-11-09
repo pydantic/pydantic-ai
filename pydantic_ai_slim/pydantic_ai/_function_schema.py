@@ -386,9 +386,9 @@ def _build_schema(
             # so the model generates its fields at the top level rather than inside a redundant wrapper.
             # The validator output is wrapped to `{name: value}` so validated args are always a dict
             # keyed by parameter name — matching the contract that hooks and `call_tool` rely on.
-            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
-            # which is what Temporal (and any other caller) passes when re-validating previously
-            # validated args after serialization round-trip.
+            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape, which
+            # a caller re-validating previously validated args after a serialization round-trip passes
+            # unless it goes through `FunctionSchema.revalidate`.
             # `accepted_keys` lets the validator tell that wrapper shape apart from genuine unwrapped
             # input for a model with a field (or alias) named `name`; `function_schema` fills it from
             # the generated JSON schema so we don't rebuild the model's schema just to read its keys.
@@ -437,7 +437,7 @@ def _validate_single_arg(
         return {name: handler(value)}
     if name not in accepted_keys:
         # `name` isn't a key the model accepts, so `{name: ...}` can only be a wrapper envelope (e.g.
-        # re-validated args after a Temporal round-trip). Unwrap it; a bad payload still raises here.
+        # re-validated args after a serialization round-trip). Unwrap it; a bad payload still raises here.
         return {name: handler(value[name])}
     # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
     # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
