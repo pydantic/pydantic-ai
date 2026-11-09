@@ -57,6 +57,6 @@ class TestKubernetesSandboxConformance(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
+            await KubernetesSandbox(warm_pool='pool', namespace='agents').destroy(backend.ref)
 
         return destroy

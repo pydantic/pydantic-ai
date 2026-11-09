@@ -17,6 +17,7 @@ from pydantic_ai_harness.kubernetes_sandbox._backend import (
     PROVIDER,
     ConnectionMode,
     KubernetesSandboxBackend,
+    check_capability_ref,
     connection_problem,
     destroy_sandbox,
 )
@@ -121,20 +122,25 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         )
 
     def backend(self, ref: WorkspaceRef) -> KubernetesSandboxBackend:
-        """Construct a lazy backend for an existing claim; close its connection with `aclose()`."""
+        """Construct a lazy backend for a claim this capability made; close its connection with `aclose()`."""
+        check_capability_ref(ref, self.namespace)
         return KubernetesSandboxBackend(ref=ref, connection=self.connection, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete the claim, and with it the sandbox, without running anything in it.
 
-        A claim that no longer exists is already gone, so destroying it returns quietly.
+        A claim that no longer exists is already gone, so destroying it returns quietly. Only claims
+        this capability made in its `namespace` are accepted.
         """
+        check_capability_ref(ref, self.namespace)
         await destroy_sandbox(ref)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it claims or attaches on first use."""
         if ref is not None and ref.provider != PROVIDER:
             return None
+        if ref is not None:
+            check_capability_ref(ref, self.namespace)
         return _SuppliedBackend(
             run_id=ctx.run_id,
             ref=ref,

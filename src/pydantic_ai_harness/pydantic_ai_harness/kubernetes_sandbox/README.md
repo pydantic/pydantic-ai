@@ -149,7 +149,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
 ```
 
-The ref is `<namespace>/<claim name>`. It holds no credentials, so the process that reattaches needs its own access to the cluster. Pass `workspace='new'` to claim a fresh sandbox even when the message history names one.
+The ref is `<namespace>/<claim name>`. It holds no credentials, so the process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made in its `namespace`; see [Security model](#security-model). Pass `workspace='new'` to claim a fresh sandbox even when the message history names one.
 
 `warm_pool`, `namespace` and `sandbox_timeout` only shape a new claim; `connection`, `working_dir` and `env` apply to every command, including after you reattach.
 
@@ -223,6 +223,17 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 ```
 
 `destroy(ref)` deletes the claim, and with it the pod; a claim that is already gone returns quietly.
+
+## Security model
+
+The sandbox's isolation is the pod's runtime: by default a pod shares its node's kernel with the other pods on that node. Set `runtimeClassName` to a sandboxed runtime such as gVisor or Kata Containers to give it a kernel boundary of its own, and [connect from inside the cluster](#connect-to-the-sandbox) there. Commands run as the container's user, `1000` in the template above.
+
+- The agent process acts with the authority of its kubeconfig or service account, which reaches every claim that identity can see, in any namespace. Give it a role limited to the sandbox namespace.
+- `KubernetesSandbox` reattaches to and deletes only claims it could have made: in its `namespace`, named `pydantic-ai-` and 32 hex digits. A ref from message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` that names any other claim raises `ValueError` before anything reaches the cluster. The name is a convention, not proof of origin: anything with the same credentials can create a claim with such a name, so keep refs server-side. A `KubernetesSandboxBackend(ref=...)` you build yourself attaches to whatever claim it names.
+- sandboxd runs any command sent to its ports, 8080 and 9090, unless it was started with `--auth-token-sha256` or `--auth-token-file`; then pass the token as the connection config's `auth_token`. Without a token, anything that can reach a pod's ports can run commands in it, so keep a NetworkPolicy that admits only your agent's pods.
+- The SDK talks to sandboxd over plaintext gRPC. With `connection='port-forward'`, that is a loopback hop into `kubectl`, which tunnels through its TLS connection to the API server. An in-cluster connection sends commands, file contents, `env` values and the token over the pod network unencrypted.
+- The template sets `automountServiceAccountToken: false`. Without it, Kubernetes mounts a service-account token into the pod, and any command the agent runs could call the API server with that account's permissions.
+- The template pulls sandboxd and the base image by tag; pin a digest to get the same image every time.
 
 ## Configuration
 

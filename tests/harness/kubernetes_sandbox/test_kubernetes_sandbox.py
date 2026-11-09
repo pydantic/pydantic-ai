@@ -41,6 +41,9 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-ha
 
 asyncio_only = pytest.mark.parametrize('anyio_backend', ['asyncio'])
 
+_OWN_CLAIM = f'default/pydantic-ai-{"0" * 32}'
+"""A ref `KubernetesSandbox` accepts with its default namespace."""
+
 
 def _sandboxd(cluster: FakeCluster, ref: WorkspaceRef | None) -> FakeSandboxd:
     assert ref is not None
@@ -137,7 +140,7 @@ async def test_trio_is_refused() -> None:
     with pytest.raises(UserError, match='needs the asyncio event loop'):
         await backend.get_sandbox()
     with pytest.raises(UserError, match='needs the asyncio event loop'):
-        await KubernetesSandbox(warm_pool='pool').destroy(WorkspaceRef(provider='kubernetes', id='agents/claim'))
+        await KubernetesSandbox(warm_pool='pool').destroy(WorkspaceRef(provider='kubernetes', id=_OWN_CLAIM))
 
 
 @asyncio_only
@@ -440,7 +443,7 @@ async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, mon
 @asyncio_only
 async def test_destroy_ignores_a_missing_claim_and_raises_other_failures(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool')
-    await capability.destroy(WorkspaceRef(provider='kubernetes', id='agents/gone'))
+    await capability.destroy(WorkspaceRef(provider='kubernetes', id=_OWN_CLAIM))
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
     assert backend.ref is not None
@@ -472,8 +475,25 @@ def test_get_workspace_only_takes_kubernetes_refs() -> None:
     assert capability.get_workspace(ctx, ref=WorkspaceRef(provider='modal', id='sb')) is None
     backend = capability.get_workspace(ctx, ref=None)
     assert isinstance(backend, KubernetesSandboxBackend) and backend.ref is None
-    attached = capability.backend(WorkspaceRef(provider='kubernetes', id='agents/claim'))
+    attached = capability.backend(WorkspaceRef(provider='kubernetes', id=f'agents/pydantic-ai-{"0" * 32}'))
     assert type(attached) is KubernetesSandboxBackend and attached.ref is not None
+
+
+@pytest.mark.parametrize(
+    'claim', ['other/pydantic-ai-' + '0' * 32, 'agents/team-claim', 'agents/pydantic-ai-' + '0' * 31]
+)
+async def test_the_capability_only_reaches_its_own_claims(claim: str) -> None:
+    """A ref from message history may come from a client, and the cluster credentials reach every claim they can see."""
+    capability = KubernetesSandbox(warm_pool='pool', namespace='agents')
+    ref = WorkspaceRef(provider='kubernetes', id=claim)
+    with pytest.raises(ValueError, match="only uses claims it made in its namespace 'agents'"):
+        capability.get_workspace(_ctx(), ref=ref)
+    with pytest.raises(ValueError, match='only uses claims'):
+        capability.backend(ref)
+    with pytest.raises(ValueError, match='only uses claims'):
+        await capability.destroy(ref)
+    # Built directly, the backend attaches to any claim: that is the caller's explicit choice.
+    assert KubernetesSandboxBackend(ref=ref).ref == ref
 
 
 @asyncio_only

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
@@ -141,6 +142,27 @@ def parse_ref(ref: WorkspaceRef) -> tuple[str, str]:
     if not separator or not namespace or not claim_name or '/' in claim_name:
         raise ValueError(f'a {PROVIDER!r} workspace ref id is `<namespace>/<claim name>`, got {ref.id!r}')
     return namespace, claim_name
+
+
+_CLAIM_PREFIX = 'pydantic-ai-'
+_CLAIM_NAME = re.compile(rf'{_CLAIM_PREFIX}[0-9a-f]{{32}}')
+"""The names the backend gives the claims it makes."""
+
+
+def check_capability_ref(ref: WorkspaceRef, namespace: str) -> None:
+    """Refuse a ref that `KubernetesSandbox` did not claim in `namespace`, before anything reaches the cluster.
+
+    A ref in message history can come from a client, and the cluster credentials reach every claim
+    they can see, in any namespace. The name is a convention, not proof of origin: anything with
+    those credentials can create a claim with such a name, so a ref is still trusted input.
+    """
+    ref_namespace, claim_name = parse_ref(ref)
+    if ref_namespace != namespace or _CLAIM_NAME.fullmatch(claim_name) is None:
+        raise ValueError(
+            f'KubernetesSandbox only uses claims it made in its namespace {namespace!r}, named '
+            f'{_CLAIM_PREFIX!r} and 32 hex digits, got {ref.id!r}. To use another claim, pass '
+            "`workspace=KubernetesSandboxBackend(ref=...)` to the run; `workspace='new'` claims a fresh sandbox."
+        )
 
 
 @dataclass(frozen=True)
@@ -388,7 +410,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             assert warm_pool is not None  # `__init__` requires a ref or a warm pool.
             # Named here rather than by the SDK, so the claim is known whatever ends the claim before it
             # is Ready, and the backend deletes it if it never becomes Ready.
-            claim_name = f'pydantic-ai-{uuid.uuid4().hex}'
+            claim_name = f'{_CLAIM_PREFIX}{uuid.uuid4().hex}'
             ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
             try:
                 sandbox = await client.create_sandbox(
