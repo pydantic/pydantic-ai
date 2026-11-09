@@ -105,7 +105,7 @@ error naming the largest size that fits.
 - Actions run in order. If one fails, the rest don't run, and the result says which failed and why.
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
-- Agents in one process on one screen take turns, a whole call at a time, so their clicks never interleave.
+- Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
 
 ## Watching a run
 
