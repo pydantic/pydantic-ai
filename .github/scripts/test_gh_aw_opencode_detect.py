@@ -168,8 +168,12 @@ def test_retry_recovers_from_an_incomplete_stream(detection_dir: Path, monkeypat
     assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
 
 
-def test_deadline_stops_retries_and_reports_a_timeout(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A run that reaches the deadline is not retried, so the status line is written before the step limit."""
+@pytest.mark.parametrize('deadline_seconds', [gh_aw_opencode_detect.DEADLINE_SECONDS, 0])
+def test_deadline_stops_retries_and_reports_a_timeout(
+    detection_dir: Path, monkeypatch: pytest.MonkeyPatch, deadline_seconds: int
+) -> None:
+    """A run that reaches the deadline is not retried, and a spent deadline starts no run at all."""
+    monkeypatch.setattr(gh_aw_opencode_detect, 'DEADLINE_SECONDS', deadline_seconds)
     attempts: list[list[str]] = []
 
     def slow_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -181,7 +185,7 @@ def test_deadline_stops_retries_and_reports_a_timeout(detection_dir: Path, monke
     with pytest.raises(SystemExit):
         gh_aw_opencode_detect.main()
 
-    assert len(attempts) == 1
+    assert len(attempts) == (1 if deadline_seconds else 0)
     assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=engine_timeout exit=2'
 
 

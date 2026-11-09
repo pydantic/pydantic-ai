@@ -151,6 +151,9 @@ safe-outputs:
         if: always() && steps.detector_checkout.outcome == 'success'
         continue-on-error: true
         uses: ./.gh-aw-detector/.github/actions/setup-douwebot-tools
+        env:
+          # The install has no lockfile. Skip dependency releases younger than 3 days, as gh-aw's Claude CLI install did.
+          NPM_CONFIG_MIN_RELEASE_AGE: '3'
       # A missing verdict concludes as a warning. Stop before the 20-minute job limit so it can.
       - name: Run OpenCode threat detection
         id: detection_agentic_execution

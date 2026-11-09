@@ -69,10 +69,11 @@ def main() -> None:
         while True:
             # One stream per attempt, so the usage report counts the retried attempts too.
             stream = Path(os.environ['RUNNER_TEMP']) / f'gh-aw-opencode-detector-{attempt}.ndjson'
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired('opencode', DEADLINE_SECONDS)
             try:
-                run_read_only(
-                    prompt, cwd=DETECTION_DIR, agent='detector', output=stream, timeout=deadline - time.monotonic()
-                )
+                run_read_only(prompt, cwd=DETECTION_DIR, agent='detector', output=stream, timeout=remaining)
                 text = final_text(stream)
                 break
             except (ValueError, subprocess.CalledProcessError) as exc:
