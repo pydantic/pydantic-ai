@@ -488,6 +488,8 @@ class TaskInfo:
     backgroundable: bool = False
     """Whether `TaskCatalog.background` can let the run that waits for it go on: it runs in the foreground of
     a run, and its workspace can outlive that run. A task the user prompted is waited for by no run."""
+    name: str | None = None
+    """A team member's name, unique in the conversation; `None` for any other task."""
 
 
 class TaskCatalog(Protocol):
@@ -520,6 +522,9 @@ class TaskCatalog(Protocol):
     async def resume(self, task_id: str) -> None:
         """Ask the agent to resume a finished task, as `/tasks resume ID` does, entering the request as a prompt.
 
+        A team member (one with a `name`) is woken at once instead, with the user's word to continue, and no
+        prompt is entered.
+
         Raises `ValueError` for a task that is running or cannot resume, and `RuntimeError` on a CLAI with
         no prompt to enter it at; the task stays as it was then.
         """
@@ -541,8 +546,9 @@ class TaskCatalog(Protocol):
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a user message, which its run reads at its next model request.
 
-        Returns `False` when the task is not running; `prompt` or `resume` continues a finished one. Raises
-        `ValueError` for blank text.
+        Returns `False` when the task is not running; `prompt` or `resume` continues a finished one. It also
+        returns `False` for a team member, which `/team msg NAME TEXT` messages instead. Raises `ValueError` for
+        blank text.
         """
         ...
 

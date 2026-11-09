@@ -163,6 +163,32 @@ class Settings(BaseModel):
         default={},
         description='Confirmed removal on exit: absolute Git common directory -> argv.',
     )
+    team: bool = Field(
+        default=False,
+        description=(
+            'Let the agent lead a team: spawn named teammates that share a task board and message each other. '
+            '/team lists and spawns them.'
+        ),
+    )
+    team_models: dict[str, str] = Field(
+        default={},
+        description=(
+            'JSON object: the model each teammate type runs on unless its spawn names one, such as '
+            '{"general-purpose": "PROVIDER:MODEL"}. A type with none runs on the session model.'
+        ),
+    )
+
+    @field_validator('team_models')
+    @classmethod
+    def validate_team_models(cls, value: dict[str, str]) -> dict[str, str]:
+        """Teammate types and model IDs are nonempty printable text without surrounding whitespace."""
+        for agent, model in value.items():
+            for text in (agent, model):
+                if not text or text != text.strip() or not text.isprintable():
+                    raise ValueError('Teammate types and models must be nonempty, without surrounding whitespace.')
+            if ':' not in model:
+                raise ValueError(f'Use PROVIDER:MODEL or chain:NAME for the {agent!r} teammate model.')
+        return value
 
     @field_validator('worktree_remove_commands')
     @classmethod
@@ -226,6 +252,8 @@ SETTING_FIELDS = {
     'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
     'worktrees.remove_commands': 'worktree_remove_commands',
+    'team.enabled': 'team',
+    'team.models': 'team_models',
 }
 
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}

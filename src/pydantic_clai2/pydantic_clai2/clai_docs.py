@@ -53,6 +53,7 @@ _HARNESS_DOCS = (
     'notion',
     'ordinal',
     'permissions',
+    'planning',
     'posthog',
     'pylon',
     'repo_context',
@@ -61,6 +62,7 @@ _HARNESS_DOCS = (
     'slack',
     'step_persistence',
     'subagents',
+    'teams',
 )
 """The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 

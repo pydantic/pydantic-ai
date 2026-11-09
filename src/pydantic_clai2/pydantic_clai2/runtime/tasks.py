@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import hashlib
 import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, Sequence
@@ -38,6 +39,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.planning import ClaimablePlanStore, FileClaimablePlanStore, InMemoryClaimablePlanStore
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
     DelegationEndEvent,
@@ -49,6 +51,7 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     TaskQuestionEvent,
 )
+from pydantic_ai_harness.teams import Team
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
@@ -61,6 +64,12 @@ PromptTask = Callable[[DelegationTask, str], Coroutine[object, object, object]]
 
 REVIEW_AGENT_NAME = 'Review'
 """The isolated, opt-in specialist allowed to select another working directory."""
+
+MemberRunner = Callable[[DelegationTask], Awaitable[str]]
+"""Runs one turn of a team member with a session's agent, plugins and models."""
+
+CONTINUE = 'Continue where you left off.'
+"""What `/tasks resume` sends a team member, which wakes it as the user's message."""
 
 
 def specialists() -> dict[str, SubAgent[object]]:
@@ -133,7 +142,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
 def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartEvent):
-        name = _display_name(event.agent_name)
+        name = display_name(event.agent_name)
         prompt = ' '.join(terminal_text(event.task).split())
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
         row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
@@ -155,7 +164,7 @@ def question_row(event: AgentStreamEvent) -> Text | None:
     """A task's question to its parent, which a run shows even without the task panel."""
     if not isinstance(event, TaskQuestionEvent):
         return None
-    name = _display_name(event.agent_name)
+    name = display_name(event.agent_name)
     question = ' '.join(terminal_text(event.question).split())
     row = Text('? ', style=theme.color(theme.WARNING), no_wrap=True, overflow='ellipsis')
     row.append(name, style=theme.color(theme.ACCENT))
@@ -197,10 +206,42 @@ class TaskRouter:
                 'Use Explore for code discovery and Plan for design research. Both are read-only and one-shot. '
                 'General-purpose work uses self (alias general-purpose) and inherits your tools and guardrails.'
             ),
+            member_runner=self.run_member,
+            lead_waker=self.wake_lead,
         )
+        self.directory = directory
+        self._boards: dict[str, ClaimablePlanStore] = {}
+        self.team = Team[object](self.owner, board=self.board)
+        """Every conversation's team, on the turns of a session with `team.enabled`, and its members' turns."""
+        self.owner.claims = self.team.claims
         self._users = 0
         self._lock = anyio.Lock()
         self._stack = AsyncExitStack()
+
+    def board(self, conversation_id: str) -> ClaimablePlanStore:
+        """A conversation's team board: a file beside the saved tasks, or kept in memory without a directory."""
+        if (board := self._boards.get(conversation_id)) is None:
+            if self.directory is None:
+                board = InMemoryClaimablePlanStore()
+            else:
+                name = hashlib.sha256(conversation_id.encode()).hexdigest()
+                board = FileClaimablePlanStore(self.directory / 'boards' / f'{name}.json')
+            self._boards[conversation_id] = board
+        return board
+
+    async def run_member(self, record: DelegationTask) -> str:
+        """Run a team member's turn in the session it last ran in, or else the one holding its conversation."""
+        view = self.started.get(record.id) or self.view(record.conversation_id)
+        if view is None or view.run_member is None:
+            raise RuntimeError('No session holds this conversation; open it to wake its team.')
+        self.started[record.id] = view
+        return await view.run_member(record)
+
+    async def wake_lead(self, conversation_id: str) -> None:
+        """Give an idle lead a turn to read its inbox, when a session shows its conversation."""
+        view = self.view(conversation_id)
+        if view is not None and view.wake is not None:
+            view.wake()
 
     def view(self, conversation_id: str) -> 'Tasks | None':
         """The live session's `Tasks` holding `conversation_id`, if one does."""
@@ -235,7 +276,7 @@ class TaskRouter:
         record, event = update.task, update.event
         progress = self.progress.setdefault(
             record.id,
-            Status(agent=f'{_display_name(record.agent_name)} [{record.id[:8]}]', model='', activity='starting'),
+            Status(agent=f'{display_name(record.agent_name)} [{record.id[:8]}]', model='', activity='starting'),
         )
         if update.model_name is not None:
             progress.model, progress.context_window = update.model_name, update.context_window
@@ -323,6 +364,8 @@ class Tasks:
         """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
+        self.run_member: MemberRunner | None = None
+        """Runs a turn of a team member of this session's conversation; set by the shell that holds it."""
 
     def join(self) -> None:
         """Be one of the router's views; again once a closed session is live again, as after a failed `/reload`."""
@@ -411,9 +454,11 @@ class Tasks:
         return task_row(event, model_name=model_name, show_model=self.show_task_models())
 
     def waiting(self, conversation_id: str) -> bool:
-        """Whether the main run of `conversation_id` has a task report to read, or a task question to answer."""
+        """Whether the main run of `conversation_id` has a task report or teammate message to read, or a question."""
         return bool(
-            self.owner.reports(conversation_id=conversation_id) or self.owner.questions(conversation_id=conversation_id)
+            self.owner.reports(conversation_id=conversation_id)
+            or self.owner.questions(conversation_id=conversation_id)
+            or self.owner.lead_inbox(conversation_id)
         )
 
     def _for_main_run(self, record: DelegationTask) -> bool:
@@ -485,8 +530,8 @@ class Tasks:
         state = activity.removeprefix('running: ').removeprefix('tool: ')
         state = state if record.status == 'running' else record.outcome
         elapsed = (record.finished_at or now) - record.started_at
-        name = _display_name(record.agent_name)
-        mode = 'background' if record.background else 'foreground'
+        name = task_label(record)
+        mode = _mode(record)
         suffix = f' · {descendants} descendants' if descendants else ''
         state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
         if record.outcome in ('cancelled', 'interrupted'):
@@ -543,8 +588,9 @@ class Tasks:
             activity = 'waiting for an answer'
         return TaskInfo(
             id=record.id,
+            name=record.name,
             parent_id=record.parent_id,
-            agent=_display_name(record.agent_name),
+            agent=display_name(record.agent_name),
             model=progress.model if progress is not None and progress.model else record.model,
             prompt=record.prompt,
             status=record.status,
@@ -580,6 +626,9 @@ class Tasks:
 
     async def resume(self, task_id: str) -> None:
         record = self._record(task_id)
+        if record.name is not None:
+            await self.wake_member(record)
+            return
         if self.send_input is None:
             raise RuntimeError('This CLAI has no prompt to ask the agent to resume a task at.')
         stopped = record.user_stopped
@@ -692,15 +741,37 @@ class Tasks:
             raise LookupError(f'No task {task_id!r} in this conversation.')
         return record
 
+    async def wake_member(self, record: DelegationTask) -> None:
+        """Wake a settled team member with the user's word to continue; it clears a stop the user made."""
+        if record.status == 'running':
+            raise ValueError(f'{record.name} is still running.')
+        await self.owner.send(CONTINUE, to=record.id, conversation_id=record.conversation_id)
+
     def resolve(self, prefix: str) -> DelegationTask:
+        """A task of this conversation by a unique ID prefix, or a team member by its name."""
+        if member := next((record for record in self.records() if record.name == prefix), None):
+            return member
         matches = [record for record in self.records() if record.id.startswith(prefix)]
         if len(matches) != 1:
             raise ValueError(f'Task ID {prefix!r} is unknown or ambiguous. Use /tasks.')
         return matches[0]
 
 
-def _display_name(agent_name: str) -> str:
+def display_name(agent_name: str) -> str:
+    """An agent type as the user knows it: `general-purpose` for the agent itself."""
     return 'general-purpose' if agent_name == 'self' else agent_name
+
+
+def _mode(record: DelegationTask) -> str:
+    if not record.background:
+        return 'foreground'
+    return 'background' if record.name is None else 'teammate'
+
+
+def task_label(record: DelegationTask) -> str:
+    """How a task is named on screen: a team member by its name and type, any other task by its agent."""
+    agent = display_name(record.agent_name)
+    return agent if record.name is None else f'{record.name} ({agent})'
 
 
 class TaskPresentation(AbstractCapability[object]):
