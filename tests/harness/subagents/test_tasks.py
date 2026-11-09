@@ -1109,6 +1109,49 @@ async def test_close_lets_a_settling_child_finish_saving(tmp_path: Path) -> None
     assert json.loads((tmp_path / f'{record.id}.json').read_text())['outcome'] == 'ok'
 
 
+async def test_a_resume_settled_while_the_owner_closes_is_saved(tmp_path: Path) -> None:
+    """A resumed task that the closing owner keeps from starting is saved settled, though an earlier worker ran it."""
+    accepting, release_accept, release_other = anyio.Event(), anyio.Event(), anyio.Event()
+
+    class GatedOwner(DelegationTasks):
+        async def save(self, record: DelegationTask) -> None:
+            if record.status == 'running' and record.generation == 2:
+                accepting.set()
+                await release_accept.wait()
+            await super().save(record)
+
+    async def other(record: DelegationTask) -> str:
+        # Keeps the drain waiting until the resume has settled.
+        while not release_other.is_set():
+            try:
+                await release_other.wait()
+            except asyncio.CancelledError:
+                pass
+        return 'done'
+
+    owner = GatedOwner(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            await delegate(owner)
+            (record,) = owner.records.values()
+            await owner.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='other',
+                model=None,
+                background=True,
+                resume=None,
+                run=other,
+            )
+            pending = asyncio.create_task(delegate(owner, resume=record.id))
+            pending.add_done_callback(lambda _: release_other.set())
+            await accepting.wait()
+            asyncio.get_running_loop().call_soon(release_accept.set)
+    assert 'stopped before execution' in pending.result()
+    saved = json.loads((tmp_path / f'{record.id}.json').read_text())
+    assert (saved['generation'], saved['status']) == (2, 'finished')
+
+
 @pytest.mark.parametrize('closing_error', [True, False])
 async def test_stuck_child_does_not_mask_the_closing_error(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, closing_error: bool

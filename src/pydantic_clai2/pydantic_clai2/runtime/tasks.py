@@ -228,7 +228,7 @@ class TaskRouter:
                         try:
                             await self._stack.aclose()
                         except RuntimeError:
-                            # A task that ignores cancellation must not crash CLAI as it closes.
+                            # The owner's drain timeout: a task that ignores cancellation must not crash CLAI.
                             logging.getLogger(__name__).exception('Delegated tasks did not close cleanly')
                 if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:

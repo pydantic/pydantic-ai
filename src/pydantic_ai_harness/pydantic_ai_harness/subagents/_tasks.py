@@ -281,7 +281,7 @@ class DelegationTasks:
                 logging.getLogger(__name__).error(message)
 
     async def _drain(self) -> None:
-        """Cancel running workers, wait for all of them at once, then settle and save the children that never ran."""
+        """Cancel running workers, wait for all of them at once, then settle and save the children that never started."""
         for task_id, worker in self._workers.items():
             # A worker whose run ended is saving its record, which a cancellation would cut short.
             if self.records[task_id].status == 'running':
@@ -289,13 +289,11 @@ class DelegationTasks:
         if self._workers:
             # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
             await asyncio.wait(self._workers.values())
-        # Workers save their own records, and the loaded ones are unchanged.
+        # Every other record saved itself when it settled.
         for record in self.records.values():
             if record.status == 'running':
                 self._settle_unstarted(record)
-            elif record.id in self._workers or record.id not in self._released:
-                continue
-            await self.save(record)
+                await self.save(record)
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
         """Settle a saved child that was still running when its process exited."""
@@ -424,6 +422,7 @@ class DelegationTasks:
             # Stopped meanwhile, or its owner is closing: it settles without a worker.
             if record.status == 'running':
                 self._settle_unstarted(record)
+                await self.save(record)
             return f'Task {record.id} was stopped before execution.'
         worker = asyncio.create_task(self._run(record, run), name=f'delegate-{record.id}')
         # Even a worker cancelled before it ran ends a wait for its task.
