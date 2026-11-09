@@ -757,8 +757,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. builtin tools) and any betas from
-    extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    Merged with auto-added betas (e.g. builtin tools) and any betas from an `anthropic-beta` header in
+    `extra_headers`, however its name is capitalized. See the Anthropic docs for available beta features.
     """
 
     anthropic_speed: Literal['standard', 'fast']
@@ -1900,6 +1900,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return context_management
 
+    @staticmethod
+    def _pop_beta_headers(extra_headers: dict[str, str]) -> set[str]:
+        """Remove the `anthropic-beta` header from `extra_headers`, in any spelling, and return the betas it lists.
+
+        The SDK folds header names case-insensitively, so one left in `extra_headers` would replace the header it
+        builds from `betas`.
+        """
+        names = [name for name in extra_headers if name.lower() == 'anthropic-beta']
+        return {
+            stripped_beta
+            for name in names
+            # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
+            if (header := extra_headers.pop(name))
+            for beta in header.split(',')
+            if (stripped_beta := beta.strip())
+        }
+
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
@@ -1937,8 +1954,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
 
-        if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
+        betas.update(self._pop_beta_headers(extra_headers))
 
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
