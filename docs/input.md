@@ -388,7 +388,8 @@ async def main():
         file = await provider.client.aio.files.upload(file=f)
         assert file.uri is not None
 
-    # Reference the uploaded file by URI (media_type is optional for Google)
+    # Reference the uploaded file by URI (media_type is optional for Google,
+    # but a video needs media_type='video/...' to get video_metadata)
     agent = Agent(model)
     result = await agent.run(
         [
