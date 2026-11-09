@@ -230,8 +230,7 @@ class _DownloadBudget:
     remaining: int
 
 
-# Each download is capped at what was left when it started, so the total holds only while one request downloads its
-# files one at a time, as every model does.
+# A mutable budget, so a download in a task the request spawned charges the same total.
 _request_download_budget: ContextVar[_DownloadBudget | None] = ContextVar('_request_download_budget', default=None)
 
 
@@ -3196,9 +3195,17 @@ async def _download_within_request_budget(url: str, *, allow_local: bool) -> htt
     from .._ssrf import DownloadTooLargeError, safe_download
 
     budget = _request_download_budget.get()
-    max_bytes = _MAX_FILE_URL_DOWNLOAD_BYTES if budget is None else min(_MAX_FILE_URL_DOWNLOAD_BYTES, budget.remaining)
+    if budget is None:
+        return await safe_download(url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+
+    # Reserved before the download and the unused part refunded after, so downloads running at the same time can't
+    # each claim what is left.
+    max_bytes = min(_MAX_FILE_URL_DOWNLOAD_BYTES, budget.remaining)
+    budget.remaining -= max_bytes
+    downloaded = 0
     try:
         response = await safe_download(url, allow_local=allow_local, max_bytes=max_bytes)
+        downloaded = len(response.content)
     except DownloadTooLargeError as e:
         if max_bytes == _MAX_FILE_URL_DOWNLOAD_BYTES:
             raise
@@ -3206,8 +3213,8 @@ async def _download_within_request_budget(url: str, *, allow_local: bool) -> htt
             f'File URL downloads for one model request exceed the total of {_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES} bytes; '
             'pass large files as `BinaryContent` instead.'
         ) from e
-    if budget is not None:
-        budget.remaining -= len(response.content)
+    finally:
+        budget.remaining += max_bytes - downloaded
     return response
 
 

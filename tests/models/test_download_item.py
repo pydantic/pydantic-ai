@@ -1,14 +1,21 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from unittest.mock import patch
 
+import anyio
 import httpx2
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AudioUrl, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, UserError, download_item
+from pydantic_ai.models import (
+    ModelRequestContext,
+    ModelRequestParameters,
+    UserError,
+    _open_request_download_budget,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from pydantic_ai.models.batch import BatchRequest
 
 from ..conftest import IsInstance, IsStr, try_import
@@ -30,7 +37,9 @@ with try_import() as anthropic_imports_successful:
 
 
 def _mock_downloads(
-    monkeypatch: pytest.MonkeyPatch, handle_request: Callable[[httpx2.Request], httpx2.Response]
+    monkeypatch: pytest.MonkeyPatch,
+    handle_request: Callable[[httpx2.Request], httpx2.Response]
+    | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]],
 ) -> None:
     def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
@@ -252,6 +261,46 @@ async def test_download_item_outside_a_model_request_has_no_total(monkeypatch: p
         for i in range(3):
             downloaded = await download_item(DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt'), data_format='bytes')
             assert len(downloaded['data']) == 1024
+
+
+async def test_concurrent_downloads_in_a_model_request_share_one_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Downloads running at the same time in one request can't each claim what is left of the total.
+
+    No model downloads concurrently, so this opens the request's budget directly instead of through a model. The
+    server holds each response until both requests have arrived, so the two downloads are in flight together.
+    """
+    both_arrived = anyio.Event()
+    arrived: list[str] = []
+
+    async def handle_request(request: httpx2.Request) -> httpx2.Response:
+        arrived.append(str(request.url))
+        if len(arrived) == 2:
+            both_arrived.set()
+        await both_arrived.wait()
+        return httpx2.Response(200, content=b'x' * 1024, headers={'content-type': 'text/plain'}, request=request)
+
+    _mock_downloads(monkeypatch, handle_request)
+    outcomes: list[str] = []
+
+    async def download(i: int) -> None:
+        try:
+            await download_item(DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt'), data_format='bytes')
+        except ValueError as e:
+            outcomes.append(str(e))
+        else:
+            outcomes.append('downloaded')
+
+    with patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 1536), _open_request_download_budget():
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(download, 0)
+            tg.start_soon(download, 1)
+
+    assert sorted(outcomes) == snapshot(
+        [
+            'File URL downloads for one model request exceed the total of 1536 bytes; pass large files as `BinaryContent` instead.',
+            'downloaded',
+        ]
+    )
 
 
 def _round_trip(item: ImageUrl) -> ImageUrl:
