@@ -2,9 +2,8 @@
 
 Startup skips these so the prompt appears sooner. Without warming, the first prompt pays for
 them instead: the OpenAI and Anthropic model modules load their SDKs, which takes about a second.
-Input typed meanwhile is handled once the thread finishes (`ClaiProcess.imports_warmed()`): the
-import locks do not make two threads importing one package graph safe, as CPython can fail one of
-the imports partway to break a lock cycle between them.
+The import system locks each module, so a turn that needs a module the thread is still importing
+waits for it instead of importing it twice.
 """
 
 import importlib

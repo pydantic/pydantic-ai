@@ -47,6 +47,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  warm-douwebot-tools:
+    name: warm douwebot fallback tools
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-douwebot-tools
+        with:
+          save-cache: 'true'
+
   classify:
     name: classify changes
     runs-on: ubuntu-latest
@@ -277,13 +290,13 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_workflow_agent.py
           .github/scripts/test_review_lifecycle.py
           .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_latest_versions_canary_report.py
-          .github/scripts/test_semantic_owner_router.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
@@ -294,6 +307,9 @@ jobs:
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
+          .github/scripts/test_douwebot_usage_limit.py
+          .github/scripts/test_douwebot_opencode_run.py
+          .github/scripts/test_douwebot_opencode_result.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_ui_security_detection.py
@@ -302,6 +318,9 @@ jobs:
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
+
+      - name: Test threat detector telemetry
+        run: node --test .github/scripts/test_detector_telemetry.cjs .github/scripts/test_workflow_telemetry.cjs
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -764,9 +783,12 @@ jobs:
 
       - run: uv sync --only-dev
 
+      # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
       - name: install harness and CLAI 2 test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
-        run: uv sync ${{ matrix.install.sync_command }}
+        run: |
+          uv sync ${{ matrix.install.sync_command }}
+          uv sync --inexact --only-group gh-aw-tracing
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
@@ -2000,8 +2022,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

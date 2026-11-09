@@ -302,9 +302,9 @@ A provider's own signal decides between categories that share a status code: a 4
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
 its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
 overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
-`ModelContextWindowExceededError`, a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or
-a `ModelAuthenticationError` (the Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits or disabled billing
-are a `ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
+`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
+`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
+the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message

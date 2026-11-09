@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from prompt_toolkit.input import create_pipe_input
 from rich.console import Console
@@ -722,7 +723,8 @@ def run_cli(
     prompts: list[str] = []
 
     async def chat(*_: object, **__: object) -> None:
-        session()
+        # The stand-in session commits and edits settings with Git and SQLite, which would block the loop.
+        await anyio.to_thread.run_sync(session)
         if relaunch:
             raise Relaunch(executable='/b/clai2', session_id='s')
 

@@ -423,6 +423,42 @@ print(closed_out.content)
 
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
+### Special tokens in content
+
+Open-weight models mark their turns with special tokens in a chat template, such as `<|im_start|>`, `<|eot_id|>` or `[INST]`. Many hosts of these models also encode those characters as the real control token when they find them in message content. Text from a tool, a file or a user can then close the current turn and open a new one in any role, and a note beside the text can't help, because it sits in a turn the forged one has already closed. Which hosts do this depends on the host and the model, not only on the model family, and a routing service can pick a different host per request.
+
+So on routes that can reach such a host, Pydantic AI puts a zero-width joiner (U+200D) inside each of these tokens before sending, so `<|im_start|>` goes out as `<\u200d|im_start|>` and reaches the model as ordinary text. This is the exception to sending your content as written, and it's limited to this one character:
+
+- **What goes out with the joiner:** user prompts, tool results, inlined text files, retry feedback, summaries sent as user text, and the model's own text, tool names, tool call arguments and reasoning when they're sent back in later requests, unless the reasoning goes back to the provider that signed it. Text without a special token goes out unchanged.
+- **What doesn't:** the message history you store, system prompts, instructions and tool definitions. A file or URL a provider fetches itself isn't changed either. Tool definitions tokenize on these hosts too, so a tool description from an MCP server you don't trust is not protected by this.
+- **Prompt cache:** the same text always gets the same joiners, so resending a history sends the same bytes.
+
+The flag is [`may_tokenize_special_tokens_in_content`][pydantic_ai.profiles.ModelProfile.may_tokenize_special_tokens_in_content]. It's on for self-hosted servers ([vLLM](models/compatible-apis.md#vllm), [Ollama](models/ollama.md), [Hugging Face](models/huggingface.md)), for most hosts of open-weight models, and for routing services and [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] for every model that isn't only available from its own lab, such as Claude, GPT or Gemini. [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] are treated like routing services, since a custom deployment name or base URL can serve anything: a name that isn't one of those labs' own gets the flag, including a custom Azure deployment of a GPT model. It's off for those labs' own APIs and for hosts that have sent these tokens as text wherever we've checked. To change it for a model, use `profile=`, as below.
+
+The model reads the joiner as part of the text and copies it into what it writes, or writes another invisible character for it, so Pydantic AI removes any zero-width character inside these tokens in each response, on the same routes. Your tools, your output validators, your users and the stored history get `<|im_start|>`, streamed or not, including when a token is split across stream chunks. When that text goes back in a later request, the joiner is put back, so the model gets the bytes it wrote. An agent that reads a chat template and writes it back therefore writes the real tokens.
+
+This has two consequences you can observe:
+
+- **Tool call arguments and response text can differ from the model's raw output in this one way.** That's the only change Pydantic AI makes to them. Reasoning and the provider's own tool calls stay as the model wrote them.
+- **A file that deliberately contains a broken token gets repaired** if the model copies it: `<\u200d|im_start|>` in a file is indistinguishable from a token Pydantic AI broke, so what the tool receives is `<|im_start|>`. A zero-width character anywhere else, such as in an emoji sequence, stays as it is.
+
+Breaking the token only stops the host from creating a turn boundary. A model can still follow text written to look like a turn, and some do, which no change to these characters can prevent: in measurements on routes that tokenize, breaking the token stopped forged turns from being followed on most runs of Qwen 3.8, GLM 5 and DeepSeek V4 Flash, and made no measurable difference on DeepSeek V4 Pro, Qwen3 Next, Llama 3.3 and gpt-oss.
+
+To send these tokens as written, turn the flag off for that model, which also stops the removal from responses:
+
+```python {title="turn_off_special_token_breaking.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+model = OpenRouterModel(
+    'qwen/qwen3.8-27b',
+    profile={'may_tokenize_special_tokens_in_content': False},
+)
+agent = Agent(model)
+```
+
+Only do this when you trust that text, or when you've pinned a host that treats these tokens as text. On a host that tokenizes them, the text can then forge a turn, and the model usually can't copy the tokens at all, since it never sees them as text.
+
 ### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:

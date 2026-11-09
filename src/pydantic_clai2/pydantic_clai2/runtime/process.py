@@ -3,10 +3,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Thread
 from typing import TYPE_CHECKING, Generic, Self
-
-from anyio import to_thread
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.config import PluginSettings
@@ -43,8 +40,6 @@ class ClaiProcess(Generic[DepsT]):
     """The live sessions, by ID and by conversation, which process-scoped plugins reach as `host.live`."""
     codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
     """The native Codex provider per account, shared by every session's `ModelResolver`, so each refreshes once."""
-    warming: Thread | None = None
-    """The thread `warm_imports.start()` started, importing what the first turn and commands need."""
 
     @classmethod
     def open(cls, store: SettingsStore | None = None, *, builtin_plugins: Sequence[PluginSettings] = ()) -> Self:
@@ -61,14 +56,3 @@ class ClaiProcess(Generic[DepsT]):
             plugins=plugins,
             live=live,
         )
-
-    async def imports_warmed(self) -> None:
-        """Wait until the background imports of `warming` have finished, without blocking the event loop.
-
-        Input is handled only after this. A turn or command imports the same packages, and two threads importing one
-        package graph at once can make CPython fail one of the imports partway: the warming thread's failure is only
-        logged, but it leaves submodules in `sys.modules` that the package imported afresh then lacks as attributes.
-        """
-        if self.warming is not None:
-            # Abandoned on cancel, so Ctrl-C is not held up; the thread finishes on its own.
-            await to_thread.run_sync(self.warming.join, abandon_on_cancel=True)

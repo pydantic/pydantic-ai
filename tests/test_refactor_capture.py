@@ -8,29 +8,47 @@ from __future__ import annotations
 import importlib.util
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai
-from pydantic_ai.models import StreamedResponse
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 
-from .conftest import try_import
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx2
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     from . import refactor_capture
-    from .refactor_capture import CAPTURE_OPTION, SDK_MOCKS, SOURCE_FILE, RefactorCapture, compare, normalized
+    from .refactor_capture import (
+        CAPTURE_OPTION,
+        SDK_MOCKS,
+        SOURCE_FILE,
+        RefactorCapture,
+        bedrock_canary_model,
+        compare,
+        normalized,
+    )
 
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq` and `anthropic`; the `REQUESTS` sessions import `openai` too.
+    # The plugin imports `httpx`, `groq`, `anthropic` and `boto3`; the `REQUESTS` sessions import `openai` too.
     pytest.mark.skipif(
         not imports_successful() or importlib.util.find_spec('openai') is None,
-        reason='`httpx`, `groq`, `anthropic` or `openai` not installed',
+        reason='`httpx`, `groq`, `anthropic`, `boto3` or `openai` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -123,6 +141,7 @@ from contextlib import suppress
 
 import httpx
 import httpx2
+from anthropic import AsyncAnthropic
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
@@ -161,7 +180,9 @@ def test_sdk_mock():
 
 async def send_with_beta():
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        # Keep the captured target stable across SDK versions that add or omit this query parameter.
+        sdk_client = AsyncAnthropic(api_key='secret', http_client=client, default_query=dict(beta='true'))
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk_client))
         with override_allow_model_requests(True), suppress(ModelHTTPError):
             await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
 
@@ -445,13 +466,73 @@ def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
 def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
     """A canary request the capture doesn't see fails the run instead of the capture recording nothing.
 
-    The capture's `send` wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
+    The capture's request wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
     """
     with pytest.raises(
         pytest.UsageError,
-        match='with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` was not recorded',
+        match=(
+            'with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` and `BedrockConverseModel` over `botocore` '
+            'was not recorded'
+        ),
     ):
         RefactorCapture(tmp_path).check_request_hook()
+
+
+async def test_capture_records_a_request_botocore_sends(tmp_path: Path):
+    """A request a botocore client sends is recorded unsigned, with the extra headers the model adds."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        with override_allow_model_requests(True), suppress(ModelHTTPError):
+            await Agent(bedrock_canary_model()).run('hello', model_settings={'extra_headers': {'x-canary': 'yes'}})
+    finally:
+        capture.pytest_unconfigure()
+
+    assert capture.records == snapshot(
+        [
+            {
+                'kind': 'request',
+                'node': None,
+                'target': 'POST https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse',
+                'headers': {'Content-Type': 'application/json', 'User-Agent': IsStr(), 'x-canary': 'yes'},
+                'body': {
+                    'messages': [{'role': 'user', 'content': [{'text': 'hello'}]}],
+                    'system': [],
+                    'inferenceConfig': {},
+                },
+            }
+        ]
+    )
+
+
+async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
+    """A request SigV4 signs with a session token is recorded without the token, which is a credential."""
+    sent: list[httpx2.Request] = []
+
+    def answer_400(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(400)
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(answer_400)) as http_client:
+            client = AsyncAnthropicBedrock(
+                aws_access_key='canary',
+                aws_secret_key='canary',
+                aws_session_token='canary-session-token',
+                aws_region='us-east-1',
+                http_client=http_client,
+            )
+            model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+            with override_allow_model_requests(True), suppress(ModelHTTPError):
+                await Agent(model).run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    assert [request.headers['x-amz-security-token'] for request in sent] == ['canary-session-token']
+    assert len(capture.records) == 1
+    assert 'canary-session-token' not in json.dumps(capture.records)
 
 
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
@@ -623,6 +704,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': f'pyd_ai_{"0" * 32}',
             'uuid': '12345678-1234-5678-1234-567812345678',
             'repr': object(),
+            'mock_repr': Mock(name='mock.service_tier'),
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
@@ -637,6 +719,13 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
             'added_step': "Added step 'a' with id: 0a1b2c3d",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
+                "'keep-alive'}, 'RetryAttempts': 0}}"
+            ),
         }
     ) == snapshot(
         {
@@ -647,6 +736,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': 'pyd_ai_ID',
             'uuid': 'UUID',
             'repr': '<object object at 0x?>',
+            'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
@@ -661,5 +751,12 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
             'added_step': "Added step 'a' with id: STEP_ID",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': 'NOW',
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
+                "GMT'}, 'RetryAttempts': 0}}"
+            ),
         }
     )

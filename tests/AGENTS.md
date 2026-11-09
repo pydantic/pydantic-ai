@@ -175,11 +175,13 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_clai2`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
 - List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
+- `pydantic_clai2` keeps its own state in small local files and SQLite databases through synchronous functions. List a module that is only such a store in `BLOCKBUSTER_LOCAL_STORES`, and other such synchronous functions in `BLOCKBUSTER_LOCAL_FILES`, with a reason. Every file and database call beneath a listed function is exempt, including in code it calls, so never list an async function. In `BLOCKBUSTER_LOCAL_FILES`, also never list a function an async function calls on the event loop: offload that call instead. The deliberate exceptions, which async code still calls on the loop, are the store modules, `pydantic_clai2`'s shell construction and plugin loading, since making them async is a separate redesign, and the status row's read of `spinners.json` on each repaint.
+- A test that calls a synchronous API production code runs in a thread should do the same, with `anyio.to_thread.run_sync`, rather than add an exemption.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
