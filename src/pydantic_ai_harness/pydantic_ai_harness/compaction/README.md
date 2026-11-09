@@ -15,7 +15,7 @@ control.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
-![In before_model_request, TieredCompaction's two zero-LLM tiers bring the history under target_tokens, so the summarizing tier never runs.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
+![Compaction runs in before_model_request, between the message history and the model; here TieredCompaction's two zero-LLM tiers bring the history under target_tokens, so the summarizing tier never runs.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
 
 ## The menu
 
@@ -936,11 +936,12 @@ A tool found through tool search stays discovered while its discovery record is 
 the latest compaction: the model's `search_tools` exchange, the provider's native search result, or
 a `ToolReturn.tools` reveal. When `SummarizingCompaction`, `SlidingWindowCompaction` or
 `RelevanceCompaction` removes that record, it re-records the discovery as a
-`ToolAvailabilityDeltaPart` naming the tools, where it records capability loads. This framework
-record of what the model was shown, not a search it never made, keeps native and local search
-results alike, and the tools stay callable without searching again. A tool revealed by a capability
-load is left to that load, so `preserve_loaded_capabilities=False` unloads it with its capability.
-Provider-native compaction still drops discoveries, so the model searches again.
+`ToolAvailabilityDeltaPart` naming the tools, where it records capability loads. This is a framework
+record of what the model was shown, not a search it never made, so a provider's native search result
+is kept the same way as a local one. The tools stay in the request and the model can call them
+without searching again. A tool revealed by a capability load is left to that load, so
+`preserve_loaded_capabilities=False` unloads it with its capability. Provider-native compaction
+still drops discoveries, so the model searches again.
 
 ## Keeping user messages (`keep_user_messages`)
 
