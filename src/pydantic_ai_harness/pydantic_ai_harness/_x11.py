@@ -193,13 +193,13 @@ _START_TIMEOUT = 600
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, and makes the
-    directory for the X server's socket, which Xvfb makes only when it runs as root. It gives up as soon as the X
+    It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, even when an X
+    server already answers. Before starting Xvfb, it makes the directory for the X server's socket, which Xvfb makes
+    only when it runs as root. It gives up as soon as the X
     server exits, or after 10 seconds, with the end of `log` as the reason, and runs `RECORD_START` once a new X
     server answers. `then` runs then, such as to start a panel.
     """
     return (
-        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
         f'missing=; for p in {" ".join(_PROGRAMS)}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
         # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and
         # `none` when neither works.
@@ -213,6 +213,7 @@ def start_x_server(log: str, *, then: str = '') -> str:
         '{ $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
         f'apt-get install -y -qq --no-install-recommends {_PACKAGES}; }} >{log} 2>&1 '
         f'|| {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; fi; '
+        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
         # Without root, a directory the user makes themselves works, so the mkdir runs unprefixed.
         f'if [ ! -d {_X_SOCKET_DIR} ]; then [ "$elevate" = none ] && elevate=; '
         f'$elevate mkdir -p {_X_SOCKET_DIR} && $elevate chmod 1777 {_X_SOCKET_DIR}; fi; '
