@@ -2685,7 +2685,7 @@ class TestModelRequestErrorHooks:
     async def test_recovered_response_rejected_when_a_limit_stops_the_run_keeps_it_after_the_request(self):
         """A limit the recovered response crosses keeps both it and the request it answered in history."""
 
-        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model exploded')
 
         @dataclass
@@ -2700,7 +2700,7 @@ class TestModelRequestErrorHooks:
             async def after_model_request(
                 self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
             ) -> ModelResponse:
-                raise ModelRetry('try again')  # pragma: no cover
+                raise ModelRetry('try again')
 
         agent = Agent(FunctionModel(failing_model), capabilities=[RecoverThenRejectCap()])
         with capture_run_messages() as messages:
