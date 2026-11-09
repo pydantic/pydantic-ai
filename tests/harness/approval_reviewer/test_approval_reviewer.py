@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests
-from pydantic_ai.capabilities import AbstractCapability, DurableApprovals, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, AwaitApproval, HandleDeferredToolCalls
 from pydantic_ai.durable_exec import ExternalEventWaiter, external_event_scope
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, UserError
 from pydantic_ai.messages import (
@@ -545,7 +545,7 @@ class TestComposition:
         ran: list[str] = []
         model = _reviewer_model(lambda prompt: 'no' if '"x": 1' in prompt else 'yes')
         agent = _agent(
-            DurableApprovals[None](announce),
+            AwaitApproval[None](announce),
             _reviewer(model),
             outer=_outer_model(_danger(1, 'call-1'), _danger(2, 'call-2')),
             ran=ran,

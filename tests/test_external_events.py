@@ -1,8 +1,9 @@
-"""Tests for waiting on an external event in a durable run, and for `DurableApprovals`, which waits for a decision.
+"""Tests for waiting on an external event, and for `AwaitApproval`, which waits for a decision.
 
-No core engine implements the wait yet, so these install an in-memory `ExternalEventWaiter` with
-`external_event_scope`, the way an engine does for each durable agent run, and drive `DurableApprovals`
-through `Agent.run`. The AWS Lambda implementation, with suspension and replay, is tested in
+Most tests install a recording `ExternalEventWaiter` with `external_event_scope`, the way a durable
+engine does for each durable agent run, and drive `AwaitApproval` through `Agent.run`. `TestInProcess`
+covers the default waiter used without a durable engine, resolved with `resolve_external_event`. The
+AWS Lambda waiter, with suspension and replay, is tested in
 `tests/harness/aws_lambda/test_aws_lambda_approvals.py`.
 """
 
@@ -11,25 +12,40 @@ from __future__ import annotations
 import threading
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
+import anyio
+import anyio.to_thread
 import pytest
 from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import DurableApprovals, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AwaitApproval, HandleDeferredToolCalls
 from pydantic_ai.durable_exec import (
-    ExternalEventError,
-    ExternalEventWaiter,
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    DurableOperationId,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
     durable_unit_scope,
-    external_event_scope,
-    wait_for_external_event,
 )
 from pydantic_ai.exceptions import CallDeferred, UserError
+from pydantic_ai.external_events import (
+    ExternalEventError,
+    ExternalEventWaiter,
+    external_event_scope,
+    fail_external_event,
+    resolve_external_event,
+    wait_for_external_event,
+)
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+
+from .test_agent import READINESS_WAIT_TIMEOUT
 
 
 class RecordingWaiter(ExternalEventWaiter):
@@ -75,7 +91,7 @@ def build_agent(
         FunctionModel(delete_and_look_up),
         deps_type=type(None),
         output_type=output_type,
-        capabilities=[DurableApprovals[None](announce, timeout=timedelta(hours=1)), *capabilities],
+        capabilities=[AwaitApproval[None](announce, timeout=timedelta(hours=1)), *capabilities],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -151,7 +167,7 @@ async def test_decision_metadata_reaches_the_approved_tool() -> None:
     agent = Agent(
         FunctionModel(delete_and_look_up),
         deps_type=type(None),
-        capabilities=[DurableApprovals[None](lambda ctx, requests, token: None)],
+        capabilities=[AwaitApproval[None](lambda ctx, requests, token: None)],
     )
 
     @agent.tool(requires_approval=True)
@@ -230,7 +246,7 @@ async def test_invalid_decision_fails_the_run(payload: JsonValue, error: str) ->
 
 
 async def test_other_handlers_resolve_calls_before_the_wait() -> None:
-    """`DurableApprovals` is innermost, so a handler listed after it is still asked first."""
+    """`AwaitApproval` is innermost, so a handler listed after it is still asked first."""
     deleted: list[str] = []
 
     def resolve_external(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
@@ -245,13 +261,6 @@ async def test_other_handlers_resolve_calls_before_the_wait() -> None:
     assert tool_returns(result.all_messages()) == snapshot(
         [('call-1', 'deleted a.txt', 'success'), ('call-2', 'from handler', 'success')]
     )
-
-
-async def test_without_a_durable_engine_the_run_fails() -> None:
-    agent, _ = build_agent([], [])
-
-    with pytest.raises(UserError, match=r'can only be called inside a durable agent run on an engine that supports'):
-        await agent.run('clean up')
 
 
 async def test_a_sync_announce_runs_in_a_worker_thread() -> None:
@@ -275,7 +284,7 @@ async def test_wait_rejects_a_timeout_that_is_not_positive() -> None:
     with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(0\)'):
         await wait_for_external_event('review', announce=lambda token: None, timeout=timedelta(0))
     with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(days=-1'):
-        DurableApprovals[None](lambda ctx, requests, token: None, timeout=timedelta(seconds=-1))
+        AwaitApproval[None](lambda ctx, requests, token: None, timeout=timedelta(seconds=-1))
 
 
 async def test_wait_inside_a_durable_unit_is_rejected() -> None:
@@ -290,4 +299,219 @@ async def test_wait_inside_a_durable_unit_is_rejected() -> None:
 
 
 def test_not_spec_serializable() -> None:
-    assert DurableApprovals.get_serialization_name() is None
+    assert AwaitApproval.get_serialization_name() is None
+
+
+class TestInProcess:
+    """Without a durable engine, the wait happens in this process and `resolve_external_event` ends it."""
+
+    async def test_an_approval_endpoint_resolves_the_token_and_the_run_continues(self) -> None:
+        deleted: list[str] = []
+        announced = anyio.Event()
+        tokens: list[str] = []
+
+        def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            tokens.append(token)
+            announced.set()
+
+        agent = approval_agent(AwaitApproval[None](announce, timeout=timedelta(hours=1)), deleted)
+        results: list[str] = []
+
+        async def run() -> None:
+            results.append((await agent.run('clean up')).output)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await announced.wait()
+            # From another thread, as a sync web endpoint would.
+            await anyio.to_thread.run_sync(resolve_external_event, tokens[0], {'approvals': {'call-1': True}})
+
+        assert results == ['done']
+        assert deleted == ['a.txt']
+        assert len(tokens[0]) >= 32, 'the token is an unguessable ID'
+
+    async def test_a_failure_denies_the_call_with_the_reason(self) -> None:
+        deleted: list[str] = []
+
+        def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            fail_external_event(token, 'The approver rejected the whole batch.')
+
+        result = await approval_agent(AwaitApproval[None](announce), deleted).run('clean up')
+
+        assert deleted == []
+        assert tool_returns(result.all_messages()) == snapshot(
+            [('call-1', 'No decision on this tool call arrived: The approver rejected the whole batch.', 'denied')]
+        )
+
+    async def test_a_timeout_denies_the_call_and_forgets_the_token(self) -> None:
+        tokens: list[str] = []
+        agent = approval_agent(
+            AwaitApproval[None](lambda ctx, requests, token: tokens.append(token), timeout=timedelta(milliseconds=1)),
+            [],
+        )
+
+        result = await agent.run('clean up')
+
+        assert tool_returns(result.all_messages()) == snapshot(
+            [
+                (
+                    'call-1',
+                    'No decision on this tool call arrived: No resolution arrived within 0:00:00.001000.',
+                    'denied',
+                )
+            ]
+        )
+        with pytest.raises(UserError, match='No wait in this process has this token'):
+            resolve_external_event(tokens[0], {'approvals': {'call-1': True}})
+
+    async def test_a_token_resolves_once(self) -> None:
+        def announce(token: str) -> None:
+            resolve_external_event(token, 'first')
+            with pytest.raises(UserError, match='No wait in this process has this token'):
+                fail_external_event(token, 'second')
+
+        assert await wait_for_external_event('review', announce=announce) == 'first'
+
+    async def test_the_payload_arrives_in_its_json_form(self) -> None:
+        """As on its way through a durable engine, so the wait sees the same value in process."""
+
+        def announce(token: str) -> None:
+            with pytest.raises(UserError, match='The payload for an external event must be JSON-serializable'):
+                resolve_external_event(token, object())
+            resolve_external_event(token, {'ids': ('call-1', 'call-2')})
+
+        assert await wait_for_external_event('review', announce=announce) == {'ids': ['call-1', 'call-2']}
+
+    def test_an_unknown_token_is_rejected(self) -> None:
+        with pytest.raises(
+            UserError, match='No wait in this process has this token: it is wrong, from another process'
+        ):
+            resolve_external_event('not-a-token', None)
+
+    async def test_a_cancelled_wait_forgets_its_token(self) -> None:
+        tokens: list[str] = []
+        announced = anyio.Event()
+
+        def announce(token: str) -> None:
+            tokens.append(token)
+            announced.set()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(wait_for_external_event, 'review', announce=announce))
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await announced.wait()
+            tg.cancel_scope.cancel()
+
+        with pytest.raises(UserError, match='No wait in this process has this token'):
+            resolve_external_event(tokens[0], None)
+
+    async def test_two_waits_resolve_independently(self) -> None:
+        tokens: dict[str, str] = {}
+        both_announced = anyio.Event()
+        payloads: dict[str, JsonValue] = {}
+
+        async def wait(name: str) -> None:
+            def announce(token: str) -> None:
+                tokens[name] = token
+                if len(tokens) == 2:
+                    both_announced.set()
+
+            payloads[name] = await wait_for_external_event(name, announce=announce)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(wait, 'first')
+            tg.start_soon(wait, 'second')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await both_announced.wait()
+            assert tokens['first'] != tokens['second']
+            resolve_external_event(tokens['second'], 2)
+            resolve_external_event(tokens['first'], 1)
+
+        assert payloads == {'first': 1, 'second': 2}
+
+    @pytest.mark.parametrize('anyio_backend', ['trio'])
+    async def test_on_trio(self) -> None:
+        tokens: list[str] = []
+        announced = anyio.Event()
+
+        async def announce(token: str) -> None:
+            tokens.append(token)
+            announced.set()
+
+        payloads: list[JsonValue] = []
+
+        async def wait() -> None:
+            payloads.append(await wait_for_external_event('review', announce=announce))
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(wait)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await announced.wait()
+            await anyio.to_thread.run_sync(resolve_external_event, tokens[0], 'yes')
+
+        assert payloads == ['yes']
+
+    async def test_a_durable_engine_that_cannot_wait_is_rejected(self) -> None:
+        """Waiting in process inside a durable run would not be recorded, so it is refused rather than done unsafely."""
+        agent = approval_agent(AwaitApproval[None](lambda ctx, requests, token: None), [], durable=True)
+
+        with pytest.raises(UserError, match="This agent's durable engine does not support waiting for external events"):
+            await agent.run('clean up')
+
+
+class _ImmediateBackend(JournalCallableOperationBackend[None]):
+    def __init__(self, agent_name: str, default_model_id: str | None) -> None:
+        super().__init__(
+            agent_name=agent_name,
+            default_model_id=default_model_id,
+            config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        )
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: None,
+    ) -> object:
+        return await body()
+
+
+class _AlwaysDurable(BaseDurabilityCapability[None]):
+    """A durable engine that runs every operation immediately and implements no external-event waiter."""
+
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Immediate', durable_unit_noun='operation', durable_container_noun='run', codec=JSON_CODEC
+    )
+
+    @property
+    def in_durable_context(self) -> bool:
+        return True
+
+    def get_durable_operation_backend(self) -> _ImmediateBackend:
+        return _ImmediateBackend(self.name, self.default_model_id)
+
+
+def delete_only(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def approval_agent(capability: AwaitApproval[None], deleted: list[str], *, durable: bool = False) -> Agent[None, str]:
+    agent = Agent(
+        FunctionModel(delete_only),
+        name='approver',
+        deps_type=type(None),
+        capabilities=[capability, *([_AlwaysDurable()] if durable else [])],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete(path: str) -> str:
+        deleted.append(path)
+        return f'deleted {path}'
+
+    return agent

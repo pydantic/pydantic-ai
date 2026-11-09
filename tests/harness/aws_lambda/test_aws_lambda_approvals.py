@@ -1,4 +1,4 @@
-"""Tests for waiting on a decision inside an AWS Lambda durable execution, with `DurableApprovals`.
+"""Tests for waiting on a decision inside an AWS Lambda durable execution, with `AwaitApproval`.
 
 The run creates a Lambda callback, announces its ID in a step, and suspends on the callback's
 result. A test resolves the callback on the fake context the way `SendDurableExecutionCallbackSuccess`
@@ -19,9 +19,9 @@ from aws_durable_execution_sdk_python.exceptions import SuspendExecution
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import DurableApprovals
-from pydantic_ai.durable_exec import wait_for_external_event
+from pydantic_ai.capabilities import AwaitApproval
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.external_events import resolve_external_event, wait_for_external_event
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -68,7 +68,7 @@ class Approvals:
             FunctionModel(model_fn, stream_function=stream_fn),
             name='a',
             deps_type=type(None),
-            capabilities=[AWSLambdaDurability[None](**durability), DurableApprovals[None](announce, timeout=timeout)],
+            capabilities=[AWSLambdaDurability[None](**durability), AwaitApproval[None](announce, timeout=timeout)],
         )
 
         @self.agent.tool_plain(requires_approval=True)
@@ -181,11 +181,28 @@ def test_a_sub_second_timeout_rounds_up_to_a_whole_second() -> None:
     assert callback.callback_config.timeout_seconds == 2
 
 
-def test_outside_a_durable_handler_the_wait_is_rejected() -> None:
-    approvals = Approvals()
+def test_outside_a_durable_handler_the_same_agent_waits_in_process() -> None:
+    """Run outside the bridge, as in local development, the agent waits in process instead of on a callback."""
+    deleted: list[str] = []
 
-    with pytest.raises(UserError, match=r'can only be called inside a durable agent run'):
-        approvals.agent.run_sync('clean up')
+    def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        # Stands in for the approval endpoint, which would resolve the token later.
+        resolve_external_event(token, {'approvals': {'call-1': True}})
+
+    agent = Agent(
+        FunctionModel(delete_then_report),
+        name='a',
+        deps_type=type(None),
+        capabilities=[AWSLambdaDurability[None](), AwaitApproval[None](announce)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete(path: str) -> str:
+        deleted.append(path)
+        return f'deleted {path}'
+
+    assert agent.run_sync('clean up').output == 'success: deleted a.txt'
+    assert deleted == ['a.txt']
 
 
 def test_waiting_inside_a_tool_step_is_rejected() -> None:
@@ -211,7 +228,7 @@ def test_waiting_inside_the_announce_step_is_rejected() -> None:
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), DurableApprovals[None](announce)],
+        capabilities=[AWSLambdaDurability[None](), AwaitApproval[None](announce)],
     )
 
     @agent.tool_plain(requires_approval=True)

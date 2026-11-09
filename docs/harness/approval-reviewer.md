@@ -96,7 +96,7 @@ Approval requests for tools the selector does not match go to the person unrevie
 
 There is no setting for the failure case, because leaving a call for the person is what happens without a reviewer: a reviewer that is down, overloaded, or out of budget makes the run ask, and never makes it approve.
 
-A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. The same holds for [`DurableApprovals`](../capabilities/durable-approvals.md), which waits for the person inside a durable run. Otherwise the requests end the run as [`DeferredToolRequests`](../deferred-tools.md) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
+A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. The same holds for [`AwaitApproval`](../capabilities/await-approval.md), which waits for the person inside the run. Otherwise the requests end the run as [`DeferredToolRequests`](../deferred-tools.md) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
 
 ```python {names="defined"}
 from pydantic_ai import Agent

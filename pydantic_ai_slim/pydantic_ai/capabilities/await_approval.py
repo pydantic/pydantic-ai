@@ -1,4 +1,4 @@
-"""Capability that waits for a person's decision on deferred tool calls inside a durable agent run."""
+"""Capability that waits for a person's decision on deferred tool calls inside the agent run."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from functools import partial
 
 from pydantic import TypeAdapter
 
-from pydantic_ai.durable_exec._external_events import ExternalEventError, check_timeout, wait_for_external_event
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.external_events import ExternalEventError, check_timeout, wait_for_external_event
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
 
 from .abstract import AbstractCapability, CapabilityOrdering
@@ -19,25 +20,30 @@ _RESULTS_ADAPTER = TypeAdapter(DeferredToolResults)
 
 
 @dataclass
-class DurableApprovals(AbstractCapability[AgentDepsT]):
-    """Wait for a person to decide on deferred tool calls without ending the durable agent run.
+class AwaitApproval(AbstractCapability[AgentDepsT]):
+    """Wait for a person to decide on deferred tool calls, and continue the same agent run with the decision.
 
-    When tools require approval or external execution, the run hands a resume token to `announce`
-    and suspends until the token is resolved with the decision, then continues with the approved
-    calls executed, the denied ones reported to the model, and the external results filled in. The
-    decision is the JSON form of [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults].
+    When tools require approval or external execution, the run hands a resume token to `announce`, which
+    shows the pending calls and the token to a person, and waits until the token is resolved with the
+    decision: the JSON form of [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. The run
+    then continues with the approved calls executed, the denied ones reported to the model, and the
+    external results filled in.
 
-    Requires a durable agent run on an engine that can wait for external events, currently AWS Lambda
-    durable functions with Pydantic AI Harness's `AWSLambdaDurability`. Anywhere else the run fails
-    with a `UserError` when a call needs a decision.
+    The wait is [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]. In a
+    plain run it happens in this process, and your code resolves the token with
+    [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]. In a durable run on
+    an engine that supports it, currently AWS Lambda durable functions with Pydantic AI Harness's
+    `AWSLambdaDurability`, the engine records the wait and suspends the run while it lasts, and the
+    token is resolved through the engine's API.
 
-    See [Durable Approvals](../capabilities/durable-approvals.md).
+    See [Await Approval](../capabilities/await-approval.md).
     """
 
     announce: Callable[[RunContext[AgentDepsT], DeferredToolRequests, str], Awaitable[None] | None]
-    """Hands the resume token to whoever decides, for example by posting it to Slack or writing a database row.
+    """Shows the pending calls and the resume token to whoever decides: a Slack message, an email, a database row.
 
-    Called with the run context, the pending requests and the token, once per decision, inside a
+    It does not return the decision: code you write elsewhere resolves the token with it. Called with
+    the run context, the pending requests and the token, once per decision; in a durable run, inside a
     durable unit that is not run again on replay. Can be sync or async; a sync function runs in a
     worker thread, like a sync tool.
     """
@@ -45,7 +51,7 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
 
     timeout: timedelta | None = None
-    """How long to wait for the decision before giving up, or `None` to wait as long as the engine allows.
+    """How long to wait for the decision, or `None` to wait without a limit (in a durable run, as long as the engine allows).
 
     When it elapses, or the token is resolved with a failure instead of a decision, every pending
     approval is denied and every pending external call fails, with a message to the model saying why.
@@ -69,11 +75,13 @@ class DurableApprovals(AbstractCapability[AgentDepsT]):
         requests: DeferredToolRequests,
     ) -> DeferredToolResults:
         try:
-            payload = await wait_for_external_event(
-                'deferred_tool_calls',
-                announce=partial(self.announce, ctx, requests),
-                timeout=self.timeout,
-            )
+            # Current, so the wait can tell a durable run whose engine can't wait from a plain run.
+            with set_current_run_context(ctx):
+                payload = await wait_for_external_event(
+                    'deferred_tool_calls',
+                    announce=partial(self.announce, ctx, requests),
+                    timeout=self.timeout,
+                )
         except ExternalEventError as error:
             message = f'No decision on this tool call arrived: {error}'
             return requests.build_results(

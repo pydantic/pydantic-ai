@@ -65,7 +65,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     return value must survive that round trip. Control-flow signals (`ModelRetry`,
     `ApprovalRequired`, `CallDeferred`, `ToolFailed`) cross the boundary as values rather than
     exceptions, so approval and deferred-tool flows work inside a durable execution. With
-    `DurableApprovals` attached, a call that needs a person's decision waits on a Lambda callback
+    `AwaitApproval` attached, a call that needs a person's decision waits on a Lambda callback
     instead of ending the run.
 
     Example:
@@ -141,7 +141,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Let the run wait for external events, such as `DurableApprovals` decisions, through Lambda callbacks."""
+        """Let the run wait for external events, such as `AwaitApproval` decisions, through Lambda callbacks."""
         bridge = current_bridge()
         if bridge is None:
             return await super().wrap_run(ctx, handler=handler)

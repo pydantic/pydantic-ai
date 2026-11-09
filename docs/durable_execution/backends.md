@@ -260,25 +260,66 @@ capability authors contribute decorated methods that arrive through the same bac
 
 ## Waiting for external events
 
-[`wait_for_external_event`][pydantic_ai.durable_exec.wait_for_external_event] suspends a durable run
-until something outside it resolves a token the run handed out, and returns the JSON payload it was
-resolved with. [`DurableApprovals`](../capabilities/durable-approvals.md) uses it to wait for a
-person's decision on deferred tool calls without ending the run. It only works on engines that
-implement it; anywhere else it raises a `UserError`.
+[`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event] waits until
+something outside the run resolves a token the run handed out, and returns the JSON payload it was
+resolved with. [`AwaitApproval`](../capabilities/await-approval.md) uses it to wait for a person's
+decision on deferred tool calls without ending the run. Outside a durable run it waits in process,
+and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] ends the wait. In
+a durable run, an in-process wait would not be recorded, so a replay would announce again and a
+restart would lose it: there, the wait goes through your engine, and on an engine that doesn't
+implement it, it raises a `UserError`.
 
-To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.durable_exec.ExternalEventWaiter] and
+To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter] and
 install an instance for each durable agent run with
-[`external_event_scope`][pydantic_ai.durable_exec.external_event_scope], typically in your
-capability's `wrap_run` when it is in the durable context. Its `wait` method receives a stable
-`name`, an async `announce` callback, and an optional `timeout`, and must journal three things so a
-replay returns the recorded payload without side effects:
+[`external_event_scope`][pydantic_ai.external_events.external_event_scope], typically in your
+capability's `wrap_run` when it is in the durable context. Both are re-exported from
+`pydantic_ai.durable_exec` with [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError],
+and live in `pydantic_ai.external_events`. The `wait` method receives a stable `name`, an async
+`announce` callback, and an optional `timeout`, and must journal three things so a replay returns
+the recorded payload without side effects:
 
 1. Create a resume token: a callback ID, an awakeable ID, or a waitpoint token, depending on the engine.
 2. Call `announce(token)` once, inside a durable unit, so the run can hand the token to whoever
    resolves it.
-3. Suspend until the token is resolved, then return its JSON payload. Raise
-   [`ExternalEventError`][pydantic_ai.durable_exec.ExternalEventError] when the timeout elapses or the
-   token is resolved with a failure.
+3. Suspend until the token is resolved, then return its JSON payload. Raise `ExternalEventError`
+   when the timeout elapses or the token is resolved with a failure.
+
+```python {title="external_event_waiter.py"}
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+
+from pydantic import JsonValue
+
+from pydantic_ai.durable_exec import ExternalEventWaiter, external_event_scope
+from pydantic_ai.external_events import wait_for_external_event
+
+
+class ApprovingWaiter(ExternalEventWaiter):
+    async def wait(
+        self,
+        name: str,
+        *,
+        announce: Callable[[str], Awaitable[None]],
+        timeout: timedelta | None,
+    ) -> JsonValue:
+        token = f'{name}-1'  # (1)!
+        await announce(token)  # (2)!
+        return {'approved': True}  # (3)!
+
+
+async def main():
+    with external_event_scope(ApprovingWaiter()):  # (4)!
+        payload = await wait_for_external_event('review', announce=print)
+    print(payload)
+    #> {'approved': True}
+```
+
+1. A real engine creates a resume token through its API and records it.
+2. Run inside a durable unit the engine records, so a replay does not announce again.
+3. A real engine suspends the run here until the token is resolved, then returns the recorded payload.
+4. An engine enters the scope for each durable agent run, such as in its capability's `wrap_run`.
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Engines that hand out tokens map onto this directly: AWS Lambda callbacks, Restate awakeables,
 Trigger.dev waitpoint tokens, Vercel Workflow hooks. Engines that address external events by name

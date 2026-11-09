@@ -279,7 +279,7 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
 opt out).
 
-Approvals: add core `DurableApprovals(announce, timeout=timedelta(...))` (`pydantic_ai.capabilities`)
+Approvals: add core `AwaitApproval(announce, timeout=timedelta(...))` (`pydantic_ai.capabilities`)
 next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
 a second run. A call that needs approval or external execution creates a Lambda callback, runs
 `announce(ctx, requests, callback_id)` once in a step, and suspends the execution. The approver sends the
@@ -288,9 +288,12 @@ JSON form of `DeferredToolResults` (`{"approvals": {"<tool_call_id>": true}}`, o
 `aws lambda send-durable-execution-callback-success --callback-id ... --cli-binary-format
 raw-in-base64-out --result '<json>'` (boto3 `send_durable_execution_callback_success`). On replay the
 model is not called again and `announce` does not rerun. A timeout or `send-durable-execution-callback-failure`
-denies every pending call with a message and the run continues; an invalid decision or a stale tool call
-ID raises `UserError`. Other deferred-call handlers (`HandleDeferredToolCalls`, `ApprovalReviewer`) run
-first. Outside a durable handler, or from inside a tool, the wait raises `UserError`.
+denies every pending approval and fails every pending external call with a message, and the run
+continues; an invalid decision or a stale tool call ID raises `UserError`. Other deferred-call handlers
+(`HandleDeferredToolCalls`, `ApprovalReviewer`) run first. `announce` only delivers the question; the
+answer comes from your approval endpoint. Outside a durable handler (local development) the same agent
+waits in process and `pydantic_ai.external_events.resolve_external_event(token, decision)` resolves it;
+from inside a checkpointed tool, the wait raises `UserError`.
 
 Gotchas:
 

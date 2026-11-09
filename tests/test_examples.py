@@ -129,7 +129,7 @@ class ExamplesConfig(BaseExamplesConfig):
 
 
 RUNNABLE_HARNESS_PAGES = frozenset(
-    {'artifact-scanning.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+    {'artifact-scanning.md', 'aws-lambda.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
@@ -187,6 +187,13 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             )
             if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
                 marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
+            if _is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md':
+                marks.append(
+                    pytest.mark.skipif(
+                        find_spec('aws_durable_execution_sdk_python') is None,
+                        reason='aws-durable-execution-sdk-python not installed',
+                    )
+                )
             if title in _MOVES_CACHE_PREFIX:
                 marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
@@ -1174,6 +1181,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    # docs/capabilities/await-approval.md: the refund waits for the approval endpoint
+    'Refund order 1234, it arrived broken.': ToolCallPart(
+        tool_name='issue_refund', args={'order_id': '1234', 'amount': 50}, tool_call_id='issue_refund_1234'
+    ),
 }
 
 model_routes: dict[str, str] = {
@@ -2000,6 +2011,9 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'issue_refund':
+        # docs/capabilities/await-approval.md: the approved refund ran
+        return ModelResponse(parts=[TextPart("I've refunded $50 for order 1234.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
