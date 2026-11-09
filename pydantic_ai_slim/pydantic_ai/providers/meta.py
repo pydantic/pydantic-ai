@@ -23,9 +23,6 @@ else:
     )
 
 MetaModelName = Literal[
-    'muse-spark-1.1',
-    'muse-spark-1.2',
-    'muse-spark-1.2-contributor',
     'muse-spark-1.3',
     'muse-spark-1.3-contributor',
     'muse-wonder-1.0',

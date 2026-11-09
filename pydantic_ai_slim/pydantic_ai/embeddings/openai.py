@@ -17,7 +17,6 @@ from .settings import EmbeddingSettings
 try:
     import tiktoken
     from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
-    from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
     from openai.types.create_embedding_response import Usage
 
     from pydantic_ai.models.openai import OMIT
@@ -26,6 +25,9 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI embeddings model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+LatestOpenAIEmbeddingModelNames = Literal['text-embedding-3-large', 'text-embedding-3-small']
+"""Latest OpenAI embeddings models."""
 
 OpenAIEmbeddingModelName = str | LatestOpenAIEmbeddingModelNames
 """Possible OpenAI embeddings model names.
