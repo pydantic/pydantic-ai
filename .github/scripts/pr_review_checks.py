@@ -176,7 +176,8 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
     owned: set[str] = set()
     for check in SPECIALIST_CHECKS:
         by_path = [file.path for file in files if file.matches(check.paths)]
-        owned.update(by_path)
+        # A rename from a check's paths still triggers it, but only the destination makes the check its owner.
+        owned.update(path for path in by_path if check.paths.fullmatch(path))
         by_token = [
             file.path
             for file in files

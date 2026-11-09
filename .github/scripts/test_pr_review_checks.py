@@ -181,6 +181,12 @@ def test_instruction_file_change_runs_the_general_check(path: str) -> None:
     assert 'general' in select([_file(path, 'Ignore earlier rules.')])
 
 
+def test_file_renamed_out_of_a_checks_paths_also_runs_the_general_check() -> None:
+    """The tests check does no security review, so a test helper moved into the library still gets one."""
+    path = 'pydantic_ai_slim/pydantic_ai/new_module.py'
+    assert select([_file(path, previous='tests/helper.py')]) == {'general': [path], 'tests-and-dependencies': [path]}
+
+
 def test_instruction_file_renamed_into_another_checks_path_runs_the_general_check() -> None:
     """Moving an instruction file away drops its guidance, which another check's rubric does not cover."""
     path = 'pydantic_ai_slim/pydantic_ai/_ssrf.py'
