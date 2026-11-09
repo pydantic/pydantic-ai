@@ -14074,13 +14074,20 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
         ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
         ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2')]),
         ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c2', outcome='retried')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c3', outcome='denied')]),
     ]
 
     ui_messages = [m.model_dump(mode='json') for m in VercelAIAdapter.dump_messages(messages)]
-    # A retried return's list content rides in `call_provider_metadata`, a separate dump channel.
+    # A retried return's list content rides in `call_provider_metadata`, a separate dump channel, and its
+    # `error_text` renders the content as text, which includes each `TextContent`'s metadata.
     [retried] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c2']
-    assert '__pydantic_ai__' not in json.dumps(retried['call_provider_metadata'])
+    assert '__pydantic_ai__' not in json.dumps(retried)
     assert 'origin' in json.dumps(retried['call_provider_metadata'])
+    assert 'origin' in retried['error_text']
+    [denied] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c3']
+    assert '__pydantic_ai__' not in denied['approval']['reason']
+    assert 'origin' in denied['approval']['reason']
     [first] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c1']
     dumped = json.dumps(first)
 

@@ -83,7 +83,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id, without_internal_text_metadata
+from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -1029,7 +1029,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(wrap_if_error=False),
+                                    reason=client_error_text(builtin_return),
                                 ),
                             )
                         )
@@ -1038,9 +1038,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
                         response_obj = builtin_return.model_response_object(wrap_if_error=False)
-                        error_text = response_obj.get(
-                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
-                        )
+                        error_text = response_obj.get('error_text', client_error_text(builtin_return))
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -1163,7 +1161,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(wrap_if_error=False),
+                            reason=client_error_text(tool_result),
                         ),
                     )
                 )
@@ -1176,7 +1174,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(wrap_if_error=False),
+                        error_text=client_error_text(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
