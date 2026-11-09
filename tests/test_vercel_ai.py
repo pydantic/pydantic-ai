@@ -14259,18 +14259,17 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
-        pytest.param({'system_prompt': 'Be brief.'}, True, [None, None, None], SystemPromptPart, id='trimmed'),
-        pytest.param(
-            {'instructions': 'Be brief.'}, True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'
-        ),
-        pytest.param(
-            {'system_prompt': 'Be brief.'}, False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'
-        ),
-        pytest.param({'system_prompt': 'Be brief.'}, False, ['low', 'low', 'low'], None, id='same-effort'),
+        pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
+        pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
+        pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
+        pytest.param('system_prompt', False, ['low', 'low', 'low'], None, id='same-effort'),
     ],
 )
 async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
-    prompt: dict[str, str], trim: bool, efforts: list[Literal['low', 'high'] | None], added: type | None
+    prompt: Literal['system_prompt', 'instructions'],
+    trim: bool,
+    efforts: list[Literal['low', 'high'] | None],
+    added: type | None,
 ):
     """Parts the run adds to the client's new turn, like a reinjected system prompt or a settings change, don't make the save rewrite the stored history.
 
@@ -14278,8 +14277,9 @@ async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
     """
     agent = Agent(
         FunctionModel(stream_function=_answer_ok),
+        system_prompt='Be brief.' if prompt == 'system_prompt' else (),
+        instructions='Be brief.' if prompt == 'instructions' else None,
         capabilities=[ProcessHistory(_keep_last)] if trim else [],
-        **prompt,
     )
     store = InMemoryConversationStore()
     stored_ids: list[str] = []
