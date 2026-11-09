@@ -204,7 +204,7 @@ Pass `models` to advertise a stable ACP session config option named `model` (usi
 run_acp_stdio_sync(agent, models=['{{ anthropic:medium }}', '{{ anthropic:large }}', '{{ openai:medium }}'])
 ```
 
-A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
+A model id is any string a Pydantic AI model accepts, so models not listed in `KnownModelName` work too. Pass `models='all'` to offer every model `KnownModelName` lists. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
 
 ## Cancellation and limitations
 
@@ -231,7 +231,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     mcp_capabilities=None,    # MCP transports to advertise; needs a session_config to connect them
     tool_presenter=None,      # defaults to the FileSystem/Shell presenter
     session_store=None,       # enables session/load by persisting each session
-    models=None,              # models offered as the `model` config option ('all' for every known model)
+    models=None,              # models offered as the `model` config option ('all' for every `KnownModelName`)
     model_resolver=None,      # maps an advertised model id to the Model used for the run
     usage_limits=None,        # no request limit by default; pass UsageLimits(...) to set ceilings
 )

@@ -22,6 +22,7 @@ import sys
 from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, TypeVar
 
 import anyio
@@ -45,6 +46,7 @@ try:
         ExternalReturnValue,
         ExternalSettledResult,
         MontyComplete,
+        MontyRefusedError,
         OsFunction,
         OsHandler,
         OSPolicy,
@@ -157,7 +159,10 @@ class MontyRunState:
         limits: ResourceLimits,
         in_temporal_workflow: bool = False,
     ) -> AsyncMontySession:
-        """Return the live REPL session, spawning or dialing the pool on first use."""
+        """Return the live REPL session, spawning or dialing the pool on first use.
+
+        Retry a capacity refusal once after a short backoff. Other setup errors propagate unchanged.
+        """
         if self.pool is None:
             try:
                 if in_temporal_workflow:
@@ -175,11 +180,26 @@ class MontyRunState:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
                 raise
         if self.session is None:
-            checkout = self.pool.checkout(
-                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+            checkout = partial(
+                self.pool.checkout,
+                limits=limits,
+                type_check=type_check,
+                type_check_stubs=type_check_stubs,
+                os_policy=_OS_POLICY,
             )
-            self.session = await _enter_monty(self._session_stack, checkout, self.portal)
+            self.session = await self._checkout_with_retry(checkout)
         return self.session
+
+    async def _checkout_with_retry(
+        self, checkout: Callable[[], AbstractAsyncContextManager[AsyncMontySession]]
+    ) -> AsyncMontySession:
+        try:
+            return await _enter_monty(self._session_stack, checkout(), self.portal)
+        except MontyRefusedError as error:
+            if error.cause not in ('caller_cap', 'capacity', 'worker_unavailable'):
+                raise
+            await call_monty(self.portal, anyio.sleep, 0.1)
+            return await _enter_monty(self._session_stack, checkout(), self.portal)
 
     async def reset(self) -> None:
         """Return the current worker and make the next call start a fresh REPL."""
