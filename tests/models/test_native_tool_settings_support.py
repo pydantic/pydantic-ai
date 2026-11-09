@@ -656,3 +656,26 @@ class TestProviderSettings:
     def test_unknown_settings_are_ignored(self, read_request: Any, make_tool: Any) -> None:
         """Like model settings, an unknown option is never sent, so it can't override a field like `allowed_domains`."""
         assert read_request(make_tool(provider_settings=UNKNOWN_SETTINGS)) == read_request(make_tool())
+
+
+@pytest.mark.parametrize(
+    ('read_request', 'request_key'),
+    [
+        pytest.param(
+            _openai_request_tool,
+            'max_num_results',
+            id='openai',
+            marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
+        ),
+        pytest.param(
+            _xai_request_search,
+            'limit',
+            id='xai',
+            marks=_needs_xai,
+        ),
+    ],
+)
+@pytest.mark.usefixtures('allow_model_requests')
+def test_file_search_max_num_results_reaches_the_request(read_request: Any, request_key: str) -> None:
+    assert read_request(FileSearchTool(file_store_ids=['store'], max_num_results=5))[request_key] == 5
+    assert request_key not in read_request(FileSearchTool(file_store_ids=['store']))
