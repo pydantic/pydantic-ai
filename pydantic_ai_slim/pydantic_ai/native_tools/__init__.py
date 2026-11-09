@@ -4,13 +4,14 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai.computer_use import COMPUTER_KIND
+from pydantic_ai.messages import ToolKind, UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
@@ -24,6 +25,7 @@ __all__ = (
     'ImageAspectRatio',
     'ImageSize',
     'MemoryTool',
+    'ComputerTool',
     'MCPServerTool',
     'FileSearchTool',
     'AdvisorModelName',
@@ -100,6 +102,15 @@ class AbstractNativeTool(ABC):
     the native one isn't available). When `False` (the default), the request errors on
     models that can't honor the native tool — the user explicitly asked for it, so fail loudly
     rather than silently substituting different behavior.
+    """
+
+    executed_by: ClassVar[frozenset[ToolKind]] = frozenset()
+    """The kinds of the local tools that run this native tool's calls; empty when the provider runs them.
+
+    A model adapter turns the provider's calls into calls of these tools, and their results back into the provider's
+    format. The native tool is only sent when the request has a tool of each kind that isn't deferred: otherwise it is
+    left out when it is [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is
+    refused when it isn't.
     """
 
     @property
@@ -622,6 +633,24 @@ class MemoryTool(AbstractNativeTool):
 
 
 @dataclass(kw_only=True)
+class ComputerTool(AbstractNativeTool):
+    """A provider's native computer use tool, whose calls a local `computer` tool runs.
+
+    That is the request's tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind. Pydantic AI Harness's `ComputerUse` adds it with the display size of each step. A model adapter sends it in place
+    of that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns
+    the results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+    """
+
+    display_size: tuple[int, int]
+    """The `(width, height)` of the screenshots the model sees, which may be smaller than the display."""
+
+    kind: str = 'computer'
+    """The kind of tool."""
+
+    executed_by: ClassVar[frozenset[ToolKind]] = frozenset({COMPUTER_KIND})
+
+
+@dataclass(kw_only=True)
 class MCPServerTool(AbstractNativeTool):
     """A native tool that allows your agent to use MCP servers.
 
@@ -843,5 +872,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
 """Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, ComputerTool, AdvisorTool, _tool_search.ToolSearchTool}
 )
