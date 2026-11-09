@@ -480,10 +480,13 @@ class Team(WrapperCapability[AgentDepsT]):
         Returns the request as a message, or `None` when the member was shut down at once.
         """
         record = self._record(conversation_id, name)
+        reason = reason.strip()
+        if reason and not reason.endswith(('.', '!', '?')):
+            reason += '.'
         text = (
-            f'Shutdown requested by {sender}{f": {reason}" if reason else ""}. Wrap up now: finish the board item '
-            'you hold with `finish_task`, or hand it back as `pending`, then end your turn. You are stopped when '
-            'this turn ends.'
+            f'Shutdown requested by {sender}.{f" Reason: {reason}" if reason else ""} Wrap up now: finish the board '
+            'item you hold with `finish_task`, or hand it back as `pending`, then end your turn. You are stopped '
+            'when this turn ends.'
         )
         request = text if sender == USER else AgentMessage(sender=sender, text=text)
         sent = await self.owner.shutdown(

@@ -412,7 +412,9 @@ class TestTeamComposition:
             call('board_add', content='Write docs'),
             call('board_add', content='Write docs, done when examples run'),
             call('board_add', content='Publish', depends_on=['7']),
-            call('finish_task', item_id='1'),
+            # Models write IDs as the tools show them, with a `#`.
+            call('board_add', content='Publish, done when live', depends_on=['#1']),
+            call('finish_task', item_id='#1'),
             call('assign_task', item_id='1', teammate='nobody'),
             call('board_list'),
         )
@@ -424,11 +426,12 @@ class TestTeamComposition:
             'The task was not added to the board.\n\nSay when it is done.',
             'Added #1 [pending] Write docs, done when examples run',
             'No board items #7. Use `board_list`.',
+            'Added #2 [blocked] Publish, done when live (after: #1)',
             '#1 is not in progress for anyone.',
             "No teammate 'nobody'.",
-            '#1 [pending] Write docs, done when examples run',
+            '#1 [pending] Write docs, done when examples run\n#2 [blocked] Publish, done when live (after: #1)',
         ]
-        assert [item.id for item in creating] == ['1', '1']
+        assert [item.id for item in creating] == ['1', '1', '2']
 
     async def test_members_message_each_other_and_the_lead(self, tmp_path: Path) -> None:
         def chatty(messages: list[ModelMessage]) -> Reply:

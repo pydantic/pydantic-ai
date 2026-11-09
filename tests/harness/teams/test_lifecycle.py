@@ -172,16 +172,16 @@ class TestShutdown:
             name, latest = _name(messages), str(messages[-1])
             if 'Shutdown requested' in latest and name == 'ann':
                 # ann wraps up: she hands her item back herself.
-                return call('finish_task', item_id='1', status='pending')
+                return call('finish_task', item_id='#1', status='pending')
             if last_return(messages) is None and 'Shutdown requested' not in latest:
-                return call('claim_task')
+                return call('claim_task', item_id='#1') if name == 'ann' else call('claim_task')
             return f'{name} is done.'
 
         board = FileClaimablePlanStore(tmp_path / 'board.json')
         await board.add_item(OwnedPlanItem(id='1', content='One'))
         await board.add_item(OwnedPlanItem(id='2', content='Two'))
         lead_model = scripted(
-            call('shutdown_teammate', teammate='ann', reason='Done for today.'),
+            call('shutdown_teammate', teammate='ann', reason='Done for today'),
             call('shutdown_teammate', teammate='nobody'),
             'Shut down.',
         )
@@ -228,7 +228,8 @@ class TestShutdown:
                 ('ben', 'stopped', 'done'),
             ]
             assert [(m.sender, m.recipient) for m in snapshot.messages] == [('lead', 'ann'), ('user', 'ben')]
-            assert 'Shutdown requested by lead: Done for today.' in snapshot.messages[0].text
+            assert 'Shutdown requested by lead. Reason: Done for today. Wrap up now' in snapshot.messages[0].text
+            assert 'Shutdown requested by user. Reason: Stop. Wrap up now' in snapshot.messages[1].text
             # Both reports reached the lead.
             assert len(host.owner.lead_inbox('conv')) == 4
 
@@ -269,8 +270,11 @@ class TestShutdown:
                 await host.team.shutdown('conv', 'nobody')
 
     async def test_a_wrap_up_past_the_grace_period_is_stopped(self, tmp_path: Path) -> None:
+        stuck = anyio.Event()
+
         async def respond(messages: list[ModelMessage]) -> ModelResponse:
             if _name(messages) == 'ann' and 'Shutdown requested' in str(messages[-1]):
+                stuck.set()
                 await anyio.sleep_forever()
             return ModelResponse(parts=[TextPart('idle')])
 
@@ -292,11 +296,13 @@ class TestShutdown:
             await host.watch.settled(ben, generation=2)
             assert (ben.shut_down, ben.outcome) == (True, 'ok')
 
-            host.team.shutdown_grace = 0.05
+            host.team.shutdown_grace = 1
             assert await host.team.shutdown('conv', 'ann') is True
             with pytest.raises(ValueError, match='already shutting down'):
                 await host.team.shutdown('conv', 'ann')
             await host.watch.until(lambda: ann.shut_down)
+            # ann's wrap-up hung in its model request until the grace ran out.
+            assert stuck.is_set()
             assert (ann.outcome, ann.generation) == ('cancelled', 2)
 
         with pytest.raises(RuntimeError, match='closed'):

@@ -35,6 +35,11 @@ def _render(item: OwnedPlanItem) -> str:
     return line
 
 
+def _item_id(text: str) -> str:
+    """A board item's ID as a model may write it: `#2`, as the tools render it, is `2`."""
+    return text.strip().removeprefix('#')
+
+
 def _next_id(board: list[OwnedPlanItem]) -> str:
     numbers = [int(item.id) for item in board if item.id.isdigit()]
     return str(max(numbers, default=0) + 1)
@@ -124,9 +129,10 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
         store = self.team.store(conversation_id)
         board = await store.get_owned_items()
         ids = {item.id for item in board}
-        if missing := [dependency for dependency in depends_on or [] if dependency not in ids]:
+        dependencies = [_item_id(dependency) for dependency in depends_on or []]
+        if missing := [dependency for dependency in dependencies if dependency not in ids]:
             raise ModelRetry(f'No board items {", ".join(f"#{item_id}" for item_id in missing)}. Use `board_list`.')
-        item = OwnedPlanItem(id=_next_id(board), content=content, depends_on=list(depends_on or []))
+        item = OwnedPlanItem(id=_next_id(board), content=content, depends_on=dependencies)
         if is_blocked(list[PlanItem](board), item):
             item.status = TaskStatus.blocked
         await check_task_creating(ctx, item)
@@ -148,6 +154,7 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
             item_id: The item to take, or `None` for the first pending item that waits on nothing.
         """
         conversation_id, name = self._role(ctx)
+        item_id = None if item_id is None else _item_id(item_id)
         change = await self.team.store(conversation_id).claim(item_id, owner=name)
         if change is None:
             what = f'#{item_id} is not available' if item_id is not None else 'No item is available'
@@ -166,6 +173,7 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
         conversation_id, _ = self._role(ctx)
         if teammate not in {record.name for record in self.team.owner.members(conversation_id)}:
             raise ModelRetry(f'No teammate {teammate!r}.')
+        item_id = _item_id(item_id)
         change = await self.team.store(conversation_id).claim(item_id, owner=teammate)
         if change is None:
             raise ModelRetry(f'#{item_id} is not available: it may be taken, done, or waiting. Use `board_list`.')
@@ -191,6 +199,7 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
         """
         conversation_id, name = self._role(ctx)
         store = self.team.store(conversation_id)
+        item_id = _item_id(item_id)
         item = await store.get_owned_item(item_id)
         if item is None:
             raise ModelRetry(f'No board item #{item_id}. Use `board_list`.')
