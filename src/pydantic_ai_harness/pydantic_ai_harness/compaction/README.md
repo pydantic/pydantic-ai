@@ -67,9 +67,9 @@ tail measures high. `tokenizer` or the heuristic applies before the first such r
 last, where the history did not grow between two (as across an earlier compaction), and with no
 provider usage. Instructions are not part of the tail.
 
-**If you set `keep_tokens`, re-check it.** The heuristic alone, used before, can see a third of a
-thinking-heavy history's real tokens or less, so a budget kept several times what it named. It now
-keeps the named amount, so fewer messages.
+**If you set `keep_tokens`, re-check it.** Before, it was measured with the heuristic alone, which
+can see a third or less of a thinking-heavy history's real tokens, so a budget kept several times
+more history than it named. It now keeps the named amount, so fewer messages.
 
 ### `max_fraction`: one setting for every model
 
@@ -177,9 +177,9 @@ the pending request are estimated conservatively, since the anchor does not cove
 **If you already set an absolute `max_tokens`, re-check it.** Besides user and system prompts, tool
 returns, response text, and tool calls, the estimator now counts `ThinkingPart` / `CompactionPart`
 content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the latest
-`ModelRequest.instructions`, so a history measures higher (it can be several times the old count on
-a thinking-heavy, tool-calling history, depending on how much of it is thinking blocks, retries, and
-instructions) and an unchanged `max_tokens` compacts earlier. What each strategy clears is
+`ModelRequest.instructions`, so a history measures higher and an unchanged `max_tokens` compacts
+earlier. On a thinking-heavy, tool-calling history it can be several times the old count, depending
+on how much of it is thinking blocks, retries, and instructions. What each strategy clears is
 unchanged.
 
 ## Reporting usage: `ReportContextUsage`
@@ -639,7 +639,7 @@ them raises `UnexpectedModelBehavior` instead of writing an empty summary. Retri
 nested run's [usage limits](#usage-accounting), raising `UsageLimitExceeded` if that budget runs out
 first. To fall back on either failure, set `FallbackCompaction`'s
 `fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback that makes
-no model requests. This does not raise the parent run's limits.
+no model requests. This does not increase the parent run's limits.
 
 `model_settings` merges over the summary model's defaults without mutating the model or the
 dictionary. `summarization_capabilities` attaches capabilities to the summary agent; the outer
