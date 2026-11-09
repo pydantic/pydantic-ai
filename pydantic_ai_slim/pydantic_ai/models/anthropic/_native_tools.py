@@ -331,13 +331,11 @@ def map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaT
 
 def map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:
     param = BetaAdvisorTool20260301Param(type='advisor_20260301', name='advisor', model=tool.model)
-    settings = (tool.provider_settings or {}).get('anthropic', {})
-    max_uses = settings.get('max_uses', tool.max_uses)
-    if max_uses is not None:
-        param['max_uses'] = max_uses
+    if tool.max_uses is not None:
+        param['max_uses'] = tool.max_uses
     if tool.max_tokens is not None:
         param['max_tokens'] = tool.max_tokens
-    caching = settings.get('caching', tool.caching)
+    caching = (tool.provider_settings or {}).get('anthropic', {}).get('caching', tool.caching)
     if caching is not None:
         param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=caching)
     return param
