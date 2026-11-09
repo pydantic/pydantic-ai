@@ -376,7 +376,7 @@ When a workflow changes business data, such as issuing a refund or updating a re
 2. **Decide**: one step turns the findings into a typed plan. This is usually plain code; when the decision needs judgment, it can be a single agent whose output is the plan.
 3. **Write**: application code applies the plan inside a lock, checks that the data the plan was based on hasn't changed since it was read, and records an idempotency key so that a retry, or a crash after the write, doesn't apply the plan twice.
 
-No model call can change data, so a misread input produces a wrong plan that your code can reject, log, or show to a person, rather than a half-finished set of writes made from inside an agent loop. It also replaces chains of narrow agents that each write part of the result with one typed plan that is applied in a single place.
+As long as no agent is given a tool that writes, no model call can change data, so a misread input produces a wrong plan that your code can reject, log, or show to a person, rather than a half-finished set of writes made from inside an agent loop. It also replaces chains of narrow agents that each write part of the result with one typed plan that is applied in a single place.
 
 ```python {title="extract_decide_write.py" test="skip"}
 from dataclasses import dataclass, field
@@ -478,7 +478,7 @@ async def handle_email(store: Store, message_id: str, email: str) -> RefundPlan 
 2. The extraction agent only gets read-only tools.
 3. An [output validator](output.md#output-validator-functions) checks every id the model returns against the data, so a made-up order id is sent back to the model as a retry instead of reaching your code.
 4. The decision is plain code: the refund policy is a business rule, not something the model should make up. The plan records the order version it was based on.
-5. The write happens in one place, under a lock, and only if the order still has the version the plan was based on. If a person reviews the plan before it is applied, this is what stops an approved plan from overwriting a change made while it was waiting.
+5. The write happens in one place, under a lock, and only if the order still has the version the plan was based on. If a person reviews the plan before it is applied, this is what stops an approved plan from overwriting a change made while it was waiting. On `StalePlanError`, decide again from the current order rather than retrying the old plan.
 6. The idempotency key comes from the input (here, the email's message id), not from the model, so handling the same email twice applies its refund once.
 
 When a person has to approve the change, show them the typed plan between the decide and write steps. [Deferred tools](deferred-tools.md) are the right fit when they need to approve an individual tool call that the agent makes during its run, rather than a business change.
@@ -555,7 +555,8 @@ async def find_disputed_charges(ctx: RunContext[CaseFile]) -> str:
         usage=ctx.usage,
     )
     case.disputed = result.output  # (2)!
-    return f'{len(result.output.charge_ids)} charge(s) disputed.'  # (3)!
+    case.eligibility = None  # (3)!
+    return f'{len(result.output.charge_ids)} charge(s) disputed.'  # (4)!
 
 
 @case_agent.tool
@@ -564,7 +565,7 @@ async def check_eligibility(ctx: RunContext[CaseFile]) -> str:
     if case.disputed is None:
         raise ModelRetry('Find the disputed charges first.')
     disputed = [c for c in case.charges if c.charge_id in case.disputed.charge_ids]
-    result = await eligibility_agent.run(  # (4)!
+    result = await eligibility_agent.run(  # (5)!
         '\n'.join(c.model_dump_json() for c in disputed),
         usage=ctx.usage,
     )
@@ -574,18 +575,19 @@ async def check_eligibility(ctx: RunContext[CaseFile]) -> str:
 
 async def handle_dispute(case: CaseFile) -> str:
     result = await case_agent.run(case.complaint, deps=case)
-    if case.disputed and case.eligibility and case.eligibility.eligible:  # (5)!
+    if case.disputed and case.eligibility and case.eligibility.eligible:  # (6)!
         ...  # open the chargeback for case.disputed.charge_ids
     return result.output
 ```
 
 1. The case file is the run's shared state. Your code creates it, the parent's tools fill it in, and your code reads it after the run.
 2. The delegate's typed output is stored as-is, so nothing downstream has to parse it back out of text.
-3. The parent model only sees a summary. It doesn't need the full result to decide what to do next.
-4. The second delegate gets its input from the typed state the first one produced, not from the parent model restating it.
-5. Your code acts on the typed state, not on the reply the parent model wrote to the customer. This combines with [extract, decide, write](#extract-decide-write): the delegates extract, and your code decides and writes.
+3. A later result invalidates what was derived from the earlier one: if the model finds the disputed charges again, the eligibility check has to run again on the new set.
+4. The parent model sees the state through tool results like this summary, which is enough to decide what to do next. Rendering the case file into [instructions](agent.md#instructions) instead would change them on every step and invalidate the [prompt cache](capabilities/caching.md#what-invalidates-a-cache).
+5. The second delegate gets its input from the typed state the first one produced, not from the parent model restating it.
+6. Your code acts on the typed state, not on the reply the parent model wrote to the customer. This combines with [extract, decide, write](#extract-decide-write): the delegates extract, and your code decides and writes.
 
-The delegation tools are written by hand here because the Harness's [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability returns a delegate's output to the parent as text, with no hook for storing the typed result.
+The delegation tools are written by hand here because Pydantic AI Harness's [`SubAgents`](harness/subagents.md) capability returns a delegate's output to the parent as text.
 
 ## Pydantic Graphs
 
