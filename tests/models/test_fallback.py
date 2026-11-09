@@ -1301,6 +1301,7 @@ async def test_fallback_condition_sync_def_returning_coroutine() -> None:
         await agent.run('hello')
 
 
+# coverage 7.17.0 reports a one-line class as a partial branch; drop this marker once 7.17.1 is locked.
 class PotatoException(Exception): ...  # pragma: no branch
 
 

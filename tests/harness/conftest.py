@@ -62,9 +62,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     test would otherwise silently never run.
     """
     for module in {item.path for item in items if item.get_closest_marker('temporal')}:
-        if 'temporal' not in module.read_text().lower():  # pragma: no cover
+        # `test-durable-exec` selects `test_*.py` files that mention Temporal; pytest also collects `*_test.py`.
+        if not module.name.startswith('test_') or 'temporal' not in module.read_text().lower():  # pragma: no cover
             raise pytest.UsageError(
-                f'{module} has `temporal` tests but never mentions Temporal; see `test-durable-exec`.'
+                f'{module} has `temporal` tests but `test-durable-exec` only runs `test_*.py` modules that mention '
+                'Temporal.'
             )
 
 

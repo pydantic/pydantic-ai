@@ -1193,8 +1193,9 @@ jobs:
       # `voyageai` and `sentence-transformers` don't install on 3.14, and these tests hold the lines that only run before
       # 3.14. Nothing else needs 3.11's coverage. When `coverage` reports lines that only a test skipped on 3.14 runs,
       # such as a helper or fixture of a `skipif(sys.version_info >= (3, 14))` test, add that test here.
+      # It runs on harness-only changes too, since their coverage report still includes `tests/clai2`.
       - name: cover what only 3.11 can
-        if: matrix.python-version == '3.11' && matrix.shard == 1 && needs.classify.outputs.harness_only != 'true'
+        if: matrix.python-version == '3.11' && matrix.shard == 1
         run: >-
           uv run --all-packages --all-extras --no-extra mcp-tasks
           coverage run -m pytest -n logical --dist=loadgroup
@@ -1212,7 +1213,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.3.11-version-specific
 
       - name: store what only 3.11 can cover
-        if: matrix.python-version == '3.11' && matrix.shard == 1 && needs.classify.outputs.harness_only != 'true'
+        if: matrix.python-version == '3.11' && matrix.shard == 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-3.11-version-specific
@@ -1354,6 +1355,7 @@ jobs:
           # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
           # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
           mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
@@ -2091,6 +2093,7 @@ jobs:
       # which vouch for those and the harness source. The rest of the workspace is covered on the
       # full path. (`pydantic-clai2`'s source is not measured: see `[tool.coverage.run]`.)
       - name: coverage report
+        id: report
         env:
           CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
@@ -2102,6 +2105,13 @@ jobs:
           else
             uv run --no-sync coverage report
           fi
+
+      - name: explain where 3.11-only lines are covered
+        if: failure() && steps.report.outcome == 'failure'
+        run: >-
+          echo "::error::If a missing line only runs below Python 3.14 (a version check, an extra that doesn't install
+          on 3.14, or a helper of a test skipped there), add the test that runs it to the 'cover what only 3.11 can'
+          step of the test-all-extras job."
 
       - run: uv run --no-sync strict-no-cover
         env:
