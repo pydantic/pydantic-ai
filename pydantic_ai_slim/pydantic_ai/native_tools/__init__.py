@@ -615,7 +615,8 @@ class WebFetchTool(AbstractNativeTool):
     enable_citations: Annotated[bool, _moved_to_provider_settings('anthropic', 'enable_citations')] = False
     """If True, enables citations for fetched content.
 
-    Deprecated: use `provider_settings.anthropic.enable_citations` instead.
+    Deprecated: set `provider_settings.anthropic.enable_citations` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
 
@@ -627,7 +628,8 @@ class WebFetchTool(AbstractNativeTool):
     max_content_tokens: Annotated[int | None, _moved_to_provider_settings('anthropic', 'max_content_tokens')] = None
     """Maximum content length in tokens for fetched content.
 
-    Deprecated: use `provider_settings.anthropic.max_content_tokens` instead.
+    Deprecated: set `provider_settings.anthropic.max_content_tokens` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -707,7 +709,8 @@ class ImageGenerationTool(AbstractNativeTool):
     action: Annotated[Literal['generate', 'edit', 'auto'], _moved_to_provider_settings('openai', 'action')] = 'auto'
     """Whether to generate a new image or edit an existing image.
 
-    Deprecated: use `provider_settings.openai.action` instead.
+    Deprecated: set `provider_settings.openai.action` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -719,7 +722,8 @@ class ImageGenerationTool(AbstractNativeTool):
     ] = 'auto'
     """Background type for the generated image.
 
-    Deprecated: use `provider_settings.openai.background` instead.
+    Deprecated: set `provider_settings.openai.background` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -733,7 +737,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Control how much effort the model will exert to match the style and features,
     especially facial features, of input images.
 
-    Deprecated: use `provider_settings.openai.input_fidelity` instead.
+    Deprecated: set `provider_settings.openai.input_fidelity` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -743,7 +748,8 @@ class ImageGenerationTool(AbstractNativeTool):
     moderation: Annotated[Literal['auto', 'low'], _moved_to_provider_settings('openai', 'moderation')] = 'auto'
     """Moderation level for the generated image.
 
-    Deprecated: use `provider_settings.openai.moderation` instead.
+    Deprecated: set `provider_settings.openai.moderation` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -753,7 +759,8 @@ class ImageGenerationTool(AbstractNativeTool):
     model: Annotated[ImageGenerationModelName | None, _moved_to_provider_settings('openai', 'model')] = None
     """The image generation model to use.
 
-    Deprecated: use `provider_settings.openai.model` instead.
+    Deprecated: set `provider_settings.openai.model` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -788,7 +795,8 @@ class ImageGenerationTool(AbstractNativeTool):
     """
     Number of partial images to generate in streaming mode.
 
-    Deprecated: use `provider_settings.openai.partial_images` instead.
+    Deprecated: set `provider_settings.openai.partial_images` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -800,7 +808,8 @@ class ImageGenerationTool(AbstractNativeTool):
     )
     """The quality of the generated image.
 
-    Deprecated: use `provider_settings.openai.quality` instead.
+    Deprecated: set `provider_settings.openai.quality` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -991,7 +1000,8 @@ class FileSearchTool(AbstractNativeTool):
     instructions: Annotated[str | None, _moved_to_provider_settings('xai', 'instructions')] = None
     """Optional instructions that guide how the collections search results are interpreted and ranked.
 
-    Deprecated: use `provider_settings.xai.instructions` instead.
+    Deprecated: set `provider_settings.xai.instructions` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -1003,7 +1013,8 @@ class FileSearchTool(AbstractNativeTool):
     ] = None
     """The retrieval strategy for the search.
 
-    Deprecated: use `provider_settings.xai.retrieval_mode` instead.
+    Deprecated: set `provider_settings.xai.retrieval_mode` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
@@ -1105,7 +1116,8 @@ class AdvisorTool(AbstractNativeTool):
     """If provided, caches the advisor context ephemerally with the given TTL. Maps to
     `caching={'type': 'ephemeral', 'ttl': ...}`.
 
-    Deprecated: use `provider_settings.anthropic.caching` instead.
+    Deprecated: set `provider_settings.anthropic.caching` instead, and read it from there too.
+    This field holds only a value set on it directly, not one set in `provider_settings`.
 
     Supported by:
 
