@@ -309,8 +309,8 @@ def test_the_required_check_reports_on_every_merge_group():
     workflow = _workflow()
     assert workflow[True]['merge_group'] == {'types': ['checks_requested']}
     assert workflow['jobs']['guard']['name'] == '.github Directory Guard'
-    # Without it the merge-group branch never fires, and a merge group passes only through
-    # the closed-PR early exit.
+    # `_run_guard` sets `EVENT_NAME` itself, so only this catches a missing mapping, which
+    # fails the guard on every event under `set -u`.
     assert workflow['jobs']['guard']['steps'][0]['env']['EVENT_NAME'] == '${{ github.event_name }}'
     assert workflow['concurrency'] == {
         'group': 'protect-github-dir-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}',
