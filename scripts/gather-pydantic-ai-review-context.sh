@@ -637,7 +637,9 @@ the surrounding code before posting.
   reasons differ deliberately across providers. Check the provider's
   SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
   before asserting a "bug".
-- **Cassettes / `uv.lock` / generated files** — never review.
+- **Generated files** — never review a `uv.lock`, a `.yaml` cassette under a
+  `cassettes/` directory, or another generated file. Review every other file
+  under `cassettes/` like any source file.
 - **Theoretical performance** — `O(n²)` is only a problem if `n` is
   realistically large in this use case. Don't flag without evidence of
   real-world impact.
