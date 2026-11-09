@@ -4830,18 +4830,27 @@ def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
 
     A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
     executed, so its validator runs but its function body doesn't: only the validator's
-    `ApprovalRequired(metadata=...)` reaches `DeferredToolRequests.metadata`.
+    `ApprovalRequired(metadata=...)` reaches `DeferredToolRequests.metadata`. A validator's
+    `CallDeferred` without metadata routes its call to `calls` and adds no metadata entry.
     """
     executed: list[str] = []
 
     def my_validator(ctx: RunContext, x: int) -> None:
         raise ApprovalRequired(metadata={'from': 'validator'})
 
+    def deferring_validator(ctx: RunContext, x: int) -> None:
+        raise CallDeferred()
+
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     @agent.tool(requires_approval=True, args_validator=my_validator)
     def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
         executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True, args_validator=deferring_validator)
+    def validator_hands_off(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_hands_off')
         return x
 
     @agent.tool(requires_approval=True)
@@ -4852,6 +4861,13 @@ def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
         DeferredToolRequests(
+            calls=[
+                ToolCallPart(
+                    tool_name='validator_hands_off',
+                    args={'x': 0},
+                    tool_call_id='pyd_ai_tool_call_id__validator_hands_off',
+                )
+            ],
             approvals=[
                 ToolCallPart(
                     tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
