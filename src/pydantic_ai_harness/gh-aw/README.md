@@ -154,9 +154,12 @@ agent = Agent(name='triage', instructions='Answer briefly.')
 Some details to know.
 
 - **A private wrapper module resolves the agent.** The engine writes it in every mode: the
-  default composition, an imported `PAI_AGENT`, or a spec. For an imported target, the
-  framework packages load before the wrapper adds the checkout to `sys.path` while
-  resolving `PAI_AGENT`. Gateway tools and recording apply in every mode.
+  default composition, an imported `PAI_AGENT`, or a spec. The wrapper appends the
+  checkout to `sys.path`, after installed packages, only for an imported target whose
+  top-level name nothing installed has, such as `my_agent:agent` above. A checkout target
+  whose top-level name is also installed resolves against the installed package instead,
+  so it usually fails with `ModuleNotFoundError`. Gateway tools and recording apply in
+  every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install
   step and the agent, so a `--user` install lands in the same `$HOME/.local` the
@@ -189,80 +192,37 @@ name a harness capability or define a Python function tool; use a module for eit
 
 ## Observability
 
-The engine instruments the agent whenever gh-aw supplies an OTLP endpoint. A workflow
-turns that on with `observability.otlp`, plus an allowlist entry for the backend's host,
-because the egress firewall otherwise drops the export:
+gh-aw keeps OTLP endpoints and authorization headers on the host, so the agent sandbox
+receives no telemetry credentials. Host and proxy telemetry use gh-aw's own exporters,
+configured with `observability.otlp`.
 
-```yaml
-network:
-  allowed:
-    - logfire-us.pydantic.dev
-observability:
-  otlp:
-    endpoint:
-      - url: https://logfire-us.pydantic.dev
-        headers:
-          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
-```
+When `OTEL_EXPORTER_OTLP_ENDPOINT` reaches the launcher, it instruments Pydantic AI and
+exports spans directly, with `send_to_logfire='if-token-present'`. gh-aw excludes that
+variable from the agent container, so this direct export does not run under gh-aw. The
+launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported
+spans keep their workflow parentage and identity.
 
-gh-aw injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
-`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `TRACEPARENT` into the workflow
-environment when, and only when, an endpoint is configured, and workflow-level environment
-reaches both the pre-agent step and the agent container. The endpoint variable is what the
-engine keys on: with it set, the install step adds `logfire` and the launcher calls
-`logfire.configure()` and `logfire.instrument_pydantic_ai()` before importing the agent
-target, then attaches the W3C context from `TRACEPARENT`. With it unset, neither happens
-and the install costs nothing.
+When it configures Logfire, the launcher uses private mode-0700 configuration and data
+directories under `/tmp`, ignoring checkout settings and credentials. `console=False`
+prevents span content entering captured engine stdio.
 
-These choices are not defaults, and each is load-bearing.
+A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
+Logfire. Calling `logfire.configure()` again replaces that configuration. Preserve the
+private directories, disabled console output and distributed tracing if the agent replaces it.
 
-- **`send_to_logfire="if-token-present"`.** The default requires a `LOGFIRE_TOKEN` in the
-  environment and raises without one. The credential here is a header value gh-aw holds,
-  not an environment variable, so the export is driven by the endpoint alone and works
-  against any backend. A token that does reach the agent's environment adds Logfire as a
-  second destination rather than replacing the endpoint, prompts and completions included;
-  gh-aw strips `${{ secrets.* }}` out of `engine.env`, so that takes a workflow putting one
-  in its own `env:` or a `steps:` block.
-- **Private `config_dir` and `data_dir`.** Both point to a mode-0700 temporary directory
-  under `/tmp`, outside the checkout even if `TMPDIR` points into it. This prevents
-  checkout `pyproject.toml` settings and `.logfire/logfire_credentials.json` from selecting
-  a telemetry destination. Explicit directory arguments also override `LOGFIRE_CONFIG_DIR`
-  and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
-  The directory stays alive through the process and is removed at interpreter shutdown,
-  after exporter shutdown handlers run.
-- **`console=False`.** logfire's console exporter writes every span to stderr. Keeping it
-  off prevents spans and their content from entering captured engine stdio.
-- **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
-  behavior-defined engines (`applyTraceContextEnvToMap` in
-  `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
-  workflow run's span, but neither logfire nor the OpenTelemetry SDK reads it from the
-  environment. Without the attach each run produces a second, unrelated trace. The flag is
-  what marks the propagated context as deliberate; logfire warns on every run without it,
-  because extracting incoming context is usually accidental.
-- **`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` default to `none`.** logfire's OTLP
-  setup is per signal, so an endpoint alone also builds metrics and logs exporters that POST
-  to `/v1/metrics` and `/v1/logs`. A traces-only backend answers `404`, and the step log then
-  carries `Failed to export metrics batch code: 404` once per export while the run still
-  succeeds. These are the standard OpenTelemetry switches rather than a logfire argument, so
-  a workflow that has a backend for those signals can set either one back to `otlp`.
+### Authenticated terminal metadata
 
-The engine contributes no resource attributes of its own. `OTEL_RESOURCE_ATTRIBUTES`
-already carries `gh-aw.engine.id` (`pydantic-ai`), `gh-aw.workflow.name`,
-`gh-aw.repository`, `gh-aw.run.id` and `github.run_id`, and `logfire.configure()` merges
-the variable into the resource, so `gh-aw.engine.id` is the filter that finds runs of this
-engine in a backend. The configuration line the engine logs gains an `otlp=` segment while
-this is active, carrying the endpoint's origin only: userinfo and query parameters are
-credentials, and a run log is not a private place to put one.
+Set `PAI_RESULT_METADATA` to `MODULE:ATTRIBUTE` to include a trusted agent module's
+dictionary in `session.result.data.metadata`. The dictionary must have string keys
+and JSON-serializable values. Update the same dictionary during the run; the recorder
+serializes it when the process finishes, including handled failures. A target that is
+not such a dictionary fails the run. Metadata that cannot be serialized is left out,
+and the result still records the run's outcome.
 
-A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
-and replaces it, whole rather than argument by argument, so it has to restate the three
-settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or spans
-appear in captured engine stdio, and `distributed_tracing=True` or it warns on every run.
-The context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
-supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
-these re-enables checkout configuration and credentials. Such a module also has
-to install `logfire` through the workflow's own `steps:` if it imports it on runs that
-configure no endpoint.
+The engine signs this metadata with the terminal result. Ordinary stdout and
+sandbox-written files cannot substitute for it. Consumers should read the verified
+`agent-session.jsonl` artifact and validate their metadata schema and run identity.
+Like `PAI_AGENT`, this import target is trusted engine configuration.
 
 ## Threat detection
 
