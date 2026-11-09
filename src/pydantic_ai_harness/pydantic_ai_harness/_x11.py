@@ -243,7 +243,8 @@ def x11_display(
 
     async def start() -> X11Computer:
         width, height = size
-        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], timeout=_START_TIMEOUT)
+        # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
+        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, scrot and setsid '

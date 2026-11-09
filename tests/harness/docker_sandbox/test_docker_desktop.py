@@ -122,6 +122,16 @@ async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path)
     assert result.stdout == ':1\n'
 
 
+async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(
+        image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
+    )
+    await Workspace(backend).act(Click(x=3, y=4))
+
+    # Starting the display checks the same X server the actions go to.
+    assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
+
+
 async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
