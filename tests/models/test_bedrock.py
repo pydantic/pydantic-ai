@@ -9487,7 +9487,9 @@ async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content
     }
     result = await agent.run('Hi', model_settings={'max_tokens': 32})
     assert result.output == 'Ok!'
-    assert result.all_messages()[-1].canonical_system == 'bedrock'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.canonical_system == 'bedrock'
 
     claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     claude_agent = Agent(model=claude_model, system_prompt='You are a helpful assistant.')
@@ -9537,7 +9539,9 @@ async def test_bedrock_same_family_history_replay_keeps_thinking(
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
     result = await claude_agent.run('Hi', model_settings={'max_tokens': 32})
-    assert result.all_messages()[-1].canonical_system == 'anthropic'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.canonical_system == 'anthropic'
 
     mock_converse.reset_mock()
     await claude_agent.run('Continue', message_history=result.all_messages(), model_settings={'max_tokens': 32})
@@ -9571,7 +9575,9 @@ async def test_bedrock_same_family_history_replay_keeps_thinking(
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
     gpt_result = await gpt_agent.run('Hi', model_settings={'max_tokens': 32})
-    assert gpt_result.all_messages()[-1].canonical_system == 'bedrock'
+    gpt_response = gpt_result.all_messages()[-1]
+    assert isinstance(gpt_response, ModelResponse)
+    assert gpt_response.canonical_system == 'bedrock'
 
     mock_gpt_converse.reset_mock()
     await gpt_agent.run('Continue', message_history=gpt_result.all_messages(), model_settings={'max_tokens': 32})
