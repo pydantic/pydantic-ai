@@ -2959,6 +2959,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_user_prompt_part(
         self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
     ) -> None:
+        request_context.has_user_prompt = True
         user_content_params = request_context.user_content_params
         async for content in self._map_user_prompt(part, include_citations=map_context.include_citations):
             if not isinstance(content, CachePoint):
@@ -2999,8 +3000,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._add_cache_control_to_last_param(
                 user_content_params[:marked_at] or last_message_content(anthropic_messages), ttl=ttl
             )
-        if len(user_content_params) > 0:
+        if user_content_params:
             anthropic_messages.append({'role': 'user', 'content': user_content_params})
+        elif request_context.has_user_prompt:
+            # Anthropic rejects a request with no messages. Preserve an explicitly
+            # empty user turn with a harmless placeholder instead of dropping it.
+            anthropic_messages.append(
+                {'role': 'user', 'content': [BetaTextBlockParam(text='.', type='text')]}
+            )
         if request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
             system_content_params: list[BetaContentBlockParam] = [
                 BetaTextBlockParam(text=content, type='text')
@@ -4080,6 +4087,7 @@ class _MapModelRequestContext:
     """What `AnthropicModel._map_model_request` collects from one `ModelRequest`'s parts before it emits the turns."""
 
     user_content_params: list[BetaContentBlockParam] = field(default_factory=list[BetaContentBlockParam])
+    has_user_prompt: bool = False
     mid_conversation_system_prompts: list[str] = field(default_factory=list[str])
     request_scoped_prompts: list[str] = field(default_factory=list[str])
     tool_availability_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])

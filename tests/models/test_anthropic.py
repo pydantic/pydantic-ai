@@ -11100,7 +11100,17 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelRequest(parts=[UserPromptPart(content='')], kind='request', timestamp=IsDatetime()),
     ]
     _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
-    assert anthropic_messages == snapshot([])  # Empty content should be filtered out
+    assert anthropic_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': '.', 'type': 'text'}]}]
+    )  # Anthropic requires at least one message
+
+    messages_empty_list: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[])], kind='request', timestamp=IsDatetime()),
+    ]
+    _, anthropic_messages = await model._map_message(messages_empty_list, ModelRequestParameters(), {})  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': '.', 'type': 'text'}]}]
+    )
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
