@@ -17,7 +17,7 @@ import anyio
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import RunContext
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ToolReturnPart
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.client import SessionView
 from pydantic_clai2.builtin_plugins.web.local_client import LocalClient, live_session
@@ -91,18 +91,22 @@ def confirmed(messages: Sequence[ModelMessage], workspace_id: str) -> bool:
         if not isinstance(message, ModelRequest):
             continue
         for part in message.parts:
-            if not isinstance(part, ToolReturnPart) or part.tool_name != ASK_USER_TOOL:
-                continue
-            try:
-                picked = _PICKED.validate_python(part.content)
-            except ValidationError:  # Declined: the user picked nothing.
-                continue
-            for labels in picked.values():
+            for labels in _picked(part).values():
                 if destroy in labels:
                     approved = True
                 elif keep in labels:
                     approved = False
     return approved
+
+
+def _picked(part: ModelRequestPart) -> dict[str, list[str]]:
+    """The labels picked for each question, when `part` is an `ask_user_question` answer; none otherwise."""
+    if not isinstance(part, ToolReturnPart) or part.tool_name != ASK_USER_TOOL:
+        return {}
+    try:
+        return _PICKED.validate_python(part.content)
+    except ValidationError:  # Declined: the user picked nothing.
+        return {}
 
 
 _PROBLEMS = (LookupError, ValueError, RuntimeError, OSError)

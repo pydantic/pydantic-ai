@@ -40,7 +40,8 @@ async def run_acp_stdio(
     """Serve `agent` as an ACP agent over stdin/stdout until the client disconnects.
 
     This is the entry point an ACP client (such as an editor or terminal UI) launches as a
-    subprocess. It blocks for the lifetime of the connection.
+    subprocess. It blocks for the lifetime of the connection. Arguments are forwarded to
+    [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent]; see it for details.
 
     Args:
         agent: The Pydantic AI agent to expose over ACP.
@@ -48,25 +49,16 @@ async def run_acp_stdio(
         name: Name advertised to the client. Defaults to the agent's name, then `'pydantic-ai-agent'`.
         version: Version advertised to the client.
         session_config: Per-session factory deriving deps, toolsets, and an optional workspace from the client's setup.
-            See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         permission_policy: Scopes how "always allow"/"always reject" decisions are remembered.
-            See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         prompt_capabilities: Prompt content types the agent advertises support for.
-            See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         mcp_capabilities: MCP transports the agent advertises support for. Requires a
-            `session_config` that connects them. See
-            [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
+            `session_config` that connects them.
         tool_presenter: Maps tool calls to rich ACP presentation (kind, file locations, diffs).
-            See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
-        session_store: Enables `session/load` by persisting each session. See
-            [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
-        models: Models the client may switch between with the `model` session config option. See
-            [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
-        model_resolver: Maps an advertised model id to the `Model` (or model string) used for the
-            run. See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
+        session_store: Enables `session/load` by persisting each session.
+        models: Models the client may switch between with the `model` session config option.
+        model_resolver: Maps an advertised model id to the `Model` (or model string) used for the run.
         usage_limits: Per-run request/token ceilings applied to every agent run. By default, no
-            request limit is applied. See
-            [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
+            request limit is applied.
     """
     adapter = PydanticAIACPAgent(
         agent,

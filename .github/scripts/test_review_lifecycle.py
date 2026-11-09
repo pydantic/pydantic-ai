@@ -100,7 +100,7 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         'RUN_URL': RUN_URL,
         'FAILED': 'false',
         'FAILURE_LABEL': 'ci-review-failed',
-        'REVIEW_MARKER': f'<!-- gh-aw-workflow-call-id: {REPO}/pydantic-ai-pr-review -->',
+        'REVIEW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'WORKFLOW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'EVENT_NAME': 'pull_request',
         'LABEL_NAME': 'final-review',
@@ -285,7 +285,9 @@ def test_compiled_publication_job_binds_each_workflow(workflow: str):
     assert env['FAILURE_LABEL'] == ('ci-review-failed' if is_ci else 'ui-security-review-failed')
     assert env['GH_TOKEN'] == '${{ github.token }}'
     assert env['RUN_URL'] == '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-    expected_needs: list[str] = ['agent', 'eligibility', 'safe_outputs'] if is_ci else ['agent', 'safe_outputs']
+    expected_needs: list[str] = (
+        ['agent', 'detection', 'eligibility', 'safe_outputs'] if is_ci else ['agent', 'detection', 'safe_outputs']
+    )
     assert job['needs'] == expected_needs
     condition = "(!cancelled()) && needs.agent.result != 'skipped'"
     assert job['if'] == condition + ('' if is_ci else ' && github.event.pull_request.number')
@@ -297,6 +299,22 @@ def test_compiled_publication_job_binds_each_workflow(workflow: str):
     assert script is not None
     assert script.rstrip('\n') == workflow_script(workflow, 'flag_failed_review').rstrip('\n')
     assert 'flag_failed_review' not in workflow_frontmatter(workflow)['jobs']
+
+
+def test_compiled_stale_pr_skip_precedes_the_pr_head_checkout():
+    """Under `pull_request*` the base-restored config dirties the tree, and checking out a moved head then fails."""
+    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pydantic-ai-pr-review.lock.yml').read_text())
+    )
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
+    steps = TypeAdapter(list[dict[str, object]]).validate_python(jobs['agent']['steps'])
+    names = [step.get('name') for step in steps]
+    skip = steps[names.index('Skip a PR that closed or moved on while queued')]
+    checkout_index = names.index('Check out the PR head')
+    assert names.index(skip['name']) < checkout_index
+    assert skip['id'] == 'stale-pr'
+    assert 'echo \'skipped=true\' >> "$GITHUB_OUTPUT"' in str(skip['run'])
+    assert steps[checkout_index]['if'] == "steps.stale-pr.outputs.skipped != 'true'"
 
 
 @pytest.mark.parametrize(

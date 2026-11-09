@@ -72,10 +72,12 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    _FILE_ITEM_KEYS,  # pyright: ignore[reportPrivateUsage]
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    BaseToolReturnPart,
     CachePoint,
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -84,6 +86,7 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
     ToolReturnContent,
+    _file_digest,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -434,6 +437,11 @@ def test_binary_content_video(media_type: str, format: str):
         ('text/html', 'html'),
         ('text/markdown', 'md'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
+        # Known only to `mimetypes`
+        ('application/zip', 'zip'),
+        ('application/octet-stream', 'bin'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -506,6 +514,17 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    pytest.param(DocumentUrl('foobar.ods'), 'application/vnd.oasis.opendocument.spreadsheet', 'ods', id='ods'),
+    pytest.param(DocumentUrl('foobar.odp'), 'application/vnd.oasis.opendocument.presentation', 'odp', id='odp'),
+    # Known only to `mimetypes`
+    pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
+    pytest.param(DocumentUrl('foobar.xml'), 'application/xml', 'xml', id='xml'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -524,14 +543,27 @@ def test_document_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
+    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
+        DocumentUrl('foobar', media_type='application/custom').format
 
 
 def test_binary_content_unknown_media_type():
+    binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+    # No extension is known for it, so it is no document: the model adapter refuses it as it did before
+    assert binary_content.is_document is False
     with pytest.raises(ValueError, match='Unknown media type: application/custom'):
-        binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
         binary_content.format
+
+
+def test_binary_content_text_like_is_not_a_document():
+    """Text-like content outside the known document types is left to the model adapter, which inlines it as text."""
+    json_content = BinaryContent(data=b'{}', media_type='application/json')
+    assert json_content.is_document is False
+    assert json_content.format == 'json'
+    xml_content = BinaryContent(data=b'<a/>', media_type='application/xml')
+    assert xml_content.is_document is False
+    # `mimetypes` lists `xsl` first for XML; the extension spelling the subtype wins
+    assert xml_content.format == 'xml'
 
 
 def test_binary_content_is_methods():
@@ -1354,6 +1386,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'metadata': {'foo': 'bar'},
                         'tools': None,
                         'kind': 'tool-return',
+                        'content_file_digests': [],
                     },
                     'call_3': {'message': 'Try again', 'kind': 'model-retry'},
                 },
@@ -1958,81 +1991,38 @@ def test_tool_return_content_nested_multimodal():
         ),
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None},
-            snapshot(ImageUrl(url='https://example.com/report')),
-            snapshot(
-                {
-                    'url': 'https://example.com/report',
-                    'force_download': False,
-                    'vendor_metadata': None,
-                    'kind': 'image-url',
-                    'media_type': None,
-                    'identifier': '43ecae',
-                }
-            ),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None}),
+            snapshot({'url': 'https://example.com/report', 'kind': 'image-url', 'media_type': None}),
             id='null-media-type',
         ),
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None},
-            snapshot(ImageUrl(url='https://example.com/report.png')),
-            snapshot(
-                {
-                    'url': 'https://example.com/report.png',
-                    'force_download': False,
-                    'vendor_metadata': None,
-                    'kind': 'image-url',
-                    'media_type': 'image/png',
-                    'identifier': '768606',
-                }
-            ),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None}),
+            snapshot({'url': 'https://example.com/report.png', 'kind': 'image-url', 'media_type': None}),
             id='null-media-type-inferable-url',
         ),
         pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
-            snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
-            snapshot(
-                {
-                    'file_id': 'file-1',
-                    'provider_name': 'openai',
-                    'vendor_metadata': None,
-                    'kind': 'uploaded-file',
-                    'media_type': 'application/octet-stream',
-                    'identifier': 'c86d26',
-                }
-            ),
+            snapshot({'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'}),
+            snapshot({'file_id': 'file-1', 'provider_name': 'openai', 'kind': 'uploaded-file'}),
             id='uploaded-file-without-media-type',
         ),
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'},
-            snapshot(ImageUrl(url='https://example.com/report', media_type='image/png')),
-            snapshot(
-                {
-                    'url': 'https://example.com/report',
-                    'force_download': False,
-                    'vendor_metadata': None,
-                    'kind': 'image-url',
-                    'media_type': 'image/png',
-                    'identifier': '43ecae',
-                }
-            ),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'}),
+            snapshot({'url': 'https://example.com/report', 'kind': 'image-url', 'media_type': 'image/png'}),
             id='shape-we-dump',
         ),
     ],
 )
-def test_tool_return_url_items_rehydrate_only_with_media_type(
-    content: dict[str, Any], expected: Any, expected_dump: Any
-):
-    """A tool return reconstructs a URL item only from a mapping carrying `media_type`, and it always dumps.
+def test_tool_return_file_shaped_mappings_stay_mappings(content: dict[str, Any], expected: Any, expected_dump: Any):
+    """A mapping a tool built stays that mapping across a round trip, whatever file it resembles, and it dumps.
 
-    A default dump of ours writes `media_type` for a URL item: a non-empty string, or `null` for a URL whose
-    media type can't be inferred ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
-    A mapping without the key, or with an empty one, is what a tool built, and stays that mapping
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). A tool-built mapping with `null`
-    can't be told apart from one of ours, so it rehydrates too, with the media type inferred where the URL
-    allows. The dump is asserted for every case, so a reconstructed item is proven to dump again.
-
-    The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
-    and `BinaryContent.media_type` is a required field, so both keep rehydrating from the fields they
-    declare.
+    A tool result rebuilds only the file items it recorded when it was serialized, so neither a partial shape
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) nor one spelled out exactly like a
+    default dump of ours, `media_type` included, comes back as a file. History saved before records existed
+    is covered by `test_tool_return_saved_before_records_rebuilds_only_sanitized_http_files`. The dump is
+    asserted for every case, so a mapping is proven to dump again.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
@@ -2043,6 +2033,294 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     assert message_part(loaded, ToolReturnPart).content == expected
     assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == expected_dump
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
+
+
+def _dumped_file(item: FileUrl | UploadedFile) -> dict[str, Any]:
+    """The mapping a tool result serializes `item` to, which a tool could also return as data."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart(tool_name='t', content=item, tool_call_id='c')])]
+    return json.loads(ModelMessagesTypeAdapter.dump_json(messages))[0]['parts'][0]['content']
+
+
+def _round_trip(content: Any, mode: Literal['json', 'python']) -> Any:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    return message_part(loaded, ToolReturnPart).content
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_rebuilds_only_the_files_it_recorded(mode: Literal['json', 'python']):
+    """A mapping a tool returns in the serialized form of a file stays a mapping across a round trip.
+
+    The model saw that mapping as data when the tool returned it, so it has to stay data after a reload.
+    The files the tool really returned keep every field.
+    """
+    local = DocumentUrl('https://example.com/report.txt', force_download='allow-local')
+    bucket = DocumentUrl('s3://bucket/report.pdf')
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalikes = [
+        _dumped_file(DocumentUrl('https://example.com/other.txt', force_download='allow-local')),
+        _dumped_file(DocumentUrl('s3://bucket/other.pdf')),
+        _dumped_file(UploadedFile('file-2', 'openai')),
+    ]
+    content = {'files': [local, bucket, uploaded], 'rows': lookalikes, 'nested': {'row': lookalikes[0]}}
+
+    reloaded = _round_trip(content, mode)
+
+    assert reloaded == {'files': [local, bucket, uploaded], 'rows': lookalikes, 'nested': {'row': lookalikes[0]}}
+    assert reloaded['files'][0].force_download == 'allow-local'
+    assert all(type(row) is dict for row in reloaded['rows'])
+
+
+def test_tool_return_file_record_lives_outside_the_content():
+    """A tool can't record a mapping as a file by putting the record key in its own data."""
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    content = {'content_file_digests': [_file_digest(lookalike)], 'row': lookalike}
+
+    assert _round_trip(content, 'json') == content
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_without_files_keeps_file_shaped_mappings(mode: Literal['json', 'python']):
+    """A tool result holding no file still records that, so a mapping shaped like one stays the mapping.
+
+    The record is written, empty, for any content that isn't a scalar, so only history saved before
+    records existed falls back to rebuilding files from their shape. Keys a file type doesn't declare
+    survive too.
+    """
+    content = [
+        {**_dumped_file(ImageUrl('https://example.com/a.png')), 'extra': 'kept'},
+        _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local')),
+    ]
+
+    assert _round_trip(content, mode) == content
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content='text', tool_call_id='c')])
+    ]
+    assert 'content_file_digests' not in json.loads(ModelMessagesTypeAdapter.dump_json(messages))[0]['parts'][0]
+
+
+def test_tool_return_saved_before_records_rebuilds_only_sanitized_http_files():
+    """History saved before records existed can't tell its files from mappings shaped like them.
+
+    A mapping is rebuilt only into what `sanitize_messages` would let a client submit: an HTTP(S) URL with
+    `force_download` reset. A non-HTTP URL or an uploaded file stays a mapping, even one a tool returned.
+    """
+    items: list[FileUrl | UploadedFile] = [
+        DocumentUrl('https://example.com/report.txt', force_download='allow-local'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+        DocumentUrl('s3://bucket/report.pdf'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=items, tool_call_id='c')])
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+    dumped = stored[0]['parts'][0]['content']
+
+    reloaded = message_part(ModelMessagesTypeAdapter.validate_json(json.dumps(stored)), ToolReturnPart).content
+
+    assert reloaded == snapshot(
+        [
+            DocumentUrl(url='https://example.com/report.txt', _media_type='text/plain', _identifier='ae60bb'),
+            ImageUrl(url='https://example.com/chart.png', _media_type='image/png', _identifier='7a6d9b'),
+            dumped[2],
+            dumped[3],
+        ]
+    )
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_saved_before_records_rebuilds_its_files_on_request(mode: Literal['json', 'python']):
+    """History the caller trusts loads its files as before, and keeps them once saved again."""
+    items: list[FileUrl | UploadedFile] = [
+        DocumentUrl('https://example.com/report.txt', force_download='allow-local'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=items, tool_call_id='c')])
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+    context = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(json.dumps(stored), context=context)
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(stored, context=context)
+
+    assert message_part(loaded, ToolReturnPart).content == items
+    resaved = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(loaded))
+    assert message_part(resaved, ToolReturnPart).content == items
+
+
+@pytest.mark.parametrize(
+    'context', [None, {}, {'pydantic_ai': {}}, {'pydantic_ai': {'rebuild_unrecorded_tool_files': 'yes'}}]
+)
+def test_tool_return_rebuild_unrecorded_tool_files_needs_the_exact_flag(context: Any):
+    """Only `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}` loads history saved before records as before."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='t', content=[UploadedFile('file-1', 'openai')], tool_call_id='c')]
+        )
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+
+    loaded = ModelMessagesTypeAdapter.validate_python(stored, context=context)
+
+    assert message_part(loaded, ToolReturnPart).content == [stored[0]['parts'][0]['content'][0]]
+
+
+@pytest.mark.parametrize('digests', [[['nested']], [1], [None]])
+def test_tool_return_rejects_a_malformed_file_record(digests: list[Any]):
+    """A record that isn't a list of strings fails validation rather than raising a raw error."""
+    stored = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 't',
+                    'tool_call_id': 'c',
+                    'content': [],
+                    'content_file_digests': digests,
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match='`content_file_digests` must be a list of strings'):
+        ModelMessagesTypeAdapter.validate_python(stored)
+
+
+def test_tool_return_inferred_serialization_keeps_its_files():
+    """History serialized by inference, as `to_json` and Temporal's converter do, keeps the file record.
+
+    A plain dataclass serialized by inference would skip its serializer decorators and lose the record,
+    and its files would load as mappings.
+    """
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[uploaded, lookalike], tool_call_id='c')]),
+        ModelResponse(parts=[NativeToolReturnPart(tool_name='n', content=[uploaded], tool_call_id='n')]),
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+    for loaded in (
+        ModelMessagesTypeAdapter.validate_json(to_json(messages)),
+        ModelMessagesTypeAdapter.validate_python(to_jsonable_python(messages)),
+    ):
+        tool_return, native_return = (
+            cast(BaseToolReturnPart[Any], part) for message in loaded for part in message.parts
+        )
+        assert (tool_return.content, native_return.content) == ([uploaded, lookalike], [uploaded])
+        assert type(cast(list[Any], tool_return.content)[1]) is dict
+
+
+def test_file_item_keys_match_their_dumps():
+    """The keys a recorded file item may carry are exactly those its dump writes."""
+    items: list[FileUrl | UploadedFile] = [
+        ImageUrl('https://example.com/a.png'),
+        AudioUrl('https://example.com/a.mp3'),
+        DocumentUrl('https://example.com/a.pdf'),
+        VideoUrl('https://example.com/a.mp4'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    dumps = [_dumped_file(item) for item in items]
+    assert {dump['kind']: frozenset(dump) for dump in dumps} == _FILE_ITEM_KEYS
+
+
+def test_tool_return_nested_in_content_counts_toward_its_parent():
+    """A result held in another result's content is part of that content, and so are its files."""
+    uploaded = UploadedFile('file-1', 'openai')
+    content = {'nested': ToolReturnPart(tool_name='inner', content=[uploaded], tool_call_id='i')}
+
+    reloaded = _round_trip(content, 'json')
+
+    assert reloaded['nested']['content'] == [uploaded]
+
+
+def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(monkeypatch: pytest.MonkeyPatch):
+    """Mappings that can't be a recorded item are told apart without digesting them, at any depth."""
+    import pydantic_ai.messages as messages_module
+
+    digested: list[Any] = []
+
+    nested: dict[str, Any] = {
+        'kind': 'document-url',
+        'url': 'https://example.com/a.pdf',
+        'media_type': 'application/pdf',
+    }
+    for _ in range(50):
+        nested = {**nested, 'child': nested}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[nested], tool_call_id='c')])
+    ]
+    payload = ModelMessagesTypeAdapter.dump_json(messages)
+
+    monkeypatch.setattr(messages_module, '_file_digest', digested.append)
+    loaded = ModelMessagesTypeAdapter.validate_json(payload)
+
+    assert message_part(loaded, ToolReturnPart).content == [nested]
+    assert digested == []
+
+
+def test_tool_return_inferred_serialization_encodes_bytes_like_the_adapter():
+    """Serialized by inference, a tool result's bytes are base64, as `ModelMessagesTypeAdapter` writes them."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content={'raw': b'\xff\x00'}, tool_call_id='c')])
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+
+
+def test_tool_return_records_only_the_files_in_its_content():
+    """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(uploaded)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=lookalike, tool_call_id='c', metadata=uploaded)])
+    ]
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert message_part(loaded, ToolReturnPart).content == lookalike
+
+    adapter = TypeAdapter(ToolReturn)
+    tool_return = ToolReturn(return_value=lookalike, content=[uploaded])
+    assert adapter.validate_json(adapter.dump_json(tool_return)) == tool_return
+
+
+def test_tool_return_file_without_a_json_form_still_dumps():
+    """A file whose `vendor_metadata` has no JSON form can't be recorded, so it reloads as its mapping.
+
+    Dumping must not fail over it.
+    """
+    for metadata in ({'raw': b'\xff'}, {'object': object()}):
+        uploaded = UploadedFile('file-1', 'openai', vendor_metadata=metadata)
+        reloaded = _round_trip(uploaded, 'python')
+        assert type(reloaded) is dict
+        assert reloaded['file_id'] == 'file-1'
+
+
+def test_tool_return_python_dump_encoded_as_json_keeps_its_files():
+    """A history dumped in python mode and encoded to JSON separately keeps its files on load."""
+    image = ImageUrl('https://example.com/a.png', vendor_metadata={'raw': b'abc'})
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=image, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(to_json(ModelMessagesTypeAdapter.dump_python(messages)))
+
+    assert message_part(loaded, ToolReturnPart).content == ImageUrl(
+        'https://example.com/a.png', vendor_metadata={'raw': 'abc'}
+    )
 
 
 @pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])

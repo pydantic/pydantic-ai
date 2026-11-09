@@ -111,6 +111,13 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     zai_mock.assert_called_with('glm-5.2')
     assert zai_profile is not None
 
+    # Crusoe serves GLM-5.3 under the `zai-org` vendor, which gets the GLM profile and its GLM-5.3 schema fix
+    glm_profile = provider.model_profile('zai-org/GLM-5.3')
+    zai_mock.assert_called_with('glm-5.3')
+    assert glm_profile is not None
+    assert glm_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert glm_profile.get('thinking_always_enabled') is True
+
     # Test unknown vendor
     unknown_profile = provider.model_profile('unknown-vendor/unknown-model')
     assert unknown_profile is not None

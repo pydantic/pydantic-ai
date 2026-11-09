@@ -16,12 +16,33 @@ Agentic Workflow.
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Run agent operations as activities in native Azure Durable Task orchestrators | `AzureDurableTaskDurability` and `run_durable` (`pydantic_ai_harness.azure_durable_task`, `[azure-durable-task]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## AzureDurableTaskDurability
+
+Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
+`AzureDurableTaskDurability.from_agent(agent)` and enter its `register(worker)` context
+before starting the native SDK worker; exit after the worker stops and drains.
+Register your own orchestrator and call
+`yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
+through the SDK client. Dependencies must be JSON-serializable and are reconstructed
+using `deps_type`.
+
+Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
+with full message history, cumulative usage and `DeferredToolResults`. Publish a fresh event
+name per pause in the custom status, and send decisions to the event the reviewer saw, keyed by tool-call ID.
+Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
+Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
+`resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
+to run a function tool inline. Function tools can also opt out with
+`metadata={'azure_durable_task': False}`. Inline tools must be deterministic and I/O-free.
+See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
 
@@ -148,7 +169,8 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
 - `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
-  browser cannot survive replay); `TrajectoryJudge` raises at run start inside a durable workflow.
+  browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
+  workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,
   `SpendLimits`, `Memory`, `Planning`, `SubAgents`, the sandboxes, and the hosted integrations build
   under Temporal.
@@ -273,11 +295,14 @@ Gotchas:
 - Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
   replay matches checkpoints by position, so concurrent runs can be served each other's results.
 - Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
-  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
-  published version.
+  `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
+  a tool, or the id a non-default model runs under (a `models=` key or the `model=` passed to
+  `agent.run`), which is part of that model's step names. SDK 2.0+ fails those executions with
+  `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
+  version.
 - Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
-- Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
+- Budget: 30,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
 ## AbsurdDurability
 
@@ -438,7 +463,10 @@ async def main():
 ```
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
-authored code executes in your process and would bypass a sandbox. Only use it where you would run the
+authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
+`ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
+a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
 model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
@@ -552,6 +580,12 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
 locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
 caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to

@@ -6,11 +6,8 @@ on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
   # job below: non-UI PRs skip the agent via `if:` (a job skipped by `if:`
-  # reports as success, so it never blocks merge), while UI PRs gate the agent
-  # behind the `ui-security-review` Environment (required reviewers) — a
-  # maintainer clicks "Approve" to start the AI run, and the pending approval
-  # blocks merge until the review has run. `synchronize` is kept so a new
-  # commit re-reports the check on the new head and re-pends the approval.
+  # reports as success, so it never blocks merge), while UI PRs run it.
+  # `synchronize` is kept so a new commit re-reports the check on the new head.
   pull_request:
     types: [opened, synchronize, ready_for_review]
   workflow_dispatch:
@@ -18,14 +15,7 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
-  # Pause for a maintainer's approval of the `ui-security-review` Environment
-  # before the agent runs. This gates the `activation` job, but because
-  # `activation` is itself gated by the `if:` below, the approval is only
-  # requested on UI-touching PRs (a skipped job never requests Environment
-  # approval). The pending approval keeps the agent's required check pending,
-  # blocking merge until a maintainer clicks Approve to start the review.
-  manual-approval: ui-security-review
-# Only run the review (and request approval) when the PR touches the UI
+# Only run the review when the PR touches the UI
 # security surface. Non-UI PRs skip the activation chain, so the agent reports
 # "skipped" (= success for required checks) and never blocks merge.
 #
@@ -35,7 +25,13 @@ on:
 # only here resolves to empty there, `activation` skips, and `detect` — which the
 # compiler makes depend on `activation` — skips with it, taking the agent down
 # too. That is why this workflow had never once run its agent (#6766 item 7).
-if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') }}
+#
+# PRs whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES`
+# repository variable skip this review. List branch names separated by commas,
+# with no spaces; the match ignores case. A dispatch has an empty `head_ref`,
+# which the first clause exempts. Without that clause, an unset variable formats
+# to `,,`, matches the empty `head_ref`, and skips every dispatch.
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') && (github.head_ref == '' || !contains(format(',{0},', vars.UI_SECURITY_REVIEW_SKIP_BRANCHES), format(',{0},', github.head_ref))) }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -55,6 +51,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -85,6 +82,8 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
@@ -105,7 +104,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/security-findings.md
 pre-agent-steps:

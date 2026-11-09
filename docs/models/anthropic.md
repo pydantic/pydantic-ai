@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[anthropic]"
 
 To use [Anthropic](https://anthropic.com) through their API, go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) to generate an API key.
 
-`AnthropicModelName` contains a list of available Anthropic models.
+`AnthropicModelName` lists the latest Anthropic models for autocomplete. Any other model id the API accepts works too.
 
 ## Environment variable
 
@@ -382,8 +382,6 @@ When you use `anthropic_cache_instructions` with both static and dynamic [instru
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 ```python {test="skip"}
-from datetime import date
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
@@ -399,7 +397,7 @@ agent = Agent(
 
 @agent.instructions
 def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
-    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+    return f'Customer name: {ctx.deps}.'
 
 
 result = agent.run_sync('What is your return policy?', deps='Alice')
@@ -408,7 +406,7 @@ print(result.output)
 
 1. Static instructions are cached across requests.
 2. Enables smart cache placement at the static/dynamic boundary.
-3. Dynamic instructions change per-request and are not cached.
+3. Dynamic instructions are evaluated for each request and sit after the cache point, so a different customer doesn't invalidate the cached static instructions.
 
 ### Fine-Grained Control with CachePoint
 
@@ -895,9 +893,13 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Web Tool Callers
 
-On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment. Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md).
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
 
-Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model always call both web tools itself, with no sandbox. This turns off dynamic filtering, so the model reads every result in full, and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses.
+Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md). When you ask for citations, with the [`Citations`][pydantic_ai.capabilities.Citations] capability and text output, or with [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] for web fetch, Pydantic AI sends the cited tools with `allowed_callers=['direct']` on the Anthropic API (the `AsyncAnthropic` client), so the model calls them itself and their results are cited. This turns off dynamic filtering for those tools, so the model reads every result in full. Claude Platform on AWS and Microsoft Foundry keep Anthropic's default, since they haven't been verified to accept `allowed_callers` with citations: set [`anthropic_calls_cited_web_tools_directly`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_calls_cited_web_tools_directly] in the model's `profile` to route them there too.
+
+A request that already needs code execution keeps Anthropic's default, so its web results come back uncited: one with an [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] you set, Skills included, and one in a user turn that has already used code execution, where direct calls would leave the request without it. Anthropic rejects that container on a request without code execution, and the turn's code execution calls can still be running. The callers are decided for each user turn, so every request in a turn sends the same ones. A conversation whose earlier turns used the sandbox switches to direct calls at its next user prompt, and the sandbox's container and files don't carry over.
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model call both web tools itself, with no sandbox, whether or not you ask for citations. This turns off dynamic filtering and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses, and takes precedence over the citations default.
 
 ```py {title="anthropic_web_tools_allowed_callers.py"}
 from pydantic_ai import Agent, WebSearchTool
@@ -931,7 +933,7 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 ### Code Execution Containers
 
-When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
+When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
 If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 

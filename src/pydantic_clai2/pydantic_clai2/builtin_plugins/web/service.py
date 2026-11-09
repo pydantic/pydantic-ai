@@ -90,6 +90,7 @@ from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 from pydantic_clai2.runtime.worktrees import new_worktree
+from pydantic_clai2.ui.menus.update_menu import VERSION
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -134,6 +135,8 @@ class WebService:
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
+        self._update_asked: tuple[SessionChannel, str] | None = None
+        """The page whose About entered `/update now`, and the live session it went into: only that one's tells it."""
         self._channels: dict[str, SessionChannel] = {}
         """By `LiveSession.id`."""
         self._chosen: str | None = None
@@ -252,13 +255,7 @@ class WebService:
             return  # Counting a watcher tells the live sessions, which call `live_changed` again.
         self._following = True
         try:
-            if client.watching is None:
-                wanted = {} if (default := self._default()) is None else {default.session.id: default}
-            else:
-                # By the conversation browsers were last shown: one a session switched to but this plugin
-                # has not heard of yet is followed after `conversation_changed`, which sends its snapshot.
-                held = {channel.shown: channel for channel in self.channels()}
-                wanted = {held[name].session.id: held[name] for name in client.watching if name in held}
+            wanted = self._wanted(client)
             for live_id in client.unwatch.keys() - wanted.keys():
                 client.unwatch.pop(live_id)()
             for live_id, channel in wanted.items():
@@ -268,6 +265,15 @@ class WebService:
                         self.hub.send([client], dump(channel.snapshot()))
         finally:
             self._following = False
+
+    def _wanted(self, client: Client) -> dict[str, SessionChannel]:
+        """The live sessions `client` shows, by live session ID."""
+        if client.watching is None:
+            return {} if (default := self._default()) is None else {default.session.id: default}
+        # By the conversation browsers were last shown: one a session switched to but this plugin
+        # has not heard of yet is followed after `conversation_changed`, which sends its snapshot.
+        held = {channel.shown: channel for channel in self.channels()}
+        return {held[name].session.id: held[name] for name in client.watching if name in held}
 
     def unwatch(self, client: Client) -> None:
         """`client` left: it no longer keeps any session from closing for being idle."""
@@ -304,7 +310,7 @@ class WebService:
         A CLAI that opens no other sessions starts it in the default session, as `open` does.
         """
         if workspace is not None:
-            directory = workspace_directory(workspace)
+            directory = await to_thread.run_sync(workspace_directory, workspace)
         else:
             directory = None if (shown := self._default()) is None else shown.session.workspace
         try:
@@ -326,7 +332,7 @@ class WebService:
 
         New session then starts a session there, and lists it among the repository's worktrees from then on.
         """
-        directory = workspace_directory(repo)
+        directory = await to_thread.run_sync(workspace_directory, repo)
         worktree = await to_thread.run_sync(lambda: new_worktree(repo=directory, branch=branch, base=base))
         return str(worktree.path)
 
@@ -379,6 +385,11 @@ class WebService:
     def command_ended(self, event: CommandEnd) -> None:
         channel = self.current()
         channel.command_ended(event)
+        asked = self._update_asked
+        if event.text.split() == ['/update', 'now'] and asked is not None and asked[1] == channel.session.id:
+            self._update_asked = None
+            if asked[0] is not channel:
+                asked[0].command_ended(event)
         self.settings_changed(channel)
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
@@ -400,7 +411,12 @@ class WebService:
         else:
             if self._uv_output:
                 level = 'error' if event.stage == 'failed' else 'info'
-                self.current().publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
+                notice = Notice(text='\n'.join(self._uv_output), level=level, command='uv')
+                channel = self.current()
+                channel.publish(notice)
+                asked = self._update_asked
+                if asked is not None and asked[1] == channel.session.id and asked[0] is not channel:
+                    asked[0].publish(notice)
             self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
         self.hub.publish(UpdateChanged(update=self.update))
 
@@ -558,7 +574,26 @@ class WebService:
     ) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
         action = partial(run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
+        if (name, key) == ('update', VERSION):
+            action = partial(self._asking_update, session, action)
         return await self._edit_command(session, name, action, path)
+
+    async def _asking_update(
+        self, session: SessionChannel, action: Callable[[SettingsMenu], Awaitable[list[str]]], menu: SettingsMenu
+    ) -> list[str]:
+        """Run About's Update, after which `session` hears how the `/update now` it entered ends.
+
+        That runs in the session CLAI restarts from, as `SessionRuntime.restarter` picks it, so only its
+        `/update now` tells `session`, not one typed in another session meanwhile. A cancelled or refused
+        Update enters nothing and returns no messages, so the page that asked before keeps hearing.
+        """
+        messages = await action(menu)
+        if messages:
+            # Nothing awaits between entering `/update now` and here: the restarter is still the session it went
+            # into, even if the terminal moved while the dialog was open, and it has not started running it.
+            restarter = self.live.restarter() if isinstance(self.live, LiveRuntimes) else None
+            self._update_asked = (session, session.session.id if restarter is None else restarter.live_session.id)
+        return messages
 
     async def _edit_command(
         self,
@@ -673,23 +708,9 @@ class WebService:
         empty = [] if query else await checkouts(self.host.plugins)
         workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)
         known = dict(self._identities)
-
-        def resolve(folders: Iterable[str], known: Mapping[str, ProjectIdentity]) -> dict[str, ProjectIdentity]:
-            # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
-            return {
-                folder: project_identity(folder)
-                for folder in folders
-                if (identity := known.get(folder)) is None or Path(folder).exists() == identity.missing
-            }
-
-        def resolve_all() -> tuple[list[str], dict[str, ProjectIdentity]]:
-            found = {**known, **resolve(workspaces, known)}
-            listed = include_worktrees and not query
-            repositories = {found[folder].key: found[folder] for folder in workspaces} if listed else {}
-            linked = [root for identity in repositories.values() for root in worktree_roots(identity)]
-            return linked, {**found, **resolve(linked, found)}
-
-        linked, resolved = await to_thread.run_sync(resolve_all)
+        linked, resolved = await to_thread.run_sync(
+            partial(_resolve_identities, workspaces, known, list_worktrees=include_worktrees and not query)
+        )
         self._identities.update(resolved)
         empty += linked
         live = {channel.id: channel.session for channel in self.channels()}
@@ -742,7 +763,7 @@ class WebService:
     async def transcript(self, conversation_id: str) -> Transcript:
         """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        continuable = self._continuable(saved.summary.workspace)
+        continuable = await self._continuable(saved.summary.workspace)
         busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
@@ -754,11 +775,11 @@ class WebService:
             owner_pid=saved.summary.owner_pid if busy else None,
         )
 
-    def _continuable(self, workspace: str) -> bool:
+    async def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        return continuable(
-            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
-        )
+        here, follows = str(self.default().session.workspace), self.catalog.follows_workspace
+        # Checking its folder stats it, so off the event loop.
+        return await to_thread.run_sync(lambda: continuable(workspace, here=here, follows=follows))
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -768,7 +789,7 @@ class WebService:
         """Copy a session and open the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
-        if self._continuable(copy.workspace):
+        if await self._continuable(copy.workspace):
             await self.open(copy.id)
         return copy.id
 
@@ -824,6 +845,29 @@ def continuable(workspace: str, *, here: str, follows: bool) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _resolve_identities(
+    workspaces: set[str], known: Mapping[str, ProjectIdentity], *, list_worktrees: bool
+) -> tuple[list[str], dict[str, ProjectIdentity]]:
+    """The worktrees Git lists for the repositories of `workspaces` when `list_worktrees`, and each folder's identity.
+
+    The identities are `known`'s, with those of the folders it lacks or holds stale resolved.
+    """
+    found = {**known, **_resolved(workspaces, known)}
+    repositories = {found[folder].key: found[folder] for folder in workspaces} if list_worktrees else {}
+    linked = [root for identity in repositories.values() for root in worktree_roots(identity)]
+    return linked, {**found, **_resolved(linked, found)}
+
+
+def _resolved(folders: Iterable[str], known: Mapping[str, ProjectIdentity]) -> dict[str, ProjectIdentity]:
+    """The identity of each of `folders` that `known` lacks or holds stale."""
+    # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
+    return {
+        folder: project_identity(folder)
+        for folder in folders
+        if (identity := known.get(folder)) is None or Path(folder).exists() == identity.missing
+    }
 
 
 async def _view(panel: SidePanel) -> PanelView:

@@ -37,6 +37,8 @@ judge model. All are
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
 agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
 (`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
+A repair is written back to the `ToolCallPart` in history (original args in
+`provider_details['original_args']`), so later requests replay the repaired arguments.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -168,7 +170,8 @@ Key parameters:
   `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
-  `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
+  `lambda out: redact_secrets(pydantic_core.to_json(out).decode()).action == 'allow'` blocks on a
+  match (and also works on the JSON data a Temporal worker passes); to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
@@ -179,6 +182,11 @@ Key parameters:
   iterators, and empty sequences raise `UserError` at first use). `ToolGuardrail` guards are single
   callables; for several tool checks, stack several `ToolGuardrail` capabilities: argument guards run
   in list order, result guards in reverse.
+- Guard verdicts are durable operations under Temporal, DBOS, and Prefect. Give every guardrail on a
+  durable-capable agent a distinct explicit `id`; ordinary runs do not require one. Under Temporal
+  a structured output or tool result reaches the guard as JSON data, its `RunContext` has no
+  `messages` or `prompt`, and an exception it raises other than `InputBlocked`, `OutputBlocked`, `ToolBlocked`,
+  `ApprovalRequired` or `ModelRetry` fails (and retries) the activity instead of reaching the run.
 
 Detectors (`pydantic_ai_harness.guardrails.detectors`), plain functions returning `GuardrailResult`
 (`.action` is `'allow'`, `'block'`, or `'replace'`; `.replacement` holds the redacted text). To block

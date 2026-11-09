@@ -23,7 +23,6 @@ from .settings import ImageGenerationSettings
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
-    from openai.types.image_model import ImageModel as LatestOpenAIImageModelNames
     from openai.types.images_response import ImagesResponse, Usage
 
     from pydantic_ai.models.openai import OMIT
@@ -33,8 +32,14 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+LatestOpenAIImageModelNames = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini']
+"""Latest OpenAI image generation models."""
+
 OpenAIImageGenerationModelName = str | LatestOpenAIImageModelNames
-"""Possible OpenAI image generation model names."""
+"""Possible OpenAI image generation model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
+"""
 
 _UNSUPPORTED_MODEL_NAMES = frozenset(('dall-e-2', 'dall-e-3'))
 """DALL·E models the OpenAI SDK's `ImageModel` literal admits but this adapter does not implement.

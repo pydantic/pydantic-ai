@@ -8,7 +8,8 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import (
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
@@ -23,6 +24,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -254,10 +256,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
-        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
-            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
-            # See https://github.com/pydantic/pydantic-ai/issues/10243.
-            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+        elif provider == 'z-ai':
+            # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
+            profile = _glm_5_3_schema_profile(model_name)
 
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
@@ -331,6 +332,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # https://openrouter.ai/docs/features/prompt-caching
                 default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
+            special_token_route_profile('openrouter', model_name),
         )
 
     @overload
