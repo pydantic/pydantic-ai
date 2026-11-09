@@ -4825,14 +4825,12 @@ def test_args_validator_defers_call():
     )
 
 
-def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
-    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
+    """A tool that's already deferred by kind keeps the metadata its `args_validator` deferred it with.
 
     A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
-    executed, so neither its `args_validator` nor its function body can contribute
-    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
-    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
-    deferral itself (a plain function tool) carry metadata through.
+    executed, so its validator runs but its function body doesn't: only the validator's
+    `ApprovalRequired(metadata=...)` reaches `DeferredToolRequests.metadata`.
     """
     executed: list[str] = []
 
@@ -4859,11 +4857,10 @@ def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds(
                     tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
                 ),
                 ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
-            ]
+            ],
+            metadata={'pyd_ai_tool_call_id__validator_defers': {'from': 'validator'}},
         )
     )
-    assert isinstance(result.output, DeferredToolRequests)
-    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
     assert executed == []
 
 
