@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from uuid import uuid4
 
@@ -59,6 +60,21 @@ class PlanItem(BaseModel):
     )
 
 
+class OwnedPlanItem(PlanItem):
+    """A plan step on a shared board, with the agent that has claimed it.
+
+    `ClaimablePlanStore` returns these from its typed reads, `claim` and `release`.
+    Only `claim` and `release` change `owner`; the inherited `PlanStore` writes keep it.
+
+    Attributes:
+        owner: Name of the agent that claimed the step, or `None` while it is unclaimed.
+            A step keeps its owner when it is completed or cancelled, as a record of who
+            finished it.
+    """
+
+    owner: str | None = Field(default=None, description='Name of the agent that claimed this step.')
+
+
 class PlanStatusUpdate(BaseModel):
     """One entry of the `update_task_statuses` batch tool."""
 
@@ -67,3 +83,14 @@ class PlanStatusUpdate(BaseModel):
         description='New status: pending, in_progress, completed, or cancelled -- '
         'or blocked, when subtasks are enabled.'
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoardChange:
+    """One step a `ClaimablePlanStore.claim` or `release` changed, before and after, read in the same atomic operation."""
+
+    item: OwnedPlanItem
+    """The step as the operation left it."""
+
+    previous: OwnedPlanItem
+    """The step as it was just before, so a caller can report the change without reading the board again."""

@@ -9,12 +9,13 @@ own `asyncpg` pool (which already satisfies these protocols) at construction.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 import anyio
 
+from pydantic_ai_harness.planning._claimable import Board, BoardStore, apply_change, item_to_row, row_to_item
 from pydantic_ai_harness.planning._events import PlanEventEmitter
 from pydantic_ai_harness.planning._store import (
     apply_updates,
@@ -24,7 +25,9 @@ from pydantic_ai_harness.planning._store import (
     validate_table_name,
     warn_event_emitter,
 )
-from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
+from pydantic_ai_harness.planning._types import OwnedPlanItem, PlanItem, TaskStatus
+
+_T = TypeVar('_T')
 
 
 @runtime_checkable
@@ -235,6 +238,76 @@ class PostgresPlanStore:
             item.parent_id,
             json.dumps(item.depends_on),
         )
+
+
+class PostgresClaimablePlanStore(BoardStore):
+    """PostgreSQL claimable board, scoped to a `session`, over a caller-owned asyncpg-compatible pool.
+
+    Each write is one transaction that first takes a transaction-scoped advisory
+    lock on the table and session (`pg_advisory_xact_lock`), then reads the board,
+    applies the change and rewrites the session's rows. Writers on one session
+    therefore serialize across connections and processes, and readers see either
+    the whole change or none of it. The table is its own (`claimable_plan_items` by
+    default, with an `owner` column) and does not share rows with `PostgresPlanStore`.
+    """
+
+    def __init__(self, pool: PostgresPool, *, session: str = 'default', table: str = 'claimable_plan_items') -> None:
+        validate_table_name(table)
+        self._pool = pool
+        self._session = session
+        self._table = table
+        self._ready = False
+        self._schema_lock = anyio.Lock()
+
+    async def _ensure_schema(self) -> None:
+        """Create the table once, under an advisory lock, like `PostgresPlanStore`."""
+        if self._ready:
+            return
+        async with self._schema_lock:
+            if self._ready:
+                return
+            async with self._pool.acquire() as connection, connection.transaction():
+                await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._table)
+                await connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._table} ('
+                    'session TEXT NOT NULL, seq BIGINT NOT NULL, id TEXT NOT NULL, '
+                    'content TEXT NOT NULL, status TEXT NOT NULL, active_form TEXT NOT NULL, '
+                    'parent_id TEXT, depends_on TEXT NOT NULL, owner TEXT, PRIMARY KEY (session, id))'
+                )
+            self._ready = True
+
+    async def _load(self, connection: PostgresConnection) -> Board:
+        rows = await connection.fetch(
+            f'SELECT id, content, status, active_form, parent_id, depends_on, owner '
+            f'FROM {self._table} WHERE session = $1 ORDER BY seq',
+            self._session,
+        )
+        return [row_to_item(row) for row in rows]
+
+    async def get_owned_items(self) -> list[OwnedPlanItem]:
+        """Return every step for this session, with its owner, in insertion order."""
+        await self._ensure_schema()
+        async with self._pool.acquire() as connection:
+            return await self._load(connection)
+
+    async def _transact(self, change: Callable[[Board], _T]) -> _T:
+        await self._ensure_schema()
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', f'{self._table}:{self._session}')
+            board = await self._load(connection)
+            result, changed = apply_change(board, change)
+            if changed:
+                await connection.execute(f'DELETE FROM {self._table} WHERE session = $1', self._session)
+                for seq, item in enumerate(board):
+                    await connection.execute(
+                        f'INSERT INTO {self._table} '
+                        '(session, seq, id, content, status, active_form, parent_id, depends_on, owner) '
+                        'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+                        self._session,
+                        seq,
+                        *item_to_row(item),
+                    )
+        return result
 
 
 def _deleted_count(status: object) -> int:

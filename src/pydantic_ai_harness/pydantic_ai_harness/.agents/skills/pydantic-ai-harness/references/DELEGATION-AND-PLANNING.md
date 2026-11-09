@@ -99,6 +99,21 @@ Gotchas:
   made through the tools emit them; direct `PlanStore` calls do not. Store `event_emitter=` is deprecated.
 - The planner's "do not implement" discipline comes from its instructions and toolsets, not from `Planning`.
 
+Shared boards: several agents on one plan use a `ClaimablePlanStore` (`InMemoryClaimablePlanStore()`,
+`SqliteClaimablePlanStore(database, *, session, table='claimable_plan_items')`,
+`PostgresClaimablePlanStore(pool, ...)`, `RedisClaimablePlanStore(client, ...)` with `get` and `eval`,
+`FileClaimablePlanStore(path)`). Steps are `OwnedPlanItem`s with an `owner`.
+
+- `await store.claim(item_id_or_None, owner=name)` atomically takes a `pending`, unowned (or already
+  the caller's), unblocked step and moves it to `in_progress`; returns a `BoardChange(item, previous)` or `None`.
+- `await store.release(item_id, owner=name, status=...)` atomically sets the status and moves direct
+  dependents into or out of `blocked`; returns a `BoardChange` per changed step. `completed`/`cancelled` keep the
+  owner, `pending`/`blocked` clear it, `in_progress` raises `ValueError`.
+- `set_items`/`update_item` keep owners on surviving ids. Don't route claims through the `Planning`
+  tools: their dependency reconciliation is not atomic.
+- Store calls emit nothing; emit your own event per returned change, carrying `OwnedPlanItem` so `owner`
+  survives serialization.
+
 ## SubAgents
 
 One `delegate_task(agent_name, task)` tool. Each call runs the named agent in a fresh run (no parent
