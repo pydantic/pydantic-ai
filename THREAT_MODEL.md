@@ -163,7 +163,7 @@ Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeout
 
 ### Repository CI and agentic workflows
 
-The repository's own workflows run pull-request content with repository credentials. A workflow triggered by `pull_request_target` or `workflow_run` holds secrets and can hold a write token while it reads content the pull request's author wrote. Such a job must not build, install, or run that content, and it must not give it to a model that holds a write tool, a shell, or a writable token. Model output from such a job is untrusted: a separate step validates it and publishes it with the narrowest token. Treat every part of a pull request, its text included, as untrusted input to each job that reads it.
+The repository's own workflows run pull-request content with repository credentials. A workflow triggered by `pull_request_target` or `workflow_run` holds secrets and can hold a write token while it reads content the pull request's author wrote. Such a job must not build, install, or run that content, and it must not give it to a model that holds a write tool, a shell, or a writable token. Model output from such a job is untrusted: a separate step validates it and publishes it with the narrowest token. A private report sent to a maintainer channel is model output too: it is escaped before sending, so it cannot add links or mentions. Treat every part of a pull request, its text included, as untrusted input to each job that reads it.
 
 These workflows are not part of the published packages. Maintainers handle a weakness in one as an internal fix, not a library vulnerability.
 
