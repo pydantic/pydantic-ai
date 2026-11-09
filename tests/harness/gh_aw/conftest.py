@@ -14,4 +14,5 @@ def started_node() -> None:
     to run first. Package-scoped, so it covers every module that runs `node` (each requests it with
     `pytestmark`), not only the first one a worker collects.
     """
-    subprocess.run(['node', '-e', ''], check=True)
+    # Bounded only against a hang: far longer than any cold start or runner stall.
+    subprocess.run(['node', '-e', ''], check=True, timeout=300)

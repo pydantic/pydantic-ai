@@ -864,11 +864,6 @@ fake registered the command's stream only after the process started. If the
 loop stalls in between, `break_streams` reaches no stream, the marker is lost,
 and the test hangs until the job's timeout. Ask the fake to register the stream
 before starting the process, or the test to wait for the stream itself.
-The same goes for a wait with no `READINESS_WAIT_TIMEOUT` guard or a shorter
-literal (`fail_after(1)`, `sleep(0.1)` "to let it start"), an assertion on
-elapsed time, a timeout test where the work can finish first, a
-`new_event_loop()` that is never closed, and a flake fix that only lengthens a
-timeout or adds a retry.
 
 **Don't flag this:**
 ```python
@@ -879,9 +874,7 @@ monkeypatch.setattr(module, '_GONE_SETTLE', 3600.0)
 *Why:* The test waits for the state its next step needs, signalled by the
 code that owns it. The guard only stops a hang, and the patched timeout is far
 beyond any stall, so no runner speed changes the outcome. Also don't flag a
-short real wait whose duration is itself the claim and is asserted with a wide
-margin, or a test that breaks out of `async for` because early exit is its
-subject.
+test that breaks out of `async for` because early exit is its subject.
 
 ## Sub-agent finding format
 

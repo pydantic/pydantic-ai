@@ -76,18 +76,11 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   `.review-context/review-instructions.md`. Cap at **MEDIUM**.
 - **Test determinism.** When the diff adds or changes a test, a test double
   (any `fake_*.py`, stub server or fixture that runs work concurrently), or a
-  fix for a flaky test, check it against the six numbered rules in "Tests that
-  don't depend on timing" in `tests/AGENTS.md`. For each `await`, wait or
-  assertion, ask what happens if the scheduler stalls for a minute right before
-  it: a test acting on a side effect before the state it changes is registered,
-  a fake that starts work before registering it or drops an early event, a wait
-  with no `READINESS_WAIT_TIMEOUT` guard or a shorter literal, an assertion on
-  elapsed time or scheduling, a timeout test the work can win, and a loop,
-  generator, task, process or thread left to the garbage collector. A flake fix
-  with no forced reproduction, or that only lengthens a timeout, adds a retry
-  or sleep, or skips the test, is a finding too. Rate it **HIGH** when you can
-  name the interleaving that fails, **MEDIUM** otherwise. Calibration is
-  Example 9 in `.review-context/review-instructions.md`.
+  fix for a flaky test, check each wait and assertion against the numbered
+  rules in "Tests that don't depend on timing" in `tests/AGENTS.md`, reading it
+  as if the runner stalls for a minute right before that line. Rate a violation
+  **HIGH** when you can name the interleaving that fails, **MEDIUM** otherwise.
+  Calibration is Example 9 in `.review-context/review-instructions.md`.
 - **Fix reach.** When the diff fixes a bug in a code path that several
   providers, models, or callers go through (a model class, a profile setting, a
   helper), list the surfaces that path reaches and check that the PR reproduces
