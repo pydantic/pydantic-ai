@@ -238,12 +238,10 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
     assert (result.outcome, result.findings) == ('INCOMPLETE', [])
 
 
-@pytest.mark.parametrize('text', ['Still reading.', _result('elsewhere.py')])
-def test_invalid_answer_under_the_budget_fails(tmp_path: Path, text: str) -> None:
-    """A malformed answer, or a finding on a file this check does not own, is a reviewer error."""
-    with pytest.raises(ValueError) as error:
-        check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=1), changed=CHANGED)
-    assert 'elsewhere.py' not in str(error.value)
+def test_invalid_answer_under_the_budget_fails(tmp_path: Path) -> None:
+    """A malformed answer is a reviewer error."""
+    with pytest.raises(ValueError):
+        check_result(CHECK, ['a.py'], _stream(tmp_path, 'Still reading.'), Usage(steps=1), changed=CHANGED)
 
 
 def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
@@ -281,10 +279,13 @@ def test_private_report_never_reaches_the_publishable_result(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize('severity', ['high', 'medium'])
-def test_finding_off_the_changed_lines_never_reaches_the_result(tmp_path: Path, severity: str) -> None:
-    """Artifacts on this repository are public, so only the severity of a finding on an unchanged line leaves the job."""
+@pytest.mark.parametrize(('path', 'line'), [('a.py', 9), ('elsewhere.py', 3)], ids=['unchanged line', 'other file'])
+def test_misplaced_finding_never_reaches_the_result(tmp_path: Path, severity: str, path: str, line: int) -> None:
+    """Artifacts on this repository are public, so only the severity of a finding off this check's changed lines leaves the job."""
     answer = json.loads(_result('a.py', 'a.py'))
-    answer['findings'][1] |= {'line': 9, 'severity': severity, 'body': 'pre-existing issue'}
-    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1), changed=CHANGED)
+    answer['findings'][1] |= {'path': path, 'line': line, 'severity': severity, 'body': 'pre-existing issue'}
+    # Another check's file changed too, so only the check's own file list can keep its finding out.
+    changed = {**CHANGED, 'elsewhere.py': frozenset({('RIGHT', 3)})}
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1), changed=changed)
     assert ([(f.line, f.severity) for f in result.findings], result.dropped) == ([(3, 'high')], {severity: 1})
     assert 'pre-existing issue' not in result.model_dump_json()

@@ -257,8 +257,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook. Result artifacts are public, so they carry no private report. A
-  review job also leaves out a finding on a line the pull request did not add or remove, and its
-  result keeps only how many it dropped of each severity.
+  review job also leaves out a finding on a file outside its check or on a line the pull request did
+  not add or remove, and its result keeps only how many it dropped of each severity.
 - `publish` validates every finding against its check's files, and drops a finding on a line outside
   GitHub's patch for its file. The job log counts every dropped finding. A dropped `critical` or
   `high` finding marks its check `INCOMPLETE`, including one on a file whose patch GitHub omitted. A

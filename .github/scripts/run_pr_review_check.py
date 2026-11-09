@@ -234,12 +234,11 @@ def check_result(
                 raise ValueError('The review answer does not match its schema') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
-            if outside := sorted({finding.path for finding in result.findings} - set(files)):
-                raise ValueError(f'{len(outside)} findings name files outside this check')
             # The result artifact is public, and a finding on a line the pull request did not change can describe a
-            # weakness it did not add. Only its severity leaves this job, so the publisher can fail a blocking one.
+            # weakness it did not add. A finding on a file outside this check is misplaced. Only the severity of
+            # either leaves this job, so the publisher can fail a blocking one.
             for finding in result.findings:
-                if (finding.side, finding.line) in changed.get(finding.path, frozenset()):
+                if finding.path in files and (finding.side, finding.line) in changed.get(finding.path, frozenset()):
                     findings.append(finding)
                 else:
                     dropped[finding.severity] += 1
