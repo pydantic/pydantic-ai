@@ -118,7 +118,7 @@ All of these must hold:
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as rule 3 of "Tests that don't depend on timing" in `tests/AGENTS.md` requires, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as rule 3 of "Tests that don't depend on timing" in `tests/AGENTS.md` requires, is not a longer timeout, and neither is patching a product timeout beyond any stall, as its rule 4 says.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.
