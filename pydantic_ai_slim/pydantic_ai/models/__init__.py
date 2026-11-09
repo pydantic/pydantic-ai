@@ -15,7 +15,17 @@ import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import copy
@@ -32,6 +42,7 @@ from typing import (
     Generic,
     Literal,
     NamedTuple,
+    ParamSpec,
     Self,
     TypeAlias,
     TypeVar,
@@ -233,6 +244,21 @@ def _open_request_download_budget() -> Generator[None]:
         yield
     finally:
         _request_download_budget.reset(token)
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+def _within_request_download_budget(method: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+    """Wrap `method` so the file URLs each call downloads share one total."""
+
+    @wraps(method)
+    async def budgeted(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _open_request_download_budget():
+            return await method(*args, **kwargs)
+
+    return budgeted
 
 
 ModelContextDepsT = TypeVar('ModelContextDepsT')
@@ -1115,20 +1141,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @classmethod
     def _budget_downloads_at_the_model_boundary(cls) -> None:
-        """Have each request a method of `cls` makes share one total for the file URLs it downloads.
+        """Give each call of a method of `cls` that builds one request its own total for the file URLs it downloads.
 
         Done here, for every model class, so a request that carries many file URLs can't download the per-file limit
         once per URL. A model that calls another one, like `FallbackModel`, gives each inner request its own total.
         """
-        request = cls.__dict__.get('request')
-        if inspect.iscoroutinefunction(request):
-
-            @wraps(request)
-            async def budgeted_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
-                with _open_request_download_budget():
-                    return await request(self, *args, **kwargs)
-
-            cls.request = budgeted_request
+        for name in ('request', 'count_tokens', 'batch_encode', 'compact_messages'):
+            method = cls.__dict__.get(name)
+            if inspect.iscoroutinefunction(method):
+                setattr(cls, name, _within_request_download_budget(method))
 
         request_stream = cls.__dict__.get('request_stream')
         if inspect.isfunction(request_stream):

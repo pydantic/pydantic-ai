@@ -7,8 +7,9 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AudioUrl, DocumentUrl, ImageUrl, VideoUrl
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
-from pydantic_ai.models import UserError, download_item
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters, UserError, download_item
+from pydantic_ai.models.batch import BatchRequest
 
 from ..conftest import IsInstance, IsStr, try_import
 
@@ -22,6 +23,10 @@ with try_import() as openai_imports_successful:
 
     from .mock_openai import MockOpenAI, completion_message
     from .test_openai import text_chunk
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
 def _mock_downloads(
@@ -196,6 +201,32 @@ async def test_each_model_request_has_its_own_download_total(
 
     assert result.output == 'Done.'
     assert len(downloaded) == 4
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@pytest.mark.parametrize('method', ['count_tokens', 'batch_encode'])
+async def test_building_a_request_to_count_or_batch_shares_one_download_total(
+    method: str, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`count_tokens` and `batch_encode` build a request without sending it, and their downloads share one total too.
+
+    `AnthropicModel` downloads `text/plain` document URLs; the request fails while it is built, before any API call.
+    """
+    downloaded = _serve_text_files(monkeypatch, 1024)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    urls = [DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt', media_type='text/plain') for i in range(3)]
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Summarize these.', *urls])])]
+
+    with (
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 2560),
+        pytest.raises(ValueError, match=r'^File URL downloads for one model request exceed the total of 2560 bytes\.$'),
+    ):
+        if method == 'count_tokens':
+            await model.count_tokens(messages, None, ModelRequestParameters())
+        else:
+            await model.batch_encode(BatchRequest(custom_id='item', messages=messages))
+
+    assert len(downloaded) == 3
 
 
 async def test_download_item_outside_a_model_request_has_no_total(monkeypatch: pytest.MonkeyPatch) -> None:
