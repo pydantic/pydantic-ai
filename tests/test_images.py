@@ -56,7 +56,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, google_user_agents, try_import
 
 pytestmark = [
     pytest.mark.usefixtures('allow_model_requests'),
@@ -1063,6 +1063,93 @@ async def test_google_image_generation_wires_extra_body():
         await model.generate('a robot', settings={'extra_body': {'labels': {'team': 'growth'}}})
 
     assert json.loads(requests[0].content)['labels'] == snapshot({'team': 'growth'})
+
+
+_GOOGLE_IMAGE_RESPONSE = {
+    'candidates': [
+        {
+            'content': {'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}], 'role': 'model'},
+            'finishReason': 'STOP',
+        }
+    ]
+}
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    'extra_headers,expected',
+    [
+        ({'User-Agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'user-agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'USER-AGENT': 'support-bot'}, ['google-genai support-bot']),
+        ({'User-Agent': ''}, ['google-genai']),
+    ],
+)
+async def test_google_image_generation_extra_headers_user_agent_replaces_ours(
+    extra_headers: dict[str, str], expected: list[str]
+):
+    """A user-agent in `extra_headers` replaces ours in any spelling, on the one line google-genai adds its label to.
+
+    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GOOGLE_IMAGE_RESPONSE)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        await model.generate('a robot', settings={'extra_headers': extra_headers})
+
+    assert google_user_agents(requests[0]) == expected
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
+@pytest.mark.parametrize(
+    'client_header,expected',
+    [
+        ('user-agent', ['google-genai per-request-app']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
+    ],
+)
+async def test_google_image_generation_extra_headers_user_agent_replaces_user_built_client_user_agent(
+    client_header: str, extra_headers: dict[str, str], expected: list[str]
+):
+    """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
+
+    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GOOGLE_IMAGE_RESPONSE)
+
+    async with _mock_google_provider(
+        handle_request,
+        build_provider=lambda http_options: GoogleProvider(
+            client=GoogleClient(
+                api_key='test-api-key',
+                http_options=http_options.model_copy(update={'headers': {client_header: 'client-app'}}),
+            )
+        ),
+    ) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        await model.generate('a robot', settings={'extra_headers': extra_headers})
+
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
