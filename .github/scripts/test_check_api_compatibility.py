@@ -172,7 +172,7 @@ _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
     ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", (set(), set())),
     (
         "TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])",
-        ({'a', 'b'}, {"TypeAliasType('Names', Literal['a'], type_params=())"}),
+        ({'b'}, set()),
     ),
     ("str | Literal['a'] -> unset", None),
     ("str | Literal['a'] -> str | Literal['a'] | int", None),

@@ -300,19 +300,19 @@ def _collection_entries(value: str) -> tuple[str, set[str]] | None:
 
 
 def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
-    """Split a type alias value into its `TypeAliasType` name, the source of each arm that isn't a string `Literal`,
-    and the string members of its `Literal` arms."""
+    """Split a type alias value into its `TypeAliasType` call without the aliased value, the source of each arm that
+    isn't a string `Literal`, and the string members of its `Literal` arms."""
     node = ast.parse(value, mode='eval').body
-    alias_name = ''
+    alias = ''
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == 'TypeAliasType'
         and len(node.args) == 2
-        and not node.keywords
     ):
-        alias_name = ast.dump(node.args[0])
-        node = node.args[1]
+        aliased = node.args.pop()
+        alias = ast.dump(node)
+        node = aliased
     other_arms: set[str] = set()
     members: set[str] = set()
     arms = [node]
@@ -332,7 +332,7 @@ def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
             if len(strings) == len(elements):
                 continue
         other_arms.add(ast.unparse(arm))
-    return alias_name, other_arms, members
+    return alias, other_arms, members
 
 
 def is_field_description_change(message: str) -> bool:
