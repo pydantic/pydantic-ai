@@ -9,7 +9,9 @@ provider_field_warnings_suppressed: ContextVar[bool] = ContextVar('provider_fiel
 
 @contextmanager
 def suppress_provider_field_warnings() -> Generator[None]:
-    """Build native tools from values the user didn't set on the tool directly, without warning them.
+    """Rebuild native tools without warning about deprecated fields the user was already warned about, or didn't set.
+
+    Covers tools validated from saved data and copies of a tool the user built with deprecated fields.
 
     Uses a context variable rather than `warnings.catch_warnings()`, which changes global state and so isn't safe when
     runs happen concurrently.

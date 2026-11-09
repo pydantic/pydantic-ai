@@ -357,7 +357,7 @@ class TestImageGenerationCapability:
 
         native_tool = capability.get_native_tools()[0]
         assert isinstance(native_tool, ImageGenerationTool)
-        assert native_tool.quality == 'high'
+        assert native_tool.provider_settings == {'openai': {'quality': 'high'}}
         assert native_tool.size == '1024x1024'
 
     async def test_image_generation_direct_fallback(self, allow_model_requests: None):
@@ -545,7 +545,7 @@ class TestImageGenerationCapability:
         assert result.output == 'native path'
         native_tool = capability.get_native_tools()[0]
         assert isinstance(native_tool, ImageGenerationTool)
-        assert native_tool.action == 'edit'
+        assert native_tool.provider_settings == {'openai': {'action': 'edit'}}
 
     async def test_image_generation_direct_fallback_warns_for_image_model(self, allow_model_requests: None):
         """The direct model is `fallback_image_model`'s to name, so the native override says it is ignored."""
@@ -1397,16 +1397,22 @@ class TestImageGenerationCapability:
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
-        assert tool.action == 'generate'
-        assert tool.background == 'opaque'
-        assert tool.input_fidelity == 'high'
-        assert tool.moderation == 'low'
-        assert tool.model == 'gpt-image-2'
-        assert tool.output_compression == 80
-        assert tool.output_format == 'jpeg'
-        assert tool.quality == 'high'
-        assert tool.size == '1024x1024'
-        assert tool.aspect_ratio == '16:9'
+        assert tool == ImageGenerationTool(
+            output_compression=80,
+            output_format='jpeg',
+            size='1024x1024',
+            aspect_ratio='16:9',
+            provider_settings={
+                'openai': {
+                    'action': 'generate',
+                    'background': 'opaque',
+                    'input_fidelity': 'high',
+                    'moderation': 'low',
+                    'model': 'gpt-image-2',
+                    'quality': 'high',
+                }
+            },
+        )
 
     @pytest.mark.parametrize(
         ('kwargs', 'ignored'),
@@ -1473,28 +1479,6 @@ class TestImageGenerationCapability:
         assert isinstance(tool, ImageGenerationTool)
         assert tool.size is None
         assert tool.aspect_ratio is None
-
-    def test_image_generation_capability_fields_do_not_warn_and_stay_readable(self):
-        """Capability users get no deprecation warning, and the built tool's fields read as they always have."""
-        tool = ImageGeneration(
-            action='generate',
-            background='opaque',
-            input_fidelity='high',
-            moderation='low',
-            image_model='gpt-image-2',
-            quality='high',
-        ).get_native_tools()[0]
-
-        assert isinstance(tool, ImageGenerationTool)
-        assert (tool.action, tool.background, tool.input_fidelity, tool.moderation, tool.model, tool.quality) == (
-            'generate',
-            'opaque',
-            'high',
-            'low',
-            'gpt-image-2',
-            'high',
-        )
-        assert tool.provider_settings is None
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """A custom native instance produces a local fallback tool.

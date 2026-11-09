@@ -18,7 +18,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, BinaryImage
-from pydantic_ai._warnings import suppress_provider_field_warnings
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import ImageGeneration, NativeOrLocalTool, XSearch
 from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool
@@ -60,13 +60,6 @@ def _xsearch_pass_through(ctx: RunContext[str]) -> XSearchTool:
 async def _image_generation_from_deps(ctx: RunContext[str]) -> ImageGenerationTool:
     return ImageGenerationTool(provider_settings={'openai': {'model': ctx.deps, 'quality': 'high'}})
 
-
-# The capability's `quality` replaces the nested one and keeps `moderation`. Overrides are applied to the tool's
-# own fields, so the expected tool sets the deprecated `quality` field too.
-with suppress_provider_field_warnings():
-    _IMAGE_GENERATION_INSTANCE_WITH_OVERRIDES = ImageGenerationTool(
-        quality='low', provider_settings={'openai': {'moderation': 'low'}}, size='1024x1024', output_format='jpeg'
-    )
 
 _IMAGE_GENERATION_PASS_THROUGH = ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}})
 
@@ -192,7 +185,16 @@ IMAGE_GENERATION_CASE = Case(
         output_format='jpeg',
         quality='low',
     ),
-    expected_instance_native_tools=[_IMAGE_GENERATION_INSTANCE_WITH_OVERRIDES],
+    # The capability's `quality` replaces the nested one and keeps `moderation`.
+    expected_instance_native_tools=snapshot(
+        [
+            ImageGenerationTool(
+                provider_settings={'openai': {'quality': 'low', 'moderation': 'low'}},
+                size='1024x1024',
+                output_format='jpeg',
+            )
+        ]
+    ),
     native_tool_type=ImageGenerationTool,
     # The narrowed `native_tool` type rejects a `None`-returning factory; this case exists to
     # prove the runtime `UserError` still fires for callers who bypass the type checker.
@@ -336,6 +338,26 @@ async def test_native_capable_outer_model_skips_the_fallback_subagent(case: Case
     assert seen_function_tools == [[]]
     assert [[type(tool) for tool in tools] for tools in outer_native_tools] == [[case.native_tool_type]]
     assert subagent_native_tools == []
+
+
+async def test_override_replaces_a_deprecated_field_on_the_native_instance(allow_model_requests: None):
+    """A capability field moves the value into `provider_settings`, rather than conflicting with the tool's old field."""
+    case = IMAGE_GENERATION_CASE
+    with pytest.warns(PydanticAIDeprecationWarning, match='fields `moderation`, `quality` are deprecated'):
+        native = ImageGenerationTool(quality='high', moderation='low')
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = ImageGeneration[str](
+        native=native, fallback_subagent_model=_recording_subagent_model(case, seen_native_tools), quality='low'
+    )
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    await agent.run(case.prompt, deps=case.deps)
+
+    assert len(seen_native_tools) == 1
+    tool = seen_native_tools[0]
+    assert isinstance(tool, ImageGenerationTool)
+    assert (tool.quality, tool.moderation) == ('auto', 'low')
+    assert tool.provider_settings == {'openai': {'quality': 'low'}}
 
 
 @case_param

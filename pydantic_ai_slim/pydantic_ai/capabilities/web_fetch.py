@@ -4,9 +4,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools import WebFetchTool
+from pydantic_ai.native_tools import AnthropicWebFetchToolSettings, WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -84,12 +83,14 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             kwargs['blocked_domains'] = self.blocked_domains
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
+        anthropic: AnthropicWebFetchToolSettings = {}
         if self.enable_citations is not None:
-            kwargs['enable_citations'] = self.enable_citations
+            anthropic['enable_citations'] = self.enable_citations
         if self.max_content_tokens is not None:
-            kwargs['max_content_tokens'] = self.max_content_tokens
-        with suppress_provider_field_warnings():
-            return WebFetchTool(**kwargs)
+            anthropic['max_content_tokens'] = self.max_content_tokens
+        if anthropic:
+            kwargs['provider_settings'] = {'anthropic': anthropic}
+        return WebFetchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
         return WebFetchTool.kind

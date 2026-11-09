@@ -285,6 +285,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """Return `tool` with capability-level overrides applied."""
         if not overrides:
             return tool
+        # A tool the user built with deprecated fields already warned them once; rebuilding it shouldn't warn again.
         with suppress_provider_field_warnings():
             return replace(tool, **overrides)
 
@@ -308,8 +309,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             return self._apply_native_overrides(self.native, overrides)
 
         if self.native is False:
-            with suppress_provider_field_warnings():
-                return tool_cls(**overrides)
+            return tool_cls(**overrides)
 
         native_factory = self.native
         if not callable(native_factory):

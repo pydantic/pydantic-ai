@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable, Iterator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, get_args
 
 from typing_extensions import deprecated
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai._warnings import PydanticAIDeprecationWarning, suppress_provider_field_warnings
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -30,6 +30,7 @@ from pydantic_ai.native_tools import (
     ImageGenerationModelName,
     ImageGenerationTool,
     ImageSize,
+    OpenAIImageGenerationToolSettings,
 )
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
@@ -46,6 +47,8 @@ if TYPE_CHECKING:
 _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 # Derived from the native tool's own aliases so widening either can't silently start dropping values.
+# What `_apply_native_overrides` resets a deprecated top-level field to when an override replaces it.
+_IMAGE_GENERATION_TOOL_DEFAULTS: dict[str, Any] = {field.name: field.default for field in fields(ImageGenerationTool)}
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
 _NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
 
@@ -731,33 +734,38 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return kwargs, ignored
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
-        """Collect settings supported by the native `ImageGenerationTool` path."""
+        """Collect settings supported by the native `ImageGenerationTool` path.
+
+        The OpenAI-only options go in `provider_settings['openai']`, not the deprecated top-level fields.
+        """
         kwargs: dict[str, Any] = {}
-        if self.background is not None:
-            kwargs['background'] = self.background
-        if self.input_fidelity is not None:
-            kwargs['input_fidelity'] = self.input_fidelity
-        if self.moderation is not None:
-            kwargs['moderation'] = self.moderation
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
             kwargs['output_format'] = self.output_format
-        if self.quality is not None:
-            kwargs['quality'] = self.quality
 
         geometry, _ = self._native_geometry()
         kwargs.update(geometry)
 
+        openai: OpenAIImageGenerationToolSettings = {}
         if self.action is not None:
-            kwargs['action'] = self.action
+            openai['action'] = self.action
+        if self.background is not None:
+            openai['background'] = self.background
+        if self.input_fidelity is not None:
+            openai['input_fidelity'] = self.input_fidelity
+        if self.moderation is not None:
+            openai['moderation'] = self.moderation
         if self.image_model is not None:
-            kwargs['model'] = self.image_model
+            openai['model'] = self.image_model
+        if self.quality is not None:
+            openai['quality'] = self.quality
+        if openai:
+            kwargs['provider_settings'] = {'openai': openai}
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
-        with suppress_provider_field_warnings():
-            return ImageGenerationTool(**self._image_gen_kwargs())
+        return ImageGenerationTool(**self._image_gen_kwargs())
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Every string and `local=True` land here: the capability has no named local strategy, and
@@ -804,15 +812,18 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return ImageGenerationTool.kind
 
     def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
-        """Also drop overridden options from the tool's `provider_settings`, which would otherwise conflict with them."""
-        if (
-            overrides
-            and isinstance(tool, ImageGenerationTool)
-            and tool.provider_settings
-            and (openai := tool.provider_settings.get('openai'))
-        ):
-            kept = {option: value for option, value in openai.items() if option not in overrides}
-            overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
+        """Merge the overridden OpenAI options into the tool's own `provider_settings['openai']`.
+
+        If the tool set one of them on its deprecated top-level field, that field goes back to its default, which
+        would otherwise conflict with the nested value.
+        """
+        override_settings: dict[str, dict[str, Any]] = overrides.get('provider_settings') or {}
+        openai_overrides = override_settings.get('openai', {})
+        if openai_overrides and isinstance(tool, ImageGenerationTool):
+            provider_settings = tool.provider_settings or {}
+            openai = {**provider_settings.get('openai', {}), **openai_overrides}
+            reset = {option: _IMAGE_GENERATION_TOOL_DEFAULTS[option] for option in openai_overrides}
+            overrides = {**overrides, **reset, 'provider_settings': {**provider_settings, 'openai': openai}}
         return super()._apply_native_overrides(tool, overrides)
 
     def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
