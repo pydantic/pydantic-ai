@@ -11,7 +11,7 @@ Let an agent delegate self-contained tasks to named child agents, each running i
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The parent model calls delegate_task. SubAgents checks the agent name and its max_calls budget, then runs the delegate in a new run with the parent's deps, usage and workspace, but not its conversation. The output, a steering message, or a retry comes back.](../img/harness/subagents.svg)
+![The parent model calls delegate_task. SubAgents checks the agent name, its max_calls budget and max_depth, then runs the delegate in a new run with the parent's deps, usage and workspace, but not its conversation. The output, a steering message, or a retry comes back.](../img/harness/subagents.svg)
 
 ## The problem
 
@@ -299,7 +299,7 @@ With task control, every task step is a typed `sub_agents` capability event in t
 | `TaskRetryEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
-These events and `AgentCreatedEvent` are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message a transport carries, so it arrives whole. A listener that persists or forwards them bounds them itself.
+These events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message a transport carries, so it arrives whole. Neither is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
 
 Events listeners can change are dispatched immediately, so their decisions take effect; a vetoed message is not sent, and the model is told why. A bound `DelegationTasks` sends `DelegationStartEvent` and `DelegationEndEvent` only to its observer; the run's own owner sends them to the run.
 
@@ -411,7 +411,7 @@ async def converse():
 
 `restore(task)` adds a finished `DelegationTask` from elsewhere, such as another agent's session, so the parent can resume it by ID; called before `opened()`, it loads on open. If a task with that ID has since run under a different `run_id`, it is kept and `restore` returns `False`.
 
-`background(task_id)` releases a foreground waiter without restarting the child. `await cancel(task_id)` stops and drains the child and its descendants; the model can't resume it until the application calls `await allow_resume(task_id)`. `one_shot` agent names never resume; `SubAgent(resumable=False)` does the same where the delegate is declared, also under the owner `SubAgents(task_control=...)` opens. A resume keeps the child ID and history, with a new run ID and the current direct parent.
+`background(task_id)` releases a foreground waiter without restarting the child. `await cancel(task_id)` stops and drains the child and its descendants; the model can't resume it until the application calls `await allow_resume(task_id)`. `DelegationTasks(one_shot=...)` names never resume, for an owner the application binds; `SubAgent(resumable=False)` does the same where the delegate is declared, also under the owner `SubAgents(task_control=...)` opens. A resume keeps the child ID and history, with a new run ID and the current direct parent.
 
 A child waits for its descendants and consumes their reports before its output settles. Reports go to the direct parent; an idle parent gets them on its next explicitly started run. Delivery is acknowledged only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted. With task control, `ask_parent` questions route the same way: `questions(conversation_id=...)` lists children whose question awaits delivery, and the observer is notified when one starts waiting, so the application can start the idle parent's next run to answer it.
 
@@ -419,7 +419,7 @@ A child waits for its descendants and consumes their reports before its output s
 
 An observer receives `DelegationTaskEvent`: the task identity and an optional correlated child stream event, which also carries the streaming model's `model_name` and `context_window`, so a UI can show the child's context usage. Managed start/end events carry `task_id` and `parent_id`. Managed cancellation and uncontained exceptions produce terminal outcomes; unmanaged behavior is unchanged.
 
-Metadata and final/interrupted histories are saved atomically under `directory`. `step_store` checkpoints through `StepPersistence` to recover a process-killed child's latest frontier. Loading an interrupted record never executes its tools, so inspect partial effects before an explicit resume, which answers tool calls the interruption left open with an `interrupted` tool return.
+Metadata and final/interrupted histories are saved atomically under `directory`. `step_store` checkpoints through `StepPersistence` to recover a process-killed child's latest frontier. Loading an interrupted record never executes its tools. Inspect possible partial effects before an explicit resume; the resume answers tool calls the interruption left open with an `interrupted` tool return, so the child sees they did not complete.
 
 Managed children with `forward_usage=True` share live usage accounting and parent ceilings. A per-child budget becomes an absolute ceiling at launch, which concurrent sibling spend may reach earlier; no child can bypass the parent's budget. Unmanaged per-child accounting is unchanged.
 
