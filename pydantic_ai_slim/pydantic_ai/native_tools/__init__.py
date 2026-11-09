@@ -640,6 +640,10 @@ class ComputerTool(AbstractNativeTool):
     Harness's `ComputerUse` adds it with the display size of each step. A model adapter sends it in place of that
     tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
     results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * OpenAI Responses, on models whose profile sets `openai_supports_computer_tool`
     """
 
     display_size: tuple[int, int]
