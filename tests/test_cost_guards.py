@@ -423,3 +423,27 @@ def test_a_module_within_the_collection_budget_passes(run: RunPytest, monkeypatc
     result = run('def test_nothing():\n    pass\n')
     assert result.ret == pytest.ExitCode.OK
     assert 'slow test module collection' not in result.stdout.str()
+
+
+@pytest.mark.parametrize(('budget', 'preloaded'), [('5', True), ('', False)])
+def test_the_collection_budget_imports_shared_dependencies_before_collection(
+    run: RunPytest,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: str,
+    preloaded: bool,
+):
+    """So no module is charged for being the first to import one; a dependency that isn't installed is skipped."""
+    pytester.makepyfile(shared_dependency='')
+    pytester.syspathinsert()
+    monkeypatch.setattr(cost_guards, 'SHARED_DEPENDENCIES', ('shared_dependency', 'not_an_installed_dependency'))
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, budget)
+    result = run(
+        f"""
+        PRELOADED = 'shared_dependency' in sys.modules
+
+        def test_preloaded():
+            assert PRELOADED is {preloaded}
+        """
+    )
+    result.assert_outcomes(passed=1)
