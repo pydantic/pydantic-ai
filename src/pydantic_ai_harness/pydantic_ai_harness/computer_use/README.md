@@ -64,7 +64,7 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | Setting | Default | What it does |
 |---|---|---|
 | `requires_approval` | `False` | Ask before any call that does more than look, zoom or wait. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). |
-| `keep_screenshots` | `None` | Send only the newest N screenshots, to cap the cost of long runs. Older ones are dropped 25 at a time so prompt caching keeps working. Don't use it on Claude Fable 5.1 or the Claude 5.5 models: they lose their earlier reasoning. |
+| `keep_screenshots` | `None` | Send at least the newest N images (screenshots and zooms), to cap the cost of long runs. Older ones are dropped 25 at a time so prompt caching keeps working. Don't use it on Claude Fable 5.1 or the Claude 5.5 models: they lose their earlier reasoning. |
 | `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a `ComputerTool` that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
@@ -76,9 +76,7 @@ handler such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-t
 
 ## Screen size
 
-Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile:
-
-A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
+Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile. A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
 model's positions back up, if the display can scale screenshots
 ([`SupportsScaledScreenshot`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsScaledScreenshot)). If it can't, the run stops with an
 error naming the largest size that fits.
