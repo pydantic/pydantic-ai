@@ -483,7 +483,7 @@ Each guardrail on a durable-capable agent needs an explicit, distinct `id`, whic
 
 `replace` and `block` record spans on the active OpenTelemetry tracer (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes, visible in Logfire. The replacement value and the refusal `message` are attached only when `RunContext.trace_include_content` is enabled, since they can quote guarded content. The value a redaction removed is never recorded. `retry` records no guardrail span; its retry appears as a normal model request.
 
-Tool spans add a `guardrail.tool` attribute. `approve` records `guardrail deferred tool args` with `guardrail.tool_call_id`, to correlate with the `DeferredToolRequests` your application answers, and `guardrail.arguments` under the same `trace_include_content` rule. A deferred call never executes, so this is the only span recording what was asked for.
+Tool spans add a `guardrail.tool` attribute. `approve` records `guardrail deferred tool args` with `guardrail.tool_call_id`, to correlate with the `DeferredToolRequests` your application answers, and `guardrail.arguments` under the same `trace_include_content` rule. A deferred call never executes, so no `execute_tool` span records it; this span is the record of the request.
 
 `OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its spans whatever the list order.
 
