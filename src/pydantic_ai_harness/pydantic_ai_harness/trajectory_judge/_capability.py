@@ -560,15 +560,23 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
         if isinstance(message, ModelResponse):
             user_lines = lines
         for part in message.parts:
-            if (steered := _steering_line(part)) is not None:
-                lines.append(steered)
-            elif isinstance(part, UserPromptPart):
-                text = user_prompt_text(part)
-                if text:
-                    user_lines.append(f'user: {text}')
-            elif (line := render_part(part)) is not None:
-                # A tool return or retry is the agent's activity, so it ends the opening request.
-                if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
-                    user_lines = lines
-                (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
+            user_lines = _render_part_line(part, user_lines, lines)
     return request, lines
+
+
+def _render_part_line(part: ModelRequestPart | ModelResponsePart, user_lines: list[str], lines: list[str]) -> list[str]:
+    """Render `part` into `user_lines` or `lines`, and return where the user's words go from here on."""
+    if (steered := _steering_line(part)) is not None:
+        lines.append(steered)
+        return user_lines
+    if isinstance(part, UserPromptPart):
+        if text := user_prompt_text(part):
+            user_lines.append(f'user: {text}')
+        return user_lines
+    if (line := render_part(part)) is None:
+        return user_lines
+    # A tool return or retry is the agent's activity, so it ends the opening request.
+    if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        user_lines = lines
+    (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
+    return user_lines
