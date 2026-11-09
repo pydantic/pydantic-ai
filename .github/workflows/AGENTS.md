@@ -266,7 +266,10 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   dropped `medium` finding leaves the verdict unchanged.
   When there are findings, it posts one `COMMENT` review with each check's usage and the receipt
   `<!-- pr-review-checks run=… head=… -->`, which douwebot's clean approval gate does not count as a
-  douwebot finding. The job summary always carries the usage table. A `critical` or `high` finding,
+  douwebot finding. Each inline finding carries a hidden key built from its check, path, side,
+  line text, severity and body. The review leaves out a finding whose key an earlier run already
+  posted, and says how many it left out; the status still counts it. The job summary always carries
+  the usage table. A `critical` or `high` finding,
   an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
 - A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
   findings. Every event that reviews the head again, a push included, removes the label; apply it

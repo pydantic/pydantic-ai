@@ -691,7 +691,7 @@ def test_pr_review_checks_receipt_does_not_count_as_douwebot_finding():
         tokens=1,
         seconds=1,
     )
-    parent = review(8, body=json.loads(pr_review_checks_payload([result], HEAD, 30, inline=True))['body'])
+    parent = review(8, body=json.loads(pr_review_checks_payload([result], HEAD, 30, inline=True, lines={}))['body'])
     comment = review_gates.ReviewComment(
         pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='Security finding'
     )

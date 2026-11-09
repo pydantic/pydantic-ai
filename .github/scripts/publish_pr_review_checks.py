@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -17,6 +18,7 @@ CONTEXT = 'PR Review Checks'
 RUN_LABEL = 'pr-review-checks:run'
 ACCEPTED_LABEL = 'pr-review-checks:accepted'
 MARKER = re.compile(r'\n\n<!-- pr-review-checks run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
+FINDING_KEY = re.compile(r'<!-- pr-review-checks finding=([0-9a-f]{64}) -->')
 # `.permission` maps maintain and custom roles onto these base levels.
 TRUSTED_PERMISSIONS = frozenset({'admin', 'write'})
 
@@ -87,24 +89,31 @@ class PullFile(BaseModel):
 _HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
 
-def _changed_lines(patch: str) -> set[tuple[str, int]]:
-    """The lines a patch adds, as `RIGHT`, and removes, as `LEFT`."""
-    changed: set[tuple[str, int]] = set()
+def _changed_lines(patch: str) -> dict[tuple[str, int], str]:
+    """The text of each line a patch adds, as `RIGHT`, and removes, as `LEFT`."""
+    changed: dict[tuple[str, int], str] = {}
     old = new = 0
     # Git ends a line only at LF. `splitlines` would also split at CR and Unicode separators inside a line.
     for line in patch.split('\n'):
         if hunk := _HUNK.match(line):
             old, new = int(hunk[1]), int(hunk[2])
         elif line.startswith('+'):
-            changed.add(('RIGHT', new))
+            changed['RIGHT', new] = line[1:]
             new += 1
         elif line.startswith('-'):
-            changed.add(('LEFT', old))
+            changed['LEFT', old] = line[1:]
             old += 1
         elif not line.startswith('\\'):
             old += 1
             new += 1
     return changed
+
+
+def finding_key(check: str, finding: ReviewFinding, lines: Mapping[str, Mapping[tuple[str, int], str]]) -> str:
+    """Identify a finding by its line's text rather than its number, so a push that shifts the line keeps the key."""
+    text = lines[finding.path][finding.side, finding.line]
+    fields = [check, finding.path, finding.side, text, finding.severity, finding.body]
+    return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
 
 
 class ReviewChecksGitHub(Protocol):
@@ -117,6 +126,7 @@ class ReviewChecksGitHub(Protocol):
     def remove_label(self, label: str) -> None: ...
     def status(self, head: str, state: CommitStatus, description: str, url: str) -> None: ...
     def post_review(self, payload: str) -> str | None: ...
+    def posted_finding_keys(self) -> set[str]: ...
 
 
 def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
@@ -195,20 +205,36 @@ def verdict(checks: list[str], results: Mapping[str, CheckResult]) -> tuple[Comm
     return 'success', f'Reviewed by {", ".join(checks)}{noted}.'[:140]
 
 
-def review_payload(results: list[CheckResult], head: str, run_id: int, *, inline: bool) -> str:
-    """One `COMMENT` review for every check's findings, bound to this run and head."""
-    body = '## PR Review Checks\n\n' + '\n'.join(
-        f'- `{result.check}` ({result.outcome.lower()}): {result.coverage}' for result in results
-    )
-    body += '\n\n<details><summary>Usage</summary>\n\n' + usage_table(results) + '\n\n</details>'
+def review_payload(
+    results: list[CheckResult],
+    head: str,
+    run_id: int,
+    *,
+    inline: bool,
+    lines: Mapping[str, Mapping[tuple[str, int], str]],
+    posted: Set[str] = frozenset(),
+) -> str:
+    """One `COMMENT` review for every check's findings that no earlier run posted, bound to this run and head."""
     comments: list[dict[str, object]] = []
+    sections = ''
+    repeated = 0
     for result in results:
         for finding in result.findings:
-            text = f'**{finding.severity}** · `{result.check}` check\n\n{finding.body}'
+            key = finding_key(result.check, finding, lines)
+            if key in posted:
+                repeated += 1
+                continue
+            text = f'**{finding.severity}** · `{result.check}` check\n\n{finding.body}\n\n<!-- pr-review-checks finding={key} -->'
             if inline:
                 comments.append({'path': finding.path, 'line': finding.line, 'side': finding.side, 'body': text})
             else:
-                body += f'\n\n### `{finding.path}:{finding.line}` (`{finding.side}`)\n\n{text}'
+                sections += f'\n\n### `{finding.path}:{finding.line}` (`{finding.side}`)\n\n{text}'
+    body = '## PR Review Checks\n\n' + '\n'.join(
+        f'- `{result.check}` ({result.outcome.lower()}): {result.coverage}' for result in results
+    )
+    if repeated:
+        body += f'\n\n{repeated} more findings repeat comments an earlier run posted on the same lines.'
+    body += '\n\n<details><summary>Usage</summary>\n\n' + usage_table(results) + '\n\n</details>' + sections
     body += f'\n\n<!-- pr-review-checks run={run_id} head={head} -->'
     return json.dumps({'commit_id': head, 'event': 'COMMENT', 'body': body, 'comments': comments})
 
@@ -230,7 +256,7 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
     # comment lands on, so a finding on a file whose patch GitHub omitted is dropped here too.
     changed = {file.filename: _changed_lines(file.patch) for file in github.pull_files()}
     for check, result in results.items():
-        outside = [f for f in result.findings if (f.side, f.line) not in changed.get(f.path, set())]
+        outside = [f for f in result.findings if (f.side, f.line) not in changed.get(f.path, {})]
         if dropped := len(outside) + sum(result.dropped.values()):
             print(f'{check}: dropped {dropped} findings outside the changed lines.')
         update: dict[str, object] = {'findings': [f for f in result.findings if f not in outside]}
@@ -240,12 +266,16 @@ def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
         results[check] = result.model_copy(update=update)
     state, description = verdict(checks, results)
     ordered = [results[check] for check in checks if check in results]
-    if any(result.findings for result in ordered):
+    # A finding an earlier run already posted on the same line still counts toward the verdict, but is not posted again.
+    posted = github.posted_finding_keys() if any(result.findings for result in ordered) else set[str]()
+    if any(finding_key(r.check, f, changed) not in posted for r in ordered for f in r.findings):
         run_id = int(env['GITHUB_RUN_ID'])
-        review_url = github.post_review(review_payload(ordered, head, run_id, inline=True))
+        review = review_payload(ordered, head, run_id, inline=True, lines=changed, posted=posted)
+        review_url = github.post_review(review)
         if review_url is None:
             print('GitHub rejected the inline review; retrying with findings in the review body.')
-            review_url = github.post_review(review_payload(ordered, head, run_id, inline=False))
+            review = review_payload(ordered, head, run_id, inline=False, lines=changed, posted=posted)
+            review_url = github.post_review(review)
         if review_url is None:
             raise GateError('GitHub rejected the review with its findings in the body.')
         url = review_url
@@ -278,6 +308,14 @@ _PERMISSION = TypeAdapter(dict[str, object])
 
 class _PostedReview(BaseModel):
     html_url: str
+
+
+class _ReviewComment(BaseModel):
+    user: Actor
+    body: str
+
+
+_COMMENT_PAGES = TypeAdapter(list[list[_ReviewComment]])
 
 
 class ReviewChecksGhCli(GhCli):
@@ -326,6 +364,16 @@ class ReviewChecksGhCli(GhCli):
                 return None
             raise
         return _PostedReview.model_validate_json(posted).html_url
+
+    def posted_finding_keys(self) -> set[str]:
+        """Keys only `GITHUB_TOKEN` wrote count: a key hides a repeat but never changes the verdict."""
+        pages = _COMMENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100'))
+        return {
+            key[1]
+            for page in pages
+            for comment in page
+            if comment.user.login == 'github-actions[bot]' and (key := FINDING_KEY.search(comment.body))
+        }
 
 
 def main() -> None:

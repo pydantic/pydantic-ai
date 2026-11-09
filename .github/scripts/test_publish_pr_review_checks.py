@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pr_gates import Commit, GateError, Label
 from publish_pr_review_checks import (
     ACCEPTED_LABEL,
+    FINDING_KEY,
     MARKER,
     RUN_LABEL,
     Actor,
@@ -100,6 +101,10 @@ class FakeGitHub:
             return None
         self.reviews.append(review)
         return 'https://github.com/o/r/pull/1#pullrequestreview-1'
+
+    def posted_finding_keys(self) -> set[str]:
+        bodies = [str(comment['body']) for review in self.reviews for comment in review.comments]
+        return {key[1] for body in bodies if (key := FINDING_KEY.search(body))}
 
 
 def _states(github: FakeGitHub) -> list[tuple[str, CommitStatus]]:
@@ -305,8 +310,9 @@ def test_moved_head_publishes_nothing(tmp_path: Path) -> None:
 
 def test_review_payload_prefixes_each_finding_with_its_check() -> None:
     """A reader can tell which check raised a finding and how severe it is."""
-    payload = json.loads(review_payload([_result('url-fetch', 'critical')], HEAD, 5, inline=True))
-    assert payload['comments'][0]['body'] == '**critical** · `url-fetch` check\n\nFix.'
+    lines = {'a.py': {('RIGHT', 3): 'fixed = 1'}}
+    payload = json.loads(review_payload([_result('url-fetch', 'critical')], HEAD, 5, inline=True, lines=lines))
+    assert payload['comments'][0]['body'].startswith('**critical** · `url-fetch` check\n\nFix.\n\n<!-- ')
 
 
 def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -364,3 +370,36 @@ def test_a_finding_the_review_job_dropped_fails_the_status_only_when_blocking(
     assert github.reviews == []
     assert [status[1:3] for status in github.statuses] == [expected]
     assert 'general: dropped 1 findings outside the changed lines.' in capsys.readouterr().out
+
+
+def _finding(body: str, line: int = 3) -> ReviewFinding:
+    return ReviewFinding.model_validate(
+        {'path': 'a.py', 'line': line, 'side': 'RIGHT', 'severity': 'high', 'body': body}
+    )
+
+
+def _publish_on(github: FakeGitHub, tmp_path: Path, head: str, *findings: ReviewFinding) -> None:
+    github.head = head
+    result = _result('general').model_copy(update={'findings': list(findings)})
+    publish(github, {**_publish_env(tmp_path, result), 'HEAD_SHA': head})
+
+
+def test_a_finding_posted_on_an_earlier_head_is_not_posted_again(tmp_path: Path) -> None:
+    """A push that moves the flagged line keeps its key, and the repeated finding still fails the status."""
+    github = FakeGitHub()
+    _publish_on(github, tmp_path, HEAD, _finding('Fix.'))
+    github.files = [PullFile(filename='a.py', patch='@@ -5 +5 @@\n-old = 1\n+fixed = 1')]
+    _publish_on(github, tmp_path, 'c' * 40, _finding('Fix.', line=5))
+    assert len(github.reviews) == 1
+    assert github.statuses[-1][:3] == ('c' * 40, 'failure', 'Blocking findings: general')
+
+
+def test_a_different_finding_on_the_same_line_is_still_posted(tmp_path: Path) -> None:
+    """Only an identical finding counts as a repeat, and the new review says how many it left out."""
+    github = FakeGitHub()
+    _publish_on(github, tmp_path, HEAD, _finding('Fix.'))
+    _publish_on(github, tmp_path, 'c' * 40, _finding('Fix.'), _finding('Another problem.'))
+    first, second = github.reviews
+    assert [str(comment['body']).split('\n\n')[1] for comment in second.comments] == ['Another problem.']
+    assert '1 more findings repeat comments an earlier run posted on the same lines.' in second.body
+    assert second.commit_id == 'c' * 40 and first.commit_id == HEAD
