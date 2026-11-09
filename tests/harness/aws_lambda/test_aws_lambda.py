@@ -1668,17 +1668,16 @@ def _token_usage_points(capfire: CaptureLogfire) -> int:
     data = capfire.metrics_reader.get_metrics_data()
     if data is None:
         return 0  # Nothing was recorded at all.
-    for resource_metrics in data.resource_metrics:
-        for scope_metrics in resource_metrics.scope_metrics:
-            for metric in scope_metrics.metrics:
-                if metric.name == 'gen_ai.client.token.usage':
-                    points = [
-                        point
-                        for point in metric.data.data_points
-                        if isinstance(point, HistogramDataPoint | ExponentialHistogramDataPoint)
-                    ]
-                    return sum(point.count for point in points) // 2  # One input and one output point each.
-    return 0  # pragma: no cover - every run here makes a model request
+    points = [
+        point
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == 'gen_ai.client.token.usage'
+        for point in metric.data.data_points
+        if isinstance(point, HistogramDataPoint | ExponentialHistogramDataPoint)
+    ]
+    return sum(point.count for point in points) // 2  # One input and one output point each.
 
 
 def _instrumented_agent(tool: Any) -> Agent[Any, Any]:
