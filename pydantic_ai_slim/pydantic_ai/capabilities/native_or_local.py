@@ -285,6 +285,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """Return `tool` with capability-level overrides applied."""
         if not overrides:
             return tool
+        # TODO(v3): overrides can still name deprecated fields such as `ImageGenerationTool.quality`; once those
+        # are removed, the capabilities should pass them in `provider_settings` and this suppression can go.
         with suppress_provider_field_warnings():
             return replace(tool, **overrides)
 
