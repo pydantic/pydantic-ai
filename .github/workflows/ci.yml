@@ -2022,8 +2022,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
