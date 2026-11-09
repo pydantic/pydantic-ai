@@ -349,8 +349,10 @@ first pre-agent step, before any workspace script runs:
   blocked provider.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
-then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
-these host steps. The agent container gets no Z.AI credential beyond the engine's own.
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job, these
+host steps, and the `record` step of the `provider_health_record` job below. gh-aw allows no
+secret in the agent job's post-steps. The agent container gets no Z.AI credential beyond the
+engine's own.
 
 The monitor reads a run's terminal result from a record a host job writes, not from the
 agent's own output. After the agent job, including a failed one, `shared/provider-health.md`
@@ -360,11 +362,10 @@ to the `provider-health` artifact. gh-aw's parser wrote that `agent-session.json
 host from the engine's verified recording. The record keeps the failure kind the runner
 reported. It marks a provider-scope kind confirmed only when the job's own Z.ai check observes
 the same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted.
-Only the job's `record` step holds `ZAI_API_KEY`: gh-aw allows no secret in the agent job's
-post-steps. gh-aw runs the job only after threat detection passes cleanly, and detection skips
-the model when the agent left no output or patch. A failed record does not fail the run.
-Without a valid record, because the run predates the job, detection did not pass or the record
-failed, the monitor reads the `agent` artifact, which never confirms a provider failure.
+gh-aw runs the job only after threat detection passes cleanly, and detection skips the model
+when the agent left no output or patch. A failed record does not fail the run. Without a valid
+record (the run predates the job, detection did not pass, or the record failed), the monitor
+reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted
 completion without a concurrency group and stops before it reads incidents. The `monitor`

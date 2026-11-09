@@ -1943,6 +1943,7 @@ def _host_result_job(
     *,
     needs: tuple[str, ...] = ('agent', 'detection'),
     condition: str = _AFTER_AGENT,
+    job_env: dict[str, str] | None = None,
     continue_on_error: bool = True,
     checkout_ref: str = '${{ github.event.repository.default_branch }}',
     download: dict[str, str] = _AGENT_DOWNLOAD,
@@ -1966,7 +1967,7 @@ def _host_result_job(
         'uses': 'actions/upload-artifact@sha',
         'with': {'name': 'provider-health', 'overwrite': True, 'path': upload_path},
     }
-    return {
+    job: dict[str, object] = {
         'needs': list(needs),
         'if': condition,
         'continue-on-error': continue_on_error,
@@ -1985,6 +1986,9 @@ def _host_result_job(
             *([upload, record] if upload_first else [record, upload]),
         ],
     }
+    if job_env is not None:
+        job['env'] = job_env
+    return job
 
 
 def _write_host_result_workflow(workflows: Path, record_job: dict[str, object] | None) -> None:
@@ -2048,6 +2052,7 @@ def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Pa
         pytest.param(
             _host_result_job(download_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-another-step'
         ),
+        pytest.param(_host_result_job(job_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-job-env'),
         pytest.param(_host_result_job(upload_path='provider-health/provider-health.json\n'), id='record-not-uploaded'),
         pytest.param(_host_result_job(upload_first=True), id='upload-before-record'),
     ],

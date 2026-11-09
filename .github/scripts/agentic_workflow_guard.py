@@ -1282,6 +1282,7 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
         and checkout.get('persist-credentials') is False
         and checkout.get('sparse-checkout') == controller
         and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
+        and 'secrets.' not in str(job.get('env', ''))
         and all('secrets.' not in str(step) for i, step in enumerate(steps) if i != record)
         and any(
             str(step.get('uses', '')).startswith('actions/upload-artifact@')
