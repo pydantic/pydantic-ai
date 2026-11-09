@@ -103,8 +103,9 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part, no_leaked_tasks
 from .realtime.simulation._loop import SimulatedLoop
 
-READINESS_WAIT_TIMEOUT = 5
-"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
+READINESS_WAIT_TIMEOUT = 300
+"""Guards waits for something that should happen promptly against a hang, so it is far longer than any runner stall
+(calls of up to 187 s were seen on CI) and never decides a test's outcome."""
 
 
 class Foo(BaseModel):

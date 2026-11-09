@@ -110,8 +110,8 @@ class _CloseLoopsOnThreadExit:
     """Holds the loops `new_thread_event_loop()` installed on one worker thread, and closes them when it exits.
 
     It lives in a `threading.local`, which drops it as the thread exits, so its `__del__` runs then, on that thread.
-    A loop another thread is already running is left to that thread. One handed to another thread that has not
-    started running it yet is closed, like any loop the exiting thread left open.
+    A loop another thread is already running is left to that thread. Handing a loop to another thread before it runs
+    it is not supported: if this thread exits first, the loop is closed with the others it left open.
     """
 
     __slots__ = ('loops',)
