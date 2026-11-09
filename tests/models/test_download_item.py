@@ -8,7 +8,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AudioUrl, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
-from pydantic_ai.models import ModelRequestParameters, UserError, download_item
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, UserError, download_item
 from pydantic_ai.models.batch import BatchRequest
 
 from ..conftest import IsInstance, IsStr, try_import
@@ -204,16 +204,16 @@ async def test_each_model_request_has_its_own_download_total(
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-@pytest.mark.parametrize('method', ['count_tokens', 'batch_encode'])
-async def test_building_a_request_to_count_or_batch_shares_one_download_total(
+@pytest.mark.parametrize('method', ['count_tokens', 'batch_encode', 'compact_messages'])
+async def test_counting_batching_or_compacting_shares_one_download_total(
     method: str, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`count_tokens` and `batch_encode` build a request without sending it, and their downloads share one total too.
+    """`count_tokens`, `batch_encode` and `compact_messages` each build a request, whose downloads share one total too.
 
     `AnthropicModel` downloads `text/plain` document URLs; the request fails while it is built, before any API call.
     """
     downloaded = _serve_text_files(monkeypatch, 1024)
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key='mock-api-key'))
     urls = [DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt', media_type='text/plain') for i in range(3)]
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Summarize these.', *urls])])]
 
@@ -223,8 +223,17 @@ async def test_building_a_request_to_count_or_batch_shares_one_download_total(
     ):
         if method == 'count_tokens':
             await model.count_tokens(messages, None, ModelRequestParameters())
-        else:
+        elif method == 'batch_encode':
             await model.batch_encode(BatchRequest(custom_id='item', messages=messages))
+        else:
+            await model.compact_messages(
+                ModelRequestContext(
+                    model=model,
+                    messages=messages,
+                    model_settings=None,
+                    model_request_parameters=ModelRequestParameters(),
+                )
+            )
 
     assert len(downloaded) == 3
 

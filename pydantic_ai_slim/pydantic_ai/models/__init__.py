@@ -217,9 +217,8 @@ else:
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
 
-# Vertex AI documents a 500 MiB request payload, the largest among OpenAI, Anthropic, the Gemini API and Vertex AI.
-# Files are sent base64-encoded, a third larger than they download, so a request whose files pass this total is over
-# that limit too.
+# Set at Vertex AI's documented 500 MiB request payload limit, the largest of OpenAI, Anthropic, the Gemini API and
+# Vertex AI. Files are sent base64-encoded, so their uncompressed payload is a third larger than this total.
 _MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES = 500 * 1024 * 1024
 """Maximum total size of the [`FileUrl`][pydantic_ai.messages.FileUrl] downloads made for one model request."""
 
