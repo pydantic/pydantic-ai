@@ -2549,6 +2549,26 @@ class TestPartialOutput:
 
 
 class TestStreamingCachedOutput:
+    async def test_none_output_is_cached_after_validation(self):
+        """A validated ``None`` output must not be validated again on the next read."""
+        calls = 0
+
+        def process() -> None:
+            nonlocal calls
+            calls += 1
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process, name='empty_output'))
+
+        async with agent.run_stream('test') as result:
+            assert await result.get_output() is None
+            assert await result.get_output() is None
+
+        assert calls == 1
+
     async def test_output_function_structured_double_stream_output(self):
         """Test that calling `stream_output()` twice works correctly.
 
