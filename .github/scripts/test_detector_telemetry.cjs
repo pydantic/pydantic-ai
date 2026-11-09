@@ -44,7 +44,7 @@ test('OpenCode step usage is summed without model-authored text', async () => {
       JSON.stringify({ type: 'text', part: { text: 'private text' } }),
       stepFinish(1644, 306, 0, 0.01),
       stepFinish(571, 228, 1536, 0.002),
-    ].join('\n'),
+    ].join('\n') + '\n',
     [directory + '/detection_result.json']: JSON.stringify(cleanVerdict),
     [directory + '/detection.log']: 'THREAT_DETECTION_STATUS: reason=result_recorded exit=0\n',
   });
@@ -76,7 +76,7 @@ test('step usage does not depend on event key order, and counts only step_finish
     [streamPath]: [
       JSON.stringify({ ...rest, type }),
       JSON.stringify({ type: 'text', part: { tool: 'step_finish' } }),
-    ].join('\n'),
+    ].join('\n') + '\n',
   });
   assert.equal(spans[0].attributes['gh-aw.detector.requests'], 1);
   assert.equal(spans[0].attributes['gh-aw.detector.usage.output_tokens'], 204);
@@ -107,6 +107,24 @@ test('an invalid report keeps its usage and status reason', async () => {
   assert.equal(result.options.errorMessage, 'invalid_report_exhausted');
 });
 
+test('a timeout keeps its reason and earlier usage when the killed run left a partial line', async () => {
+  const spans = await report({
+    [streamPath]: stepFinish(780, 204, 0, 0) + '\n',
+    '/runner/gh-aw-opencode-detector-2.ndjson': stepFinish(571, 228, 0, 0) + '\n' + stepFinish(1, 1, 1, 1).slice(0, 40),
+    [directory + '/detection.log']: 'THREAT_DETECTION_STATUS: reason=engine_timeout exit=2\n',
+  }, 'failure');
+  assert.equal(spans[0].attributes['gh-aw.detector.reason'], 'engine_timeout');
+  assert.equal(spans[0].attributes['gh-aw.detector.requests'], 2);
+  assert.equal(spans[0].attributes['gh-aw.detector.usage.output_tokens'], 432);
+});
+
+test('a step_finish without token counters still reports the result', async () => {
+  const spans = await report({ [streamPath]: JSON.stringify({ type: 'step_finish', part: { reason: 'stop' } }) + '\n' });
+  assert.equal(spans[0].attributes['gh-aw.detector.requests'], 1);
+  assert.equal(spans[0].attributes['gh-aw.detector.usage.input_tokens'], 0);
+  assert.equal(spans[0].attributes['gh-aw.detector.cost'], 0);
+});
+
 test('a threat verdict is a completed detector result', async () => {
   const spans = await report({
     [directory + '/detection_result.json']: JSON.stringify({ ...cleanVerdict, prompt_injection: true }),
@@ -131,5 +149,5 @@ test('cancellation wins over a prior success step outcome', async () => {
 });
 
 test('malformed usage is visible as a reporting-step error', async () => {
-  await assert.rejects(report({ [streamPath]: '{"type":"step_finish",' }), SyntaxError);
+  await assert.rejects(report({ [streamPath]: '{"type":"step_finish",\n' }), SyntaxError);
 });

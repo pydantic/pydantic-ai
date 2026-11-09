@@ -186,7 +186,8 @@ safe-outputs:
             const log = read(path.join(directory, 'detection.log'));
             // One stream per OpenCode attempt. Read only step counters: the streams' text is model-authored.
             const streams = fs.readdirSync(process.env.RUNNER_TEMP).filter(name => /^gh-aw-opencode-detector-\d+\.ndjson$/.test(name));
-            const steps = streams.flatMap(name => read(path.join(process.env.RUNNER_TEMP, name)).split('\n'))
+            // A killed run can leave an unterminated last line; every complete event ends in a newline.
+            const steps = streams.flatMap(name => read(path.join(process.env.RUNNER_TEMP, name)).split('\n').slice(0, -1))
               .filter(line => line.includes('"step_finish"')).map(line => JSON.parse(line))
               .filter(event => event.type === 'step_finish').map(event => event.part);
             const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
@@ -204,12 +205,12 @@ safe-outputs:
               'gh-aw.detector.attempts': streams.length,
               'gh-aw.detector.requests': steps.length,
               'gh-aw.detector.usage_available': steps.length > 0,
-              'gh-aw.detector.usage.input_tokens': sum(step => step.tokens.input),
-              'gh-aw.detector.usage.output_tokens': sum(step => step.tokens.output),
-              'gh-aw.detector.usage.reasoning_tokens': sum(step => step.tokens.reasoning),
-              'gh-aw.detector.usage.cache_read_tokens': sum(step => step.tokens.cache.read),
-              'gh-aw.detector.usage.cache_write_tokens': sum(step => step.tokens.cache.write),
-              'gh-aw.detector.cost': sum(step => step.cost),
+              'gh-aw.detector.usage.input_tokens': sum(step => step.tokens?.input ?? 0),
+              'gh-aw.detector.usage.output_tokens': sum(step => step.tokens?.output ?? 0),
+              'gh-aw.detector.usage.reasoning_tokens': sum(step => step.tokens?.reasoning ?? 0),
+              'gh-aw.detector.usage.cache_read_tokens': sum(step => step.tokens?.cache?.read ?? 0),
+              'gh-aw.detector.usage.cache_write_tokens': sum(step => step.tokens?.cache?.write ?? 0),
+              'gh-aw.detector.cost': sum(step => step.cost ?? 0),
               'gh-aw.detector.log_available': Boolean(log),
             };
             await logSpan('gh-aw.detector.result', attributes, {
