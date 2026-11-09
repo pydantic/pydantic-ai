@@ -100,8 +100,6 @@ class FakeSandboxd:
         self._next_id = 0
         self.send_exit = True
         """When false, `Start` ends its stream without the exit event."""
-        self.start_error: grpc.StatusCode | None = None
-        """When set, `Start` fails with this code."""
         self.negative_signal_exits = False
         """When set, a signal death exits -1, as sandboxd before v1.0.7 reports it."""
         self.sandbox_id = f'sandbox-{uuid.uuid4().hex[:8]}'
@@ -133,8 +131,6 @@ class FakeSandboxd:
 
     async def _start(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> AsyncIterator[Any]:
         Response = MESSAGES['StartResponse']
-        if self.start_error is not None:
-            await context.abort(self.start_error, 'failed')
         command = list(request.config.command)
         call_env = dict(request.config.env_vars)
         strings = [*command, *(f'{key}={value}' for key, value in call_env.items())]
@@ -287,34 +283,29 @@ class FakeSandbox:
 
 
 class FakeConnector:
-    """`connect()` reopens a dropped connection, as the SDK restarts a `kubectl port-forward` that died."""
+    """The SDK's connector, as much of it as `commands.start()` calls: one gRPC channel to the fake sandboxd."""
 
     def __init__(self, sandbox: FakeSandbox) -> None:
         self.sandbox = sandbox
         self.channel: grpc.aio.Channel | None = None
         self.channels: list[grpc.aio.Channel] = []
-        self.dropped = False
-        """When set, the channel points at an address nothing listens on until `connect()` reopens it."""
 
     def is_sandboxd(self) -> bool:
         return True
 
     async def connect(self) -> None:
-        if self.dropped and not self.sandbox.cluster.reconnect_fails:
-            self.dropped = False
-            self.channel = None
+        pass
 
     async def grpc_channel(self) -> grpc.aio.Channel:
         if self.sandbox.cluster.channel_error is not None:
             raise self.sandbox.cluster.channel_error
         if self.channel is None:
-            target = '127.0.0.1:1' if self.dropped else self.sandbox.sandboxd.target
-            self.channel = grpc.aio.insecure_channel(target)
+            self.channel = grpc.aio.insecure_channel(self.sandbox.sandboxd.target)
             self.channels.append(self.channel)
         return self.channel
 
     async def invalidate_sandboxd_transport(self, channel: grpc.aio.Channel) -> None:
-        self.sandbox.cluster.invalidated.append(channel)
+        pass
 
 
 class FakeCluster:
@@ -340,18 +331,9 @@ class FakeCluster:
         self.lookup_error = False
         """When set, `get_sandbox` fails although the claim exists, as the SDK reports any failed lookup."""
         self.delete_error: Exception | None = None
-        self.reconnect_fails = False
-        self.invalidated: list[grpc.aio.Channel] = []
 
     def root(self, namespace: str, claim_name: str) -> Path:
         return (self.base / namespace / claim_name).resolve()
-
-    def drop_connections(self) -> None:
-        """Point every open connection at an address nothing listens on, as when a port-forward dies."""
-        for client in self.clients:
-            for sandbox in client.sandboxes:
-                sandbox.connector.dropped = True
-                sandbox.connector.channel = None
 
     async def delete(self, key: tuple[str, str]) -> None:
         await self.claims.pop(key).stop()

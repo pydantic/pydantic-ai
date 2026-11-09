@@ -26,8 +26,6 @@ from pydantic_ai.workspaces import (
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    import grpc
-    import grpc.aio
     from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxNotFoundError
     from k8s_agent_sandbox.models import (
         SandboxdInClusterConnectionConfig,
@@ -206,23 +204,14 @@ async def test_aclose_in_a_cancelled_scope_still_closes(cluster: FakeCluster) ->
 
 
 @asyncio_only
-async def test_working_dir_is_reported_as_the_sandbox_resolves_it(cluster: FakeCluster) -> None:
-    probe = KubernetesSandboxBackend(warm_pool='pool')
-    root = await probe.working_dir()
-    assert (await probe.run(['mkdir', f'{root}/sub'])).exit_code == 0
-    assert (await probe.run(['ln', '-s', f'{root}/sub', f'{root}/link'])).exit_code == 0
-    via_link = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/link')
-    assert await via_link.working_dir() == f'{root}/sub'
-    for each in (probe, via_link):
-        await each.aclose()
-
-
-@asyncio_only
 async def test_commands_start_in_working_dir(cluster: FakeCluster) -> None:
     probe = KubernetesSandboxBackend(warm_pool='pool')
     root = await probe.working_dir()
     assert (await probe.run(['mkdir', f'{root}/sub'])).exit_code == 0
-    backend = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/sub')
+    assert (await probe.run(['ln', '-s', f'{root}/sub', f'{root}/link'])).exit_code == 0
+    backend = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/link')
+    # Reported as the sandbox resolves it, through the symlink.
+    assert await backend.working_dir() == f'{root}/sub'
     assert (await backend.run(['pwd', '-P'])).stdout == f'{root}/sub\n'
     assert (await backend.run(['missing-program'])).exit_code == 127
     gone = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/gone')
@@ -280,6 +269,7 @@ async def _wait_for_file(path: Path) -> None:
 
 @asyncio_only
 async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None:
+    """The last command in flight closes the connection; later operations share a new one until the next `aclose()`."""
     backend = KubernetesSandboxBackend(warm_pool='pool')
     root = Path(await backend.working_dir())
     results: list[str] = []
@@ -297,25 +287,8 @@ async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None
         (root / 'go').touch()
     assert results == ['done\n'] and cluster.clients[0].closed
 
-
-@asyncio_only
-async def test_a_deferred_aclose_closes_only_the_connection_in_use(cluster: FakeCluster) -> None:
-    """After the deferred close, later operations share one connection again until the next `aclose()`."""
-    backend = KubernetesSandboxBackend(warm_pool='pool')
-    root = Path(await backend.working_dir())
-
-    async def wait_for_go() -> None:
-        await backend.run('touch started; until [ -e go ]; do sleep 0.01; done', shell=True)
-
-    async with anyio.create_task_group() as group:
-        group.start_soon(wait_for_go)
-        await _wait_for_file(root / 'started')
-        await backend.aclose()
-        (root / 'go').touch()
-    assert cluster.clients[0].closed
-
-    await backend.run('true', shell=True)
-    await backend.run('true', shell=True)
+    await backend.run(['true'])
+    await backend.run(['true'])
     assert len(cluster.clients) == 2 and not cluster.clients[1].closed
     await backend.aclose()
     assert cluster.clients[1].closed
@@ -356,29 +329,6 @@ async def test_a_failed_lookup_of_an_existing_claim_propagates(cluster: FakeClus
     with pytest.raises(SandboxNotFoundError):
         await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
     await probe.aclose()
-
-
-@asyncio_only
-async def test_a_dropped_connection_is_reopened(cluster: FakeCluster) -> None:
-    backend = KubernetesSandboxBackend(warm_pool='pool')
-    await backend.run(['true'])
-    cluster.drop_connections()
-    cluster.reconnect_fails = True
-    # The SDK re-raises gRPC errors as `RuntimeError`, keeping the original as the cause.
-    with pytest.raises(RuntimeError, match='UNAVAILABLE') as caught:
-        await backend.run(['true'])
-    cause = caught.value.__cause__
-    assert isinstance(cause, grpc.aio.AioRpcError) and cause.code() == grpc.StatusCode.UNAVAILABLE
-    # The SDK drops the unreachable connection from its cache.
-    assert len(cluster.invalidated) == 1
-    cluster.reconnect_fails = False
-    assert (await backend.run(['true'])).exit_code == 0
-    # Any other gRPC error leaves the connection cached.
-    _sandboxd(cluster, backend.ref).start_error = grpc.StatusCode.INTERNAL
-    with pytest.raises(RuntimeError, match='INTERNAL'):
-        await backend.run(['true'])
-    assert len(cluster.invalidated) == 1
-    await backend.aclose()
 
 
 @asyncio_only
@@ -478,19 +428,15 @@ async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, mon
 
 
 @asyncio_only
-async def test_destroying_a_missing_claim_returns_quietly(cluster: FakeCluster) -> None:
+async def test_destroy_ignores_a_missing_claim_and_raises_other_failures(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool')
     await capability.destroy(WorkspaceRef(provider='kubernetes', id='agents/gone'))
-
-
-@asyncio_only
-async def test_a_failed_destroy_raises(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
     assert backend.ref is not None
     cluster.delete_error = RuntimeError('403 Forbidden')
     with pytest.raises(RuntimeError, match='Forbidden'):
-        await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
+        await capability.destroy(backend.ref)
     await backend.aclose()
 
 

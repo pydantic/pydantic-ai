@@ -117,7 +117,7 @@ async def _kubectl(*args: str) -> str:
 
 
 async def _claim_names() -> set[str]:
-    return await anyio.to_thread.run_sync(_claims_now)
+    return set((await _kubectl('get', 'sandboxclaims', '-o', 'jsonpath={.items[*].metadata.name}')).split())
 
 
 async def _gone(kind: str, name: str) -> bool:
