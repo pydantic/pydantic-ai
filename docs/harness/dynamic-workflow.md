@@ -214,7 +214,7 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` runs sub-agents concurrently (one at a time under
-  [DBOS and AWS Lambda](#running-under-other-durable-engines)) with positional awaitables but no keyword
+  [AWS Lambda](#running-under-other-durable-engines)) with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
 Before a script runs it is statically type-checked against the sub-agent signatures. An ordinary, statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can reach runtime validation; they are still rejected before a sub-agent runs.
@@ -233,10 +233,17 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 ## Running under other durable engines
 
-`DBOSDurability` and `AWSLambdaDurability` match a replayed step to its recording by the order the
-steps start. When sub-agents carry either one, the script runs them one at a time, so recovery
-replays each sub-agent's steps into the same call. An `asyncio.gather` over sub-agents then takes the
-sum of their run times rather than the longest. Under other engines, sub-agents run concurrently.
+`DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
+interleave by timing and recovery could replay one sub-agent's results into another call. When a
+sub-agent carries it, each call to that sub-agent is instead recorded as a single DBOS step, whose ID
+is drawn in the order the script makes the calls. Sub-agents still run concurrently. Recovery returns
+each finished call's recorded output and runs an unfinished call again from the start, and a replayed
+call's usage is not added to the run's usage again.
+
+`AWSLambdaDurability` runs an agent's tool calls one at a time, because Lambda matches a replayed step
+to its recording by the order the steps start. When sub-agents carry it, the script runs them one at
+a time too, so an `asyncio.gather` over sub-agents takes the sum of their run times rather than the
+longest. Under other engines, sub-agents run concurrently.
 
 ## Observability
 

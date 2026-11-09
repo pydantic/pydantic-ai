@@ -10,11 +10,12 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
+import sys
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -59,6 +60,11 @@ from pydantic_ai_harness._sub_agent_output import (
     resumable_output_reason,
     without_resumable_outputs,
 )
+
+if TYPE_CHECKING:
+    from dbos import StepReservation
+
+    from pydantic_ai.durable_exec.dbos._operation_backend import SnapshotStepReservation
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -205,14 +211,41 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
 }
 
 
-# Engines that match a replayed step to its recording by the order the steps start.
-_START_ORDER_ENGINES = frozenset({'DBOS', 'AWS Lambda'})
+def _runs_tools_sequentially(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the agent's durability engine can only make one durable step at a time, as AWS Lambda's can.
 
-
-def _records_steps_in_start_order(agent: AbstractAgent[Any, object]) -> bool:
-    """Whether the agent's durable steps are matched on replay by the order they start."""
+    Such an engine matches a replayed step to its recording by the order the steps start, and runs
+    the agent's own tool calls one at a time for the same reason.
+    """
     durability = BaseDurabilityCapability.from_agent(agent)
-    return durability is not None and durability.in_durable_context and durability.engine_name in _START_ORDER_ENGINES
+    return (
+        durability is not None
+        and durability.in_durable_context
+        and durability.engine_spec.sequential_tools_in_durable_context
+    )
+
+
+def _reserve_dbos_step(agent: AbstractAgent[Any, object]) -> StepReservation | SnapshotStepReservation | None:
+    """Draw the DBOS step that records the sub-agent's run, when it runs under `DBOSDurability` in a workflow.
+
+    DBOS numbers steps in the order they start, so the steps of concurrent sub-agents would
+    interleave by timing, and recovery could replay one sub-agent's results into another call.
+    Each run is instead recorded as one step, whose ID is drawn here in the order the script
+    dispatches the calls, the way `DBOSDurability` reserves its event-handler steps.
+    """
+    durability = BaseDurabilityCapability.from_agent(agent)
+    # Only an agent with `DBOSDurability` attached has imported it, so other engines import nothing.
+    if durability is None or 'pydantic_ai.durable_exec.dbos' not in sys.modules:
+        return None
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+    if not isinstance(durability, DBOSDurability) or not durability.in_durable_context:
+        return None
+    from dbos import DBOS
+
+    from pydantic_ai.durable_exec.dbos._operation_backend import SnapshotStepReservation
+
+    return DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -731,6 +764,18 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if self._call_count >= self.max_agent_calls:
             raise _BudgetExhausted(self.max_agent_calls)
         self._call_count += 1
+        # Also suspension-free: concurrent dispatches draw their DBOS steps in dispatch order.
+        reservation = _reserve_dbos_step(self._by_name[agent_name].agent)
+        if reservation is None:
+            return await self._run_sub_agent(agent_name, task, ctx)
+
+        async def run_sub_agent() -> Any:
+            return await self._run_sub_agent(agent_name, task, ctx)
+
+        return await reservation.run_async({'name': f'{self.tool_name}.{agent_name}'}, run_sub_agent)
+
+    async def _run_sub_agent(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
+        """Run one sub-agent and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
         # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
         # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
@@ -829,7 +874,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
-                global_sequential=any(_records_steps_in_start_order(w.agent) for w in self._by_name.values()),
+                global_sequential=any(_runs_tools_sequentially(w.agent) for w in self._by_name.values()),
                 portal=monty.portal,
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))

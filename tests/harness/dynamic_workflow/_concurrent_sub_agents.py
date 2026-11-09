@@ -38,11 +38,14 @@ def noop() -> str:
 
 
 def build_orchestrator(
-    durability: Callable[[], AbstractCapability[Any]], *, durable_orchestrator: bool = True
+    durability: Callable[[], AbstractCapability[Any]],
+    *,
+    durable_orchestrator: bool = True,
+    summarize_model: FunctionModel | None = None,
 ) -> Agent[None, str]:
     """An orchestrator whose script gathers two `summarize` sub-agents, which carry `durability()`."""
     summarize = Agent(
-        FunctionModel(_summarize_model),
+        summarize_model or FunctionModel(_summarize_model),
         name='summarize',
         description='Summarize a text.',
         tools=[noop],
