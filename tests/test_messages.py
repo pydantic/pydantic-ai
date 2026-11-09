@@ -2651,6 +2651,16 @@ def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: st
     assert type(reloaded_audio) is BinaryContent
 
 
+def test_file_part_narrows_binary_image_from_direct_model_response() -> None:
+    """A custom model's direct FilePart construction should expose generated images."""
+    content = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    part = FilePart(content=content)
+    response = ModelResponse(parts=[part])
+
+    assert isinstance(part.content, BinaryImage)
+    assert response.images == [part.content]
+
+
 def test_every_multimodal_type_rehydrates_as_tool_return_content():
     """Every `MultiModalContent` type, dumped as scalar `ToolReturnPart.content`, must rehydrate to
     its own subclass through `ModelMessagesTypeAdapter` — not collapse to a plain dict.

@@ -833,6 +833,8 @@ class BinaryContent:
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
         """Narrow the type of the `BinaryContent` to `BinaryImage` if it's an image."""
+        if isinstance(bc, BinaryImage):
+            return bc
         if bc.is_image:
             return BinaryImage(
                 data=bc.data,
@@ -4158,6 +4160,9 @@ class FilePart:
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    def __post_init__(self) -> None:
+        self.content = BinaryContent.narrow_type(self.content)
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
