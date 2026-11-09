@@ -153,6 +153,14 @@ CLIENT_SUPPORT_CASES = [
         expected_tool_types=['web_search_20250305'],
     ),
     ClientSupportCase(
+        # `response_inclusion` has no effect on the direct calls Vertex makes, so it doesn't pick a newer version.
+        id='vertex-web-search-response-inclusion',
+        client_cls=AsyncAnthropicVertex,
+        base_url='https://us-central1-aiplatform.googleapis.com',
+        native_tools=[WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'full'}})],
+        expected_tool_types=['web_search_20250305'],
+    ),
+    ClientSupportCase(
         id='bedrock-web-search-rejected',
         client_cls=AsyncAnthropicBedrock,
         base_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -217,25 +225,25 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     assert sorted(beta_features) == case.expected_betas
 
 
-@pytest.mark.parametrize('tool_kind', ['search', 'fetch'])
+@pytest.mark.parametrize(
+    'tool',
+    [
+        pytest.param(WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'full'}}), id='search'),
+        pytest.param(WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}), id='fetch'),
+    ],
+)
 @pytest.mark.parametrize(
     ('model_name', 'enables_code_execution'),
     [('claude-sonnet-4-6', True), ('claude-sonnet-4-5', False)],
 )
 def test_anthropic_20260318_web_tools_implicit_code_execution(
-    tool_kind: str, model_name: str, enables_code_execution: bool
+    tool: AbstractNativeTool, model_name: str, enables_code_execution: bool
 ):
     """The `20260318` web tools provision code execution unless the model has dynamic filtering off.
 
     This whitelist controls response filtering and is not visible in the outgoing request, so the
     test exercises the helper that supplies it to streamed and non-streamed response processing.
     """
-    tool: AbstractNativeTool
-    if tool_kind == 'search':
-        tool = WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
-    else:
-        tool = WebFetchTool(provider_settings={'anthropic': AnthropicWebFetchToolSettings(use_cache=False)})
-
     m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test'))
     params = ModelRequestParameters(native_tools=[tool])
 
@@ -244,38 +252,6 @@ def test_anthropic_20260318_web_tools_implicit_code_execution(
     )
 
     assert ('code_execution' in enabled_names) is enables_code_execution
-
-
-def test_anthropic_response_inclusion_keeps_older_web_search_on_vertex():
-    """Vertex calls web search directly, where `response_inclusion` has no effect, so the version Vertex takes is kept."""
-    model = AnthropicModel(
-        'claude-sonnet-4-6',
-        provider=AnthropicProvider(
-            anthropic_client=mock_anthropic_client(
-                AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'
-            )
-        ),
-    )
-    params = ModelRequestParameters(
-        native_tools=[
-            WebSearchTool(provider_settings={'anthropic': AnthropicWebSearchToolSettings(response_inclusion='full')})
-        ]
-    )
-
-    tools, *_ = model._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
-
-    assert tools == snapshot(
-        [
-            {
-                'name': 'web_search',
-                'type': 'web_search_20250305',
-                'max_uses': None,
-                'allowed_domains': None,
-                'blocked_domains': None,
-                'user_location': None,
-            }
-        ]
-    )
 
 
 def _native_parts(result: AgentRunResult[str]) -> list[tuple[str, str]]:
