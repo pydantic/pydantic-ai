@@ -300,10 +300,10 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 ```
 
 `max_duration_secs` counts sandbox execution time, excluding waits for sub-agents. There is no
-default duration cap. Set it to stop CPU-bound loops that never call a sub-agent, bypass agent
-budgets, and block the workflow thread under Temporal. A partial limits dict overrides only the
-named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap
-remains.
+default duration cap. A CPU-bound loop that never calls a sub-agent bypasses agent budgets and
+blocks the workflow thread under Temporal. Set `max_duration_secs` to stop such loops. A partial
+limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the
+separate 10 MiB print cap remains.
 
 ### Workflows do not nest
 
