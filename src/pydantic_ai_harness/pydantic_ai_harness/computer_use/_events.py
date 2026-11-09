@@ -28,9 +28,9 @@ class ActionsPerformedEvent(CapabilityEvent, namespace=COMPUTER_USE_EVENTS, name
 
 @dataclass(kw_only=True)
 class DisplayRestartedEvent(CapabilityEvent, namespace=COMPUTER_USE_EVENTS, name='display_restarted'):
-    """The display restarted during a `computer` call, such as after its process stopped.
+    """The display restarted, such as after its process stopped.
 
-    What was on the screen before may be gone. The model isn't told; the call's screenshot shows the screen as it is.
-    Only displays that report restarts emit it; see
-    [`SupportsRestartCount`][pydantic_ai.workspaces.SupportsRestartCount].
+    It restarted since the run's previous `computer` call took its screenshot, or during this call. What was on the
+    screen before may be gone. The model isn't told; the call's screenshot shows the screen as it is. Only displays
+    that report restarts emit it; see [`SupportsRestartCount`][pydantic_ai.workspaces.SupportsRestartCount].
     """

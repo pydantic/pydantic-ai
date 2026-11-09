@@ -360,7 +360,7 @@ for example so GPT can zoom).
 Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
 (`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
 tool name. Each finished call emits `ActionsPerformedEvent` (`performed`, `error`, `screenshot_size`), and
-`DisplayRestartedEvent` when the display restarted during it, in the `computer_use` namespace.
+`DisplayRestartedEvent` when the display restarted since the previous call's screenshot, in the `computer_use` namespace.
 
 Gotchas:
 
