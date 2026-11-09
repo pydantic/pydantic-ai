@@ -167,12 +167,17 @@ _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
     ("Literal['a', 1] -> Literal['a']", ({'a'}, {"Literal['a', 1]"})),
     ("ModelParam -> str | Literal['a']", None),
     ('LatestNames -> str | LatestNames', None),
-    ("ModelParam -> TypeAliasType('Names', Literal['a'])", None),
+    ("ModelParam -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", (set(), set())),
+    (
+        "TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])",
+        ({'a', 'b'}, {"TypeAliasType('Names', Literal['a'], type_params=())"}),
+    ),
     ("str | Literal['a'] -> unset", None),
     ("str | Literal['a'] -> str | Literal['a'] | int", None),
     ("Literal['a'] -> Literal['a', 1]", None),
-    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", None),
-    ("TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])", None),
+    ("TypeAliasType('Old', str | Literal['a']) -> TypeAliasType('New', str | Literal['a', 'b'])", None),
     ("Literal['a' -> Literal['a', 'b']", None),
 ]
 

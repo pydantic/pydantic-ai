@@ -240,7 +240,7 @@ def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
             new_alias, new_arms, new_members = _literal_members(values[separator.end() :])
         except SyntaxError:
             continue
-        if old_alias != new_alias or (new_arms and new_arms != old_arms):
+        if new_arms and (new_alias != old_alias or new_arms != old_arms):
             return None
         return new_members - old_members, (old_members - new_members) | (old_arms - new_arms)
     return None
