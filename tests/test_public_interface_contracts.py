@@ -55,6 +55,10 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.capabilities.prefix_tools.PrefixTools',
         'pydantic_ai.common_tools.exa.ExaFindSimilarTool',
         'pydantic_ai.common_tools.exa.ExaSearchTool',
+        # Typed kinds of the allowlisted `ToolCallPart` and `ToolReturnPart`: they add no fields, and a subclass can't
+        # make its parent's fields keyword-only.
+        'pydantic_ai.computer_use.ComputerCallPart',
+        'pydantic_ai.computer_use.ComputerReturnPart',
         'pydantic_ai.concurrency.ConcurrencyLimit',
         'pydantic_ai.embeddings.instrumented.InstrumentedEmbeddingModel',
         'pydantic_ai.function_signature.GenericTypeExpr',
