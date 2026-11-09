@@ -6,6 +6,7 @@ import struct
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
+from itertools import cycle
 from typing import Any, cast
 
 import anyio
@@ -35,7 +36,7 @@ from pydantic_ai.computer_use import (
     SafetyCheck,
 )
 from pydantic_ai.messages import BinaryContent, BinaryImage
-from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
+from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -60,6 +61,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayRestartedEvent
 from pydantic_ai_harness.computer_use._capability import (
+    _CALL_SPACE,  # pyright: ignore[reportPrivateUsage]
     _changed,  # pyright: ignore[reportPrivateUsage]
     _grid,  # pyright: ignore[reportPrivateUsage]
     _recorded_space,  # pyright: ignore[reportPrivateUsage]
@@ -408,22 +410,24 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
     @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
     @pytest.mark.parametrize(
-        'padding,calls,last_requests',
+        'sizes,calls,last_requests',
         [
             # The oldest 25 go at once.
-            pytest.param(0, 101, [100, 76], id='100-screenshots'),
-            # Down to a quarter of the cap at once, then the request grows again from there.
-            pytest.param(1_000_000 - len(FAKE_SCREENSHOT), 17, [15, 5, 6], id='15-mb-of-screenshots'),
+            pytest.param([0], 101, [100, 76], id='100-screenshots'),
+            # Down to about a quarter of the cap at once, then the request grows again from there.
+            pytest.param([1_000_000], 17, [15, 4, 5], id='15-mb-of-screenshots'),
+            # The screenshot that crosses the line goes too, even when it is the first.
+            pytest.param([12_000_000, 4_000_000], 2, [1, 1], id='one-large-screenshot'),
         ],
     )
     async def test_without_keep_screenshots_a_request_stays_within_provider_limits(
-        self, padding: int, calls: int, last_requests: list[int]
+        self, sizes: list[int], calls: int, last_requests: list[int]
     ) -> None:
-        screen = FAKE_SCREENSHOT + b'\x00' * padding
+        screens = cycle(FAKE_SCREENSHOT + b'\x00' * max(0, size - len(FAKE_SCREENSHOT)) for size in sizes)
 
         class Screen(ProviderBackend):
             async def screenshot(self) -> bytes:
-                return screen
+                return next(screens)
 
         class Provider(InMemoryProvider):
             def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
@@ -1169,7 +1173,22 @@ def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() 
     assert _the_call(ctx) is None
     # A response made without `ComputerUse`, such as one from an older history.
     assert _recorded_space(ModelResponse(parts=[other])) is None
+    # A record that doesn't have the shape `ComputerUse` writes, such as one edited by hand.
+    malformed = {_CALL_SPACE: {'coordinate_grid': None, 'screenshot_size': 12}}
+    assert _recorded_space(ModelResponse(parts=[other], metadata=malformed)) is None
     # Arguments that no longer validate don't match any actions.
     assert _changed(other, []) is True
     # A realtime model has no profile, so it points in pixels.
-    assert _grid(object()) is None
+    assert _grid(_Realtime()) is None
+
+
+class _Realtime(AbstractModel):
+    """A model outside the request-response `Model` hierarchy, as a realtime model is."""
+
+    @property
+    def model_name(self) -> str:
+        return 'realtime'
+
+    @property
+    def system(self) -> str:
+        return 'test'
