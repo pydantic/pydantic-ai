@@ -1319,7 +1319,7 @@ CASES = [
         attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
     ),
     Case(
-        # The Responses API sends an unknown model as a 400; its code says what it is.
+        # Its code says what it is, whatever status it comes with.
         id='openai-model-not-found-400',
         model=_openai,
         handler=_json(
@@ -1368,7 +1368,7 @@ CASES = [
         attrs={'status_code': 409},
     ),
     Case(
-        # Its status before a stream opens depends on the API, so an in-stream one gets none, only the category.
+        # An in-stream one gets no status, only the category.
         id='openai-stream-model-not-found',
         model=_openai,
         handler=_sse_data({'error': {'message': 'The model does not exist.', 'code': 'model_not_found'}}),
