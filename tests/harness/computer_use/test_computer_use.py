@@ -544,6 +544,30 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         ]
         assert [result and result.get('display_restarted') for result in results] == [None, True]
 
+    async def test_a_restart_in_a_first_call_whose_screenshot_failed_is_told_next_call(self) -> None:
+        class RestartsThenFailsOnce(DisplayOnlyBackend):
+            restart_count = 0
+            screenshots = 0
+
+            async def act(self, action: ComputerAction) -> None:
+                self.restart_count += 1
+                await super().act(action)
+
+            async def screenshot(self) -> bytes:
+                self.screenshots += 1
+                if self.screenshots == 1:
+                    raise WorkspaceError('the display went away')
+                return await super().screenshot()
+
+        display = RestartsThenFailsOnce(InMemoryProvider().backend(None))
+        model = _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}])
+        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
+
+        async with agent.run_stream_events('Go.', workspace=display) as stream:
+            events = [e async for e in stream if isinstance(e, DisplayRestartedEvent)]
+
+        assert len(events) == 1
+
     @pytest.mark.parametrize(
         'workspace',
         [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
