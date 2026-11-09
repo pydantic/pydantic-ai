@@ -200,7 +200,7 @@ Input `replace` raises `UserError` in three cases. Under `parallel=True`, the mo
 
 ## Retry (`retry`)
 
-`GuardrailResult.retry(instruction)` sends a bad output back to the model with the instruction as the retry prompt. It uses Pydantic AI's normal retry mechanism and counts against the run's output-retry budget.
+From an `OutputGuardrail`, `GuardrailResult.retry(instruction)` sends a bad output back to the model with the instruction as the retry prompt. It uses Pydantic AI's normal retry mechanism and counts against the run's output-retry budget.
 
 ```python
 from pydantic_ai_harness import GuardrailResult, OutputGuardrail
@@ -288,7 +288,7 @@ Guard exceptions propagate as-is: raise `InputBlocked`, `OutputBlocked`, `ToolBl
 
 ## Tool calls
 
-`InputGuardrail` screens only the user prompt, on a run's first model request, so tool arguments and results pass unchecked without a `ToolGuardrail`. A `ToolGuardrail`'s `guard` sees the validated arguments before the tool runs; `result_guard` sees the return value before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, since that text reaches the model; a screened failure stays a failure. Capabilities ordered inside this one (another `position='innermost'` capability) run in the same screening window, so their raw retries are screened too, except one from an error hook, which closes the window; those ordered outside pass through. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
+`InputGuardrail` screens only the user prompt, on a run's first model request, so tool arguments and results pass unchecked without a `ToolGuardrail`. A `ToolGuardrail`'s `guard` sees the validated arguments before the tool runs; `result_guard` sees the return value before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, since that text reaches the model; a screened failure stays a failure. Capabilities ordered inside this one (another `position='innermost'` capability) run in the same screening window, so their raw retries are screened too, except one from an error hook, which this guard's error hook closes the window on; those ordered outside pass through. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
 
 ```python
 import re
@@ -466,7 +466,7 @@ Three kinds of call never reach the execution hooks, so neither guard sees them:
 
 ## Streaming
 
-`OutputGuardrail` inspects only the final output. Under `run_stream()` partial chunks reach the caller first, and `block` or `replace` cannot un-send them; use `run()` or `run_sync()` when no output may be exposed unscreened. `retry` is not supported under `run_stream()`, since Pydantic AI does not retry output during streaming, and surfaces as `UnexpectedModelBehavior`. `InputGuardrail` streams the same, except with `parallel=True`: chunks sent before the guard blocks reach the caller before the block message replaces them, and a block after the whole response has streamed raises `SkipModelRequest`.
+`OutputGuardrail` inspects only the final output. Under `run_stream()` partial chunks reach the caller first, and `block` or `replace` cannot un-send them; use `run()` or `run_sync()` when no output may be exposed unscreened. `retry` is not supported under `run_stream()`, since Pydantic AI does not retry output during streaming, and surfaces as `UnexpectedModelBehavior`. `InputGuardrail` behaves the same in streamed and non-streamed runs, except with `parallel=True`: chunks sent before the guard blocks reach the caller before the block message replaces them, and a block after the whole response has streamed raises `SkipModelRequest`.
 
 ## Durable execution
 
