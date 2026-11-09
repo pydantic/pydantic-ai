@@ -116,7 +116,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch. Default: `False`.
 
     When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
-    which let Claude filter web results via code execution before they enter context.
+    which let Claude filter web results via code execution before they enter context. Anthropic web tool
+    `provider_settings` can select the `20260318` versions instead, which also support dynamic filtering.
     """
 
     anthropic_supports_xhigh_effort: bool
@@ -278,7 +279,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_calls_cited_web_tools_directly: bool
-    """Whether a request that asks for citations sends the `20260209` web tools it cites with
+    """Whether a request that asks for citations sends the `20260209` or `20260318` web tools it cites with
     `allowed_callers=['direct']`, so their results are cited. Default: `False`.
 
     See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
