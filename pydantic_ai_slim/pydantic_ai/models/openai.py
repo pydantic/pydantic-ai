@@ -172,6 +172,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1947,8 +1948,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                extra_headers = dict(model_settings.get('extra_headers', {}))
-                extra_headers.setdefault('User-Agent', get_user_agent())
+                extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
@@ -4668,8 +4668,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[dict[str, str], _ResponsesTimeout]:
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
@@ -5142,11 +5141,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(tool, WebSearchTool):
                 tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
-                file_search_tool = cast(
-                    responses.FileSearchToolParam,
-                    {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-                )
-                tools.append(file_search_tool)
+                tools.append(_map_file_search_tool_param(tool))
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
@@ -8146,6 +8141,13 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_file_search_tool_param(tool: FileSearchTool) -> responses.FileSearchToolParam:
+    file_search_tool = responses.FileSearchToolParam(type='file_search', vector_store_ids=list(tool.file_store_ids))
+    if tool.max_num_results is not None:
+        file_search_tool['max_num_results'] = tool.max_num_results
+    return file_search_tool
 
 
 def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
