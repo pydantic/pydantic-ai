@@ -185,7 +185,8 @@ class Team(WrapperCapability[AgentDepsT]):
                 f'{MESSAGES_INSTRUCTIONS} You lead the team. Start teammates with `spawn_teammate` (agent types: '
                 f'{types}), put the work on the shared board with `board_add`, and hand items out with '
                 '`assign_task`; idle teammates also claim items themselves. Teammates report back to you when '
-                'they go idle.'
+                "they go idle: don't wait or poll for them, end your turn, and their reports arrive as your next "
+                'input.'
             )
         return (
             f'{MESSAGES_INSTRUCTIONS} You are `{name}`. Take work from the shared board with `claim_task`, mark '
