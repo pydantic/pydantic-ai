@@ -266,6 +266,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Toolset': Anonymous('one per toolset'),
     'Hooks': Anonymous('several hook bundles compose'),
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
+    'DurableApprovals': Anonymous('chained like `HandleDeferredToolCalls`: calls one decision leaves pending go on'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
     'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),

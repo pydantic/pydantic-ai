@@ -43,6 +43,8 @@ Two key rules:
 - `DeferredToolRequests` must be in the output type
 - for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True` — from the tool function, or from its `args_validator=` so invalid arguments are rejected before a human is asked (see below)
 
+In a durable run on an engine that supports it (currently AWS Lambda durable functions with the harness's `AWSLambdaDurability`), add `DurableApprovals(announce, timeout=...)` from `pydantic_ai.capabilities` instead of ending the run: it hands a resume token to `announce(ctx, requests, token)`, suspends the durable execution until the token is resolved with the JSON form of `DeferredToolResults` (`{"approvals": {"<tool_call_id>": true}}`), and continues the same run. A timeout denies the pending calls with a message; on other engines or outside a durable run it raises `UserError`. Other deferred-call handlers run before it. Engines implement the underlying `pydantic_ai.durable_exec.wait_for_external_event` by installing an `ExternalEventWaiter` with `external_event_scope`.
+
 Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`). A realtime session emits both the same way, with each deferred call as its own batch.
 
 ## Make an Agent Resilient with Retries

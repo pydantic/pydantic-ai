@@ -109,13 +109,15 @@ Tool implementations must authorize the requested action using trusted applicati
 
 Untrusted content can influence model decisions. Instructions, delimiters, model judgment, and an approval label are not substitutes for authorization in tool code. An approval mechanism protects only the operations it actually intercepts; preserve that control through delegated, resumed, background, and Code Mode execution paths.
 
+`DurableApprovals` takes a person's decision from whoever resolves the resume token it hands to `announce` (on AWS Lambda, anyone allowed to call `SendDurableExecutionCallbackSuccess` with the callback ID). The decision can approve calls, replace their arguments with `override_args`, supply external results the model is shown, and set the `metadata` tools read as `tool_call_metadata`, so tool code must not treat that metadata as proof of who approved; Pydantic AI checks only its shape and that it names pending calls. Treat the token as a bearer credential, and authorize the approver in the service that resolves it.
+
 `ToolCallJudge` and `ApprovalReviewer` are model-based filters, not security boundaries. A judge can block a call; a reviewer approval replaces the person's decision for the calls it covers. Both send the reviewed arguments, and optionally the conversation, to the reviewing model's provider.
 
 A `wrap_*` hook that short-circuits skips that stage's `before_*` hooks, including policy hooks. Review where a mandatory control sits in the hook order.
 
 On routes that can reach a host that encodes chat-template special tokens found in message content as control tokens, Pydantic AI breaks those tokens in user, tool and file text and in replayed model output, so that text can't open a real turn (`may_tokenize_special_tokens_in_content` in the model profile). It's an opt-out default. It doesn't cover system prompts, instructions or tool definitions, including tool descriptions from an MCP server, nor files a provider fetches itself, and it doesn't stop a model from following text shaped like a turn. See [Special tokens in content](docs/message-history.md#special-tokens-in-content).
 
-Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools-advanced.md), [deferred tools](docs/deferred-tools.md), [dependencies](docs/dependencies.md), [hooks](docs/hooks.md#wrap-hooks), [Tool Call Judge](docs/harness/tool-call-judge.md#safety-boundary), [Approval Reviewer](docs/harness/approval-reviewer.md#safety-boundary), and [Code Mode](docs/harness/code-mode.md).
+Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools-advanced.md), [deferred tools](docs/deferred-tools.md), [Durable Approvals](docs/capabilities/durable-approvals.md#the-decision), [dependencies](docs/dependencies.md), [hooks](docs/hooks.md#wrap-hooks), [Tool Call Judge](docs/harness/tool-call-judge.md#safety-boundary), [Approval Reviewer](docs/harness/approval-reviewer.md#safety-boundary), and [Code Mode](docs/harness/code-mode.md).
 
 ### MCP connections and agent configuration
 

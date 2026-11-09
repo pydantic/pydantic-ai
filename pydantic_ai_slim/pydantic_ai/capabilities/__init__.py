@@ -42,6 +42,7 @@ from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .durable_approvals import DurableApprovals
 from .durable_operation import durable_operation
 from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
@@ -176,6 +177,7 @@ __all__ = [
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
+    'DurableApprovals',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',
