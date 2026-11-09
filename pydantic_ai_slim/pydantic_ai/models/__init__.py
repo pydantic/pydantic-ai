@@ -429,10 +429,10 @@ class ModelRequestParameters:
         """The name of the first function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
 
         A model adapter uses it to find the tool that runs a native tool's calls, through
-        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called. Like
-        that rule, it leaves out deferred tools, unlike
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which names a tool for
-        instructions and tool results.
+        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called. It
+        leaves out deferred tools, as the check that decides whether a native tool is sent does.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] keeps them, because it
+        names a tool for instructions and tool results.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
