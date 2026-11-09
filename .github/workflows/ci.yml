@@ -1322,8 +1322,12 @@ jobs:
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
+          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -2023,8 +2027,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
