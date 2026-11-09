@@ -45,6 +45,7 @@ from .._adapter import (
     model_settings_delta_payload,
     tool_availability_delta_payload,
 )
+from .._utils import client_error_text
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
@@ -411,9 +412,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
         elif part.outcome in ERROR_OUTCOMES:
-            yield ToolOutputErrorChunk(
-                tool_call_id=part.tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
-            )
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=client_error_text(part))
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
             # outcomes are errors; `'interrupted'` (a call cut off before it produced a result)
@@ -534,15 +533,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_details=invalidated_part.provider_details,
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response_str(wrap_if_error=False),
+                error_text=client_error_text(part),
             )
         elif part.outcome in ERROR_OUTCOMES:
             # A retry takes the error channel like a failure does, and its `error_text` is the
             # feedback itself — unwrapped, and with none of the instruction framing the retry part
             # it replaces rendered (https://github.com/pydantic/pydantic-ai/pull/4869).
-            yield ToolOutputErrorChunk(
-                tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
-            )
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=client_error_text(part))
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
             # outcomes are errors; a synthesized `'interrupted'` return (from message-history repair)

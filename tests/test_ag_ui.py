@@ -11946,9 +11946,21 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
         ModelRequest(parts=[UserPromptPart('Go.')]),
         ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
         ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        # The error channel renders the content as text, which includes each `TextContent`'s metadata.
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2'), ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('t', content, tool_call_id='c2', outcome='failed'),
+                ToolReturnPart('t', content, tool_call_id='c3', outcome='denied'),
+            ]
+        ),
     ]
 
-    dumped = json.dumps([m.model_dump(mode='json') for m in AGUIAdapter.dump_messages(messages)])
+    ag_ui_messages = AGUIAdapter.dump_messages(messages)
+    errors = [m.error for m in ag_ui_messages if isinstance(m, ToolMessage) and m.error is not None]
+    assert len(errors) == 2
+    assert all('origin' in error and '__pydantic_ai__' not in error for error in errors)
+    dumped = json.dumps([m.model_dump(mode='json') for m in ag_ui_messages])
 
     assert '__pydantic_ai__' not in dumped
     assert 'origin' in dumped
