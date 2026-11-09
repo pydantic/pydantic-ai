@@ -275,7 +275,7 @@ class FallbackModel(Model):
             else:
                 if not await chain.falls_back(response):
                     if response.state == 'suspended':
-                        _stamp_continuation(response, pinned)
+                        _stamp_continuation(response, pinned, owner=self)
                         carry_deadline(response, deadline)
                     self._set_span_attributes(pinned, prepared_parameters)
                     return response
@@ -344,7 +344,7 @@ class FallbackModel(Model):
             if rewound:
                 _stamp_replace_previous(response)
             if response.state == 'suspended':
-                _stamp_continuation(response, model)
+                _stamp_continuation(response, model, owner=self)
                 carry_deadline(response, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
@@ -415,7 +415,7 @@ class FallbackModel(Model):
                     # after `yield`: the final `state` is only known once the caller has consumed the
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, pinned)
+                        _stamp_continuation(streamed_response, pinned, owner=self)
                         carry_deadline(streamed_response, deadline)
                     return
 
@@ -463,7 +463,7 @@ class FallbackModel(Model):
                     # Stamp after `yield` (see the pinned path above): `state` is only final once the
                     # caller has consumed the stream, so callers must call `get()` after the context exits.
                     if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, model)
+                        _stamp_continuation(streamed_response, model, owner=self)
                         carry_deadline(streamed_response, deadline)
                     return
 
@@ -578,6 +578,12 @@ class FallbackModel(Model):
 
     def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
         """Resolve the underlying model pinned to this continuation from its routing metadata."""
+        if path := _continuation_model_path(response):
+            for route in reversed(path):
+                if route.get('owner') == self.model_id:
+                    index = route.get('index')
+                    if isinstance(index, int) and 0 <= index < len(self.models):
+                        return self.models[index]
         if model_id := continuation_pin(response, key=FALLBACK_MODEL_PIN_KEY):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
@@ -648,9 +654,45 @@ def _pinned_request_deadline(
     return resume_deadline(start_request_deadline(model, model_settings, stream=stream), suspended_response)
 
 
-def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
-    """Stamp the model's identifier into metadata for stateless continuation routing."""
-    stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
+_FALLBACK_MODEL_PATH_KEY = 'fallback_model_path'
+
+
+def _continuation_model_path(response: ModelResponse) -> list[dict[str, Any]] | None:
+    """Return valid positional continuation routes, if one was recorded."""
+    pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if not isinstance(pydantic_ai_meta, dict):
+        return None
+    path = pydantic_ai_meta.get(_FALLBACK_MODEL_PATH_KEY)
+    if not isinstance(path, list):
+        return None
+    return [route for route in path if isinstance(route, dict)]
+
+
+def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model, *, owner: FallbackModel) -> None:
+    """Stamp continuation routing, using a positional route when IDs are ambiguous or nested.
+
+    The legacy model-id pin remains for backwards compatibility and for simple chains. A positional
+    route is added when a chain has duplicate IDs or the selected model is itself a ``FallbackModel``;
+    each nested wrapper records its own selection without overwriting the route recorded by an inner
+    wrapper. This lets a resumed response reach the same API-key/model instance that created it.
+    """
+    model_index = next(index for index, candidate in enumerate(owner.models) if candidate is model)
+    model_ids = [candidate.model_id for candidate in owner.models]
+    path = _continuation_model_path(response)
+    if path or len(set(model_ids)) != len(model_ids) or isinstance(model, FallbackModel):
+        metadata = response.metadata if response.metadata is not None else {}
+        response.metadata = metadata
+        pydantic_ai_meta = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+        if not isinstance(pydantic_ai_meta, dict):
+            pydantic_ai_meta = {}
+            metadata[_PYDANTIC_AI_METADATA_KEY] = pydantic_ai_meta
+        routes = [route for route in (path or []) if route.get('owner') != owner.model_id]
+        routes.append({'owner': owner.model_id, 'index': model_index})
+        pydantic_ai_meta[_FALLBACK_MODEL_PATH_KEY] = routes
+
+    # A nested fallback owns its own legacy pin, so leave it intact for the inner wrapper to resolve.
+    if not isinstance(model, FallbackModel):
+        stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
 
 
 def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:

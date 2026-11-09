@@ -3187,6 +3187,64 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     )
 
 
+def test_fallback_nested_continuation_keeps_inner_route() -> None:
+    """A nested fallback resumes the inner model that owns the suspended job."""
+    primary_calls = 0
+    secondary_calls = 0
+
+    def inner_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=503, model_name='inner-primary', body='unavailable')
+
+    def inner_secondary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal secondary_calls
+        secondary_calls += 1
+        if secondary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    def outer_fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('outer fallback should not be called')  # pragma: no cover
+
+    inner = FallbackModel(
+        FunctionModel(inner_primary, model_name='inner-primary'),
+        FunctionModel(inner_secondary, model_name='inner-secondary'),
+    )
+    model = FallbackModel(inner, FunctionModel(outer_fallback, model_name='outer-fallback'))
+
+    result = Agent(model=model).run_sync('test')
+
+    assert result.output == 'pauseddone'
+    assert primary_calls == 1
+    assert secondary_calls == 2
+
+
+def test_fallback_continuation_disambiguates_duplicate_model_ids() -> None:
+    """When two candidates share an ID, a suspended continuation stays on the selected position."""
+    first_calls = 0
+    second_calls = 0
+
+    def first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal first_calls
+        first_calls += 1
+        raise ModelHTTPError(status_code=503, model_name='same', body='unavailable')
+
+    def second(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal second_calls
+        second_calls += 1
+        if second_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    model = FallbackModel(FunctionModel(first, model_name='same'), FunctionModel(second, model_name='same'))
+    result = Agent(model=model).run_sync('test')
+
+    assert result.output == 'pauseddone'
+    assert first_calls == 1
+    assert second_calls == 2
+
+
 def test_fallback_continuation_pin_in_untrusted_history_is_ignored() -> None:
     """`sanitize_messages` drops the continuation pin from client-held history, so the normal chain continues it.
 
