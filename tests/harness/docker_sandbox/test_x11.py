@@ -132,59 +132,20 @@ class BlockingCommands(ScriptedCommands):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
-    assert commands.calls == [
-        (['xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})
-    ]
+    assert commands.calls == [(['xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})]
 
 
-async def test_x11_computer_types_mixed_text_in_one_command_mapping_each_character_outside_ascii_once() -> None:
+@pytest.mark.parametrize(
+    'action',
+    [TypeText(text='café'), PressKeys(keys=('ctrl', 'é')), HoldKeys(keys=('日',), seconds=1)],
+    ids=['type', 'press', 'hold'],
+)
+async def test_x11_computer_refuses_characters_outside_ascii(action: ComputerAction) -> None:
+    # `xdotool` types them by remapping a key per keystroke, which Chrome reads too late; nothing is sent.
     commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='Zoë 日本日 é'))
-    ((*_, args),) = [(argv[:4], argv[4:]) for argv in commands.argvs]  # after `sh -c <script> sh`
-    # The characters to map, then `xdotool`'s arguments: the whole text, ASCII included.
-    assert args == ['U00EB', 'U65E5', 'U672C', 'U00E9', '--', *RELEASE_MODIFIERS, 'key', '--delay', '12', '--'] + [
-        'U005A',
-        'U006F',
-        'U00EB',
-        'U0020',
-        'U65E5',
-        'U672C',
-        'U65E5',
-        'U0020',
-        'U00E9',
-    ]
-
-
-async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
-    commands = ScriptedCommands()
-    text = ''.join(chr(0x4E00 + n) for n in range(51))
-    await X11Computer(commands).act(TypeText(text=text))
-    first, second = commands.argvs
-    assert first[4 : first.index('--')] == [f'U{0x4E00 + n:04X}' for n in range(50)]
-    assert second[4:] == ['U4E32', '--', *RELEASE_MODIFIERS, 'key', '--delay', '12', '--', 'U4E32']
-
-
-async def test_x11_computer_maps_a_character_key_outside_ascii_before_pressing_it() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(PressKeys(keys=('ctrl', 'é')))
-    assert commands.argvs[0][4:] == ['U00E9', '--', *RELEASE_MODIFIERS, 'key', '--repeat', '1', '--', 'ctrl+U00E9']
-
-
-async def test_x11_computer_maps_a_held_character_outside_ascii_to_a_key_first() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(HoldKeys(keys=('é',), seconds=1))
-    assert commands.argvs[0][:2] == ['sh', '-c']
-    assert commands.argvs[0][4:] == [
-        'U00E9',
-        '--',
-        *RELEASE_MODIFIERS,
-        'keydown',
-        'U00E9',
-        'sleep',
-        '1.0',
-        'keyup',
-        'U00E9',
-    ]
+    with pytest.raises(WorkspaceUnsupportedActionError, match='can only type ASCII characters'):
+        await X11Computer(commands).act(action)
+    assert commands.calls == []
 
 
 @pytest.mark.parametrize(
@@ -234,7 +195,7 @@ async def test_x11_computer_releases_what_a_failed_action_held(
     'action, release',
     [
         (HoldKeys(keys=('shift',), seconds=5), ['xdotool', 'keyup', 'shift']),
-        (TypeText(text='é'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U00E9']),
+        (TypeText(text='!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0021']),
     ],
 )
 async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: ComputerAction, release: list[str]) -> None:
@@ -260,7 +221,7 @@ async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_a
     assert await computer.cursor_position() == Point(x=12, y=34)
     # The size and region go in as arguments, never into the script.
     assert [command[-1] for command in commands.argvs[2:4]] == ['640x400', '10,20,100,50']
-    assert all(env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
+    assert all(env == {'DISPLAY': ':1'} for _, _, env in commands.calls)
 
 
 async def test_x11_display_size_is_the_root_window_spanning_every_monitor() -> None:

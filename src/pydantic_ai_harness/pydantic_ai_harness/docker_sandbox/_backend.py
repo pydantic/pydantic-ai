@@ -302,7 +302,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
-    image needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
+    image needs Xvfb, `xdotool`, `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
