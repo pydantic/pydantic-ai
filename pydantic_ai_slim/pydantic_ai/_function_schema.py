@@ -78,6 +78,17 @@ class FunctionSchema:
             return next(iter(properties))
         return None
 
+    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
+        """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
+
+        For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
+        unwrapped input when the model also has a field called `name` that accepts a dict. Here the
+        envelope's content is validated as the model's input, which is what the first validation produced.
+        """
+        if self.single_arg_name is None:
+            return self.validator.validate_python(args_dict, context=context)
+        return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
         if self.is_async:
@@ -401,6 +412,13 @@ def _build_schema(
     return td_schema, None, None
 
 
+@dataclass
+class _Revalidated:
+    """A single model-like argument's already-validated value, passed in by `FunctionSchema.revalidate`."""
+
+    value: Any
+
+
 def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
     return isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]
 
@@ -412,6 +430,8 @@ def _validate_single_arg(
     name: str,
     accepted_keys: set[str],
 ) -> dict[str, Any]:
+    if isinstance(value, _Revalidated):
+        return {name: handler(value.value)}
     if not _is_wrapped_single_arg(value, name):
         # Plain unwrapped model input, as emitted against the flattened JSON schema.
         return {name: handler(value)}
@@ -422,7 +442,8 @@ def _validate_single_arg(
     # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
     # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
     # If the field accepts both shapes (e.g. it's typed `Any`) the two are indistinguishable; we prefer
-    # the unwrapped reading, so re-validation isn't idempotent for that (rare) collision.
+    # the unwrapped reading, so re-validating such a model's envelope here isn't idempotent. Callers that
+    # know they hold an envelope use `FunctionSchema.revalidate`, which doesn't guess.
     try:
         return {name: handler(value)}
     except ValidationError:
