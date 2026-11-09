@@ -251,6 +251,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -871,6 +872,7 @@ async def test_bedrock_inference_profile_converse(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1041,6 +1043,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1076,6 +1079,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1119,6 +1123,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1168,6 +1173,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1277,6 +1283,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -1314,6 +1321,7 @@ The capital of France is Paris. If you need any further information, feel free t
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2436,6 +2444,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2569,6 +2578,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2602,6 +2612,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4554,6 +4565,7 @@ async def test_bedrock_thinking_high_openai_variant(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7524,6 +7536,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7584,6 +7597,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7677,6 +7691,7 @@ while True:
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7767,6 +7782,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -7968,7 +7984,7 @@ async def test_bedrock_model_with_instructions_only(
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     # Claude's thinking is verified by the Anthropic API too, so its responses record that.
-    canonical_system = 'anthropic' if 'anthropic' in model_name else None
+    canonical_system = 'anthropic' if 'anthropic' in model_name else 'bedrock'
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
@@ -8020,7 +8036,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     # Claude's thinking is verified by the Anthropic API too, so its responses record that.
-    canonical_system = 'anthropic' if 'anthropic' in model_name else None
+    canonical_system = 'anthropic' if 'anthropic' in model_name else 'bedrock'
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     first_result = await agent.run()
@@ -9440,3 +9456,129 @@ async def test_non_json_response_body_raises_model_api_error(
     assert exc_info.value.message.startswith(message)
     if call == 'stream':
         assert isinstance(exc_info.value.__cause__, EventStreamParserError)
+
+
+async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """GPT-on-Bedrock encrypted reasoning is not replayed into a Claude-on-Bedrock agent."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {
+            'message': {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'reasoningContent': {
+                            'redactedContent': b'\x01\x02\x03',
+                            'signature': 'gpt-bedrock-signature',
+                            'text': 'Internal reasoning about the answer.',
+                        }
+                    },
+                    {'text': 'Ok!'},
+                ],
+            }
+        },
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    result = await agent.run('Hi', model_settings={'max_tokens': 32})
+    assert result.output == 'Ok!'
+    assert result.all_messages()[-1].canonical_system == 'bedrock'
+
+    claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    claude_agent = Agent(model=claude_model, system_prompt='You are a helpful assistant.')
+    mock_claude_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_claude_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Hello!'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await claude_agent.run('Continue', message_history=result.all_messages(), model_settings={'max_tokens': 32})
+
+    _, kwargs = mock_claude_converse.call_args
+    request_json = json.dumps(kwargs['messages'])
+    assert 'redactedContent' not in request_json
+    assert 'gpt-bedrock-signature' not in request_json
+    assert 'Ok!' in request_json
+
+
+async def test_bedrock_same_family_history_replay_keeps_thinking(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Same-family history replay keeps thinking: Claude re-sends its signature; GPT-OSS keeps the text."""
+    claude_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    claude_agent = Agent(model=claude_model, system_prompt='You are a helpful assistant.')
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {
+            'message': {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'reasoningContent': {
+                            'reasoningText': {
+                                'signature': 'claude-signature',
+                                'text': 'Internal reasoning about the answer.',
+                            }
+                        }
+                    },
+                    {'text': 'Ok!'},
+                ],
+            }
+        },
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    result = await claude_agent.run('Hi', model_settings={'max_tokens': 32})
+    assert result.all_messages()[-1].canonical_system == 'anthropic'
+
+    mock_converse.reset_mock()
+    await claude_agent.run('Continue', message_history=result.all_messages(), model_settings={'max_tokens': 32})
+
+    _, kwargs = mock_converse.call_args
+    request_json = json.dumps(kwargs['messages'])
+    assert 'claude-signature' in request_json
+
+    gpt_model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    gpt_agent = Agent(model=gpt_model, system_prompt='You are a helpful assistant.')
+    mock_gpt_converse = mocker.patch.object(gpt_model.client, 'converse')
+    mock_gpt_converse.return_value = {
+        'output': {
+            'message': {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'reasoningContent': {
+                            'reasoningText': {
+                                'signature': 'gpt-bedrock-signature',
+                                'text': 'Internal reasoning about the answer.',
+                            }
+                        }
+                    },
+                    {'text': 'Ok!'},
+                ],
+            }
+        },
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    gpt_result = await gpt_agent.run('Hi', model_settings={'max_tokens': 32})
+    assert gpt_result.all_messages()[-1].canonical_system == 'bedrock'
+
+    mock_gpt_converse.reset_mock()
+    await gpt_agent.run('Continue', message_history=gpt_result.all_messages(), model_settings={'max_tokens': 32})
+
+    _, gpt_kwargs = mock_gpt_converse.call_args
+    gpt_request_json = json.dumps(gpt_kwargs['messages'])
+    # GPT-OSS has no native send-back channel (`bedrock_send_back_thinking_parts` is unset): the
+    # thinking text is kept as text, and its signature is not replayed.
+    assert 'Internal reasoning about the answer.' in gpt_request_json
+    assert 'gpt-bedrock-signature' not in gpt_request_json

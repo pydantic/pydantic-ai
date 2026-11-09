@@ -273,6 +273,18 @@ ACCEPT_CASES = [
         True,
     ),
     AcceptCase('older bedrock claude into anthropic', 'anthropic', thinking_response('bedrock'), False),
+    AcceptCase(
+        'stamped bedrock into bedrock claude',
+        'bedrock-claude',
+        thinking_response('bedrock', canonical_system='bedrock'),
+        False,
+    ),
+    AcceptCase(
+        'stamped bedrock into bedrock nova',
+        'bedrock-nova',
+        thinking_response('bedrock', canonical_system='bedrock'),
+        True,
+    ),
     # Gemini API and Google Cloud share the `google` name.
     AcceptCase(
         'gemini api into vertex client',

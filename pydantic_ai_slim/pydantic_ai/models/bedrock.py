@@ -932,6 +932,15 @@ class BedrockConverseModel(Model[BaseClient]):
             return 'anthropic'
         return super().canonical_system
 
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """Stamp `canonical_system` on every response, since here it depends on the model, not just the provider.
+
+        Claude's thinking signatures belong to the `'anthropic'` system while other models' belong to `'bedrock'`,
+        so a response left unstamped would be replayable into a different model family on the same provider.
+        """
+        return self.canonical_system
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
