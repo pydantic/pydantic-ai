@@ -4,21 +4,31 @@ from unittest.mock import patch
 
 import httpx2
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai import Agent, AudioUrl, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models import UserError, download_item
 
-from ..conftest import IsInstance, IsStr
+from ..conftest import IsInstance, IsStr, try_import
+
+with try_import() as openai_imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_tool_call import Function
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .mock_openai import MockOpenAI, completion_message
+    from .test_openai import text_chunk
 
 
 def _mock_downloads(
     monkeypatch: pytest.MonkeyPatch, handle_request: Callable[[httpx2.Request], httpx2.Response]
 ) -> None:
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
-
     def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
-        return http_client
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
@@ -89,6 +99,97 @@ async def test_download_item_rejects_oversized_body(
         pytest.raises(ValueError, match='maximum size of 512 bytes'),
     ):
         await download_item(url, data_format='bytes')
+
+
+def _serve_text_files(monkeypatch: pytest.MonkeyPatch, size: int) -> list[str]:
+    """Serve a `size`-byte text file at every URL, and return the URLs downloaded, in order."""
+    downloaded: list[str] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        downloaded.append(str(request.url))
+        return httpx2.Response(200, content=b'x' * size, headers={'content-type': 'text/plain'}, request=request)
+
+    _mock_downloads(monkeypatch, handle_request)
+    return downloaded
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('stream', [False, True])
+async def test_file_url_downloads_share_one_total_per_model_request(
+    stream: bool, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model request refuses the file URL that takes its downloads past the per-request total.
+
+    `OpenAIChatModel` downloads every document URL, so each file here is fetched while the request is built.
+    """
+    downloaded = _serve_text_files(monkeypatch, 1024)
+    client = (
+        MockOpenAI.create_mock_stream([text_chunk('Done.')])
+        if stream
+        else MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Done.', role='assistant')))
+    )
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client)))
+    prompt = ['Summarize these.', *(DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt') for i in range(3))]
+
+    with (
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 2560),
+        pytest.raises(ValueError, match=r'^File URL downloads for one model request exceed the total of 2560 bytes\.$'),
+    ):
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()  # pragma: no cover
+        else:
+            await agent.run(prompt)
+
+    assert downloaded == snapshot(
+        ['https://93.184.215.14/doc0.txt', 'https://93.184.215.14/doc1.txt', 'https://93.184.215.14/doc2.txt']
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_each_model_request_has_its_own_download_total(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second request of a run downloads its history's file URLs again, within a total of its own."""
+    downloaded = _serve_text_files(monkeypatch, 1024)
+    client = MockOpenAI.create_mock(
+        [
+            completion_message(
+                ChatCompletionMessage(
+                    content=None,
+                    role='assistant',
+                    tool_calls=[
+                        ChatCompletionMessageFunctionToolCall(
+                            id='1', function=Function(arguments='{}', name='get_date'), type='function'
+                        )
+                    ],
+                )
+            ),
+            completion_message(ChatCompletionMessage(content='Done.', role='assistant')),
+        ]
+    )
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client)))
+
+    @agent.tool_plain
+    def get_date() -> str:
+        return '2026-11-09'
+
+    prompt = ['Summarize these.', *(DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt') for i in range(2))]
+    with patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 2048):
+        result = await agent.run(prompt)
+
+    assert result.output == 'Done.'
+    assert len(downloaded) == 4
+
+
+async def test_download_item_outside_a_model_request_has_no_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `download_item` call made outside a model request is limited per file only."""
+    _serve_text_files(monkeypatch, 1024)
+
+    with patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 1024):
+        for i in range(3):
+            downloaded = await download_item(DocumentUrl(url=f'https://93.184.215.14/doc{i}.txt'), data_format='bytes')
+            assert len(downloaded['data']) == 1024
 
 
 def _round_trip(item: ImageUrl) -> ImageUrl:
