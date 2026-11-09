@@ -777,9 +777,12 @@ def add_system_voice_tag(name: str) -> None:
         _system_voice_tags = tags
 
 
-_ENTITY_OPENER: Final = re.compile(r'&(?:lt|#0*60|#x0*3c);', re.IGNORECASE)
-"""An HTML-entity-encoded `<`, which a model may read as one."""
-_ENTITY_CLOSER: Final = re.compile(r'&(?:gt|#0*62|#x0*3e);', re.IGNORECASE)
+_ENTITY_OPENER: Final = re.compile(r'&(?:lt|#0*60(?![0-9])|#x0*3c(?![0-9a-f]));?', re.IGNORECASE)
+"""An HTML-entity-encoded `<`, which a model may read as one.
+
+The `;` is optional, as HTML decodes these references without one too.
+"""
+_ENTITY_CLOSER: Final = re.compile(r'&(?:gt|#0*62(?![0-9])|#x0*3e(?![0-9a-f]));?', re.IGNORECASE)
 """An HTML-entity-encoded `>`, which can end an entity-encoded tag."""
 
 _CONFUSABLES: Final = str.maketrans(
