@@ -1033,13 +1033,6 @@ class AnthropicAdvisorToolSettings(TypedDict, total=False):
     caching: Literal['5m', '1h']
     """The ephemeral cache TTL for the Anthropic advisor context. Maps to `caching={'type': 'ephemeral', 'ttl': ...}`."""
 
-    max_uses: int
-    """The most times the advisor can be consulted in one request. Maps to `max_uses`.
-
-    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
-    count each request. Enforce a conversation-wide ceiling yourself if you need one.
-    """
-
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
 class OpenRouterAdvisorToolSettings(TypedDict, total=False):
@@ -1083,10 +1076,11 @@ class AdvisorTool(AbstractNativeTool):
     * OpenRouter
     """
 
-    max_uses: Annotated[int | None, _moved_to_provider_settings('anthropic', 'max_uses')] = None
+    max_uses: int | None = None
     """If provided, the advisor can be consulted at most this many times per request. Maps to `max_uses`.
 
-    Deprecated: use `provider_settings.anthropic.max_uses` instead.
+    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
+    count each request. Enforce a conversation-wide ceiling yourself if you need one.
 
     Supported by:
 
@@ -1132,7 +1126,7 @@ class AdvisorTool(AbstractNativeTool):
             self,
             'anthropic',
             (self.provider_settings or {}).get('anthropic', {}),
-            {'max_uses': (self.max_uses, None), 'caching': (self.caching, None)},
+            {'caching': (self.caching, None)},
         )
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('AdvisorTool.max_tokens must be at least 1024')

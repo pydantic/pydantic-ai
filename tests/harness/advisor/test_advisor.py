@@ -98,7 +98,7 @@ class TestAdvisor:
         tool = seen[0].native_tools[0]
         assert isinstance(tool, AdvisorTool)
         assert tool == AdvisorTool(
-            model='claude-opus-4-8', max_tokens=2048, provider_settings={'anthropic': {'max_uses': 3, 'caching': '5m'}}
+            model='claude-opus-4-8', max_uses=3, max_tokens=2048, provider_settings={'anthropic': {'caching': '5m'}}
         )
 
     @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
