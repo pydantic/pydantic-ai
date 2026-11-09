@@ -174,8 +174,14 @@ async def test_map_empty_list():
     )
 
     graph = g.build()
-    result = await graph.run(state=CounterState())
-    assert result == []
+    saw_empty_map = False
+    async with graph.iter(state=CounterState()) as run:
+        async for event in run:
+            if event == []:
+                saw_empty_map = True
+                assert run.next_task == []
+
+    assert saw_empty_map
 
 
 async def test_map_non_empty_list_with_downstream_join_id():
