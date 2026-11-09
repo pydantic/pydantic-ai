@@ -1594,7 +1594,10 @@ class GoogleModel(Model[Client]):
                 # Processing mode is independent of the source, including YouTube's native URI route.
                 part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
-            if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
+            is_video = isinstance(file, VideoUrl) or (
+                isinstance(file, (BinaryContent, UploadedFile)) and file.media_type.startswith('video/')
+            )
+            if vendor_metadata and is_video:
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
