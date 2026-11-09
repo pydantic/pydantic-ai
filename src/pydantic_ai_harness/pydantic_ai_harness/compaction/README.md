@@ -177,9 +177,10 @@ the pending request are estimated conservatively, since the anchor does not cove
 **If you already set an absolute `max_tokens`, re-check it.** Besides user and system prompts, tool
 returns, response text, and tool calls, the estimator now counts `ThinkingPart` / `CompactionPart`
 content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the latest
-`ModelRequest.instructions`, so a history measures higher (several times the old count when
-thinking-heavy and tool-calling) and an unchanged `max_tokens` compacts earlier. What each strategy
-clears is unchanged.
+`ModelRequest.instructions`, so a history measures higher (it can be several times the old count on
+a thinking-heavy, tool-calling history, depending on how much of it is thinking blocks, retries, and
+instructions) and an unchanged `max_tokens` compacts earlier. What each strategy clears is
+unchanged.
 
 ## Reporting usage: `ReportContextUsage`
 
@@ -251,7 +252,7 @@ Inside a run, it takes the parent run's `conversation_id`.
 `TieredCompaction` advances when a tier does not reclaim enough; `FallbackCompaction` advances when
 a strategy raises an exception in `fallback_on`, by default `ModelAPIError` and
 `FallbackExceptionGroup` (raised when every model in a `FallbackModel` fails). When its own trigger
-runs the chain, it also skips a `SummarizingCompaction` whose result [isn't
+runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't
 smaller](#a-summary-that-isnt-smaller), and leaves the history unchanged if no strategy shrinks it.
 Each attempt gets a fresh list of the original message objects, so a failed strategy's list changes
 do not reach the next; strategies must still not mutate message objects (the `CompactionStrategy`
@@ -882,7 +883,7 @@ Receipts are opt-in (`receipts=False` by default) because they add a message the
 
 ## Pinning: content that survives compaction
 
-`pin` marks content that every shipped strategy must preserve:
+`pin` marks content that every shipped strategy must preserve verbatim:
 
 ```python
 from pydantic_ai_harness.compaction import pin
@@ -892,7 +893,7 @@ pinned = pin('Durable task state the model must never lose across compaction.')
 ```
 
 A pinned part is never summarized away or dropped; a strategy that would discard it re-injects it
-near the top of the surviving history. `is_pinned` checks for the marker, which lives in
+verbatim near the top of the surviving history. `is_pinned` checks for the marker, which lives in
 model-invisible `TextContent.metadata`, so the content stays ordinary user context that compaction
 can tell apart from user turns.
 
