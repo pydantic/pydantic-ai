@@ -67,6 +67,9 @@ Use the user-only `worktrees.remove_commands` setting to replace confirmed
 exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
 worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for repository-scoped argv configuration, placeholders, and shell functions.
+The exit picker defaults to keeping the checkout. **No, don't ask again for this
+worktree** saves that choice for this checkout in the settings database; a new
+checkout reusing the same path is asked again.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
@@ -687,7 +690,10 @@ To chat with an Agent instance you already have, skip the launcher and run
 clai2 --agent MODULE:ATTR (or -a), for example
 clai2 --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
 sys.path, after installed packages, so a module next to where you start CLAI
-resolves without installing it. ATTR must
+resolves without installing it. It does so only when nothing installed has the
+module's top-level name. A module there whose top-level name is also installed
+resolves against the installed package instead, so it usually fails with "module
+not found". ATTR must
 name an Agent instance, not a class or factory; the agent runs with deps=None.
 For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and

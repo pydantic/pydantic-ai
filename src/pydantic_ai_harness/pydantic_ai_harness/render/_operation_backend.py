@@ -182,42 +182,9 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         name: str,
         config: Options | None,
     ) -> _RegisteredTask:
+        # The Render SDK reads a task's inputs from its signature, so the registered function takes only these two.
         async def operation_task(context: TaskContext, request: OperationRequest) -> OperationResult:
-            with recording_effects() as recorder:
-                try:
-                    wire_params = read_request(request, expected_operation=name)
-                    params = load_operation_params(operation, wire_params, runtime=self._runtime)
-                except Exception as exc:
-                    # Retrying cannot repair persisted request bytes or worker-side decoding.
-                    return permanent_error('invalid-request', exc)
-
-                ctx = operation_run_context(params)
-                assert ctx is not None, 'every installed operation carries a run context'
-                try:
-                    # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
-                    with (
-                        self._runtime.activate(context),
-                        workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
-                    ):
-                        value = await operation.handler(params)
-                except RenderProtocolError as exc:
-                    return permanent_error('invalid-result', exc)
-                except Exception as exc:
-                    try:
-                        expected_error = control_flow_error(exc)
-                    except Exception as encoding_error:
-                        return permanent_error('invalid-result', encoding_error)
-                    if expected_error is not None:
-                        return expected_error
-                    raise
-
-                try:
-                    payload = operation.result_codec.dump(value)
-                    effects = recorder.effects() if _completed_tool_result(operation.operation_id, payload) else None
-                    return success(payload, effects=effects)
-                except Exception as exc:
-                    # The handler may already have committed an external side effect.
-                    return permanent_error('invalid-result', exc)
+            return await self._run_operation_task(operation, name, context, request)
 
         registered_config = _snapshot_options(config) if config is not None else None
         options = registered_config or Options()
@@ -235,6 +202,49 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
 
         self._pending_registrations.append(commit)
         return registered
+
+    async def _run_operation_task(
+        self,
+        operation: DurableOperation[ParamsT, WireT, ResultT],
+        name: str,
+        context: TaskContext,
+        request: OperationRequest,
+    ) -> OperationResult:
+        with recording_effects() as recorder:
+            try:
+                wire_params = read_request(request, expected_operation=name)
+                params = load_operation_params(operation, wire_params, runtime=self._runtime)
+            except Exception as exc:
+                # Retrying cannot repair persisted request bytes or worker-side decoding.
+                return permanent_error('invalid-request', exc)
+
+            ctx = operation_run_context(params)
+            assert ctx is not None, 'every installed operation carries a run context'
+            try:
+                # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
+                with (
+                    self._runtime.activate(context),
+                    workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
+                ):
+                    value = await operation.handler(params)
+            except RenderProtocolError as exc:
+                return permanent_error('invalid-result', exc)
+            except Exception as exc:
+                try:
+                    expected_error = control_flow_error(exc)
+                except Exception as encoding_error:
+                    return permanent_error('invalid-result', encoding_error)
+                if expected_error is not None:
+                    return expected_error
+                raise
+
+            try:
+                payload = operation.result_codec.dump(value)
+                effects = recorder.effects() if _completed_tool_result(operation.operation_id, payload) else None
+                return success(payload, effects=effects)
+            except Exception as exc:
+                # The handler may already have committed an external side effect.
+                return permanent_error('invalid-result', exc)
 
     def register_tasks(self) -> None:
         """Commit the pending definitions after core binding succeeds.

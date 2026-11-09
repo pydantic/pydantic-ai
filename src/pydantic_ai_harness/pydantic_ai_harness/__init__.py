@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .keenable import KeenableSearch
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -135,6 +136,7 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KeenableSearch',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -237,6 +239,7 @@ _LAZY_EXPORTS = {
     'InputGuardrail': 'guardrails',
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KeenableSearch': 'keenable',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',

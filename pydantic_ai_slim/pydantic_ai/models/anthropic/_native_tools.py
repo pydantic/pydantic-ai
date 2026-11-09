@@ -22,6 +22,9 @@ from anthropic.types.beta import (
     BetaDirectCaller,
     BetaMCPToolResultBlock,
     BetaMCPToolUseBlock,
+    BetaMemoryTool20250818Param,
+    BetaRequestMCPServerToolConfigurationParam,
+    BetaRequestMCPServerURLDefinitionParam,
     BetaServerToolCaller,
     BetaServerToolCaller20260120,
     BetaServerToolUseBlock,
@@ -56,6 +59,7 @@ from anthropic.types.beta.beta_text_editor_code_execution_tool_result_block_para
 from pydantic import TypeAdapter
 
 from ... import _utils
+from ...exceptions import UserError
 from ...messages import (
     ModelMessage,
     ModelRequest,
@@ -70,6 +74,7 @@ from ...messages import (
 from ...native_tools import AdvisorTool, CodeExecutionTool, MCPServerTool, WebFetchTool, WebSearchTool
 from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch
 from ...profiles.anthropic import AnthropicCodeExecutionToolVersion
+from ...tools import ToolDefinition
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
@@ -325,6 +330,33 @@ def map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaT
             return BetaCodeExecutionTool20260120Param(name='code_execution', type='code_execution_20260120')
         case _:
             assert_never(version)
+
+
+def with_native_memory_tool(
+    tools: list[BetaToolUnionParam], declared_function_tools: Sequence[ToolDefinition]
+) -> list[BetaToolUnionParam]:
+    """Replace the `memory` function tool's definition in `tools` with Anthropic's native memory tool."""
+    if 'memory' not in {tool.name for tool in declared_function_tools}:
+        raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
+    tools = [tool for tool in tools if tool.get('name') != 'memory']
+    tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
+    return tools
+
+
+def map_mcp_server_tool(tool: MCPServerTool) -> BetaRequestMCPServerURLDefinitionParam:
+    mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
+        type='url',
+        name=tool.id,
+        url=tool.url,
+    )
+    if tool.allowed_tools is not None:  # pragma: no branch
+        mcp_server_url_definition_param['tool_configuration'] = BetaRequestMCPServerToolConfigurationParam(
+            enabled=bool(tool.allowed_tools),
+            allowed_tools=tool.allowed_tools,
+        )
+    if tool.authorization_token:  # pragma: no cover
+        mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
+    return mcp_server_url_definition_param
 
 
 def map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:

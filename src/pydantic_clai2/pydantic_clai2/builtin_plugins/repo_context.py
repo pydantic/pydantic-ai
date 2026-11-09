@@ -80,8 +80,7 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
 
     async def _nearest_root(self, walk_up_roots: Sequence[str]) -> Path | None:
         """The deepest of `walk_up_roots` that contains the workspace, or `None`."""
-        # `RepoContext` compares `home_dir` as given against the resolved working directory, so resolve the
-        # roots too: one spelled through a symlink would otherwise never contain the workspace.
+        # Compare resolved paths, so a root spelled through a symlink still contains the workspace.
         working_dir = Path(await anyio.Path(self.host.workspace).resolve())
         roots: list[Path] = []
         for root in walk_up_roots:

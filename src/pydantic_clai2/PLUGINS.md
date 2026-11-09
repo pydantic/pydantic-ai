@@ -425,12 +425,21 @@ CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--re
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
-**Title.** When the conversation's title changes (its first prompt, background naming,
-or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked
-Git worktree too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the
-rename while a turn runs, and otherwise may move an AoE-managed worktree to follow the title.
-The plugin stops trying for the session once AoE refuses a rename; a rename that times out is
-tried again with the next title. AoE renames the tmux session to match.
+**Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
+the conversation instead, turn on `titles`:
+
+```text
+/plugins add aoe pydantic_clai2.builtin_plugins.aoe '{"titles": true}'
+```
+
+Then, when the conversation's title changes (its first prompt, background naming, or a rename
+in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked Git worktree
+too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the rename while a turn
+runs, but between turns it moves an AoE-managed worktree to follow the title, out from under the
+CLAI2 still working in it: its file and shell tools then fail until you restart it in the new
+directory. Turn `tie_workdir_to_name` off in AoE before turning `titles` on. The plugin stops
+trying for the session once AoE refuses a rename; a rename that times out is tried again with
+the next title. AoE renames the tmux session to match.
 
 All file and process work runs off the event loop, and failures are logged at debug
 level, never raised into a turn. `/plugins disable aoe` stops reporting.
@@ -1116,7 +1125,8 @@ and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
 shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
-to keep. This includes existing linked worktrees. By default, removal uses Git
+to keep. This includes existing linked worktrees. The inline picker also offers
+**No, don't ask again for this worktree**, saved for this checkout only. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
@@ -1703,7 +1713,9 @@ In a terminal, `/update now` and `/reload` are refused while other live sessions
 the restart would end; bare `/update` can still open its menu in the shown session, whose
 **Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
 page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
-instead, which the page shows as an error.
+instead, which the page shows as an error. That menu enters `/update now` in the session CLAI
+restarts from, whichever live session's page asks, and gives that session's refusal; the page that
+asked shows uv's output and the result too.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
