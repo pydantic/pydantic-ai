@@ -904,6 +904,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def _held(self, stream: AsyncGenerator[_StreamItemT]) -> AsyncGenerator[_StreamItemT]:
+        # A finished stream has nothing left to close, so it isn't kept until the run ends.
+        self._open_streams = [held for held in self._open_streams if getattr(held, 'ag_frame', None) is not None]
         self._open_streams.append(stream)
         return stream
 
@@ -919,12 +921,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self
         finally:
             # A stream that is running is still being stepped by its consumer, as when `run_stream_sync()` times out
-            # mid-pull, and `aclose()` would refuse it; that consumer finishes it. One suspended was abandoned.
+            # mid-pull, and `aclose()` would refuse it; that consumer finishes it. Every other stream is closed, as the
+            # run it reads from is ending.
             streams = [stream for stream in self._open_streams if not getattr(stream, 'ag_running', False)]
             self._open_streams = []
-            # Run teardown can happen inside an already-cancelled scope, as in `AgentStream.aclose_events()`.
-            with anyio.CancelScope(shield=True):
-                await _utils.aclose_all(streams)
+            await _utils.aclose_all(streams)
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""

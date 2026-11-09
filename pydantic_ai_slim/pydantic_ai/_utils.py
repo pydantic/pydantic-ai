@@ -684,15 +684,10 @@ async def group_by_temporal(
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
     context = _TemporalGroupsContext(aiter(aiterable))
-    groups = _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
     try:
-        yield groups
+        yield _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
     finally:
-        try:
-            # Closed here rather than by a task asyncio's finalizer hook would schedule, which nothing awaits.
-            await aclose_if_supported(groups)
-        finally:
-            await _cleanup_temporal_group(context.task, context.aiterator)
+        await _cleanup_temporal_group(context.task, context.aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
