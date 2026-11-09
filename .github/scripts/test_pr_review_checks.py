@@ -87,6 +87,12 @@ def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     assert select([_file(path)]) == {'sandboxes': [path]}
 
 
+def test_joint_path_runs_its_check_and_the_general_check() -> None:
+    """A change to the core message types gets the UI review without losing the general one."""
+    path = 'pydantic_ai_slim/pydantic_ai/messages.py'
+    assert select([_file(path)]) == {'general': [path], 'ui': [path]}
+
+
 def test_rename_selects_by_previous_path() -> None:
     """Moving a file out of a check's paths still gets the check's review."""
     moved = _file('pydantic_ai_slim/pydantic_ai/_net.py', previous='pydantic_ai_slim/pydantic_ai/_ssrf.py')

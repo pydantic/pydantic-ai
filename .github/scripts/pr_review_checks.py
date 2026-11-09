@@ -38,6 +38,8 @@ class SpecialistCheck(ReviewCheck):
     diff_tokens: re.Pattern[str] | None = None
     """An added or removed line matching this, in a file under `token_paths`, also selects that file."""
     token_paths: re.Pattern[str] | None = None
+    joint_paths: re.Pattern[str] | None = None
+    """A changed file matching this selects this check and is reviewed by it, but stays with the general check too."""
 
 
 @dataclass(frozen=True)
@@ -84,12 +86,14 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         title='UI adapters and local web UI',
         scope="the UI adapters' client/server trust boundary and CLAI 2's local web control UI",
         paths=re.compile(
-            r'pydantic_ai_slim/pydantic_ai/(ui/.*|messages\.py)'
+            r'pydantic_ai_slim/pydantic_ai/ui/.*'
             r'|src/pydantic_clai2/(web-ui/.*|pydantic_clai2/builtin_plugins/web/.*|pydantic_clai2/cli/web\.py'
             r'|clai2_web_README\.md|scripts/check_web_assets\.py)'
             r'|docs/(ui/.*|input\.md|web\.md|harness/clai2\.md)'
             r'|tests/(test_vercel_ai|test_ag_ui|test_ui|test_ui_web)\.py|tests/clai2/(test_web[^/]*\.py|browser/.*)'
         ),
+        # The core message types cross the adapter boundary, but most changes to them are not about it.
+        joint_paths=re.compile(r'pydantic_ai_slim/pydantic_ai/messages\.py'),
     ),
     SpecialistCheck(
         name='telemetry',
@@ -177,7 +181,11 @@ def select(files: list[ChangedFile]) -> dict[str, list[str]]:
     selected: dict[str, list[str]] = {}
     owned: set[str] = set()
     for check in SPECIALIST_CHECKS:
-        by_path = [file.path for file in files if file.matches(check.paths)]
+        by_path = [
+            file.path
+            for file in files
+            if file.matches(check.paths) or (check.joint_paths and file.matches(check.joint_paths))
+        ]
         # A rename from a check's paths still triggers it, but only the destination makes the check its owner.
         owned.update(path for path in by_path if check.paths.fullmatch(path))
         by_token = [

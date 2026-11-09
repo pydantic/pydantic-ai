@@ -237,8 +237,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `pr-review-checks:run`. The label stays valid across pushes; the gate checks who applied it last.
 - `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one review
   job per selected check. A check selects the files under its trigger paths, and can also select a
-  file whose changed lines match its diff tokens. The `general` check reviews every changed source,
-  workflow and configuration file that no selected check owns by path. The `tests-and-dependencies`
+  file whose changed lines match its diff tokens. A check's joint paths select it without making it
+  the file's owner. The `general` check reviews every changed source, workflow and configuration
+  file that no selected check owns by path. The `tests-and-dependencies`
   check owns tests, cassettes, dependency manifests and lockfiles, and holds them to the
   repository's testing and dependency rules rather than the security rubric. The `general` check
   also reviews `THREAT_MODEL.md`, every `AGENTS.md` and `CLAUDE.md`, every file under an
