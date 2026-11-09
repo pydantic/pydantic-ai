@@ -435,6 +435,8 @@ def test_only_lockfiles_and_cassettes_are_left_out_of_the_review(tmp_path: Path,
         'tests/models/cassettes/conftest.py': 'diff/tests%2Fmodels%2Fcassettes%2Fconftest.py.diff',
         'scripts/uv.lock.sh': 'diff/scripts%2Fuv.lock.sh.diff',
         'docs/uv.lock-notes.md': 'diff/docs%2Fuv.lock-notes.md.diff',
+        # Cassettes live in a `cassettes/` directory below the root, as the skip's docs say.
+        'cassettes/notes.yaml': 'diff/cassettes%2Fnotes.yaml.diff',
     }
     _, context = _gather(
         tmp_path,
@@ -455,7 +457,7 @@ def test_only_lockfiles_and_cassettes_are_left_out_of_the_review(tmp_path: Path,
     if script == SCRIPT:
         # CI Review sizes its review from the files it reviews.
         assert (context / 'pr-size.txt').read_text(encoding='utf-8') == (
-            '3 files, 3 diff lines (excluding generated files)\n'
+            '4 files, 4 diff lines (excluding generated files)\n'
         )
 
 

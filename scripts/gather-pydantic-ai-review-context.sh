@@ -332,8 +332,8 @@ fi | LC_ALL=C awk -v dir="$CTX/diff" '
         fname = substr(rest, 3, n)
     }
     # Generated files are each `uv.lock` and the `.yaml` cassettes under a
-    # `cassettes/` directory. The pattern ends the path, so a real file cannot
-    # hide from review by naming either.
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
     skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
@@ -638,8 +638,8 @@ the surrounding code before posting.
   SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
   before asserting a "bug".
 - **Generated files** — never review a `uv.lock`, a `.yaml` cassette under a
-  `cassettes/` directory, or another generated file. Review every other file
-  under `cassettes/` like any source file.
+  `cassettes/` directory below the root, or another generated file. Review
+  every other file under `cassettes/` like any source file.
 - **Theoretical performance** — `O(n²)` is only a problem if `n` is
   realistically large in this use case. Don't flag without evidence of
   real-world impact.

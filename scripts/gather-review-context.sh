@@ -255,8 +255,8 @@ fi | LC_ALL=C awk -v dir="$CTX/diff" '
         fname = substr(rest, 3, n)
     }
     # Generated files are each `uv.lock` and the `.yaml` cassettes under a
-    # `cassettes/` directory. The pattern ends the path, so a real file cannot
-    # hide from review by naming either.
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
     skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
