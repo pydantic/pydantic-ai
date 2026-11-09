@@ -251,12 +251,8 @@ class _LambdaBranches:
         pending, self._pending = self._pending, []
         if not pending:
             return
-        try:
-            results = await self.bridge.run_parallel(self.name, [operation for operation, _ in pending])
-        except BaseException:
-            for _, future in pending:
-                future.cancel()
-            raise
+        # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
+        results = await self.bridge.run_parallel(self.name, [operation for operation, _ in pending])
         for (_, future), result in zip(pending, results):
             if not future.done():  # pragma: no branch - only a cancelled dispatch is done early
                 future.set_result(result)

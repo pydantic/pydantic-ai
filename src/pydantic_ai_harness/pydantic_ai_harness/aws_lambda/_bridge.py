@@ -368,14 +368,16 @@ def _run_branch(
     context = context.copy()
     context.run(_active_bridge.set, bridge)
 
-    async def run() -> None:
-        try:
-            bridge.finish(result=await operation())
-        except BaseException as exc:
-            bridge.finish(error=exc)
-
-    _schedule(loop, 'a parallel branch', lambda: loop.create_task(run(), context=context))
+    _schedule(loop, 'a parallel branch', lambda: loop.create_task(_finish(bridge, operation), context=context))
     return bridge.consume()
+
+
+async def _finish(bridge: StepBridge, operation: Callable[[], Awaitable[Any]]) -> None:
+    """Run `operation` on the agent loop, and hand its outcome to the thread consuming `bridge`."""
+    try:
+        bridge.finish(result=await operation())
+    except BaseException as exc:
+        bridge.finish(error=exc)
 
 
 def _schedule(loop: asyncio.AbstractEventLoop, what: str, callback: Callable[[], object]) -> None:
@@ -630,15 +632,9 @@ def _run_durable_on_agent_loop(
     tasks: list[asyncio.Task[None]] = []
     started = threading.Event()
 
-    async def run() -> None:
-        try:
-            bridge.finish(result=await agent_run())
-        except BaseException as exc:
-            bridge.finish(error=exc)
-
     def schedule_run() -> None:
         try:
-            tasks.append(run_context.run(lambda: loop.create_task(run())))
+            tasks.append(run_context.run(lambda: loop.create_task(_finish(bridge, agent_run))))
         except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
             # Nothing else will ever call `bridge.finish()` if the run never started, so
             # `consume()` below would block until Lambda timed the function out. Resolve it here.
