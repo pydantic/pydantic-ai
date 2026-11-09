@@ -145,7 +145,6 @@ _CONTENT = (
 )
 
 
-# Compiled from a workflow source that the general check reviews.
 def is_instructions(path: str) -> bool:
     """The threat model and agent instructions, which steer reviews and agents."""
     return path == 'THREAT_MODEL.md' or path.rsplit('/', 1)[-1] in ('AGENTS.md', 'CLAUDE.md')

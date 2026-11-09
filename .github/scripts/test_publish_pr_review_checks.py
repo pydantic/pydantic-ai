@@ -304,7 +304,7 @@ def test_moved_head_publishes_nothing(tmp_path: Path) -> None:
 def test_review_payload_prefixes_each_finding_with_its_check() -> None:
     """A reader can tell which check raised a finding and how severe it is."""
     payload = json.loads(review_payload([_result('url-fetch', 'critical')], HEAD, 5, inline=True))
-    assert payload['comments'][0]['body'] == '**critical** · `url-fetch` security check\n\nFix.'
+    assert payload['comments'][0]['body'] == '**critical** · `url-fetch` check\n\nFix.'
 
 
 def test_only_findings_on_changed_lines_are_published(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

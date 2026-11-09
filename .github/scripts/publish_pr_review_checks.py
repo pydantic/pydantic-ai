@@ -202,7 +202,7 @@ def review_payload(results: list[CheckResult], head: str, run_id: int, *, inline
     comments: list[dict[str, object]] = []
     for result in results:
         for finding in result.findings:
-            text = f'**{finding.severity}** · `{result.check}` security check\n\n{finding.body}'
+            text = f'**{finding.severity}** · `{result.check}` check\n\n{finding.body}'
             if inline:
                 comments.append({'path': finding.path, 'line': finding.line, 'side': finding.side, 'body': text})
             else:

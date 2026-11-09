@@ -751,7 +751,7 @@ INSTRUCTIONS = (
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
     'context is missing or unreadable, report the missing data instead of attempting '
-    'a list request through gh-proxy. CI Review and UI Security must submit a COMMENT '
+    'a list request through gh-proxy. CI Review must submit a COMMENT '
     'review explaining incomplete coverage; other workflows may use `mcp__safeoutputs__noop`.'
 )
 
