@@ -296,8 +296,8 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude Mythos 5.1 and 5.2,
-    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
     resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
     ones where the API can't restrict the choice. An explicit forcing
     [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
