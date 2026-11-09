@@ -28,6 +28,8 @@ __all__ = (
     'OutputConfig',
 )
 
+_duration_ta = TypeAdapter(float | timedelta)
+
 
 @dataclass(repr=False)
 class Equals(Evaluator[object, object, object]):
@@ -180,7 +182,7 @@ class MaxDuration(Evaluator[object, object, object]):
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         duration = timedelta(seconds=ctx.duration)
-        seconds = self.seconds
+        seconds = _duration_ta.validate_python(self.seconds)
         if not isinstance(seconds, timedelta):
             seconds = timedelta(seconds=seconds)
         return duration <= seconds

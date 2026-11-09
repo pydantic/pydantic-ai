@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -34,7 +34,7 @@ with try_import() as imports_successful:
         _GradingResult,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
-    from pydantic_evals.otel.span_tree import SpanQuery
+    from pydantic_evals.otel.span_tree import SpanNode, SpanQuery
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -253,10 +253,29 @@ async def test_max_duration():
     assert evaluator.evaluate(MockContext(duration=0.5)) is True
     assert evaluator.evaluate(MockContext(duration=1.5)) is False
 
+    # ISO 8601 durations are what Dataset YAML serialization produces.
+    evaluator = MaxDuration(seconds='PT1S')  # type: ignore[arg-type]
+    assert evaluator.evaluate(MockContext(duration=0.5)) is True
+
     # Test with timedelta
     evaluator = MaxDuration(seconds=timedelta(seconds=1))
     assert evaluator.evaluate(MockContext(duration=0.5)) is True
     assert evaluator.evaluate(MockContext(duration=1.5)) is False
+
+
+def test_span_query_duration_from_serialized_timedelta():
+    node = SpanNode(
+        name='span',
+        trace_id=1,
+        span_id=1,
+        parent_span_id=None,
+        start_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        end_timestamp=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+        attributes={},
+    )
+
+    assert node.matches({'min_duration': 'PT0.5S'})
+    assert not node.matches({'max_duration': 'PT0.5S'})
 
 
 async def test_llm_judge_evaluator(mocker: MockerFixture):

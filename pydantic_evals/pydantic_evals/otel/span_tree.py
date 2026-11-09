@@ -330,11 +330,13 @@ class SpanNode:
 
     def _duration_matches(self, query: SpanQuery) -> bool:
         if (min_duration := query.get('min_duration')) is not None:
+            min_duration = _duration_ta.validate_python(min_duration)
             if not isinstance(min_duration, timedelta):
                 min_duration = timedelta(seconds=min_duration)
             if self.duration < min_duration:
                 return False
         if (max_duration := query.get('max_duration')) is not None:
+            max_duration = _duration_ta.validate_python(max_duration)
             if not isinstance(max_duration, timedelta):
                 max_duration = timedelta(seconds=max_duration)
             if self.duration > max_duration:
@@ -601,4 +603,5 @@ class SpanTree:
 
 
 SPAN_TREE_ADAPTER = TypeAdapter(SpanTree)
+_duration_ta = TypeAdapter(float | timedelta)
 """This adapter can be used to serialize and deserialize `SpanTree` objects to and from JSON."""
