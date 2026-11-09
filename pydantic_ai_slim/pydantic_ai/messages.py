@@ -6404,14 +6404,14 @@ def _text_without_metadata(item: TextContent, stripped: list[TextContent]) -> Te
     return replace(item, metadata=None)
 
 
-def _text_without_internal_metadata(item: TextContent, stripped: list[TextContent]) -> TextContent:
-    """An untrusted tool return `item` without the reserved `__pydantic_ai__` metadata namespace.
+def _text_without_internal_metadata(item: TextContent) -> TextContent:
+    """`item` without the reserved `__pydantic_ai__` metadata namespace, or `item` itself if it has none.
 
-    The application's own keys are kept. `stripped` is updated in place with `item` when it had the namespace.
+    The application's own keys are kept. The one definition of that strip, for client-submitted tool return content
+    (`sanitize_messages`) and for tool return content the UI adapters dump to a client.
     """
     if item.metadata is None or _PYDANTIC_AI_METADATA_KEY not in item.metadata:
         return item
-    stripped.append(item)
     metadata = {key: value for key, value in item.metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
     return replace(item, metadata=metadata or None)
 
@@ -6556,7 +6556,10 @@ def _sanitize_tool_return_item(
 ) -> tuple[bool, FileUrl | UploadedFile | TextContent]:
     """Sanitize a file reference or text item in tool return content, as `_sanitize_tool_return_content` describes."""
     if isinstance(item, TextContent):
-        return True, _text_without_internal_metadata(item, stripped_text_metadata)
+        sanitized = _text_without_internal_metadata(item)
+        if sanitized is not item:
+            stripped_text_metadata.append(item)
+        return True, sanitized
     if isinstance(item, FileUrl):
         scheme = urlparse(item.url).scheme.lower()
         if scheme and scheme not in allowed_file_url_schemes:
