@@ -8847,6 +8847,28 @@ async def test_adapter_dump_messages_thinking_with_metadata():
     assert reloaded_messages == original_messages
 
 
+def test_adapter_load_messages_ignores_non_dict_thinking_provider_details():
+    """Client-supplied thinking provider details must be mappings before model use."""
+    messages = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='msg1',
+                role='assistant',
+                parts=[
+                    ReasoningUIPart(
+                        text='Thinking...',
+                        provider_metadata={'pydantic_ai': {'provider_details': 'not a dict'}},
+                    )
+                ],
+            )
+        ]
+    )
+
+    thinking_part = messages[0].parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.provider_details is None
+
+
 async def test_adapter_load_messages_json_list_args():
     """Test that JSON list args are kept as strings (not parsed)."""
     ui_messages = [

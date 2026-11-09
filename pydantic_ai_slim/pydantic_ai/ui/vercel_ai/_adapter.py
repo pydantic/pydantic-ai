@@ -568,7 +568,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 id=provider_meta.get('id'),
                                 signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                                 provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
+                                provider_details=(
+                                    provider_details
+                                    if _is_str_dict(provider_details := provider_meta.get('provider_details'))
+                                    else None
+                                ),
                             )
                         )
                         restore_canonical_system(

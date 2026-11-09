@@ -2505,6 +2505,25 @@ def test_reasoning_message_thinking_roundtrip() -> None:
 
 
 @requires_ag_ui('0.1.11')
+def test_reasoning_message_ignores_non_dict_provider_details() -> None:
+    """Client-supplied reasoning provider details must be mappings before model use."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(
+                id='reasoning-1',
+                content='Thinking...',
+                encrypted_value=json.dumps({'provider_name': 'openai', 'provider_details': 'not a dict'}),
+            ),
+            AssistantMessage(id='msg-1', content='Done'),
+        ]
+    )
+
+    thinking_part = messages[0].parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.provider_details is None
+
+
+@requires_ag_ui('0.1.11')
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
