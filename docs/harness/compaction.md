@@ -287,7 +287,7 @@ Under durable execution, the guards run in a capability hook, not the tool funct
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 
-A response of repeated whitespace or a tool call with a giant payload can make one part so large the *next* request exceeds the context cap. No other strategy reaches it: the offender is the newest message (`SlidingWindowCompaction` drops the oldest) and not a tool *result* (all `ClearToolResults` touches), `WarnNearLimits` never edits history, and summarizing hits the same cap.
+A response of repeated whitespace or a tool call with a giant payload can make one part so large the *next* request exceeds the context cap. No other strategy reaches it. The offender is the newest message, but `SlidingWindowCompaction` drops the oldest; it is not a tool *result*, which is all `ClearToolResults` touches; `WarnNearLimits` never edits history; and summarizing hits the same cap.
 
 `ClampOversizedMessages` truncates the part in place to a head and tail slice joined by a `[clamped: removed N of M characters]` marker. Degenerate generations are low-entropy repetition, so little is lost.
 
