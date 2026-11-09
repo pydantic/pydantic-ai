@@ -32,6 +32,7 @@ _BOUNDED_ACCEPT_ENCODING = 'identity, gzip'
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
 # they are decoded to their embedded IPv4 by `_embedded_ipv4s()` and checked against this table.
+# Teredo and IPv4-translated prefixes are listed whole instead.
 _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     # IPv4 private ranges
     ipaddress.IPv4Network('0.0.0.0/8'),  # "This" network
