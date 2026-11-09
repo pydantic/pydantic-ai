@@ -272,13 +272,13 @@ class DelegationTasks:
             with anyio.move_on_after(10, shield=True) as cleanup:
                 await self._drain()
             if cleanup.cancel_called:
-                if sys.exc_info()[1] is None:
-                    raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
-                # Raising would mask the error that is closing the owner.
                 stuck = [task_id for task_id, worker in self._workers.items() if not worker.done()]
-                logging.getLogger(__name__).error(
-                    'Delegation cleanup timed out; tasks %s did not release their resources', stuck
-                )
+                message = f'Delegation cleanup timed out; children {stuck} did not release their resources'
+                # Also set while the closer handles an error, as when it closes an `AsyncExitStack` in a `finally`.
+                if sys.exc_info()[1] is None:
+                    raise RuntimeError(message)
+                # Raising would mask the error that is closing the owner.
+                logging.getLogger(__name__).error(message)
 
     async def _drain(self) -> None:
         """Cancel running workers, wait for all of them at once, then settle and save the children that never ran."""

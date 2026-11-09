@@ -257,7 +257,7 @@ async def test_a_task_that_ignores_cancellation_does_not_crash_closing(
             agent_name='self', prompt='go', conversation_id='root', model=None, background=True, resume=None, run=stuck
         )
         await started.wait()
-    assert 'Delegated tasks did not stop in time' in caplog.text
+    assert 'Delegated tasks did not close cleanly' in caplog.text and 'cleanup timed out' in caplog.text
     release.set()
     (worker,) = [task for task in asyncio.all_tasks() if task.get_name().startswith('delegate-')]
     await worker

@@ -1133,7 +1133,7 @@ async def test_stuck_child_does_not_mask_the_closing_error(
 
     owner = DelegationTasks()
     expected = (ValueError, 'closing error') if closing_error else (RuntimeError, 'cleanup timed out')
-    with pytest.raises(expected[0], match=expected[1]):
+    with pytest.raises(expected[0], match=expected[1]) as raised:
         async with owner.opened():
             await owner.delegate(
                 agent_name='worker',
@@ -1148,7 +1148,7 @@ async def test_stuck_child_does_not_mask_the_closing_error(
             if closing_error:
                 raise ValueError('closing error')
     (record,) = owner.records.values()
-    assert (record.id in caplog.text) is closing_error
+    assert record.id in (caplog.text if closing_error else str(raised.value))
     release.set()
     (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
     await worker
