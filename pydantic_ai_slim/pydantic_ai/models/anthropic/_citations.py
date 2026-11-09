@@ -135,15 +135,17 @@ def fetched_pages_from_history(messages: Sequence[ModelMessage]) -> list[tuple[s
     """Return the URL and text of each page Web Fetch fetched earlier in the conversation, which a new answer can cite."""
     pages: list[tuple[str, str]] = []
     for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind:
-                    try:
-                        page = BetaWebFetchBlock.model_validate(part.content)
-                    except ValidationError:
-                        continue
-                    if isinstance(page.content.source, BetaPlainTextSource):
-                        pages.append((page.url, page.content.source.data))
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if not (isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind):
+                continue
+            try:
+                page = BetaWebFetchBlock.model_validate(part.content)
+            except ValidationError:
+                continue
+            if isinstance(page.content.source, BetaPlainTextSource):
+                pages.append((page.url, page.content.source.data))
     return pages
 
 
