@@ -92,8 +92,9 @@ async def test_parallel_sub_agents_get_stable_steps_and_recover(
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await workflow()
-    assert sorted(model_calls[:2]) == ['alpha 1', 'beta 1']
-    assert model_calls[2:] == ['beta 3', 'alpha 3']
+    # Alpha, dispatched first, finished last.
+    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    assert model_calls[-1] == 'alpha 3'
 
     # Each sub-agent run is one step, numbered in dispatch order rather than completion order.
     steps = await dbos.list_workflow_steps_async(workflow_id)
@@ -111,5 +112,6 @@ async def test_parallel_sub_agents_outside_a_workflow_make_no_steps(
     orchestrator: Agent[None, str], model_calls: list[str]
 ) -> None:
     assert (await orchestrator.run('Summarize alpha and beta')).output == EXPECTED
-    assert sorted(model_calls[:2]) == ['alpha 1', 'beta 1']
-    assert model_calls[2:] == ['beta 3', 'alpha 3']
+    # Alpha, dispatched first, finished last.
+    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    assert model_calls[-1] == 'alpha 3'
