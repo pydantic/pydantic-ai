@@ -47,6 +47,12 @@ must not run the tool without them.
 To keep the local fallback of a provider-adaptive capability, pass the configured tool to its `native=` argument,
 for example `WebSearch(native=WebSearchTool(provider_settings={'openrouter': {'engine': 'exa'}}))`.
 
+Some single-provider options used to be top-level fields, such as `ImageGenerationTool.quality`. Those fields
+still work but are deprecated: set the option in `provider_settings` instead, and read it from there too. The old
+field holds only a value set on it directly, so `ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}).quality`
+is still the default `'auto'`. Setting the same option to different values in both places raises a
+[`UserError`][pydantic_ai.exceptions.UserError].
+
 See the [Anthropic web tool settings](models/anthropic.md#web-tool-settings),
 [OpenRouter web search settings](models/openrouter.md#web-search-parameters), and
 [OpenRouter advisor settings](models/openrouter.md#advisor).
