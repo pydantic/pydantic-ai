@@ -11,15 +11,14 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast, runti
 
 import anyio
 import anyio.lowlevel
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
-    DISPLAY_SIZE,
-    NATIVE_TOOL,
-    SAFETY_CHECKS,
+    ComputerCallPart,
     ComputerResult,
+    ComputerReturnPart,
     ComputerToolAction,
     CursorPosition,
     Screenshot,
@@ -41,8 +40,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     Click,
@@ -53,11 +53,13 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     SupportsDisplay,
+    SupportsRestartCount,
     WorkspaceError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._display import png_size
+from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent, DisplayRestartedEvent
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -375,12 +377,8 @@ def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | Non
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
             for part in reversed(message.parts):
-                if not (isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id):
-                    continue
-                metadata: Any = part.metadata
-                if isinstance(metadata, dict) and (size := cast(dict[str, Any], metadata).get('screenshot_size')):
-                    width, height = size  # a list once the history has been through JSON
-                    return width, height
+                if isinstance(part, ComputerReturnPart) and (result := part.result) and 'screenshot_size' in result:
+                    return result['screenshot_size']
     return None
 
 
@@ -409,16 +407,19 @@ def _recorded_space(response: ModelResponse) -> tuple[int | None, tuple[int, int
 
 def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
     """Whether `actions` differ from the ones the model asked for, such as after an approval changed them."""
-    try:
-        return _ACTIONS.validate_python(call.args_as_dict().get('actions')) != actions
-    except ValidationError:
-        return True
+    return not isinstance(call, ComputerCallPart) or call.actions != actions
 
 
 def _display(ctx: RunContext[Any]) -> object | None:
     """The workspace's display object."""
     backend = ctx.workspace.backend
     return backend.display if isinstance(backend, SupportsDisplay) else None
+
+
+def _restart_count(ctx: RunContext[Any]) -> int | None:
+    """How many times the display has restarted, if it reports that."""
+    display = _display(ctx)
+    return display.restart_count if isinstance(display, SupportsRestartCount) else None
 
 
 async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
@@ -438,13 +439,12 @@ async def _display_size(ctx: RunContext[Any]) -> tuple[int, int]:
     return size
 
 
-async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-    """Give the tool the size of the screenshots the model sees, for providers whose native tool declares it."""
+async def _native_computer(ctx: RunContext[Any]) -> ComputerTool | None:
+    """The provider's native computer tool, declaring the size of the screenshots the model sees."""
     size = await _read_size(ctx)
     if isinstance(size, WorkspaceError):
-        return tool_def  # the call itself will report the display's error
-    size = _fit(size, _screenshot_limit(ctx.model))
-    return replace(tool_def, metadata={**(tool_def.metadata or {}), DISPLAY_SIZE: size})
+        return None  # the call itself will report the display's error
+    return ComputerTool(display_size=_fit(size, _screenshot_limit(ctx.model)), optional=True)
 
 
 def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
@@ -540,13 +540,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
             # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-            metadata={
-                'temporal': False,
-                'prefect': False,
-                'render_workflows': False,
-                **({} if self.native else {NATIVE_TOOL: False}),
-            },
-            prepare=_with_display_size,
+            metadata={'temporal': False, 'prefect': False, 'render_workflows': False},
         )
         self._toolset = FunctionToolset([tool], id=self.id)
 
@@ -579,17 +573,30 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         )
         if not ctx.in_durable_context:
             # Run here, so an error keeps its traceback.
-            return await self._run_on_display(ctx, actions, plan)
-        try:
-            outcome = await self._on_display(ctx, actions, plan)
-        except UserError:
-            # A configuration error, such as a model the engine doesn't know, isn't the call failing.
-            raise
-        except Exception as e:
-            # The unit failed, timed out or lost its worker, after any number of actions.
-            raise ToolFailed(_INTERRUPTED) from e
-        if isinstance(outcome, _NotRun):
-            raise outcome.error()
+            outcome = await self._run_on_display(ctx, actions, plan)
+        else:
+            try:
+                outcome = await self._on_display(ctx, actions, plan)
+            except UserError:
+                # A configuration error, such as a model the engine doesn't know, isn't the call failing.
+                raise
+            except Exception as e:
+                # The unit failed, timed out or lost its worker, after any number of actions.
+                raise ToolFailed(_INTERRUPTED) from e
+            if isinstance(outcome, _NotRun):
+                raise outcome.error()
+        # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
+        result: ComputerResult = outcome.metadata
+        size = result.get('screenshot_size')
+        assert size is not None  # a call that returns has taken its screenshot
+        width, height = size  # a list once a durable unit's result has been through JSON
+        await ctx.emit(
+            ActionsPerformedEvent(
+                performed=result['performed'], error=result.get('error'), screenshot_size=(width, height)
+            )
+        )
+        if result.get('display_restarted'):
+            await ctx.emit(DisplayRestartedEvent())
         return outcome
 
     @durable_operation('call', policy=_CALL_POLICY)
@@ -609,6 +616,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
+        restarts = _restart_count(ctx)
         call = _Call(plan.grid, changed=plan.changed)
         if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
             # Also starts a display that stopped, so a restart is known before anything acts.
@@ -626,10 +634,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             actions = pixels
 
         async with _display_lock(ctx):
-            return await self._act_and_look(ctx, actions, call, plan)
+            return await self._act_and_look(ctx, actions, call, plan, restarts)
 
     async def _act_and_look(
-        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call: _Call, plan: _Plan
+        self,
+        ctx: RunContext[AgentDepsT],
+        actions: list[ComputerToolAction],
+        call: _Call,
+        plan: _Plan,
+        restarts: int | None,
     ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
 
@@ -658,6 +671,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
+        if _restart_count(ctx) != restarts:
+            result['display_restarted'] = True
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
@@ -696,6 +711,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
         return self._toolset
 
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        """The provider's native computer tool, which runs this capability's tool, unless `native` is `False`."""
+        return [_native_computer] if self.native else []
+
     def get_wrapper_model(self, model: Model) -> Model | None:
         """Drop old screenshots from what is sent, after every other capability has prepared the request."""
         return _DropOldScreenshots(model, self.keep_screenshots)
@@ -712,8 +731,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         """Defer a `computer` call its provider flagged with safety checks until a person approves it."""
-        flagged = tool_def.tool_kind == COMPUTER_KIND.id and (call.provider_details or {}).get(SAFETY_CHECKS)
-        if flagged and not ctx.tool_call_approved:
+        if isinstance(call, ComputerCallPart) and call.safety_checks and not ctx.tool_call_approved:
             raise ApprovalRequired
         return args
 
@@ -733,9 +751,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         """Record the coordinates the response's `computer` calls are in, for when they run."""
-        tools = request_context.model_request_parameters.function_tools
-        names = {tool.name for tool in tools if tool.tool_kind == COMPUTER_KIND.id}
-        if not any(isinstance(part, ToolCallPart) and part.tool_name in names for part in response.parts):
+        name = request_context.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+        if not any(isinstance(part, ToolCallPart) and part.tool_name == name for part in response.parts):
             return response
         record = {
             'coordinate_grid': _grid(request_context.model),
@@ -750,7 +767,7 @@ def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, 
         if not isinstance(message, ModelRequest):
             continue
         for part_index, part in enumerate(message.parts):
-            if isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id:
+            if isinstance(part, ComputerReturnPart):
                 for item_index, item in enumerate(part.content_items()):
                     if isinstance(item, BinaryContent) and item.is_image:
                         yield message_index, part_index, item_index, len(item.data)

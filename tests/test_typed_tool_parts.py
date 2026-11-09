@@ -188,6 +188,37 @@ def test_typed_content_validates_successful_content_only() -> None:
     assert AuditReturnPart('audit', 'plain').typed_content == 'plain'
 
 
+class LookupMetadata(TypedDict):
+    warehouse: str
+
+
+metadata_kind = ToolKind('test', 'with-metadata', content=LookupResult, metadata=LookupMetadata)
+
+
+class WithMetadataReturnPart(ToolReturnPart[LookupResult, LookupMetadata], kind=metadata_kind):
+    pass
+
+
+def test_a_kind_can_declare_the_shape_of_its_metadata() -> None:
+    assert metadata_kind.metadata is LookupMetadata
+    assert repr(metadata_kind) == "ToolKind('test', 'with-metadata', content=LookupResult, metadata=LookupMetadata)"
+    part = WithMetadataReturnPart('lookup', {'in_stock': True}, metadata={'warehouse': 'north'})
+    assert part.typed_metadata == {'warehouse': 'north'}
+    assert WithMetadataReturnPart('lookup', {'in_stock': True}, metadata={'other': 1}).typed_metadata is None
+    # Without a declared shape, the metadata is read as it is.
+    assert LookupReturnPart('lookup', {'in_stock': True}, metadata=[1]).typed_metadata == [1]
+    assert ToolReturnPart('t', 'plain', metadata={'any': 1}).typed_metadata == {'any': 1}
+
+
+def test_metadata_that_does_not_fit_does_not_stop_promotion() -> None:
+    request = ModelRequest(
+        parts=[ToolReturnPart('lookup', {'in_stock': True}, metadata=None, tool_kind='test.with-metadata')]
+    )
+    part = request.parts[0]
+    assert isinstance(part, WithMetadataReturnPart)
+    assert part.typed_metadata is None
+
+
 def test_a_registered_kind_is_promoted_and_survives_a_round_trip() -> None:
     response = ModelResponse(
         parts=[
@@ -434,6 +465,14 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
     ):
 
         class ShapelessReturnPart(ToolReturnPart[LookupResult], kind=audit_kind):  # pyright: ignore[reportUnusedClass]
+            pass
+
+    with pytest.raises(
+        UserError,
+        match=r"WrongMetadataReturnPart parameterizes ToolReturnPart with ImageResult, but its kind 'test\.with-metadata' declares `metadata=LookupMetadata`",
+    ):
+
+        class WrongMetadataReturnPart(ToolReturnPart[LookupResult, ImageResult], kind=metadata_kind):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
             pass
 
     class AnyCallPart(ToolCallPart[Any], kind=ToolKind('test', 'any-shape')):

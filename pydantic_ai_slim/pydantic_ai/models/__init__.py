@@ -124,6 +124,7 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -139,6 +140,7 @@ from ..messages import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
@@ -422,6 +424,20 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
+        """The name of the first function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], or `None` if there is none.
+
+        A model adapter uses it to find the tool that runs a native tool's calls, through
+        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] answers the same for
+        instructions and tools.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = _tool_kind_id(kind)
+        return next((tool_def.name for tool_def in self.function_tools if tool_def.tool_kind == kind_id), None)
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:
@@ -3142,12 +3158,20 @@ def _supported_native_tools(
     supported_natives: list[AbstractNativeTool] = []
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
+    executor_kinds = {t.tool_kind for t in params.function_tools if not t.defer_loading}
     for native_tool in params.native_tools:
         if not isinstance(native_tool, tuple(supported_types)):
             unsupported_natives.append(native_tool)
         elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
             unsupported_natives.append(native_tool)
             unapplied_settings[native_tool.unique_id] = settings
+        elif missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
+            # Its calls would have no tool to run them.
+            if not native_tool.optional:
+                raise UserError(
+                    f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
+                    'and the request has none that is not deferred.'
+                )
         else:
             supported_natives.append(native_tool)
 
