@@ -105,7 +105,7 @@ the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events(
 | Event | Payload |
 |---|---|
 | `ActionsPerformedEvent` | `performed`, `error`, `screenshot_size` |
-| `DisplayRestartedEvent` | none: the display restarted during the call, so what was on screen may be gone |
+| `DisplayRestartedEvent` | none: the display restarted since the previous call's screenshot or during this call, so what was on screen may be gone |
 
 They are emitted once per call, also under durable execution. The same facts stay in the history: the `computer`
 tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call a provider
