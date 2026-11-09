@@ -34,15 +34,19 @@ def _researcher(store: OverflowStore | WorkspaceStore | None = None) -> SubAgent
 
 
 class Researcher(CombinedCapability[AgentDepsT]):
-    """A complete research-agent harness built as a regular combined capability.
-
-    It comes with concise default instructions. Pass `instructions=` to
-    replace them, or `instructions=None` to run with no default instructions.
+    """Web research with search, page fetching, a research delegate, and tool-output limits.
 
     Oversized tool results are spilled to files in the run's workspace, so a
     run needs one: attach `LocalWorkspace('.')` or a sandbox capability. A run
     without a workspace fails at its start unless `store=` provides a non-workspace
     overflow store such as `LocalFileStore()`.
+
+    Args:
+        instructions: Replaces `DEFAULT_RESEARCHER_INSTRUCTIONS`; `None` adds no instructions.
+        subagents: Delegates for `SubAgents`. `None` uses a focused web `researcher`
+            delegate; an empty sequence leaves delegation out.
+        store: Where oversized tool results are spilled, for `Researcher` and its
+            default delegate. `None` uses the run's workspace.
     """
 
     def __init__(

@@ -20,12 +20,6 @@ collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS')
 
 
 @pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
-
-
-@pytest.fixture
 def anyio_backend() -> str:
     """CLAI's terminal and cancellation primitives require asyncio."""
     return 'asyncio'

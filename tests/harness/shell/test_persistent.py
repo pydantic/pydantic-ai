@@ -1,11 +1,13 @@
 """The opt-in `shell` tool: commands that outlive the run, with a bounded foreground wait."""
 
+import contextlib
 import json
 import os
 import shlex
+import shutil
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceError
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,
@@ -60,10 +62,26 @@ async def shell(
     arguments: dict[str, object],
     *,
     capabilities: Sequence[AbstractCapability[None]] = (),
+    workspace_env: Mapping[str, str] | None = None,
     **settings: object,
 ) -> str:
     capability = Shell[None](denied_commands=[], allow_interactive=True, tools=['shell'], **settings)  # pyright: ignore[reportArgumentType]
-    return await call_tool([capability, *capabilities], 'shell', arguments, workspace=LocalWorkspaceBackend(cwd))
+    workspace = LocalWorkspaceBackend(cwd, env=workspace_env)
+    return await call_tool([capability, *capabilities], 'shell', arguments, workspace=workspace)
+
+
+@pytest.fixture
+def unwritable(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+    """A working directory the test user cannot write to, like a root-owned `/app` in a `USER nobody` container, and a temp directory."""
+    if os.geteuid() == 0:  # pragma: no cover
+        pytest.skip('root can write to a read-only directory')
+    temp = tmp_path / 'tmp'
+    temp.mkdir()
+    work = tmp_path / 'work'
+    work.mkdir()
+    work.chmod(0o555)
+    yield work, temp
+    work.chmod(0o755)
 
 
 class Recorder(AbstractCapability[None]):
@@ -139,6 +157,43 @@ class TestShellTool:
         output = await shell(tmp_path, {'command': 'printf hello'})
         assert f'Output: {metadata}/shell/' in output
         assert (metadata / '.gitignore').read_text() == '*\n'
+
+    async def test_unwritable_workspace_keeps_job_files_in_a_private_temp_directory(
+        self, unwritable: tuple[Path, Path]
+    ) -> None:
+        work, temp = unwritable
+        output = await shell(work, {'command': 'id -u; printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'hello' in output and 'Permission denied' not in output
+        [fallback] = temp.iterdir()
+        assert fallback.name.startswith(f'.pydantic-ai-harness-{os.geteuid()}-')
+        assert f'Output: {fallback}/shell/' in output
+        assert fallback.stat().st_mode & 0o777 == 0o700
+        assert not (work / '.pydantic-ai-harness').exists()
+        # A later run in the same workspace finds the same directory.
+        assert f'Output: {fallback}/shell/' in await shell(
+            work, {'command': 'true'}, workspace_env={'TMPDIR': str(temp)}
+        )
+
+    async def test_temp_directory_another_user_could_control_is_refused(self, unwritable: tuple[Path, Path]) -> None:
+        work, temp = unwritable
+        await shell(work, {'command': 'true'}, workspace_env={'TMPDIR': str(temp)})
+        [fallback] = temp.iterdir()
+        shutil.rmtree(fallback)
+        elsewhere = temp / 'elsewhere'
+        elsewhere.mkdir()
+        fallback.symlink_to(elsewhere)
+        output = await shell(work, {'command': 'printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'hello' not in output
+        assert 'Cannot create `.pydantic-ai-harness/shell` in the workspace (Permission denied)' in output
+        assert list(elsewhere.iterdir()) == []
+
+    async def test_path_in_the_way_does_not_fall_back(self, tmp_path: Path) -> None:
+        temp = tmp_path / 'tmp'
+        temp.mkdir()
+        (tmp_path / '.pydantic-ai-harness').write_text('')
+        output = await shell(tmp_path, {'command': 'printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'Cannot create `.pydantic-ai-harness/shell` in the workspace' in output
+        assert list(temp.iterdir()) == []
 
     async def test_events(self, tmp_path: Path) -> None:
         recorder = Recorder()
@@ -323,6 +378,33 @@ class TestShellTool:
         assert recorder.finished.total_lines == 0
         assert recorder.output == ''
 
+    async def test_supervisor_exits_after_its_job_directory_is_removed(self, tmp_path: Path) -> None:
+        # With nowhere to create `watch.stop`, the supervisor must still stop its log watcher rather than wait on it.
+        output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        try:
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
+
+    async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path) -> None:
+        # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop. A job started with `TERM` ignored never
+        # receives it: the loss `dash` causes only when the signal arrives before the watcher resets its inherited trap.
+        previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        pid = int(output.split('PID: ')[1].split(' ')[0])
+        group_id = int(output.split('kill -- -')[1].split('`')[0])
+        try:
+            await wait_for_exit(pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group_id, signal.SIGKILL)
+
     async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
         toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()
         assert toolset is not None
@@ -420,6 +502,30 @@ class TestLifecycle:
             await shell(tmp_path, {'command': 'sleep 60', 'mode': mode, 'timeout': 0.01})
         await wait_for_exit(jobs[0].pid)
         assert not Path(jobs[0].directory).exists()
+
+    async def test_a_failed_stop_keeps_the_calls_own_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed call stops its command before re-raising. A stop that fails too must not take the place of the
+        # call's own error, and leaves the job's directory, as a failed `stop_command` does.
+        jobs: list[Job] = []
+        kill = Job.kill
+
+        async def fail(job: Job) -> int | None:
+            jobs.append(job)
+            raise RuntimeError('result read failed')
+
+        async def refused_kill(self: Job) -> None:
+            await kill(self)
+            raise WorkspaceError('kill: Operation not permitted')
+
+        monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', fail)
+        monkeypatch.setattr(Job, 'kill', refused_kill)
+        with pytest.raises(RuntimeError, match='result read failed') as raised:
+            await shell(tmp_path, {'command': 'sleep 60', 'timeout': 0.01})
+        assert raised.value.__notes__ == ['Cleaning up the command also failed: kill: Operation not permitted']
+        await wait_for_exit(jobs[0].pid)
+        assert Path(jobs[0].directory).exists()
 
     @pytest.mark.parametrize('command', ['sleep 60', 'true'])
     async def test_cancelled_finalization_terminates_process(

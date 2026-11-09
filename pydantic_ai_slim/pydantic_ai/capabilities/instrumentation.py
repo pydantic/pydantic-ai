@@ -70,8 +70,11 @@ from .abstract import (
 
 
 def _usage_response(request_context: ModelRequestContext) -> ModelResponse | None:
-    """Represent the usage committed at the provider boundary without changing semantic output."""
-    responses = request_context._usage_responses  # pyright: ignore[reportPrivateUsage]
+    """Represent the usage committed at the provider boundary without changing semantic output.
+
+    A response a hook rejected to make another attempt is left out: its failed attempt's span reports it.
+    """
+    responses = request_context._unrejected_usage_responses  # pyright: ignore[reportPrivateUsage]
     if not responses:
         return None
     usage = RequestUsage()
@@ -128,7 +131,10 @@ class Instrumentation(AbstractCapability[Any]):
     continues a conversation is judged against what the previous run cached. A request long enough
     to cache on a model that needs prompt caching configured, but has none configured, sets
     `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
-    conversation.
+    conversation. An Anthropic request with cache breakpoints records the ones it asked for and the ones that
+    fit the provider's limit as `pydantic_ai.cache.requested_breakpoints` and
+    `pydantic_ai.cache.applied_breakpoints`, as paths into the request as sent to Anthropic (after consecutive
+    request parts are merged into one message), not into the message history.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -448,7 +454,7 @@ class Instrumentation(AbstractCapability[Any]):
 
             segments: list[ModelResponse] = []
 
-            def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
+            def capture_response(response: ModelResponse | None, time_to_first_chunk: float | None) -> None:
                 nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
                 captured_time_to_first_chunk = time_to_first_chunk

@@ -38,7 +38,7 @@ network:
     - logfire-eu.pydantic.info
     - logfire-us.pydantic.info
 tools:
-  bash: []
+  # No shell: gh-aw rejects `bash: []` for this engine, so NO_SHELL_WORKFLOWS in pydantic_ai_gh_aw_shim/agent.py withholds it.
   cli-proxy: false
   github: false
 safe-outputs:
@@ -46,6 +46,7 @@ safe-outputs:
   activation-comments: false
   # Keep transient engine failures in Actions instead of filing report issues.
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -99,7 +100,10 @@ safe-outputs:
         - name: Install the typed-boundary dependency
           # Pinned exactly: this job holds a write-scoped token, so a
           # compromised new release must never reach it.
-          run: python3 -m pip install --quiet 'pydantic==2.13.4'
+          run: >-
+            python3 -m pip install --quiet 'pydantic==2.13.4'
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+            --no-deps
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -126,16 +130,16 @@ pre-agent-steps:
       ref: ${{ job.workflow_sha }}
       persist-credentials: false
       fetch-depth: 0
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  - name: Install repository workflow policy
+    id: workflow-policy
+    run: bash .github/scripts/stage-gh-aw-agent.sh
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   - name: Install the typed-boundary dependency
-    run: python3 -m pip install --quiet 'pydantic==2.13.4'
+    run: >-
+      python3 -m pip install --quiet 'pydantic==2.13.4'
+      'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+      --no-deps
   - name: Build bounded attention snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}
@@ -147,6 +151,8 @@ pre-agent-steps:
       path: attention-candidates.json
       retention-days: 1
       overwrite: true
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
@@ -156,7 +162,6 @@ imports:
   - shared/rigor.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
 ---
 <!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
 

@@ -122,6 +122,12 @@ class Input(BaseModel):
     text: str = Field(max_length=200_000)
 
 
+class RewindInput(BaseModel):
+    """What Edit or Retry sends in a prompt's place: new text, or `None` for the prompt as saved."""
+
+    text: str | None = Field(max_length=200_000)
+
+
 class PromptInput(Input):
     """Input for a session's prompt, with the images pasted for it, base64-encoded."""
 
@@ -209,6 +215,22 @@ class NewSession(BaseModel):
     """Where a new session runs: an absolute directory, or `None` for the default session's."""
 
     workspace: str | None = Field(default=None, max_length=4096)
+
+
+class NewWorktree(BaseModel):
+    """A worktree for New session: a new `branch` from `base` in the repository `repo` is in; empty ones are chosen."""
+
+    repo: str = Field(max_length=4096)
+    branch: str = Field(default='', max_length=255)
+    """Empty for a generated name, as `clai2 --worktree` without NAME."""
+    base: str = Field(default='', max_length=255)
+    """Empty for the checkout's `HEAD`."""
+
+
+class AddedWorktree(BaseModel):
+    """The folder of the worktree `POST /api/worktrees` checked out."""
+
+    root: str
 
 
 class CommitFiles(BaseModel):
@@ -322,15 +344,29 @@ class Assets:
 
     async def get(self, name: str) -> Asset | None:
         path = self.directory / name
-        if path.parent != self.directory or not path.is_file():
+        if path.parent != self.directory:
             return None
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
+        key = await to_thread.run_sync(_file_version, path)
+        if key is None:
+            return None
         built = self._built.get(name)
         if built is None or built[0] != key:
             built = key, await to_thread.run_sync(_build_asset, path)
             self._built[name] = built
         return built[1]
+
+
+def _file_version(path: Path) -> tuple[int, int] | None:
+    """The modification time and size of the file at `path`, or `None` when there is no file."""
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _read_text(path: Path) -> str | None:
+    """The text of the file at `path`, or `None` when there is no file."""
+    return path.read_text(encoding='utf-8') if path.is_file() else None
 
 
 def _build_asset(path: Path) -> Asset:
@@ -370,10 +406,9 @@ def _page(app: FastAPI, *, token: str, static: Path, assets: Assets) -> None:
 
     @app.get('/', include_in_schema=False)
     async def index() -> Response:
-        index = static / 'index.html'
-        if not index.is_file():
+        page = await to_thread.run_sync(_read_text, static / 'index.html')
+        if page is None:
             return Response(UNBUILT, status_code=503, media_type='text/plain')
-        page = index.read_text(encoding='utf-8')
         versions = {name: await assets.get(name) for _, name in _ASSET.findall(page)}
 
         def link(match: re.Match[str]) -> str:
@@ -464,7 +499,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
 
 
 def _queue(app: FastAPI, service: WebService) -> None:
-    """Steer the running turn, and edit, steer, or remove the input queued behind it, as the prompt does.
+    """Steer the running turn, edit, steer, or remove the input queued behind it, or rewind, as the prompt does.
 
     Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
     holding conversation ID, and unprefixed for the default session.
@@ -491,11 +526,15 @@ def _queue(app: FastAPI, service: WebService) -> None:
         channel = session(conversation_id)
         return Steered(steered=_run(lambda: channel.steer_queued(input_id)))
 
+    async def rewind(run_id: str, body: RewindInput, conversation_id: str | None = None) -> None:
+        await _wait(session(conversation_id).rewind(run_id, body.text))
+
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.post(f'{prefix}/steer')(steer)
         app.put(f'{prefix}/queue/{{input_id}}', status_code=204)(edit_queued)
         app.delete(f'{prefix}/queue/{{input_id}}', status_code=204)(remove_queued)
         app.post(f'{prefix}/queue/{{input_id}}/steer')(steer_queued)
+        app.post(f'{prefix}/rewind/{{run_id}}', status_code=204)(rewind)
 
 
 def _images(app: FastAPI, service: WebService) -> None:
@@ -543,7 +582,10 @@ def _answer(answer: Answer) -> AskUserAnswer:
 
 
 def _sessions(app: FastAPI, service: WebService) -> None:
-    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
+    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions.
+
+    Also New session's `POST /api/worktrees`, which checks out a new worktree to start one in.
+    """
 
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
@@ -557,6 +599,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
+
+    @app.post('/api/worktrees')
+    async def add_worktree(body: NewWorktree) -> AddedWorktree:
+        return AddedWorktree(root=await _wait(service.add_worktree(body.repo, branch=body.branch, base=body.base)))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:

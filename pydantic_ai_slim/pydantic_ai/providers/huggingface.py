@@ -9,12 +9,14 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from huggingface_hub import AsyncInferenceClient
@@ -73,19 +75,23 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
         profile: ModelProfile | None = None
         recognized = False
+        route_profile = special_token_route_profile('huggingface', model_name)
         if '/' in model_name:
             model_name = model_name.lower()
             provider, model_name = model_name.split('/', 1)
             if provider in provider_to_profile:
                 recognized = True
                 profile = provider_to_profile[provider](model_name)
+            elif provider == 'zai-org':
+                # Only GLM-5.3's schema fix: every other GLM id only gets the route's special-token setting.
+                return merge_profile(_glm_5_3_schema_profile(model_name), route_profile)
 
         # Only recognized `provider/model` names get a profile; bare names and unknown providers
-        # return `None` (no fallback overlay). Recognized providers always advertise inline system
+        # only get the route's special-token setting. Recognized providers always advertise inline system
         # prompt support, even when the upstream profile lookup itself returns `None`.
         if not recognized:
-            return None
-        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
+            return route_profile
+        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True), route_profile)
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...

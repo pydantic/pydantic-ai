@@ -7,8 +7,9 @@ commit, raises `GitError` with what the command printed, so the user sees why.
 
 import os
 import re
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from subprocess import DEVNULL
 from urllib.parse import urlsplit
@@ -21,6 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_clai2 import gh_cli
 from pydantic_clai2.commands import Command
 
@@ -110,7 +112,7 @@ async def _run(
     except TimeoutError:
         raise GitError(f'{_label(args)} did not finish within {timeout:g} seconds.') from None
     except OSError as exc:
-        if not workspace.is_dir():
+        if not await to_thread.run_sync(workspace.is_dir):
             # Gone, or replaced by a file, since it was checked.
             raise LookupError(f'{workspace} no longer exists.') from None
         if isinstance(exc, FileNotFoundError):
@@ -126,8 +128,17 @@ def _label(args: Sequence[str]) -> str:
     return f'{Path(args[0]).name} {subcommand}'.strip()
 
 
+def _without_api_keys(environment: Mapping[str, str]) -> dict[str, str]:
+    """`environment` minus LLM API keys, as the model's own commands get it: hooks and helpers Git runs need none."""
+    return {
+        name: value
+        for name, value in environment.items()
+        if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
+    }
+
+
 def _git_environment() -> dict[str, str]:
-    environment = {**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
+    environment = {**_without_api_keys(os.environ), 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
     # Never wait on a password or passphrase prompt nobody can see; the user's own SSH command is theirs.
     environment.setdefault('GIT_SSH_COMMAND', 'ssh -o BatchMode=yes')
     return environment
@@ -197,7 +208,7 @@ async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus
     Its paths are Git's own, with any byte that is not UTF-8 kept as a surrogate; `git_status` shows them.
     Without `pull_request`, whether one can be opened is not checked, which asks `gh`, and is `None`.
     """
-    _directory(workspace)
+    await to_thread.run_sync(_directory, workspace)
     top = await _try_git(workspace, 'rev-parse', '--show-toplevel')
     if not top:
         return None
@@ -308,8 +319,11 @@ async def _pull_request_problem(remote: str | None, *, branch: str | None, on_de
         token = await to_thread.run_sync(gh_cli.gh_token, host)
     except UserError as exc:  # `gh` did not answer, as while the keyring is locked.
         return str(exc)
-    if token is None:
+    if token is None and host == 'github.com':
         return f'The GitHub CLI is not signed in to {host}: run gh auth login --hostname {host}.'
+    if token is None:
+        # Any host may be GitHub Enterprise: its name cannot tell GitLab from GitHub.
+        return f'The GitHub CLI is not signed in to {host}; if {host} is a GitHub host, run gh auth login --hostname {host}.'
     return None
 
 
@@ -338,8 +352,9 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     """Stage and commit `files` (every changed file when `None`) with `message`; what was committed.
 
     Only these files are committed, whatever else is staged. Paths are relative to the repository's top
-    directory, as `git_status` lists them. Raises `ValueError` for an empty message or nothing to commit,
-    and `GitError` when Git refuses, as when a hook fails.
+    directory, as `git_status` lists them. Raises `ValueError` for an empty message, for nothing to
+    commit, for a file that still has a merge conflict, and for only some files while a merge is in
+    progress, which Git finishes only with every change; and `GitError` when Git refuses, as when a hook fails.
     """
     message = message.strip()
     if not message:
@@ -348,9 +363,29 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     chosen = _selected(status, files)
     if not chosen:
         raise ValueError('There is nothing to commit.')
-    # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one is
-    # known already, and `add` would refuse it.
-    present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    # Staging a conflicted file would commit its conflict markers as if it were resolved.
+    conflicted = [_shown(file.path) for file in chosen if file.status == 'U']
+    if conflicted:
+        raise ValueError(f'Resolve the merge conflict in {", ".join(conflicted)} before committing.')
+    merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
+    if merging:
+        if len(chosen) < len(status.files):
+            raise ValueError('A merge is in progress: commit every changed file to finish it.')
+        # Every change, deletions included, staged as it is; Git takes no paths to finish a merge.
+        await _git(root, 'add', '--all')
+        await _git(root, 'commit', '--quiet', f'--message={message}', timeout=LONG_TIMEOUT)
+    else:
+        await _commit_paths(root, chosen, message=message)
+    return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
+
+
+async def _commit_paths(root: Path, chosen: list[ChangedFile], *, message: str) -> None:
+    """Commit only `chosen`, whatever else is staged."""
+    # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
+    # is known already, and `add` would refuse one no longer in the index.
+    present = await to_thread.run_sync(
+        lambda: [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    )
     if present:
         await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
     paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
@@ -364,7 +399,6 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
         timeout=LONG_TIMEOUT,
         input=_pathspecs(paths),
     )
-    return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
 
 
 async def push(workspace: Path, *, confirmed: bool = False) -> str:
@@ -398,7 +432,8 @@ async def open_pull_request(workspace: Path, *, title: str, body: str) -> str:
     root, status = await _repository(workspace, pull_request=True)
     if status.pull_request is not None or status.branch is None:
         raise RuntimeError(status.pull_request)
-    if status.upstream is None or status.ahead:
+    # `gh pr create --head` pushes nothing: the branch must be on origin under its own name, up to date.
+    if status.upstream != f'origin/{status.branch}' or status.ahead:
         await _git(root, 'push', '--set-upstream', 'origin', f'refs/heads/{status.branch}', timeout=LONG_TIMEOUT)
     gh = gh_cli.gh_command()
     assert gh is not None  # `pull_request` said why otherwise.
@@ -411,7 +446,7 @@ async def open_pull_request(workspace: Path, *, title: str, body: str) -> str:
         f'--title={title}',
         '--body-file=-',
         timeout=LONG_TIMEOUT,
-        env=gh_cli.gh_environment(),
+        env=_without_api_keys(gh_cli.gh_environment()),
         input=body.strip().encode(),
     )
     if ran.code != 0:
@@ -441,9 +476,13 @@ async def _changes(root: Path, files: list[ChangedFile], *, every: bool) -> str:
     tracked = [path for file in files if file.status != '?' for path in (file.path, file.original) if path is not None]
     parts: list[str] = []
     if tracked:
-        head = await _try_git(root, 'rev-parse', '--verify', '--quiet', 'HEAD')
+        # Before the first commit, against the empty tree, so edits made since staging count, as they are committed.
+        base = (
+            await _try_git(root, 'rev-parse', '--verify', '--quiet', 'HEAD')
+            or (await _git(root, 'hash-object', '-t', 'tree', '--stdin', input=b'')).strip()
+        )
         paths = () if every else ('--', *tracked)
-        parts.append(await _git(root, 'diff', '--no-color', '--no-ext-diff', 'HEAD' if head else '--cached', *paths))
+        parts.append(await _git(root, 'diff', '--no-color', '--no-ext-diff', base, *paths))
     for file in files:
         if file.status == '?':
             text = await to_thread.run_sync(_read_start, root / file.path)
@@ -533,21 +572,29 @@ async def _summary(workspace: Path) -> str:
     return summary(None if found is None else found[1])
 
 
-def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[Command, ...]:
-    """`/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
+@dataclass(kw_only=True)
+class _GitCommands:
+    """The handlers of `/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
 
-    async def commit_command(args: list[str]) -> str:
-        directory = workspace()
+    workspace: Callable[[], Path]
+    model: ModelSource
+    shown: list[tuple[Path, str | None, PullRequestDraft]] = field(
+        default_factory=list[tuple[Path, str | None, PullRequestDraft]]
+    )
+    """The draft bare `/pr` showed last, with the repository and branch it was for, which `/pr confirm` opens."""
+
+    async def commit_command(self, args: list[str]) -> str:
+        directory = self.workspace()
         message = args[0].strip() if args else ''
         if not message:
-            message = await draft_commit_message(directory, model=model)
+            message = await draft_commit_message(directory, model=self.model)
         done = await commit(directory, message=message)
         return f'{done}\n{await _summary(directory)}'
 
-    async def push_command(args: list[str]) -> str:
+    async def push_command(self, args: list[str]) -> str:
         if args not in ([], ['confirm']):
             raise ValueError('Usage: /push [confirm]; confirm pushes the default branch too.')
-        directory = workspace()
+        directory = self.workspace()
         confirmed = args == ['confirm']
         _, status = await _repository(directory)
         if not confirmed and status.push is None and status.default_branch:
@@ -555,17 +602,35 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         done = await push(directory, confirmed=confirmed)
         return f'{done}\n{await _summary(directory)}'
 
-    async def pull_request_command(args: list[str]) -> str:
-        directory = workspace()
-        draft = await draft_pull_request(directory, model=model)
-        title = args[0].strip() if args and args[0].strip() else draft.title
-        return f'Opened {await open_pull_request(directory, title=title, body=draft.body)}'
+    async def pull_request_command(self, args: list[str]) -> str:
+        directory = self.workspace()
+        text = args[0].strip() if args else ''
+        root, status = await _repository(directory)
+        if not text:
+            draft = await draft_pull_request(directory, model=self.model)
+            self.shown[:] = [(root, status.branch, draft)]
+            return f'{draft.title}\n\n{draft.body}\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
+        if not self.shown:
+            raise ValueError('Run /pr first to see the drafted pull request.')
+        drafted_root, drafted_branch, draft = self.shown[0]
+        if (drafted_root, drafted_branch) != (root, status.branch):
+            self.shown.clear()
+            raise ValueError('The branch changed since /pr drafted its pull request. Run /pr again.')
+        if text != 'confirm':
+            draft = PullRequestDraft(title=text, body=draft.body)
+        url = await open_pull_request(directory, title=draft.title, body=draft.body)
+        self.shown.clear()
+        return f'Opened {url}'
 
+
+def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[Command, ...]:
+    """`/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
+    handlers = _GitCommands(workspace=workspace, model=model)
     return (
         Command(
             name='commit',
             description='Commit every change in this workspace: /commit [MESSAGE]; the model drafts one without',
-            handler=commit_command,
+            handler=handlers.commit_command,
             raw=True,
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.
@@ -574,7 +639,7 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         Command(
             name='push',
             description='Push this branch to origin: /push [confirm]; confirm pushes the default branch',
-            handler=push_command,
+            handler=handlers.push_command,
             complete=lambda args: ('confirm',) if len(args) <= 1 else (),
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.
@@ -582,8 +647,9 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         ),
         Command(
             name='pr',
-            description='Push this branch and open a GitHub pull request with gh: /pr [TITLE]; the model drafts it',
-            handler=pull_request_command,
+            description='Draft a GitHub pull request for this branch; /pr confirm (or /pr TITLE) pushes and opens it with gh',
+            handler=handlers.pull_request_command,
+            complete=lambda args: ('confirm',) if len(args) <= 1 else (),
             raw=True,
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.

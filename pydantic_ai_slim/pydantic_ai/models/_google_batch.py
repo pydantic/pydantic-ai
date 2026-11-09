@@ -140,12 +140,13 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
     prepared_settings, model_request_parameters = model.prepare_request(
         request.model_settings, request.model_request_parameters
     )
-    settings = cast('GoogleModelSettings', prepared_settings or {})
+    settings = cast('GoogleModelSettings', dict(prepared_settings or {}))
     # A batch is created with one set of HTTP options, and its requests run long after, so neither can be honored.
     if 'timeout' in settings:
         raise UserError('Gemini batch requests do not support per-request `timeout`; configure the client instead.')
-    if 'max_retries' in settings:
-        raise UserError('Gemini batch requests do not support per-request `max_retries`: Google runs batched requests.')
+    # The provider runs a batched request itself, with no SDK client retrying it, so a retry count has nothing to apply
+    # to and is ignored, like settings a model doesn't support.
+    settings.pop('max_retries', None)
     if 'extra_headers' in settings:
         raise UserError('Gemini batch requests do not support per-request `extra_headers`; set them on the client.')
     client = _batch_client(model)
@@ -231,28 +232,32 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     if job.dest is None or job.dest.file_name is None:
         # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't
         # say which requests it held, so its outcome fails all of them with its own reason.
-        if job.state == JobState.JOB_STATE_FAILED:
-            error = job.error
-            code = error.code if error is not None else None
-            raise BatchJobError(
-                status_code=_RPC_STATUSES[code][1] if code in _RPC_STATUSES else 500,
-                model_name=model.model_name,
-                body={'error': error.model_dump(exclude_none=True) if error is not None else None},
-            )
-        if job.state == JobState.JOB_STATE_CANCELLED:
-            raise BatchJobError(
-                status_code=_RPC_STATUSES[1][1],
-                model_name=model.model_name,
-                body={'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}},
-            )
-        if job.state == JobState.JOB_STATE_EXPIRED:
-            # Ended by the provider rather than anyone's intent, like a live request's deadline.
-            raise BatchJobError(
-                status_code=_RPC_STATUSES[4][1],
-                model_name=model.model_name,
-                body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
-            )
-        return []
+        match job.state:
+            case JobState.JOB_STATE_FAILED:
+                error = job.error
+                code = error.code if error is not None else None
+                raise BatchJobError(
+                    status_code=_RPC_STATUSES[code][1] if code in _RPC_STATUSES else 500,
+                    model_name=model.model_name,
+                    body={'error': error.model_dump(exclude_none=True) if error is not None else None},
+                )
+            case JobState.JOB_STATE_CANCELLED:
+                raise BatchJobError(
+                    status_code=_RPC_STATUSES[1][1],
+                    model_name=model.model_name,
+                    body={
+                        'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}
+                    },
+                )
+            case JobState.JOB_STATE_EXPIRED:
+                # Ended by the provider rather than anyone's intent, like a live request's deadline.
+                raise BatchJobError(
+                    status_code=_RPC_STATUSES[4][1],
+                    model_name=model.model_name,
+                    body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
+                )
+            case _:
+                return []
     content = await client.aio.files.download(file=job.dest.file_name)
     results: list[BatchResult] = []
     for line in content.splitlines():

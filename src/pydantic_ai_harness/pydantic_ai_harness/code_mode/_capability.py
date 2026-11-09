@@ -39,7 +39,7 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMontyWebsocket
+    from pydantic_monty import AsyncMontyRemote
 
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
@@ -88,9 +88,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
 
-    `mount` exposes selected host directories. The built-in `OSAccess` has an
-    isolated filesystem and environment but uses the host clock by default; custom
-    OS handlers can expose other host resources.
+    The built-in `OSAccess` has an isolated filesystem and environment but uses the
+    host clock by default; custom OS handlers can expose other host resources.
 
     ```python
     from pydantic_monty import MountDir
@@ -165,13 +164,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
-    A function's pool limits how long code runs between tool calls with its own `request_timeout`
-    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_secs`.
+    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
 
@@ -243,6 +242,47 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
                 'To allowlist one tool, pass a one-element list.'
             )
+
+    @classmethod
+    def from_spec(
+        cls,
+        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
+        eager: bool = False,
+        speculate: Sequence[str] | Literal['declared'] | None = None,
+        monty_sandbox: str | None = None,
+        dynamic_catalog: bool = True,
+        **kwargs: Any,
+    ) -> CodeMode[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyRemote` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
+        would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
+        no JSON schema, and would drop the keyword form.
+        `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            resource_limits=resource_limits,
+            eager=eager,
+            speculate=speculate,
+            monty_sandbox=monty_sandbox,
+            dynamic_catalog=dynamic_catalog,
+            **kwargs,
+        )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""

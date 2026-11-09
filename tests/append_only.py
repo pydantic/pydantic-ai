@@ -51,7 +51,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -523,17 +522,12 @@ class ConversationResult:
     def record_kind(self, part: ModelRequestPart) -> RecordKind | None:
         """What framework record a dropped part is, from its structure, or `None` for real history.
 
-        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. A `UserPromptPart` that
-        the persisted history doesn't have was added to that one request only. Anything else is history the
-        model saw, so dropping or changing it is a rewrite.
+        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. Anything else is history
+        the model saw, so dropping or changing it is a rewrite: that includes a request-only user prompt, which
+        no shipped capability adds since `Planning` records its reminder (#11521).
         """
         if isinstance(part, SystemPromptPart) and part.scope == 'request':
             return 'request-scoped system prompt'
-        persisted = (p for message in self.history if isinstance(message, ModelRequest) for p in message.parts)
-        if isinstance(part, UserPromptPart) and part not in persisted:
-            # TODO: request-only user prompts carry no provenance of their own, so this can't tell which
-            # capability added one; core history-part provenance will let an allowance pin its origin.
-            return 'request-only user prompt'
         return None
 
     def changes(self) -> list[Change]:
@@ -1106,7 +1100,7 @@ class Exempt:
 
 Check = Literal['prefix', 'ids', 'determinism', 'request-scope']
 
-RecordKind = Literal['request-scoped system prompt', 'request-only user prompt']
+RecordKind = Literal['request-scoped system prompt']
 """A framework record a request carries for itself only, identified by structure (see `ConversationResult.record_kind`)."""
 
 

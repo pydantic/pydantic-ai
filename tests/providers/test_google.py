@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+import re
+import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
@@ -19,9 +21,10 @@ with try_import() as imports_successful:
     from google.genai.types import HttpOptions, HttpRetryOptions
     from google.oauth2 import service_account
 
+    from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError
-    from pydantic_ai.models import infer_model
-    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models import get_user_agent, infer_model
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -167,6 +170,151 @@ async def test_google_provider_deprecates_caller_owned_httpx_client(provider_fac
         async with provider:
             pass
         assert not http_client.is_closed
+
+
+_GEMINI_RESPONSE = {
+    'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Paris'}]}, 'finishReason': 'STOP'}],
+    'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
+}
+
+
+@pytest.mark.parametrize(
+    ('read_timeout', 'server_timeout'),
+    [pytest.param(30, '1200', id='short'), pytest.param(3600, '3600', id='longer-than-long-decode')],
+)
+async def test_google_provider_server_timeout_header(
+    allow_model_requests: None, provider_factory: GoogleProviderFactory, read_timeout: int, server_timeout: str
+) -> None:
+    """The server deadline is at least Google's 20-minute long-decode figure, not the client's read timeout.
+
+    A read timeout bounds the wait between bytes, while `X-Server-Timeout` bounds the whole request, so a response
+    that streams for longer than the read timeout must not be cut off by the server. The local timeout stays pinned
+    to the read timeout, and a per-request `timeout` doesn't change the server deadline either.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=read_timeout, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = provider_factory(http_client)
+        http_options = provider.client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+        assert http_options.timeout == read_timeout * 1000
+
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+        await agent.run('What is the capital of France?')
+        await agent.run('What is the capital of France?', model_settings={'timeout': 10})
+
+    assert [request.headers['X-Server-Timeout'] for request in requests] == [server_timeout, server_timeout]
+
+
+async def test_google_server_timeout_header_respects_caller(allow_model_requests: None) -> None:
+    """An `X-Server-Timeout` in `extra_headers` wins, and a client without a timeout gets no server deadline."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+        await agent.run('What is the capital of France?', model_settings={'extra_headers': {'x-server-timeout': '90'}})
+
+        client = Client(api_key='test-key', http_options=HttpOptions(httpx_async_client=http_client))
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    assert [request.headers.get_list('X-Server-Timeout') for request in requests] == [['90'], []]
+
+
+async def test_google_sends_one_user_agent(allow_model_requests: None, provider_factory: GoogleProviderFactory) -> None:
+    """google-genai adds its label to a lowercase `user-agent`; any other casing goes out as a second header."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(get_user_agent())
+
+
+@pytest.mark.parametrize(
+    'user_agent_header,expected',
+    [
+        ('User-Agent', ['google-genai', 'support-bot']),
+        ('user-agent', ['google-genai support-bot', 'pydantic-ai']),
+        ('USER-AGENT', ['google-genai', 'pydantic-ai', 'support-bot']),
+    ],
+)
+async def test_google_extra_headers_user_agent_goes_out_as_given(
+    allow_model_requests: None, provider_factory: GoogleProviderFactory, user_agent_header: str, expected: list[str]
+) -> None:
+    """A user-agent in `extra_headers` goes out as given, and only the exact spelling `User-Agent` replaces ours."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    settings: GoogleModelSettings = {'extra_headers': {user_agent_header: 'support-bot'}}
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    user_agents = [
+        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value).replace(get_user_agent(), 'pydantic-ai')
+        for value in requests[0].headers.get_list('user-agent')
+    ]
+    assert user_agents == expected
+
+
+@pytest.mark.parametrize('vertexai', [False, True], ids=['google', 'google-cloud'])
+async def test_google_keeps_user_built_client_user_agent(allow_model_requests: None, vertexai: bool) -> None:
+    """A user-agent the user sets on their own client goes out on the same line as ours."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        http_options = HttpOptions(httpx_async_client=http_client, headers={'user-agent': 'my-app'})
+        client = Client(vertexai=vertexai, api_key='test-key', http_options=http_options)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(f' my-app {get_user_agent()}')
+
+
+def test_google_provider_client_headers_have_no_server_timeout(provider_factory: GoogleProviderFactory) -> None:
+    """The server deadline is set per model request, not on the client, whose headers the Live API handshake sends."""
+    http_options = provider_factory(None).client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.headers is not None
+    assert 'X-Server-Timeout' not in http_options.headers
+
+
+async def test_google_provider_warns_on_default_httpx_timeout(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        with pytest.warns(UserWarning, match="httpx's default 5-second timeout") as record:
+            provider_factory(http_client)
+    assert record[0].filename == __file__
+
+
+async def test_google_provider_does_not_warn_on_custom_timeout(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient(timeout=httpx2.Timeout(5, read=600)) as http_client:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            provider_factory(http_client)
 
 
 def _google_provider_from_client(client: Client) -> BaseGoogleProvider:
