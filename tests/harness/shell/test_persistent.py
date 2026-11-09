@@ -105,8 +105,8 @@ class Recorder(AbstractCapability[None]):
         return last
 
 
-class SlowStatus(LocalWorkspaceBackend):
-    """Records each call, and answers each read of a job's status `delay` seconds late, as a remote workspace does."""
+class SlowReads(LocalWorkspaceBackend):
+    """Records each call, and answers each file read (a job's status) `delay` seconds late, as a remote workspace does."""
 
     def __init__(self, working_dir: Path, delay: float) -> None:
         super().__init__(working_dir)
@@ -115,8 +115,7 @@ class SlowStatus(LocalWorkspaceBackend):
 
     async def read_bytes(self, path: str) -> bytes:
         self.calls.append(f'read_bytes {Path(path).name}')
-        if path.endswith('/status.json'):
-            await anyio.sleep(self.delay)
+        await anyio.sleep(self.delay)
         return await super().read_bytes(path)
 
     async def stat(self, path: str) -> FileEntry:
@@ -184,7 +183,7 @@ class TestShellTool:
         for delay in (0, 0.2):
             work = tmp_path / str(delay)
             work.mkdir()
-            workspace = SlowStatus(work, delay)
+            workspace = SlowReads(work, delay)
             capability = Shell[None](denied_commands=[], tools=['shell'])
             output = await call_tool(
                 [capability], 'shell', {'command': 'sleep 30', 'timeout': 0.3}, workspace=workspace
