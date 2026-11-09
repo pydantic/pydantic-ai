@@ -27,7 +27,7 @@ import secrets
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
@@ -224,9 +224,10 @@ async def wait_for_external_event(
     if in_durable_unit():
         raise UserError(
             '`wait_for_external_event()` was called from inside a durable unit, such as a tool call or an '
-            '`announce` callback. The wait has to be recorded by the durable run itself, so call it from code '
-            'that runs in the run, such as a `handle_deferred_tool_calls` capability hook, or resolve the call '
-            'with `AwaitApproval`.'
+            '`announce` callback. The wait has to be recorded by the durable run itself, so resolve the call '
+            'with `AwaitApproval`, or call it from a `handle_deferred_tool_calls` capability hook only outside '
+            'durable runs or on an engine that supports waiting for external events, such as AWS Lambda durable '
+            'functions with `AWSLambdaDurability`.'
         )
     waiter = _current_waiter.get()
     if waiter is None:
@@ -301,7 +302,10 @@ def _settle(token: str, *, payload: JsonValue = None, error: ExternalEventError 
         pending.payload = payload
         pending.error = error
         pending.resolved = True
-    pending.wake()
+    # The outcome is settled, so a wait that ended by timeout or cancellation in the meantime, and whose
+    # event loop has since closed, needs no waking. Trio's `RunFinishedError` is a `RuntimeError` too.
+    with suppress(RuntimeError):
+        pending.wake()
 
 
 def _check_timeout(timeout: timedelta | None) -> None:

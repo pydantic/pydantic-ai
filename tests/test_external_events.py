@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import CallDeferred, UserError
 from pydantic_ai.external_events import (
     ExternalEventError,
     ExternalEventWaiter,
+    _pending_events,  # pyright: ignore[reportPrivateUsage]
     external_event_scope,
     fail_external_event,
     resolve_external_event,
@@ -382,6 +383,24 @@ class TestInProcess:
             resolve_external_event(token, {'ids': ('call-1', 'call-2')})
 
         assert await wait_for_external_event('review', announce=announce) == {'ids': ['call-1', 'call-2']}
+
+    async def test_a_resolution_that_lands_as_the_timeout_fires_still_counts(self) -> None:
+        """The resolver was told it succeeded, so the wait returns its payload rather than timing out.
+
+        The wait's wake-up is replaced by one that fails the way it does once the waiting loop has
+        closed, so the wait only ends by its timeout, after the resolution was settled.
+        """
+
+        def closed_loop() -> None:
+            raise RuntimeError('Event loop is closed')
+
+        def announce(token: str) -> None:
+            _pending_events[token].wake = closed_loop
+            resolve_external_event(token, 'late')
+            with pytest.raises(UserError, match='No wait in this process has this token'):
+                resolve_external_event(token, 'again')
+
+        assert await wait_for_external_event('review', announce=announce, timeout=timedelta(milliseconds=1)) == 'late'
 
     def test_an_unknown_token_is_rejected(self) -> None:
         with pytest.raises(
