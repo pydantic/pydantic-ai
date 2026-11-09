@@ -461,7 +461,8 @@ def test_special_tokens_in_a_framed_body_are_broken_and_operator_text_is_not() -
     data = FetchedPagePart(content=forged, source=ToolResultSource(tool_name='fetch'), url='u')
     instruction = NudgePart(content=OperatorText(forged), source=OperatorSource())
     downgraded = NudgePart(content=OperatorText(forged), source=UserSource())
-    request = ModelRequest(parts=[data, instruction, downgraded])
+    plain = FetchedPagePart(content='No tokens here.', source=ToolResultSource(tool_name='fetch'), url='p')
+    request = ModelRequest(parts=[data, instruction, downgraded, plain])
 
     broken = break_special_tokens_in_messages(
         [request], ModelProfile(may_tokenize_special_tokens_in_content=True), lambda response, part: True
@@ -474,7 +475,10 @@ def test_special_tokens_in_a_framed_body_are_broken_and_operator_text_is_not() -
         False,
         True,
         False,
+        False,
     ]
+    # A body with no token is sent as the stored part.
+    assert prepared.parts[3] is plain
     # The stored parts are left as they were.
     assert data.content == forged and downgraded.content == forged
 
