@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import math
 import weakref
 from collections.abc import Iterator, Sequence
+from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field, replace
 from itertools import accumulate
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
@@ -111,8 +112,9 @@ at it a whole call at a time, so one's clicks and typing never land between anot
 another loop, so calls on separate event loops, such as durable units on separate loops, don't take turns. A lock goes
 once no call holds or waits for it."""
 
-_SEEN_RESTARTS: weakref.WeakKeyDictionary[object, int] = weakref.WeakKeyDictionary()
-"""Each display's restart count when its last `computer` call ended, in this process."""
+_SEEN_RESTARTS: weakref.WeakKeyDictionary[object, dict[str | None, int]] = weakref.WeakKeyDictionary()
+"""For each display, its restart count when each run's last `computer` call took its screenshot, in this process, so
+each run sharing a screen is told of a restart, including one between its calls."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
@@ -418,26 +420,32 @@ def _display(ctx: RunContext[Any]) -> object | None:
     return backend.display if isinstance(backend, SupportsDisplay) else None
 
 
-def _restarted(ctx: RunContext[Any]) -> bool:
-    """Whether the display restarted since its last `computer` call ended, or during this one, if it reports that.
+def _restarts_before(ctx: RunContext[Any]) -> int | None:
+    """The display's restart count to compare with once this call has its screenshot, if it reports restarts.
 
-    Counting from the end of the last call catches a restart between calls too, such as one started by reading the
-    display size before a model request.
+    That's the count when this run's last call took its screenshot, so a restart between calls is caught too, such as
+    one started by reading the display size before a model request. A run's first call counts from now, and so does
+    every call on a display that can't be weakly referenced and hashed.
     """
     display = _display(ctx)
     if not isinstance(display, SupportsRestartCount):
+        return None
+    count = display.restart_count
+    try:
+        return _SEEN_RESTARTS.setdefault(display, {}).setdefault(ctx.run_id, count)
+    except TypeError:
+        return count
+
+
+def _restarted(ctx: RunContext[Any], before: int | None) -> bool:
+    """Whether the display's restart count moved from `before`, recording the count for this run's next call."""
+    display = _display(ctx)
+    if before is None or not isinstance(display, SupportsRestartCount):
         return False
     count = display.restart_count
-    seen = _SEEN_RESTARTS.get(display, count)
-    _SEEN_RESTARTS[display] = count
-    return count != seen
-
-
-def _start_counting_restarts(ctx: RunContext[Any]) -> None:
-    """Count restarts from now for a display no call has used, so one before its first call isn't reported."""
-    display = _display(ctx)
-    if isinstance(display, SupportsRestartCount):
-        _SEEN_RESTARTS.setdefault(display, display.restart_count)
+    with suppress(TypeError):
+        _SEEN_RESTARTS[display][ctx.run_id] = count
+    return count != before
 
 
 async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
@@ -634,7 +642,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
-        _start_counting_restarts(ctx)
+        restarts = _restarts_before(ctx)
         call = _Call(plan.grid, changed=plan.changed)
         if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
             # Also starts a display that stopped, so a restart is known before anything acts.
@@ -652,7 +660,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             actions = pixels
 
         async with _display_lock(ctx):
-            return await self._act_and_look(ctx, actions, call, plan)
+            return await self._act_and_look(ctx, actions, call, plan, restarts)
 
     async def _act_and_look(
         self,
@@ -660,6 +668,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         actions: list[ComputerToolAction],
         call: _Call,
         plan: _Plan,
+        restarts: int | None,
     ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
 
@@ -688,7 +697,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        if _restarted(ctx):
+        if _restarted(ctx, restarts):
             result['display_restarted'] = True
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')

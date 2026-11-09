@@ -484,9 +484,17 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # the last screenshot's size. With `native=False`, every model gets the function tool.
         assert natives == ([ComputerTool(display_size=(1280, 800), optional=True)] if native else [])
 
-    @pytest.mark.parametrize('between_calls', [False, True], ids=['during-a-call', 'between-calls'])
+    @pytest.mark.parametrize(
+        'between_calls, hashable',
+        [
+            pytest.param(False, True, id='during-a-call'),
+            pytest.param(True, True, id='between-calls'),
+            # Such a display is counted from each call's start, so only a restart during a call is caught.
+            pytest.param(False, False, id='during-a-call-on-a-display-that-cannot-be-hashed'),
+        ],
+    )
     async def test_each_call_emits_what_it_did_and_whether_the_display_restarted(
-        self, durability: list[AbstractCapability[Any]], between_calls: bool
+        self, durability: list[AbstractCapability[Any]], between_calls: bool, hashable: bool
     ) -> None:
         class RestartingDisplay(DisplayOnlyBackend):
             """Restarts while it acts, or when its size is read for the second time.
@@ -508,7 +516,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                     self.restart_count += 1
                 return await super().display_size()
 
-        display = RestartingDisplay(InMemoryProvider().backend(None))
+        class UnhashableDisplay(RestartingDisplay):
+            __hash__ = None  # pyright: ignore[reportAssignmentType]
+
+        display = (RestartingDisplay if hashable else UnhashableDisplay)(InMemoryProvider().backend(None))
 
         class SuppliesDisplay(AbstractCapability[Any]):
             def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> RestartingDisplay:
