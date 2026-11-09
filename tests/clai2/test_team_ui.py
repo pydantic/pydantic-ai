@@ -683,3 +683,10 @@ async def test_claims_handed_back_by_the_owner_reach_the_feed() -> None:
 def test_the_cache_reads_nothing_without_a_loop() -> None:
     router = TaskRouter(directory=None)
     assert router.teams.snapshot('conv').board == []
+
+
+def test_a_host_built_outside_the_shell_has_no_team() -> None:
+    from pydantic_clai2.builtin_plugins.web.host_session import HostSession
+
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
+    assert host.team is None and HostSession(host).team is None
