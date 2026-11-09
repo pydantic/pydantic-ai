@@ -346,10 +346,9 @@ or before the request.
 ```python {test="skip"}
 from pydantic_ai import Agent
 
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerSandbox
 
-# `my_desktop_sandbox`: a capability whose workspace has a display (`SupportsDisplay`).
-agent = Agent('test', capabilities=[my_desktop_sandbox, ComputerUse(requires_approval=True)])
+agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(requires_approval=True)])
 ```
 
 Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
