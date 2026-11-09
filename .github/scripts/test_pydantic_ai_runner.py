@@ -2121,7 +2121,7 @@ def test_compiled_workflows_pin_retry_policy():
     for compiled_workflow in workflow_dir.glob('pydantic-ai-*.lock.yml'):
         compiled_text = compiled_workflow.read_text(encoding='utf-8')
         assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 0') == 1
-        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 3') == 1
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: "3"') == 1
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
@@ -3169,16 +3169,18 @@ def test_clai2_engine_names_the_staged_shim_sources():
 def test_compiled_job_limits_and_ui_security_concurrency():
     """gh-aw caps the agent job at 60 minutes and detection at 10 by default; main's compiler capped neither job.
 
-    Stale Issues Finder's 60-minute engine step did not fit the agent cap, and the detector step had 20 minutes.
-    gh-aw gives the detector step its job's budget. UI Security reviewed PRs in parallel.
+    Stale Issues Finder's 60-minute engine step did not fit the agent cap. The OpenCode detector step stops
+    before its 20-minute job does, so the conclusion step still records a missing verdict. UI Security
+    reviewed PRs in parallel.
     """
     workflows = Path(__file__).parent.parent / 'workflows'
     ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']
     for lock in sorted(workflows.glob('pydantic-ai-*.lock.yml')):
         jobs = yaml.safe_load(lock.read_text(encoding='utf-8'))['jobs']
         assert jobs['agent']['timeout-minutes'] == 360, lock.name
-        [detector] = [step for step in jobs['detection']['steps'] if str(step.get('name', '')).startswith('Execute')]
-        assert jobs['detection']['timeout-minutes'] == detector['timeout-minutes'] == 20, lock.name
+        [detector] = [step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution']
+        assert jobs['detection']['timeout-minutes'] == 20, lock.name
+        assert detector['timeout-minutes'] == 15, lock.name
         group = jobs['agent']['concurrency']['group']
         assert group.startswith('gh-aw-pydantic-ai-${{ github.workflow }}'), lock.name
         assert f"github.workflow == '{ui_security}' && format('-{{0}}', github.event.pull_request.number" in group
