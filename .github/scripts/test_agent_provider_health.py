@@ -2340,7 +2340,7 @@ _PLAN_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
 
 
 def _agent_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException | None) -> Path:
-    """Write the engine's terminal `session.result` for a scheduled run, with the metadata the workflow agent records."""
+    """Write the engine's terminal `session.result` for a scheduled run, with the workflow agent's metadata."""
     workflow, task_key, trigger_event = _SCHEDULED_RUN
     monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
     monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
@@ -2758,21 +2758,23 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             )
             for name in health.AGENT_START_HEALTH_STEPS
         ),
-        *(
-            (
-                [
-                    {
-                        'name': 'agent',
-                        'conclusion': 'failure',
-                        'steps': [
-                            {'name': 'Execute Claude Code CLI', 'conclusion': 'success'},
-                            {'name': name, 'conclusion': 'failure'},
-                        ],
-                    }
-                ],
-                None,
-            )
-            for name in health.HOST_RESULT_STEPS
+        # A failed host record job only leaves the monitor without that record.
+        (
+            [
+                {
+                    'name': 'Record the terminal agent result on the host',
+                    'conclusion': 'failure',
+                    'steps': [
+                        {'name': "Download the agent's terminal session record", 'conclusion': 'success'},
+                        {'name': 'Record the terminal agent result', 'conclusion': 'failure'},
+                        {
+                            'name': 'Add the host-recorded agent result to the health decision artifact',
+                            'conclusion': 'skipped',
+                        },
+                    ],
+                }
+            ],
+            None,
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),

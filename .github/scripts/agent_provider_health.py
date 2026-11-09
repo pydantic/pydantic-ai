@@ -34,12 +34,6 @@ AGENT_START_HEALTH_STEPS = (
     'Replace health decision for the incident monitor',
     'Stop before inference on a blocked provider-health decision',
 )
-# The host steps `shared/provider-health.md` adds after inference: record the terminal result, then upload it with
-# the health decision. `agentic_workflow_guard.py` requires these names in every compiled lock.
-HOST_RESULT_STEPS = (
-    'Record the terminal agent result on the host',
-    'Add the host-recorded agent result to the health decision artifact',
-)
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
 # GitHub withholds repository secrets from these events on fork and Dependabot pull requests. A gate on any other
@@ -974,8 +968,7 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
             step = parsed[index]
             name = _string(step.get('name')) if step is not None else None
             # The agent-start recheck fails closed. Its replaced artifact carries a block; an error is a gate error.
-            # A failed host result step only leaves the monitor without that record.
-            if name in (*AGENT_START_HEALTH_STEPS, *HOST_RESULT_STEPS):
+            if name in AGENT_START_HEALTH_STEPS:
                 continue
             if name == 'Restore full history and tags for dynamic versioning' or (
                 _string(job.get('name')) == 'pre_activation' and name == 'Setup Scripts'

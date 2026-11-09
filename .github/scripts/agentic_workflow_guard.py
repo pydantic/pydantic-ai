@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
-from agent_provider_health import AGENT_START_HEALTH_STEPS, HOST_RESULT_STEPS
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -118,6 +118,8 @@ AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 # `daily-ai-credits-workflow-guardrail` in v0.92.6.
 DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
+# The job `shared/provider-health.md` adds after the agent job to record its terminal result on the host.
+HOST_RESULT_JOB = 'provider_health_record'
 # The agent-start recheck fetches the controller through the contents API with no `ref`,
 # which serves the default branch, then runs `check` from the file it fetched. A workspace
 # copy can come from the PR head or its base branch.
@@ -1212,61 +1214,82 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
 
 
 def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """Z.AI agent jobs must record the terminal result on the host after inference and upload it with the decision."""
+    """Z.AI workflows must record the agent's terminal result in a host job that also follows a failed agent job."""
     violations: list[Violation] = []
-    record_name, upload_name = HOST_RESULT_STEPS
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         lock = source.with_suffix('.lock.yml')
         if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
             continue
         jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
         gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
-        agent_steps = _as_mapping(jobs.get('agent')).get('steps')
         gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
-        steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
         gate_env = _as_mapping(next((step.get('env') for step in gate if step.get('id') == 'health'), None))
-        execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), len(steps))
-        recheck = next(
-            (
-                (match['path'], step.get('id'))
-                for step in steps[:execution]
-                if (match := AGENT_START_HEALTH_CHECK.search(str(step.get('run', ''))))
-            ),
-            None,
-        )
-        fetched, recheck_id = recheck if recheck is not None else (None, None)
-        # Both steps must run after a failed engine step, the run whose result matters most, once the recheck passed.
-        after_failure = _normalized_condition(f"always() && steps.{recheck_id}.outputs.ready == 'true'")
-        after = steps[execution + 1 :]
-        record = next((i for i, step in enumerate(after) if step.get('name') == record_name), None)
-        record_env = _as_mapping(after[record].get('env')) if record is not None else {}
-        # The record step needs the gate's identity to match the agent's result, and the key for its own check.
-        identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
-        recorded = (
-            record is not None
-            and fetched is not None
-            and _normalized_condition(str(after[record].get('if', ''))) == after_failure
-            and f'python3 -I {fetched} record ' in str(after[record].get('run', ''))
-            and bool(gate_env)
-            and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
-        )
-        uploaded = record is not None and any(
-            step.get('name') == upload_name
-            and _normalized_condition(str(step.get('if', ''))) == after_failure
-            and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
-            for step in after[record + 1 :]
-        )
-        if not recorded or not uploaded:
+        if not gate_env or not _records_host_result(_as_mapping(jobs.get(HOST_RESULT_JOB)), gate_env):
             violations.append(
                 Violation(
                     str(lock),
                     'provider-health-host-result',
-                    'After engine execution, including a failed one, the agent job must run `record` from the fetched '
-                    'controller with the gate identity and Z.AI key, then upload `run-result.json` with the health '
-                    'decision. The steps must keep the names in `agent_provider_health.HOST_RESULT_STEPS`.',
+                    f'The `{HOST_RESULT_JOB}` job must follow the agent job, including a failed one, check out only '
+                    "the default-branch controller, download this run's `agent` artifact, and run `record` with the "
+                    'gate identity and the Z.AI key, which no other step of the job holds. It must then upload '
+                    '`run-result.json` with the health decision, and a failed record must not fail the run.',
                 )
             )
     return violations
+
+
+def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, object]) -> bool:
+    """Whether `job` is the host record job `check_provider_health_host_result` requires."""
+    controller = '.github/scripts/agent_provider_health.py'
+    raw_steps = job.get('steps')
+    steps = [_as_mapping(step) for step in raw_steps] if _is_object_sequence(raw_steps) else []
+    checkouts = [step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')]
+    checkout = _as_mapping(checkouts[0].get('with')) if len(checkouts) == 1 else {}
+    # This run's `agent` artifact only: no other artifact, run or repository.
+    download = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if str(step.get('uses', '')).startswith('actions/download-artifact@')
+            and _as_mapping(step.get('with')) == {'name': 'agent', 'path': 'agent'}
+        ),
+        None,
+    )
+    record = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
+            in ' '.join(str(step.get('run', '')).replace('\\\n', ' ').split()) + ' '
+        ),
+        None,
+    )
+    if download is None or record is None or record < download:
+        return False
+    record_env = _as_mapping(steps[record].get('env'))
+    identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
+    # gh-aw wraps the authored condition in its clean-detection guard; the authored part also follows a failed agent.
+    after_agent = _normalized_condition(
+        "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
+        "((!cancelled()) && needs.agent.result != 'skipped') }}"
+    )
+    return (
+        'agent' in _as_strings(job.get('needs'))
+        and _normalized_condition(str(job.get('if', ''))) == after_agent
+        and job.get('continue-on-error') is True
+        and checkout.get('repository') == '${{ github.repository }}'
+        and checkout.get('ref') == '${{ github.event.repository.default_branch }}'
+        and checkout.get('persist-credentials') is False
+        and checkout.get('sparse-checkout') == controller
+        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
+        and all('secrets.' not in str(step) for i, step in enumerate(steps) if i != record)
+        and any(
+            str(step.get('uses', '')).startswith('actions/upload-artifact@')
+            and _as_mapping(step.get('with')).get('name') == 'provider-health'
+            and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
+            for step in steps[record + 1 :]
+        )
+    )
 
 
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901

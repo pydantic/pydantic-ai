@@ -352,14 +352,19 @@ A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_faile
 then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
 these host steps. The agent container gets no Z.AI credential beyond the engine's own.
 
-The monitor reads a run's terminal result from a record the agent job writes on the host,
-not from the agent's own output. After inference, `shared/provider-health.md` runs the
-controller the recheck fetched, as `record`, outside the agent container. That step reads
-the engine's terminal `session.result` from `agent-session.jsonl` and adds `run-result.json`
-to the `provider-health` artifact. The record keeps the failure kind the runner reported.
-It marks a provider-scope kind confirmed only when the step's own Z.ai check observes the
-same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted. Without a valid record, because the run predates this step or the
-step failed, the monitor reads the `agent` artifact, which never confirms a provider failure.
+The monitor reads a run's terminal result from a record a host job writes, not from the
+agent's own output. After the agent job, including a failed one, `shared/provider-health.md`
+runs the `provider_health_record` job. It checks out the default-branch controller, reads the
+engine's terminal `session.result` from this run's `agent` artifact, and adds `run-result.json`
+to the `provider-health` artifact. gh-aw's parser wrote that `agent-session.jsonl` on the agent
+host from the engine's verified recording. The record keeps the failure kind the runner
+reported. It marks a provider-scope kind confirmed only when the job's own Z.ai check observes
+the same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted.
+Only the job's `record` step holds `ZAI_API_KEY`: gh-aw allows no secret in the agent job's
+post-steps. gh-aw runs the job only after threat detection passes cleanly, and detection skips
+the model when the agent left no output or patch. A failed record does not fail the run.
+Without a valid record, because the run predates the job, detection did not pass or the record
+failed, the monitor reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted
 completion without a concurrency group and stops before it reads incidents. The `monitor`
@@ -478,7 +483,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, or that does not record its terminal result on the host after it, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |

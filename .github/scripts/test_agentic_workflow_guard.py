@@ -22,8 +22,9 @@ from pydantic import TypeAdapter
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agentic_workflow_guard
-from agent_provider_health import AGENT_START_HEALTH_STEPS, HOST_RESULT_STEPS
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 from agentic_workflow_guard import (
+    HOST_RESULT_JOB,
     Violation,
     changed_files,
     check_ai_credits_accounting,
@@ -1925,131 +1926,137 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
 
 _RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
 _RECORD_RUN = (
-    'python3 -I "$RUNNER_TEMP/provider-health/agent_provider_health.py" record \\\n'
-    '  --agent-session /tmp/gh-aw/agent-session.jsonl \\\n'
-    '  --output "$RUNNER_TEMP/provider-health/run-result.json"\n'
+    'python3 -I .github/scripts/agent_provider_health.py record \\\n'
+    '  --agent-session agent/agent-session.jsonl \\\n'
+    '  --output provider-health/run-result.json\n'
 )
+# The authored condition inside gh-aw's clean-detection guard, as the compiled lock carries it.
+_AFTER_AGENT = (
+    "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
+    "((!cancelled()) && needs.agent.result != 'skipped') }}"
+)
+_AGENT_DOWNLOAD: dict[str, str] = {'name': 'agent', 'path': 'agent'}
+_RECORD_UPLOAD_PATH = 'provider-health/provider-health.json\nprovider-health/run-result.json\n'
 
 
-_AFTER_RECHECK = "always() && steps.agent_start_health.outputs.ready == 'true'"
-
-
-def _host_result_steps(
+def _host_result_job(
     *,
+    needs: tuple[str, ...] = ('agent', 'detection'),
+    condition: str = _AFTER_AGENT,
+    continue_on_error: bool = True,
+    checkout_ref: str = '${{ github.event.repository.default_branch }}',
+    download: dict[str, str] = _AGENT_DOWNLOAD,
+    download_env: dict[str, str] | None = None,
     run: str = _RECORD_RUN,
     env: dict[str, str] = _RECORD_ENV,
-    upload: str = 'run-result.json',
-    record_if: str = _AFTER_RECHECK,
-    upload_if: str = _AFTER_RECHECK,
-) -> list[dict[str, object]]:
-    return [
-        {'name': HOST_RESULT_STEPS[0], 'if': record_if, 'continue-on-error': True, 'env': env, 'run': run},
-        {
-            'name': HOST_RESULT_STEPS[1],
-            'if': upload_if,
-            'uses': 'actions/upload-artifact',
-            'with': {'name': 'provider-health', 'path': f'provider-health.json\n{upload}\n'},
-        },
-    ]
+    upload_path: str = _RECORD_UPLOAD_PATH,
+    upload_first: bool = False,
+) -> dict[str, object]:
+    """The record job as gh-aw compiles it from `shared/provider-health.md`, trimmed, with one part changed."""
+    download_step: dict[str, object] = {
+        'name': "Download the agent's terminal session record",
+        'uses': 'actions/download-artifact@sha',
+        'with': download,
+    }
+    if download_env is not None:
+        download_step['env'] = download_env
+    record: dict[str, object] = {'name': 'Record the terminal agent result', 'run': run, 'env': env}
+    upload: dict[str, object] = {
+        'name': 'Add the host-recorded agent result to the health decision artifact',
+        'uses': 'actions/upload-artifact@sha',
+        'with': {'name': 'provider-health', 'overwrite': True, 'path': upload_path},
+    }
+    return {
+        'needs': list(needs),
+        'if': condition,
+        'continue-on-error': continue_on_error,
+        'steps': [
+            {
+                'uses': 'actions/checkout@sha',
+                'with': {
+                    'persist-credentials': False,
+                    'ref': checkout_ref,
+                    'repository': '${{ github.repository }}',
+                    'sparse-checkout': '.github/scripts/agent_provider_health.py',
+                },
+            },
+            download_step,
+            {'name': 'Download the health decision the run acted on', 'uses': 'actions/download-artifact@sha'},
+            *([upload, record] if upload_first else [record, upload]),
+        ],
+    }
 
 
-def test_provider_health_host_result_accepts_the_shipped_record_steps(tmp_path: Path):
+def _write_host_result_workflow(workflows: Path, record_job: dict[str, object] | None) -> None:
+    source = _write(
+        workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
+    )
+    jobs: dict[str, object] = {
+        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'agent': {'needs': ['activation', 'provider_health'], 'steps': _SHIPPED_AGENT_STEPS},
+        'detection': {'needs': ['agent']},
+    }
+    if record_job is not None:
+        jobs[HOST_RESULT_JOB] = record_job
+    _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
+
+
+def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
-    _write_agent_start_workflow(workflows, [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps()])
+    _write_host_result_workflow(workflows, _host_result_job())
 
     assert check_provider_health_host_result(workflows) == []
 
 
 @pytest.mark.parametrize(
-    'agent_steps',
+    'record_job',
     [
-        pytest.param([*_agent_start_steps(), *_SHIPPED_AGENT_STEPS], id='no-record'),
-        pytest.param([*_agent_start_steps(), *_host_result_steps(), *_SHIPPED_AGENT_STEPS], id='before-execution'),
+        pytest.param(None, id='no-record-job'),
+        pytest.param(_host_result_job(needs=('detection',)), id='not-after-agent'),
         pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(
-                    run=_RECORD_RUN.replace(
-                        '"$RUNNER_TEMP/provider-health/agent_provider_health.py"',
-                        '.github/scripts/agent_provider_health.py',
-                        1,
-                    )
-                ),
-            ],
-            id='workspace-controller',
+            _host_result_job(condition=_AFTER_AGENT.replace("!= 'skipped'", "== 'success'")),
+            id='skipped-after-a-failed-agent',
         ),
         pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(run=_RECORD_RUN.replace('python3 -I ', 'python3 ', 1)),
-            ],
-            id='not-isolated',
+            _host_result_job(
+                condition="${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == "
+                "'true' && (!((!cancelled()) && needs.agent.result != 'skipped')) }}"
+            ),
+            id='negated-condition',
+        ),
+        pytest.param(_host_result_job(continue_on_error=False), id='record-failure-fails-the-run'),
+        pytest.param(
+            _host_result_job(checkout_ref='${{ github.event.pull_request.head.sha }}'), id='pr-head-controller'
         ),
         pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
-            ],
+            _host_result_job(download={'name': 'agent-output-fallback', 'path': 'agent'}), id='other-artifact'
+        ),
+        pytest.param(_host_result_job(download={**_AGENT_DOWNLOAD, 'run-id': '${{ inputs.run_id }}'}), id='other-run'),
+        pytest.param(
+            _host_result_job(run=_RECORD_RUN.replace('agent/agent-session.jsonl', 'agent/agent-stdio.log')),
+            id='reads-the-stdio-log',
+        ),
+        pytest.param(_host_result_job(run=_RECORD_RUN.replace('python3 -I ', 'python3 ', 1)), id='not-isolated'),
+        pytest.param(
+            _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
             id='no-zai-key',
         ),
         pytest.param(
-            [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps(upload='agent-stdio.log')],
-            id='record-not-uploaded',
+            _host_result_job(env={**_RECORD_ENV, 'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}'}),
+            id='identity-differs-from-gate',
         ),
         pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(record_if="steps.agent_start_health.outputs.ready == 'true'"),
-            ],
-            id='record-skipped-after-failure',
+            _host_result_job(download_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-another-step'
         ),
-        pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(record_if=f'!{_AFTER_RECHECK}'),
-            ],
-            id='record-negates-always',
-        ),
-        pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(record_if=f'!({_AFTER_RECHECK})'),
-            ],
-            id='record-negates-the-condition',
-        ),
-        pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(upload_if=f'! {_AFTER_RECHECK}'),
-            ],
-            id='upload-negates-always',
-        ),
-        pytest.param(
-            [
-                *_agent_start_steps(),
-                *_SHIPPED_AGENT_STEPS,
-                *_host_result_steps(upload_if="steps.agent_start_health.outputs.ready == 'true'"),
-            ],
-            id='upload-skipped-after-failure',
-        ),
-        pytest.param(
-            [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS, *_host_result_steps()[::-1]],
-            id='upload-before-record',
-        ),
+        pytest.param(_host_result_job(upload_path='provider-health/provider-health.json\n'), id='record-not-uploaded'),
+        pytest.param(_host_result_job(upload_first=True), id='upload-before-record'),
     ],
 )
 def test_provider_health_host_result_rejects_a_record_the_monitor_cannot_trust(
-    tmp_path: Path, agent_steps: list[dict[str, object]]
+    tmp_path: Path, record_job: dict[str, object] | None
 ):
     workflows = tmp_path / '.github' / 'workflows'
-    _write_agent_start_workflow(workflows, agent_steps)
+    _write_host_result_workflow(workflows, record_job)
 
     assert [violation.check for violation in check_provider_health_host_result(workflows)] == [
         'provider-health-host-result'
