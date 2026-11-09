@@ -985,7 +985,6 @@ class FileSearchTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses (mapped to `max_num_results`; OpenAI accepts 1 to 50)
-    * Google (mapped to `top_k`, the number of retrieved chunks)
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """
 

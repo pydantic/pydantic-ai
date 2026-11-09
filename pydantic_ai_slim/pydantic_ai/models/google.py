@@ -1007,7 +1007,8 @@ class GoogleModel(Model[Client]):
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
                 elif isinstance(tool, FileSearchTool):
-                    tools.append(ToolDict(file_search=_map_file_search_tool(tool)))
+                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
+                    tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
@@ -2063,13 +2064,6 @@ class GeminiStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
-
-
-def _map_file_search_tool(tool: FileSearchTool) -> FileSearchDict:
-    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
-    if tool.max_num_results is not None:
-        file_search_config['top_k'] = tool.max_num_results
-    return file_search_config
 
 
 def _content_model_response(
