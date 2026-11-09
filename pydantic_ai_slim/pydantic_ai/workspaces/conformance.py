@@ -626,6 +626,8 @@ class WorkspaceBackendSuite:
 
     async def test_an_unknown_action_type_is_refused(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)
+        # Looked at first, like the model does, so a display that starts on first use is up before the action.
+        await display.display_size()
         with pytest.raises(WorkspaceUnsupportedActionError):
             await display.act(_UnknownAction())  # pyright: ignore[reportArgumentType]
 
