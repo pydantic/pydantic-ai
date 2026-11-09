@@ -51,8 +51,11 @@ def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | 
     """The calls a `computer` call came from, or `None` to send it back as a plain call.
 
     A history can come back from storage or a UI, so what it kept is validated, and one call per count is required.
+    The part's class isn't: a call whose actions don't validate, such as one Claude asked for with an option the
+    `computer` tool lacks, is a plain `ToolCallPart` once the history has been through JSON, and still goes back as
+    the calls it came from.
     """
-    if not isinstance(part, ComputerCallPart) or part.provider_name != provider_name:
+    if part.provider_name != provider_name:
         return None
     try:
         replay = _REPLAY.validate_python(part.provider_details)

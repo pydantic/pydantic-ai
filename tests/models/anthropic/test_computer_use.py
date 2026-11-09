@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     PartStartEvent,
@@ -25,7 +27,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, PressKeys
 
@@ -59,7 +61,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.anthropic._computer import map_computer_member
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
@@ -291,19 +293,26 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
     ]
 
 
+def _without_computer_tool(profile: ModelProfile) -> ModelProfile:
+    """A model without a computer use tool, whose profile, like one that doesn't list its native tools, lists them all."""
+    trimmed = profile.copy()
+    trimmed.pop('supported_native_tools', None)
+    return merge_profile(trimmed, AnthropicModelProfile(anthropic_computer_tool_version=None))
+
+
 @pytest.mark.parametrize(
-    'model_name, native',
+    'native, profile',
     [
-        pytest.param('claude-3-7-sonnet-latest', True, id='a-model-without-a-computer-use-tool'),
+        pytest.param(True, _without_computer_tool, id='a-model-without-a-computer-use-tool'),
         # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
-        pytest.param('claude-sonnet-5-5', False, id='a-tool-that-opts-out'),
+        pytest.param(False, None, id='a-tool-that-opts-out'),
     ],
 )
 async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when_it_opts_out(
-    allow_model_requests: None, model_name: str, native: bool
+    allow_model_requests: None, native: bool, profile: Callable[[ModelProfile], ModelProfile] | None
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
-    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client), profile=profile)
     capabilities = [computer_capability(native=native), InMemoryProvider().capability()]
     await Agent(model, capabilities=capabilities).run('Go.')
 
@@ -314,14 +323,8 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
 async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
 
-    def every_native_tool(profile: ModelProfile) -> ModelProfile:
-        # A profile that doesn't list its native tools lists every type, `ComputerTool` included.
-        trimmed = profile.copy()
-        trimmed.pop('supported_native_tools', None)
-        return trimmed
-
     model = AnthropicModel(
-        'claude-3-7-sonnet-latest', provider=AnthropicProvider(anthropic_client=client), profile=every_native_tool
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client), profile=_without_computer_tool
     )
     agent = Agent(
         model,
@@ -719,6 +722,58 @@ async def test_a_result_answers_each_member_call(
     sent = body['messages'][-1]['content']
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert [[b['text'] if b['type'] == 'text' else b['type'] for b in r['content']] for r in sent] == results
+
+
+async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
+    allow_model_requests: None,
+) -> None:
+    """A wait longer than the tool takes is sent back for a retry; once stored, its call is no longer typed."""
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    block = {'id': 'toolu_1', 'name': 'wait', 'input': {'duration': 60}}
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'wait', 'seconds': 60}]},
+        tool_call_id='toolu_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='anthropic',
+        provider_details={
+            'computer_blocks': [block],
+            'computer_tool': 'computer_toolset_20260801',
+            'computer_action_counts': [1],
+        },
+    )
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest.user_text_prompt('Wait.'),
+                ModelResponse(parts=[call], provider_name='anthropic'),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            'computer',
+                            'At most 30 seconds.',
+                            tool_call_id='toolu_1',
+                            tool_kind=COMPUTER_KIND.id,
+                            outcome='retried',
+                        )
+                    ]
+                ),
+            ]
+        )
+    )
+    assert not isinstance(history[1].parts[0], ComputerCallPart)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (body,) = get_mock_chat_completion_kwargs(client)
+    (tool_use,) = body['messages'][1]['content']
+    assert (tool_use['name'], tool_use.get('toolset_name')) == ('wait', 'computer')
+    (result,) = body['messages'][2]['content']
+    assert (result['tool_use_id'], result['is_error']) == ('toolu_1', True)
 
 
 async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow_model_requests: None) -> None:
