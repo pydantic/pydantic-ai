@@ -1877,7 +1877,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
-        and moves the current request's ones to the end of the last request.
+        and moves the current request's ones to the end of the last request. On every profile, a downgraded
+        request-scoped capability part goes there too once rendered, and is left out once answered.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`; a request-scoped one the API clears itself
@@ -2042,8 +2043,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
         )
 
-        if not clears_request_scoped_prompts:
-            messages = _move_request_scoped_prompts_to_tail(messages)
+        messages = _move_request_scoped_prompts_to_tail(messages, self._goes_in_request_scoped_tail)
 
         if not inline_system:
             unwrapped = messages
@@ -2068,6 +2068,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _goes_in_request_scoped_tail(self, part: ModelRequestPart) -> bool:
+        """Whether `part` goes last in the current request, because the next request won't send it.
+
+        A downgraded request-scoped capability part's frame always does, since no provider clears it. Its notes do too,
+        unless this adapter sends a request's system entries after its user turn: they're past the frame there, and
+        `_system_prompts_placed_for_notes` has placed them among the request's other system prompts. A request-scoped
+        system prompt does on a model that can't clear it.
+        """
+        if isinstance(part, _RenderedCapabilityBody):
+            return part.request_scoped
+        if isinstance(part, _FrameworkNote | _RenderedCapabilityNote):
+            return part.request_scoped and not (
+                self.profile.get('supports_inline_system_prompts', False) and self._system_entries_follow_user_turn
+            )
+        return not self.profile.get('supports_request_scoped_system_prompts', False) and _is_request_scoped(part)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -2248,6 +2264,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 has_genuine=has_genuine,
                 genuine_change=genuine_change,
                 naming=part.naming if isinstance(part, _RenderedCapabilityBody) else LookalikeNaming(),
+                request_scoped=isinstance(part, _RenderedCapabilityBody) and part.request_scoped,
             )
             framed.extend(notes)
             parts.extend([part, *notes] if after else [*notes, part])
@@ -2313,20 +2330,25 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         has_genuine: bool,
         genuine_change: bool,
         naming: LookalikeNaming,
+        request_scoped: bool,
     ) -> list[_FrameworkNote]:
         """The notes for a user prompt's lookalikes in `request`, one per author.
 
         The user's note names any genuine change in the request; a file's or a frame body's only when the user's text
-        has no lookalike (`genuine_change`). `naming` names a capability part's body and its author.
+        has no lookalike (`genuine_change`). `naming` names a capability part's body and its author, and `request_scoped`
+        says that body goes with its request.
         """
         return [
-            self._lookalike_note(
-                request,
-                source,
-                tags,
-                preceding=preceding,
-                genuine_change=has_genuine if source == 'user' else genuine_change,
-                naming=naming,
+            replace(
+                self._lookalike_note(
+                    request,
+                    source,
+                    tags,
+                    preceding=preceding,
+                    genuine_change=has_genuine if source == 'user' else genuine_change,
+                    naming=naming,
+                ),
+                request_scoped=request_scoped,
             )
             for source, tags in sources
         ]
@@ -2786,6 +2808,9 @@ class _FrameworkAdded:
 @dataclass(repr=False)
 class _FrameworkNote(SystemPromptPart, _FrameworkAdded):
     """A note or the announcement, as a mid-conversation system message."""
+
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether it's about a downgraded request-scoped capability part's frame, which the next request won't send."""
 
 
 @dataclass(repr=False)
@@ -4450,10 +4475,13 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
 
-def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Send the current request's request-scoped prompts last, and record that they're there.
+def _move_request_scoped_prompts_to_tail(
+    messages: list[ModelMessage], goes_in_tail: Callable[[ModelRequestPart], bool]
+) -> list[ModelMessage]:
+    """Send the parts of the current request that the next request won't send last, and record that they're there.
 
-    Runs after `_drop_superseded_request_scoped_prompts`, so every request-scoped part left is current. They
+    `goes_in_tail` picks them out: the rendering of a downgraded request-scoped capability part, and a request-scoped
+    prompt on a model that can't clear it. Answered ones have been left out by now, so every one left is current. They
     move to the end of the last request, where adapters that place cache breakpoints automatically can
     leave them out of the cached prefix: the next request won't contain them, so a breakpoint on one
     would write a cache entry nothing ever reads. How many trailing parts they are is recorded under
@@ -4462,14 +4490,14 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
 
     Returns the original list when there's nothing to move.
     """
-    request_scoped = [
+    tail = [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if _is_request_scoped(part)
+        if goes_in_tail(part)
     ]
-    if not request_scoped:
+    if not tail:
         return messages
     last_index = max(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
     moved: list[ModelMessage] = []
@@ -4477,7 +4505,7 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
         if not isinstance(message, ModelRequest):
             moved.append(message)
             continue
-        parts = [part for part in message.parts if not _is_request_scoped(part)]
+        parts = [part for part in message.parts if not goes_in_tail(part)]
         if index != last_index:
             if len(parts) == len(message.parts):
                 moved.append(message)
@@ -4489,10 +4517,10 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
             **(message.metadata or {}),
             _PYDANTIC_AI_METADATA_KEY: {
                 **(namespace if _utils.is_str_dict(namespace) else {}),
-                _REQUEST_SCOPED_TAIL_KEY: len(request_scoped),
+                _REQUEST_SCOPED_TAIL_KEY: len(tail),
             },
         }
-        moved.append(replace(message, parts=[*parts, *request_scoped], metadata=metadata))
+        moved.append(replace(message, parts=[*parts, *tail], metadata=metadata))
     return moved
 
 
@@ -4517,19 +4545,32 @@ _SuffixItemT = TypeVar('_SuffixItemT')
 
 
 def _request_scoped_suffix_start(  # pyright: ignore[reportUnusedFunction]
-    items: Sequence[_SuffixItemT], texts: tuple[str, ...], text_of: Callable[[_SuffixItemT], str | None]
+    items: Sequence[_SuffixItemT],
+    texts: tuple[str, ...],
+    text_of: Callable[[_SuffixItemT], str | None],
+    *,
+    is_after_tail: Callable[[_SuffixItemT], bool] = lambda _: False,
 ) -> tuple[int, tuple[str, ...]]:
     """Where the wire items rendering the request-scoped `texts` start at the end of `items`, and the texts left unmatched.
 
     `texts` come from `_request_scoped_tail_texts`, in order, and end the request, so they're matched from the end,
     each once: a lasting item with the same text as a reminder, ahead of it, stays before the returned index.
     `text_of` reads an item's text the way the adapter renders a request-scoped prompt, or `None` if it can't be one.
+    `is_after_tail` picks out the items that can sit behind a text and be no part of it: an adapter that sends a
+    request's system messages after its user content sends even a lasting one behind a frame. Skipped while texts are
+    left to match, it stays past the returned index.
     """
     end = len(items)
     remaining = len(texts)
-    while end and remaining and text_of(items[end - 1]) == texts[remaining - 1]:
-        end -= 1
-        remaining -= 1
+    index = end
+    while index and remaining:
+        item = items[index - 1]
+        index -= 1
+        if text_of(item) == texts[remaining - 1]:
+            end = index
+            remaining -= 1
+        elif not is_after_tail(item):
+            break
     return end, texts[:remaining]
 
 
@@ -4539,8 +4580,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     They end the request, so adapters that place a cache breakpoint automatically skip the wire blocks at
     the end of the request carrying these texts, matched from the end in order, and the breakpoint lands on
     the last block the next request will still contain. Matching only that suffix keeps lasting content
-    with the same text as a reminder in the cached prefix. Empty for a model that clears request-scoped
-    prompts itself; its adapter recognizes them on the wire instead.
+    with the same text as a reminder in the cached prefix. A model that clears request-scoped prompts itself only
+    has the frames of downgraded request-scoped capability parts here; its adapter recognizes its native entries on
+    the wire instead.
     """
     request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
     namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if request else None
@@ -4745,6 +4787,9 @@ class _RenderedCapabilityNote(SystemPromptPart):
     the note isn't a change to the application's instructions, and lowers exactly like its base type.
     """
 
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether its part is downgraded and request-scoped, so the next request won't send it."""
+
 
 @dataclass(repr=False, kw_only=True)
 class _RenderedCapabilityBody(UserPromptPart):
@@ -4755,6 +4800,9 @@ class _RenderedCapabilityBody(UserPromptPart):
 
     naming: LookalikeNaming = field(default_factory=LookalikeNaming, compare=False)
     """How a lookalike note about this content names it and its author."""
+
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether its part is downgraded and request-scoped, so the next request won't send it."""
 
 
 _LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
@@ -4784,12 +4832,18 @@ def _rendered_capability_part(
     rendering = render_capability_part(part)
     if rendering.body is None:
         return [(new, [], new) for new in rendering.parts]
+    request_scoped = is_downgraded_request_scoped(part)
     body = _RenderedCapabilityBody(
-        content=rendering.body.content, timestamp=rendering.body.timestamp, naming=rendering.naming
+        content=rendering.body.content,
+        timestamp=rendering.body.timestamp,
+        naming=rendering.naming,
+        request_scoped=request_scoped,
     )
     rendered: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
     if rendering.note is not None:
-        note = _RenderedCapabilityNote(content=rendering.note.content, timestamp=rendering.note.timestamp)
+        note = _RenderedCapabilityNote(
+            content=rendering.note.content, timestamp=rendering.note.timestamp, request_scoped=request_scoped
+        )
         rendered.append((note, [], note))
     rendered.append((body, rendering.lookalikes, body))
     return rendered

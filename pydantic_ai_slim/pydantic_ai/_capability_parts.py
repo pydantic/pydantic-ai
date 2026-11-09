@@ -164,15 +164,20 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
         if isinstance(item, str | TextContent)
     )
     line_break = '\n' if multi_line else ''
-    # Text goes out as `TextContent`, as in any user prompt with more than one item.
-    body = UserPromptPart(
-        [
-            TextContent(f'{open_tag}{line_break}'),
-            *(TextContent(item) if isinstance(item, str) else item for item in items),
-            TextContent(f'{line_break}{close_tag}'),
-        ],
-        timestamp=part.timestamp,
-    )
+    if is_downgraded_request_scoped(part) and isinstance(content, str):
+        # One text, which is how the adapters find a request-scoped tail on the wire to keep their cache breakpoints
+        # ahead of it (`_request_scoped_tail_texts`).
+        body = UserPromptPart(f'{open_tag}{line_break}{content}{line_break}{close_tag}', timestamp=part.timestamp)
+    else:
+        # Text goes out as `TextContent`, as in any user prompt with more than one item.
+        body = UserPromptPart(
+            [
+                TextContent(f'{open_tag}{line_break}'),
+                *(TextContent(item) if isinstance(item, str) else item for item in items),
+                TextContent(f'{line_break}{close_tag}'),
+            ],
+            timestamp=part.timestamp,
+        )
     lookalikes = _body_lookalikes(part, items, tag)
     naming = _lookalike_naming(part.source, tag)
     text = _note(part, authority, _note_frame(tag, attrs, open_tag))

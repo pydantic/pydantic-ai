@@ -3,6 +3,7 @@ import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -43,9 +44,10 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai._framing import lookalike_note_announcement
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import CapabilitySource, InstructionCapabilityPart, OperatorSource, OperatorText
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile
@@ -1916,6 +1918,76 @@ async def test_openrouter_cache_messages_skip_request_scoped_system_message(allo
             {'role': 'system', 'content': 'It is 9am.'},
         ]
     )
+
+
+@dataclass(kw_only=True)
+class _RequestsLeftPart(InstructionCapabilityPart, namespace='test_openrouter', name='requests_left'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _LastingNotePart(InstructionCapabilityPart, namespace='test_openrouter', name='lasting_note'):
+    pass
+
+
+@dataclass
+class _LoweredBudget(AbstractCapability[Any]):
+    """Sends the requests left with every request, lowered to no authority, and a lasting operator note."""
+
+    left: int
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(_LastingNotePart(content=OperatorText(f'Note {self.left}.'), source=OperatorSource()))
+        ctx.enqueue(
+            _RequestsLeftPart(
+                content=OperatorText(f'{self.left} left.'),
+                source=CapabilitySource('budget', authority='none'),
+                scope='request',
+            )
+        )
+        return request_context
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('anthropic/claude-opus-5.5', id='system-after-user'),
+        pytest.param('anthropic/claude-haiku-5.5', id='fallback'),
+    ],
+)
+async def test_openrouter_cache_messages_stay_ahead_of_a_downgraded_request_scoped_frame(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """The next request doesn't send the frame, so a breakpoint behind it would write a cache entry nothing reads.
+
+    A unit test because the claim is about the bytes of two consecutive requests.
+    """
+    client = MockOpenAI.create_mock([_openrouter_completion('First.'), _openrouter_completion('Second.')])
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=client))
+    settings = OpenRouterModelSettings(openrouter_cache_messages=True)
+
+    first = await Agent(model, capabilities=[_LoweredBudget(left=2)], model_settings=settings).run('Go.')
+    await Agent(model, capabilities=[_LoweredBudget(left=1)], model_settings=settings).run(
+        'Again.', message_history=first.all_messages()
+    )
+
+    def without_breakpoint(message: dict[str, Any]) -> dict[str, Any]:
+        content = cast(list[dict[str, Any]] | str | None, message.get('content'))
+        if isinstance(content, list) and content[0].get('cache_control'):
+            return {**message, 'content': content[0]['text']}
+        return message
+
+    earlier, later = (request['messages'] for request in get_mock_chat_completion_kwargs(client))
+    breakpoint_at = max(index for index, message in enumerate(earlier) if 'cache_control' in str(message))
+    frame_at = next(index for index, message in enumerate(earlier) if '2 left.' in str(message))
+    assert breakpoint_at < frame_at
+    assert earlier[frame_at] == {'role': 'user', 'content': '<requests_left>2 left.</requests_left>'}
+    assert [without_breakpoint(message) for message in later[: breakpoint_at + 1]] == [
+        without_breakpoint(message) for message in earlier[: breakpoint_at + 1]
+    ]
+    assert '2 left.' not in str(later)
 
 
 @pytest.mark.parametrize(

@@ -98,6 +98,25 @@ def last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Bet
     return content if isinstance(content, list) else []
 
 
+def lasting_blocks_at_end(
+    anthropic_messages: list[BetaMessageParam], request_scoped_texts: tuple[str, ...]
+) -> list[BetaContentBlockParam]:
+    """The content blocks of the last message that holds some the next request will send at the same position, up to the last.
+
+    A native request-scoped entry and the trailing blocks rendering `request_scoped_texts` don't count, and neither does
+    a `system` entry behind a text still to be matched: the next request sends it without that text ahead of it. The
+    blocks are the message's own, so `cache_control` added to one lands on the wire.
+    """
+    remaining = request_scoped_texts
+    for message in reversed(anthropic_messages):
+        if message.get('clear_at') == 'next_user_message':
+            continue
+        blocks, remaining = blocks_before_request_scoped_text(message, remaining)
+        if blocks and not (remaining and message['role'] == 'system'):
+            return blocks
+    return []
+
+
 def blocks_before_request_scoped_text(
     message: BetaMessageParam, texts: tuple[str, ...]
 ) -> tuple[list[BetaContentBlockParam], tuple[str, ...]]:
