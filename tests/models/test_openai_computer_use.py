@@ -239,6 +239,41 @@ async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_outp
     assert second['input'][0]['call_id'] == 'call_1'
 
 
+async def test_a_held_call_made_as_a_function_call_gets_a_function_call_output(allow_model_requests: None) -> None:
+    """A call GPT made as a function call, such as on a model without the native tool, is answered as one."""
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    call = ComputerCallPart(
+        'computer', {'actions': [{'type': 'screenshot'}]}, tool_call_id='call_1', provider_name='openai'
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look.'),
+        ModelResponse(parts=[call], provider_name='openai', provider_response_id='resp_1'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    ['Ran 1 action.', _SCREEN],
+                    tool_call_id='call_1',
+                    metadata={'performed': 1},
+                    tool_kind=COMPUTER_KIND.id,
+                )
+            ]
+        ),
+    ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    # The call stays in the stored response, as the function call it was.
+    assert request['previous_response_id'] == 'resp_1'
+    assert [item.get('type') for item in request['input'] if 'type' in item] == ['function_call_output']
+
+
 async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model_requests: None) -> None:
     client = MockOpenAIResponses.create_mock([_done(), _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
