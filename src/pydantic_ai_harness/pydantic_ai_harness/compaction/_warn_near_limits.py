@@ -153,17 +153,20 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
                 'or max_total_tokens must be set.'
             )
 
-        if self.warn_on is None:
-            self._active_kinds = tuple(k for k in _WARNING_ORDER if configured[k])
-        else:
-            if not self.warn_on:
-                raise ValueError('warn_on must not be empty.')
-            for kind in self.warn_on:
-                if not configured[kind]:
-                    raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
-            self._active_kinds = tuple(dict.fromkeys(self.warn_on))
+        self._active_kinds = self._resolve_active_kinds(configured)
 
     # -- internal helpers --
+
+    def _resolve_active_kinds(self, configured: dict[WarningKind, bool]) -> tuple[WarningKind, ...]:
+        """The kinds to warn about: each `warn_on` kind once, which must be *configured*, else every configured kind."""
+        if self.warn_on is None:
+            return tuple(k for k in _WARNING_ORDER if configured[k])
+        if not self.warn_on:
+            raise ValueError('warn_on must not be empty.')
+        for kind in self.warn_on:
+            if not configured[kind]:
+                raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
+        return tuple(dict.fromkeys(self.warn_on))
 
     @staticmethod
     def _is_warning_part(part: ModelRequestPart) -> bool:

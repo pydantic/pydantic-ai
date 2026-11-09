@@ -2493,9 +2493,9 @@ async def test_history_from_another_model(allow_model_requests: None):
                 {
                     'retry': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Say more.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                 },
                 {

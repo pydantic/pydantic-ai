@@ -364,24 +364,30 @@ def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
             continue
         for part in reversed(message.parts):
             if isinstance(part, ToolReturnPart):
-                metadata = part.metadata
-                # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
-                if (
-                    is_str_dict(metadata)
-                    and metadata.get('origin') == PLAN_ORIGIN
-                    and isinstance(plan := metadata.get('plan'), str)
-                    and isinstance(part.content, str)
-                    and plan in part.content
-                ):
-                    return plan
+                plan = _returned_plan(part)
             elif isinstance(part, PlanReminderPart):
-                return frame_plan_text(part.content)
-            elif (
-                isinstance(part, UserPromptPart)
-                and not isinstance(part.content, str)
-                and (recorded := _recorded_plan(part.content)) is not None
-            ):
-                return recorded
+                plan = frame_plan_text(part.content)
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                plan = _recorded_plan(part.content)
+            else:
+                continue
+            if plan is not None:
+                return plan
+    return None
+
+
+def _returned_plan(part: ToolReturnPart) -> str | None:
+    """The plan a plan tool's return holds, by its metadata."""
+    metadata = part.metadata
+    # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
+    if (
+        is_str_dict(metadata)
+        and metadata.get('origin') == PLAN_ORIGIN
+        and isinstance(plan := metadata.get('plan'), str)
+        and isinstance(part.content, str)
+        and plan in part.content
+    ):
+        return plan
     return None
 
 

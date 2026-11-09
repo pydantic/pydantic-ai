@@ -7,6 +7,8 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Final, Literal, TypeAlias
 
+from opentelemetry.trace import Span
+
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -361,24 +363,16 @@ class Memory(AbstractCapability[AgentDepsT]):
             try:
                 main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
             except Exception as exc:
-                if span.is_recording():
-                    span.set_attributes(
-                        {
-                            'memory.outcome': 'error',
-                            'memory.exception_type': type(exc).__name__,
-                        }
-                    )
+                _record_load_error(span, type(exc).__name__)
                 if self.injection_errors == 'raise':
                     raise
                 return request_context
 
             if error_type is not None:
-                if span.is_recording():
-                    span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
+                _record_load_error(span, error_type)
                 return request_context
 
             main, withheld = self._withhold_flagged(ctx, main)
-            has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
             snapshot = self._render_snapshot(
                 main,
                 subfiles,
@@ -386,34 +380,41 @@ class Memory(AbstractCapability[AgentDepsT]):
                 file_reader(ctx, store, scope),
                 reserved=len(directory_instruction(self, store, scope) or ''),
             )
-            rendered = None if snapshot is None else snapshot[0]
-            # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
-            # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
-            # is just this request and holds no snapshot (a promptless resume after a failed first request merges the
-            # old one into it), and recorded once per run in which it isn't already the latest snapshot.
-            if snapshot is not None and snapshot[1] and len(ctx.messages) <= 1 and latest is None:
-                rendered = None
-            appended = rendered if rendered is not None and rendered != latest else None
+            appended = _snapshot_to_append(ctx.messages, snapshot, latest)
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
                 ctx.enqueue(_snapshot_part(appended, metadata))
                 self._run_snapshot = appended
-            if span.is_recording():
-                span.set_attributes(
-                    {
-                        # The guidance can fill the whole budget, leaving no room to inject what is stored.
-                        'memory.outcome': 'ok' if snapshot is not None or not has_memory else 'budget_exhausted',
-                        'memory.main_chars': 0 if main is None else len(main.content),
-                        'memory.files': len(subfiles),
-                        'memory.files_truncated': files_truncated,
-                        'memory.main_truncated': main is not None and main.truncated,
-                        'memory.appended': appended is not None,
-                        'memory.injected_chars': len(appended or ''),
-                        **({} if self.scanner is None else {'memory.main_withheld': withheld}),
-                    }
-                )
+            self._record_injection(span, main, subfiles, files_truncated, snapshot, appended, withheld)
         return request_context
+
+    def _record_injection(
+        self,
+        span: Span,
+        main: MemoryFile | None,
+        subfiles: list[str],
+        files_truncated: bool,
+        snapshot: tuple[str, bool] | None,
+        appended: str | None,
+        withheld: bool,
+    ) -> None:
+        if not span.is_recording():
+            return
+        has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
+        span.set_attributes(
+            {
+                # The guidance can fill the whole budget, leaving no room to inject what is stored.
+                'memory.outcome': 'ok' if snapshot is not None or not has_memory else 'budget_exhausted',
+                'memory.main_chars': 0 if main is None else len(main.content),
+                'memory.files': len(subfiles),
+                'memory.files_truncated': files_truncated,
+                'memory.main_truncated': main is not None and main.truncated,
+                'memory.appended': appended is not None,
+                'memory.injected_chars': len(appended or ''),
+                **({} if self.scanner is None else {'memory.main_withheld': withheld}),
+            }
+        )
 
     def _withhold_flagged(self, ctx: RunContext[AgentDepsT], main: MemoryFile | None) -> tuple[MemoryFile | None, bool]:
         """`main` with a notice in place of its content when the `scanner` flags it, and whether it did."""
@@ -577,6 +578,27 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
             if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
                 return snapshot
     return None
+
+
+def _snapshot_to_append(
+    messages: list[ModelMessage], snapshot: tuple[str, bool] | None, latest: str | None
+) -> str | None:
+    """The snapshot to record: `None` when it does not fit the budget, can be skipped, or is already the latest."""
+    if snapshot is None:
+        return None
+    rendered, skippable = snapshot
+    # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
+    # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
+    # is just this request and holds no snapshot (a promptless resume after a failed first request merges the
+    # old one into it), and recorded once per run in which it isn't already the latest snapshot.
+    if skippable and len(messages) <= 1 and latest is None:
+        return None
+    return rendered if rendered != latest else None
+
+
+def _record_load_error(span: Span, exception_type: str) -> None:
+    if span.is_recording():
+        span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': exception_type})
 
 
 def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]) -> str | None:

@@ -26,7 +26,7 @@ from ..messages import (
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, OpenRouterWebSearchToolSettings, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
@@ -820,6 +820,22 @@ def _openrouter_settings_to_openai_settings(
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
 
 
+def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
+    parameters: dict[str, Any] = {'search_context_size': tool.search_context_size}
+    if (user_location := tool.user_location) is not None:
+        parameters['user_location'] = {'type': 'approximate', **user_location}
+    if (allowed_domains := tool.allowed_domains) is not None:
+        parameters['allowed_domains'] = allowed_domains
+    if (blocked_domains := tool.blocked_domains) is not None:
+        parameters['excluded_domains'] = blocked_domains
+    if (max_uses := tool.max_uses) is not None:
+        parameters['max_uses'] = max_uses
+    settings = (tool.provider_settings or {}).get('openrouter', {})
+    # Like model settings, options this version doesn't know are ignored rather than sent.
+    known_options = OpenRouterWebSearchToolSettings.__optional_keys__
+    return {**parameters, **{option: value for option, value in settings.items() if option in known_options}}
+
+
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
@@ -1299,28 +1315,21 @@ class OpenRouterModel(OpenAIChatModel):
         # Append server tools after the cache block so the tool-definitions cache breakpoint stays on the last function tool.
         advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
         if advisor is not None:
+            advisor_settings = (advisor.provider_settings or {}).get('openrouter', {})
             parameters: dict[str, Any] = {
                 'model': advisor.model,
-                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
-                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
-                'forward_transcript': False,
+                'forward_transcript': advisor_settings.get('forward_transcript', False),
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
 
         web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
         if web_search is not None:
-            parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
-            if (user_location := web_search.user_location) is not None:
-                parameters['user_location'] = {'type': 'approximate', **user_location}
-            if (allowed_domains := web_search.allowed_domains) is not None:
-                parameters['allowed_domains'] = allowed_domains
-            if (blocked_domains := web_search.blocked_domains) is not None:
-                parameters['excluded_domains'] = blocked_domains
-            if (max_uses := web_search.max_uses) is not None:
-                parameters['max_uses'] = max_uses
             tools.append(
-                cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
+                cast(
+                    chat.ChatCompletionToolParam,
+                    {'type': 'openrouter:web_search', 'parameters': _map_web_search_parameters(web_search)},
+                )
             )
 
         return tools, tool_choice
@@ -1463,6 +1472,12 @@ class OpenRouterModel(OpenAIChatModel):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         assert isinstance(response, _OpenRouterChatCompletion)
         return _map_openrouter_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        return not self.accepts_stateless_artifacts(message, part) and super()._carries_thinking_in_user_turn(
+            message, part
+        )
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]

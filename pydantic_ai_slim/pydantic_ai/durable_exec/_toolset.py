@@ -532,8 +532,22 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+
+
+def revalidate_function_args(
+    toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
+) -> dict[str, Any]:
+    """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (
+        isinstance(tool, FunctionToolsetTool)
+        and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
+        # Only the source's own validator produced arguments in the shape `revalidate` expects.
+        and tool.args_validator is source.function_schema.validator
+    ):
+        return source.function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
 
 
 @dataclass
@@ -553,20 +567,6 @@ class DispatchSnapshots:
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
     _tool_names_by_kind: dict[str, str] = field(repr=False)
-
-
-def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
-
-    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
-    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
-    raises the same explanation with its own vocabulary.
-    """
-    return (
-        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
-        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
-    )
 
 
 class CancelGuard(RunCancellation):
@@ -608,7 +608,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     """
     return replace(
         ctx,
-        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        pending_messages=EnqueueGuard(unit_noun, container_noun),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 

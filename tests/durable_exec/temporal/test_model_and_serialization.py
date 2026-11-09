@@ -3176,14 +3176,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the instructions end with what `<system>` means.
+    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': [
-                    {'type': 'text', 'text': 'leading'},
-                    {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
-                ],
+                'system': f'{lookalike_note_announcement(system_role=False)}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3198,6 +3195,63 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'setting, standing_prompt',
+    [
+        # Both put the announcement ahead of the standing prompt: `'when_needed'` here because of the mid-conversation
+        # prompt, `'always'` because there is a standing prompt.
+        pytest.param(None, ['<announcement>', 'leading'], id='default'),
+        pytest.param('always', ['<announcement>', 'leading'], id='always'),
+        pytest.param('never', ['leading'], id='never'),
+    ],
+)
+def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
+    setting: str | None, standing_prompt: list[str]
+) -> None:
+    """The activity's re-prepare restores `framing_announcement` from the request's settings.
+
+    The private parameter field that carries it to `prepare_messages` isn't serialized, so without that the activity
+    would prepare with the profile's default, `'when_needed'`, whatever the run asked for.
+    """
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_lookalike_notes = True
+
+    concrete = AnnouncingFunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__reprepare_framing_announcement',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    params = _RequestParams(
+        messages=[
+            ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+        ],
+        model_settings={'framing_announcement': setting} if setting else None,
+        # As the activity receives them: the private field doesn't survive serialization.
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_id='anthropic:claude-opus-5',
+    )
+
+    prepared = temporal_model._reprepare_messages(params, concrete)  # pyright: ignore[reportPrivateUsage]
+
+    first = prepared[0]
+    assert isinstance(first, ModelRequest)
+    announcement = lookalike_note_announcement(system_role=False)
+    assert [
+        '<announcement>' if part.content == announcement else part.content
+        for part in first.parts
+        if isinstance(part, SystemPromptPart)
+    ] == standing_prompt
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -3792,6 +3846,9 @@ def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    """An error the workflow can't rebuild, without a `retry_after` or a listing as non-retryable, fails the activity
+    as it always did."""
+
     class ApplicationModelError(ModelAPIError):
         """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
 
@@ -3829,6 +3886,49 @@ def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_
     with pytest.raises(ActivityError):
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('retry_after', 'next_retry_delay'),
+    [
+        pytest.param(7.0, timedelta(seconds=7), id='retry-after'),
+        # Outside an activity, the default retry policy's `maximum_interval` of 100 seconds caps the delay.
+        pytest.param(3600.0, timedelta(seconds=100), id='capped'),
+    ],
+)
+def test_a_model_error_that_cannot_be_rebuilt_still_carries_its_retry_delay(
+    retry_after: float, next_retry_delay: timedelta
+):
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, is raised as an `ApplicationError`
+    when it has a `retry_after`, so Temporal still waits that long, under its own class name as Temporal would have
+    reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom', retry_after=retry_after)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details, raised.value.next_retry_delay) == (
+        'ApplicationModelError',
+        False,
+        (),
+        next_retry_delay,
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_a_non_retryable_model_error_gets_no_retry_delay():
+    """A model error listed as non-retryable isn't attempted again, so its `retry_after` sets no `next_retry_delay`."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', retry_after=7.0)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ModelRateLimitError,)):
+            raise error
+    assert (raised.value.non_retryable, raised.value.next_retry_delay) == (True, None)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(

@@ -40,7 +40,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 _model_errors.google_status_category(
                     status,
                     e.message,
-                    _model_errors.google_error_reason(e.details),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 )
                 or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
@@ -57,7 +57,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
+LatestGoogleGLAEmbeddingModelNames = Literal[
+    'gemini-embedding-2',
+    'gemini-embedding-001',
+]
 """Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -65,11 +68,8 @@ for available models and their capabilities.
 """
 
 LatestGoogleVertexEmbeddingModelNames = Literal[
-    'gemini-embedding-001',
-    'gemini-embedding-2-preview',
     'gemini-embedding-2',
-    'text-embedding-005',
-    'text-multilingual-embedding-002',
+    'gemini-embedding-001',
 ]
 """Latest Google Cloud (formerly known as Vertex AI) embedding models.
 

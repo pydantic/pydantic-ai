@@ -71,6 +71,7 @@ from ._framing import (
     RETRY_FEEDBACK_TAG,
     TOOL_RESULT_TAG,
     VALIDATION_ERRORS_TAG,
+    FrameworkTag,
     FramingTag,
     check_capability_frame,
     frame,
@@ -104,6 +105,11 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+# Office and OpenDocument types that Python's `mimetypes` only knows by default from 3.14
+_mime_types.add_type('application/vnd.oasis.opendocument.presentation', '.odp')
+_mime_types.add_type('application/vnd.oasis.opendocument.spreadsheet', '.ods')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
@@ -259,7 +265,7 @@ class SystemPromptPart:
     """
 
     context_id: str | None = None
-    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+    """The id of the `<pyai:context>` element this prompt is sent to the model as, or `None` to send its content as is.
 
     Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
     sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
@@ -622,16 +628,11 @@ class DocumentUrl(FileUrl):
         return mime_type
 
     @property
-    def format(self) -> DocumentFormat:
-        """The file format of the document.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        media_type = self.media_type
-        try:
-            return _document_format_lookup[media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown document media type: {media_type}') from e
+    def format(self) -> str:
+        """The file format of the document, such as `'pdf'` or `'pptx'`: the extension its media type is known by."""
+        if format := _document_format(self.media_type):
+            return format
+        raise ValueError(f'Unknown document media type: {self.media_type}')
 
 
 @dataclass(repr=False)
@@ -745,9 +746,7 @@ class StructuredContent(TextContent):
             ):
                 raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
-                raise ValueError(
-                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
-                )
+                raise ValueError(f'`StructuredContent.tag` cannot be {self.tag!r}, a built-in framing tag.')
         if format is None:
             content = self.render()
         elif callable(format):
@@ -924,23 +923,33 @@ class BinaryContent:
 
     @property
     def is_document(self) -> bool:
-        """Return `True` if the media type is a document type."""
-        return self.media_type in _document_format_lookup
+        """Return `True` if the media type is a document type.
+
+        A known document type is one, and so is any other media type that `mimetypes` knows a file extension for
+        and that isn't audio, image, video or text-like. Text-like content outside the known types (JSON, YAML,
+        XML, ...) is left to the model adapter, which inlines it as text where the API has no file part, and so is
+        a media type no extension is known for.
+        """
+        if self.media_type in _document_format_lookup:
+            return True
+        if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
+            return False
+        return _document_format(self.media_type) is not None
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format_lookup[self.media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        if self.is_audio:
+            format = _audio_format_lookup.get(self.media_type)
+        elif self.is_image:
+            format = _image_format_lookup.get(self.media_type)
+        elif self.is_video:
+            format = _video_format_lookup.get(self.media_type)
+        else:
+            format = _document_format(self.media_type)
+        if format is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return format
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1526,6 +1535,26 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
+
+
+def _document_format(media_type: str) -> str | None:
+    """The file format of a document with `media_type`: the extension it's known by, without the dot, or `None`.
+
+    `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
+    `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
+    type can be sent, and a model that doesn't read it rejects it. Where `mimetypes` knows several extensions, the
+    one spelling the subtype wins (`application/xml` is `xml`, not the `xsl` the stdlib lists first), then the first
+    known: `_mime_types` registers the stdlib's own table before the OS mime files and the Windows registry.
+    """
+    if format := _document_format_lookup.get(media_type):
+        return format
+    extensions = [extension.removeprefix('.') for extension in _mime_types.guess_all_extensions(media_type)]
+    if not extensions:
+        return None
+    subtype = media_type.partition('/')[2]
+    return subtype if subtype in extensions else extensions[0]
+
+
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
@@ -1908,13 +1937,13 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
 
 - `'validation_error'`: the output failed validation against the expected schema. The feedback
   quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
-  the user voice inside a `<validation_errors>` fence rather than in the harness's own.
+  the user voice inside a `<pyai:validation_errors>` fence rather than in the harness's own.
 - `'no_output'`: the response carried nothing usable as output (e.g. thinking only). The agent
   loop's fixed text goes in the system voice; a `'no_output'` part with any other content, such as
   one your own code builds, is fenced in the user voice like a `'model_retry'`.
 - `'model_retry'`: an output validator, output function, or model hook raised
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. Its message commonly interpolates the output it
-  rejects, so it goes in the user voice too, inside a `<retry_feedback>` fence.
+  rejects, so it goes in the user voice too, inside a `<pyai:retry_feedback>` fence.
 
 Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
 """
@@ -2774,7 +2803,7 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 
 _RETRY_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
-"""The line that opens user-voice retry feedback, ahead of its `<validation_errors>` or `<retry_feedback>` fence.
+"""The line that opens user-voice retry feedback, ahead of its `<pyai:validation_errors>` or `<pyai:retry_feedback>` fence.
 
 The feedback goes out in the user voice, so this says who is speaking: the application checking the
 model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
@@ -2959,7 +2988,7 @@ class RetryFeedbackPart:
     list of error details, serialized into the fenced block the model is shown.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
-    goes out in the user voice inside a `<retry_feedback>` fence, since output validators commonly
+    goes out in the user voice inside a `<pyai:retry_feedback>` fence, since output validators commonly
     interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
     text.
     """
@@ -2987,8 +3016,8 @@ class RetryFeedbackPart:
         Error details serialize the way an errored
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
         answers a tool call and one that answers none show the model the same JSON. A
-        `'validation_error'` goes in a `<validation_errors>` fence and a `'model_retry'` in a
-        `<retry_feedback>` fence, each behind one line saying the application is speaking: both can
+        `'validation_error'` goes in a `<pyai:validation_errors>` fence and a `'model_retry'` in a
+        `<pyai:retry_feedback>` fence, each behind one line saying the application is speaking: both can
         carry the model's own words, a `ModelRetry` message because output validators routinely
         interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
         and carries nothing the model wrote.
@@ -3028,7 +3057,7 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
     return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
+def _fenced_retry_feedback(content: str, *, tag: FrameworkTag) -> str:
     """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
 
     The content carries the model's own words (a validation error's `loc` is a key it invented for a mapping
@@ -3404,9 +3433,9 @@ class InstructionDeltaPart:
     """Part type identifier, used as a discriminator for deserialization."""
 
     def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
-        """Render this change as a `<context>` element that replaces the block's earlier one.
+        """Render this change as a `<pyai:context>` element that replaces the block's earlier one.
 
-        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
+        A replacement is rendered as a `<pyai:context_diff>` element instead, holding a unified diff against
         `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
         shorter than the full replacement.
 
@@ -3443,7 +3472,7 @@ def _instruction_text_hash(text: str) -> str:
 
 
 def _withdrawal_text(*, inline_system: bool) -> str:
-    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    """What a withdrawn `<pyai:context>` element says, which `<system>`-tagged user text has to say stays in effect."""
     if inline_system:
         return 'This context has been withdrawn.'
     return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
@@ -3453,7 +3482,7 @@ def _context_element(instruction_id: InstructionId | str | None, content: str) -
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
-    is a system-voice tag: a lookalike `<context>` in user or tool text gets a note instead.
+    is a system-voice tag: a lookalike `<pyai:context>` in user or tool text gets a note instead.
     """
     return frame(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
@@ -3472,12 +3501,13 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
 
 
 _SUPERSESSION_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    f'A later <{CONTEXT_TAG}> element with the same id replaces the earlier one '
+    'and stays in effect until replaced again.'
 )
 
 
 def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
-    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+    """Render a statement of an appending dynamic system prompt as the `<pyai:context>` element its `context_id` names.
 
     An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
     appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
@@ -3488,14 +3518,14 @@ def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool
 
 
 def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
-    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    """The positions of the parts `_render_append_parts` sends as `<pyai:context>` elements."""
     return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
-    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+    """Render the prefix's append-mode blocks as `<pyai:context>` elements, followed once by how later ones apply.
 
-    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    Each addressable append-mode part is wrapped in a `<pyai:context id>` element. The last of them is followed by
     one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
     with the same id replaces it and stays in effect, which models need to keep following an update on later
     turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as
@@ -3928,6 +3958,10 @@ class TextPart:
     """An optional identifier of the text part.
 
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+
+    If you edit `content`, such as in a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] processor, set
+    this to `None` too: the OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the text
+    sent alongside.
     """
 
     provider_name: str | None = None
@@ -4039,7 +4073,7 @@ class CompactionPart:
     `SummarizingCompaction`, lives in a [`ModelRequest`][pydantic_ai.messages.ModelRequest] instead,
     with no `provider_name`, `id` or `provider_details`. The assistant continuing the conversation
     didn't write it, so every provider model sends its `content` as user-voice text inside
-    `<conversation_summary>`, after a line saying a separate summarization model wrote it. A
+    `<pyai:conversation_summary>`, after a line saying a separate summarization model wrote it. A
     `FunctionModel` receives the part itself, a `DecisionModel` passes it on as a summary entry, and
     realtime sessions send it as user text.
     """
@@ -4703,10 +4737,10 @@ def _lower_authority(a: Authority, b: Authority) -> Authority:
 async def _workspace_authority(workspace: Workspace, path: str) -> Authority:
     """The [authority][pydantic_ai.messages.Authority] of the file at `path` in `workspace`.
 
-    A workspace reports one authority for all its files, [`Workspace.authority`][pydantic_ai.workspaces.Workspace.authority],
-    so `path` doesn't change it yet; it's taken so that a workspace can report it per file.
+    That's [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of], asked when the file is read, so
+    the level stays with the text.
     """
-    return workspace.authority
+    return await workspace.authority_of(path)
 
 
 class OperatorText(str):
@@ -4731,8 +4765,8 @@ class OperatorText(str):
     async def from_workspace(cls, workspace: Workspace, path: str) -> Self:
         """Read the text file at `path` in `workspace` as operator text.
 
-        The text has no more authority than the workspace's files
-        ([`Workspace.authority`][pydantic_ai.workspaces.Workspace.authority]): a part holding it is downgraded as if its
+        The text has no more authority than the file
+        ([`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]): a part holding it is downgraded as if its
         source were [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace],
         to the user's turn for the user's files and to data for files nobody on the application's side wrote, such as a
         cloned third-party repository.
@@ -4767,7 +4801,7 @@ class WorkspaceSource:
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content was read from a file in a workspace.
 
     Built only with [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], which asks the workspace
-    for the [authority][pydantic_ai.workspaces.Workspace.authority] of its files: there's no constructor to state it
+    for the [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file: there's no constructor to state it
     yourself.
     """
 
@@ -4775,7 +4809,7 @@ class WorkspaceSource:
     """The path the content was read from."""
 
     authority: Authority
-    """The [authority][pydantic_ai.workspaces.Workspace.authority] of the workspace's files when the content was read.
+    """The [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file when the content was read.
 
     Stored with the part, so a workspace whose authority changes later doesn't change parts already in the history.
     """
@@ -4788,10 +4822,10 @@ class WorkspaceSource:
 
     @classmethod
     async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
-        """The source for content read from `path` in `workspace`, with the authority of the workspace's files.
+        """The source for content read from `path` in `workspace`, with the authority of that file.
 
-        That's [`workspace.authority`][pydantic_ai.workspaces.Workspace.authority]: `'operator'` unless an
-        [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it.
+        That's [`workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of]: `'operator'` unless an
+        [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it for the workspace or for the path.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
@@ -4896,7 +4930,7 @@ CapabilityPartSource = Annotated[
 An [`OperatorSource`][pydantic_ai.messages.OperatorSource] has `'operator'` authority, a
 [`UserSource`][pydantic_ai.messages.UserSource] `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource]
 or [`ModelSource`][pydantic_ai.messages.ModelSource] `'none'`. A [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
-has its workspace's [authority][pydantic_ai.workspaces.Workspace.authority], and a
+has its file's [authority][pydantic_ai.workspaces.Workspace.authority_of], and a
 [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] its capability's authority ceiling.
 """
 
@@ -5704,10 +5738,9 @@ class ModelResponse:
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
     can use to test guesses at content that was redacted from it later, such as a PIN or an account
-    number. If you redact history after it was sent, give the model a key. Don't just clear this
-    field: a response without one is trusted and continued from, and the provider still holds the
-    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
-    nothing continues from them.
+    number. If you redact history after it was sent, give the model a key, or clear this field: a
+    response without one isn't continued from, and the full history is sent instead. Either way, clear
+    the [`id`][pydantic_ai.messages.TextPart.id] of a part you redact, or the provider uses its stored copy.
 
     Computing it serializes the whole history before the response on every request that continues
     server-side state, so it costs local work proportional to the conversation's length.
@@ -6581,10 +6614,10 @@ def sanitize_messages(
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
     - [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] on the text items of a
-      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], resetting it to `None` and keeping the
-      text. Metadata is never sent to the model, but application code and capabilities read it to
-      recognize content they added themselves, such as a background task's report, so a client that
-      can set it could make its own text pass as theirs.
+      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] and nested in tool return parts,
+      resetting it to `None` and keeping the text. Metadata is never sent to the model, but
+      application code and capabilities read it to recognize content they added themselves, such as a
+      background task's report, so a client that can set it could make its own text pass as theirs.
     - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
@@ -6605,7 +6638,9 @@ def sanitize_messages(
       keep state there that they act on in later runs, so it is only honored on trusted server-side
       `message_history`. On client-held history that state is computed again where it's needed: a
       file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
-      again, for example.
+      again, for example. A request holding an [on-demand capability](../capabilities/on-demand.md)'s load is
+      marked there instead, so the next request states the capability's current instructions on it again, where
+      server-held history states them.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -6760,7 +6795,7 @@ def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) 
     # Reset silently: every request an agent run records carries the agent's own instructions, so
     # a warning would fire on every turn of a normal round trip, and agent runs never send them.
     instructions = None if context.strip_instructions else message.instructions
-    metadata = _without_reserved_metadata(message, context.reserved_metadata_messages)
+    metadata = _sanitized_request_metadata(message, new_request_parts, context.reserved_metadata_messages)
     return replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
 
 
@@ -6773,6 +6808,7 @@ def _sanitize_response(context: _SanitizeMessagesContext, message: ModelResponse
         disallowed_schemes=context.disallowed_url_schemes,
         reset_force_download_values=context.reset_force_download_values,
         dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+        stripped_text_metadata=context.stripped_text_metadata,
     )
     if not new_response_parts:
         # Drop the response entirely so we don't leave an empty `ModelResponse(parts=[])` in history.
@@ -6858,9 +6894,10 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
     if context.stripped_text_metadata:
         warnings.warn(
             f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
-            f'prompt item(s). Metadata is never sent to the model, but application code and capabilities read it '
-            f'to recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
-            f'history that carries your own metadata as trusted server-side `message_history` instead.',
+            f'prompt or tool return item(s) (on tool return content, only its reserved `__pydantic_ai__` key). '
+            f'Metadata is never sent to the model, but application code and capabilities read it to recognize '
+            f'content they added themselves, so it is not accepted from untrusted clients. Pass history that '
+            f'carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
             stacklevel=4,
         )
@@ -6878,6 +6915,26 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
         )
 
 
+_UNSTATED_LOADS_KEY = 'unstated_loads'
+"""Marks a request from untrusted history that holds a capability load, in the reserved namespace.
+
+The history came from a client, which doesn't keep the framework's instruction records, so a load it holds with no
+statement of the capability's instructions after it lost that statement: the next request restores it there. Only
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] sets it, after dropping the client's own reserved
+metadata, so server-held history never carries it and is never rewritten.
+"""
+
+
+def _sanitized_request_metadata(
+    request: ModelRequest, parts: Sequence[ModelRequestPart], stripped: list[ModelMessage]
+) -> dict[str, Any] | None:
+    """The metadata of an untrusted request keeping `parts`: without the reserved key, marked if it holds a load."""
+    metadata = _without_reserved_metadata(request, stripped)
+    if not any(isinstance(part, (LoadCapabilityReturnPart, CapabilityLoadDeltaPart)) for part in parts):
+        return metadata
+    return {**(metadata or {}), _PYDANTIC_AI_METADATA_KEY: {_UNSTATED_LOADS_KEY: True}}
+
+
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
     """Return the metadata of an untrusted message without the reserved `__pydantic_ai__` key.
 
@@ -6886,7 +6943,9 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    stripped.append(message)
+    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
+    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+        stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 
@@ -6935,7 +6994,9 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     and `'model_retry'` feedback reach the model in the user voice, inside a fence, which a client
     could write anyway. `'no_output'` feedback is the one cause rendered in the system voice, and a
     client can forge the part as easily as a system prompt, so it's demoted to the same fenced,
-    attributed user text: provenance, not wording, is what earns the system voice. A tool-less legacy
+    attributed user text: provenance, not wording, is what earns the system voice. As user text, its
+    `<pyai:retry_feedback>` fence is a copy of the framework's frame, so it also gets a lookalike note
+    saying the user wrote it. A tool-less legacy
     `RetryPromptPart` is translated into the feedback part it always meant first, so it takes the
     same rule.
     """
@@ -6944,7 +7005,7 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
         return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
+            content=_fenced_retry_feedback(_retry_feedback_text(part), tag=RETRY_FEEDBACK_TAG),
             timestamp=part.timestamp,
         )
     return part
@@ -6967,7 +7028,8 @@ def _sanitize_request_parts(
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
-    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped and the tool
+    return ones whose reserved `__pydantic_ai__` metadata key was dropped.
     Returns the kept parts, whether any part carrying the system voice
     ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was stripped, and whether a
     [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] was dropped. Retry feedback is kept, in a form that can't carry client-written system text; see
@@ -7009,6 +7071,7 @@ def _sanitize_request_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:
@@ -7055,13 +7118,27 @@ def _without_text_metadata(content: list[UserContent], stripped: list[TextConten
 
     `stripped` is updated in place with the original items whose metadata was dropped.
     """
-    kept: list[UserContent] = []
-    for item in content:
-        if isinstance(item, TextContent) and item.metadata is not None:
-            stripped.append(item)
-            item = replace(item, metadata=None)
-        kept.append(item)
-    return kept
+    return [_text_without_metadata(item, stripped) if isinstance(item, TextContent) else item for item in content]
+
+
+def _text_without_metadata(item: TextContent, stripped: list[TextContent]) -> TextContent:
+    """An untrusted `item` without its metadata; `stripped` is updated in place with it when it had any."""
+    if item.metadata is None:
+        return item
+    stripped.append(item)
+    return replace(item, metadata=None)
+
+
+def _text_without_internal_metadata(item: TextContent) -> TextContent:
+    """`item` without the reserved `__pydantic_ai__` metadata namespace, or `item` itself if it has none.
+
+    The application's own keys are kept. The one definition of that strip, for client-submitted tool return content
+    (`sanitize_messages`) and for tool return content the UI adapters dump to a client.
+    """
+    if item.metadata is None or _PYDANTIC_AI_METADATA_KEY not in item.metadata:
+        return item
+    metadata = {key: value for key, value in item.metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
+    return replace(item, metadata=metadata or None)
 
 
 def _sanitize_file_url(
@@ -7088,6 +7165,7 @@ def _sanitize_tool_return_part(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> _ReturnPartT:
     """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
 
@@ -7104,6 +7182,7 @@ def _sanitize_tool_return_part(
         disallowed_schemes,
         reset_force_download_values,
         dropped_uploaded_file_providers,
+        stripped_text_metadata,
     )
     content = sanitized_content if keep_content else None
     if type(part) is base:
@@ -7121,6 +7200,7 @@ def _sanitize_tool_return_content(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> tuple[bool, ToolReturnContent]:
     """Recursively sanitize file references (file URLs and uploaded files) nested in tool return content.
 
@@ -7130,12 +7210,17 @@ def _sanitize_tool_return_content(
     schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
     is set.
 
+    The reserved `__pydantic_ai__` key of any [`TextContent`][pydantic_ai.messages.TextContent]'s metadata
+    is dropped too, keeping the application's own keys: the framework keeps state there, such as the mark an earlier
+    version put on a frame a capability wrote, which a client must not be able to claim.
+
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the `TextContent` items whose
+    reserved `__pydantic_ai__` metadata key was dropped.
     """
-    if isinstance(content, FileUrl | UploadedFile):
-        return _sanitize_tool_return_file(
+    if isinstance(content, FileUrl | UploadedFile | TextContent):
+        return _sanitize_tool_return_item(
             content,
             allowed_file_url_schemes,
             allowed_file_url_force_download,
@@ -7143,6 +7228,7 @@ def _sanitize_tool_return_content(
             disallowed_schemes,
             reset_force_download_values,
             dropped_uploaded_file_providers,
+            stripped_text_metadata,
         )
     # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
     # but resolves to `Any` at type-check time, so pyright can't infer the element types.
@@ -7158,6 +7244,7 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_mapping[key] = sanitized_value
@@ -7174,6 +7261,7 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_sequence.append(sanitized_item)
@@ -7181,26 +7269,32 @@ def _sanitize_tool_return_content(
     return True, content
 
 
-def _sanitize_tool_return_file(
-    file: FileUrl | UploadedFile,
+def _sanitize_tool_return_item(
+    item: FileUrl | UploadedFile | TextContent,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
     allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
-) -> tuple[bool, FileUrl | UploadedFile]:
-    """Sanitize a file reference in tool return content, as `_sanitize_tool_return_content` describes."""
-    if isinstance(file, FileUrl):
-        scheme = urlparse(file.url).scheme.lower()
+    stripped_text_metadata: list[TextContent],
+) -> tuple[bool, FileUrl | UploadedFile | TextContent]:
+    """Sanitize a file reference or text item in tool return content, as `_sanitize_tool_return_content` describes."""
+    if isinstance(item, TextContent):
+        sanitized = _text_without_internal_metadata(item)
+        if sanitized is not item:
+            stripped_text_metadata.append(item)
+        return True, sanitized
+    if isinstance(item, FileUrl):
+        scheme = urlparse(item.url).scheme.lower()
         if scheme and scheme not in allowed_file_url_schemes:
             disallowed_schemes.add(scheme)
-            return False, file
-        return True, _sanitize_file_url(file, allowed_file_url_force_download, reset_force_download_values)
+            return False, item
+        return True, _sanitize_file_url(item, allowed_file_url_force_download, reset_force_download_values)
     if not allow_uploaded_files:
-        dropped_uploaded_file_providers.add(file.provider_name)
-        return False, file
-    return True, file
+        dropped_uploaded_file_providers.add(item.provider_name)
+        return False, item
+    return True, item
 
 
 def _sanitize_response_parts(
@@ -7212,6 +7306,7 @@ def _sanitize_response_parts(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
@@ -7224,7 +7319,9 @@ def _sanitize_response_parts(
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the tool return
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose reserved `__pydantic_ai__` metadata
+    key was dropped.
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
@@ -7248,6 +7345,7 @@ def _sanitize_response_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:

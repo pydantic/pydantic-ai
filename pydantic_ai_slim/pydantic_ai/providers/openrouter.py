@@ -9,6 +9,7 @@ from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import (
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
@@ -331,6 +332,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # https://openrouter.ai/docs/features/prompt-caching
                 default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
+            special_token_route_profile('openrouter', model_name),
         )
 
     @overload

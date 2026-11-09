@@ -10,9 +10,10 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import anyio
 import anyio.lowlevel
@@ -27,7 +28,7 @@ from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
     FinalResultEvent,
@@ -95,6 +96,11 @@ from .._deferred_tools import pending_agent
 from .._recording_durability import RecordingDurability
 
 WAIT = 10
+
+
+class TemporalLikeDurability(RecordingDurability):
+    engine_spec = replace(RecordingDurability.engine_spec, tool_config_key='temporal')
+
 
 Step = Callable[[list[ModelMessage]], ModelResponse]
 AsyncStep = Callable[[list[ModelMessage]], Awaitable[ModelResponse]]
@@ -289,7 +295,9 @@ class TestSubAgentsTaskControl:
         [backgrounded] = recorder.of(TaskBackgroundedEvent)
         assert backgrounded.reason == 'requested'
 
-    async def test_a_slow_task_moves_to_the_background_after_auto_background_after(self) -> None:
+    # The engine gate admits it on Temporal, whose replay test is in `test_temporal.py`.
+    @pytest.mark.parametrize('durable', [False, True])
+    async def test_a_slow_task_moves_to_the_background_after_auto_background_after(self, durable: bool) -> None:
         gate = Gate()
         slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
         recorder = Recorder()
@@ -304,7 +312,12 @@ class TestSubAgentsTaskControl:
                 end_turn,
                 text('Done.'),
             ),
-            capabilities=[controlled(researcher(slow), auto_background_after=0.01), recorder],
+            name='durable',
+            capabilities=[
+                controlled(researcher(slow), auto_background_after=0.01),
+                recorder,
+                *([TemporalLikeDurability()] if durable else []),
+            ],
         )
         settings, exporter = traced(False)
         parent.instrument = settings
@@ -2529,11 +2542,270 @@ class SandboxWorkspace(WorkspaceBackend):
 
 
 class TestTaskControlBoundaries:
-    async def test_task_control_and_dynamic_agents_refuse_durable_execution(self) -> None:
-        for capability in (controlled(), SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())):
-            agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
-            with pytest.raises(UserError, match='not supported under durable execution'):
+    async def test_a_recorded_delegation_keeps_the_delegating_level(self) -> None:
+        poet_tools: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if (info.instructions or '').startswith('Write.'):
+                poet_tools.append([tool.name for tool in info.function_tools])
+                return ModelResponse(parts=[TextPart('a poem')])
+            returns = tool_returns(messages)
+            first = messages[0].parts[-1]
+            if isinstance(first, UserPromptPart) and first.content == 'Top.':
+                return text('Done.') if returns else call('delegate_task', agent_name='self', task='Inner.')
+            if not returns:
+                return call('create_agent', name='poet', description='d', instructions='Write.')
+            return call('delegate_task', agent_name='poet', task='Go.') if len(returns) == 1 else text('Inner done.')
+
+        def factory(spec: DynamicAgentSpec) -> Agent[Any, str]:
+            return Agent(
+                FunctionModel(respond), instructions=spec.instructions, capabilities=[SubAgents(include_self=True)]
+            )
+
+        parent = Agent(
+            FunctionModel(respond),
+            name='durable',
+            capabilities=[
+                SubAgents(include_self=True, dynamic_agents=DynamicAgents(factory=factory)),
+                RecordingDurability(isolated=True),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            await parent.run('Top.')
+        # The poet runs at the third level, the default `max_depth`, so it gets no delegate tool.
+        assert poet_tools == [[]]
+
+    @pytest.mark.parametrize(
+        ('capability', 'setting'),
+        [
+            pytest.param(controlled(include_self=True), 'include_self', id='include_self'),
+            pytest.param(
+                controlled(remote_agents=[RemoteSubAgent(name='remote')], transport=InMemoryTransport()),
+                'remote_agents',
+                id='remote_agents',
+            ),
+            pytest.param(controlled(auto_background_after=1), 'auto_background_after', id='auto_background_after'),
+            pytest.param(controlled(max_running_tasks=1), 'max_running_tasks', id='max_running_tasks'),
+            pytest.param(controlled(forward_events=True), 'forward_events', id='forward_events'),
+        ],
+    )
+    async def test_task_control_refuses_durable_execution_it_cannot_replay(
+        self, capability: SubAgents[Any], setting: str
+    ) -> None:
+        agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
+        # The error names only the setting that was found.
+        with pytest.raises(UserError, match=rf'not supported under durable execution with `{setting}`\.'):
+            await agent.run('Go.')
+
+    async def test_task_control_runs_each_task_in_a_durable_unit(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('never')), tools=[gate.pause])
+        recorder = Recorder()
+
+        def task_call(tool_name: str, **args: Any) -> Step:
+            return lambda messages: call(tool_name, task_id=task_id_in(tool_returns(messages)[0]), **args)
+
+        durability = RecordingDurability()
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                task_call('message_task', message='Hurry.'),
+                task_call('cancel_task'),
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            name='durable',
+            capabilities=[controlled(researcher(slow)), recorder, durability],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        delegation = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+        )
+        task_id = uuid5(NAMESPACE_URL, f'{result.run_id}:{delegation.tool_call_id}').hex
+        assert task_id_in(tool_returns(result.all_messages())[0]) == task_id
+        # A task in a durable unit can't ask, be messaged, or stop at its next model request.
+        [assigned] = recorder.of(TaskAssignedEvent)
+        assert not assigned.can_ask_questions
+        assert 'which messages cannot reach' in str(result.all_messages())
+        assert len(recorder.of(TaskForceCancelEvent)) == 1
+        assert 'It is one-shot and cannot be resumed.' in tool_returns(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
+        assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
+
+    async def test_durable_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self) -> None:
+        def delegate(task: str) -> ModelResponse:
+            args = {'agent_name': 'researcher', 'task': task, 'background': True}
+            return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='call_0')])
+
+        parent = Agent(
+            scripted(delegate('First.'), delegate('Second.'), text('Waiting.'), text('Done.')),
+            name='durable',
+            capabilities=[controlled(), RecordingDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        first, second = (task_id_in(receipt) for receipt in tool_returns(result.all_messages()))
+        assert first != second
+
+    async def test_a_durable_task_reports_when_the_run_goes_idle(self) -> None:
+        completed = anyio.Event()
+
+        class Completed(AbstractCapability[Any]):
+            @on_event(TaskCompletedEvent)
+            async def completed(self, ctx: RunContext[Any], event: TaskCompletedEvent) -> None:
+                completed.set()
+
+        async def after_the_task(messages: list[ModelMessage]) -> ModelResponse:
+            await completed.wait()
+            # The task's worker settles and queues its report.
+            await anyio.wait_all_tasks_blocked()
+            return call('list_tasks')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Find x.', background=True),
+                after_the_task,
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            name='durable',
+            capabilities=[controlled(), Completed(), RecordingDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        # Replay may settle the task at another point, so its report waits for the run to go idle.
+        assert result.output == 'Done.'
+        assert len(task_texts(result.all_messages())) == 1
+        assert task_texts(result.all_messages()[-2:-1])
+
+    async def test_a_durable_task_keeps_the_owners_usage_rules(self) -> None:
+        ticks: list[str] = []
+
+        def busy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return call('tick')
+
+        async def stream_busy(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            yield {0: DeltaToolCall(name='tick', json_args='{}')}
+
+        def tick() -> str:
+            """Do a bit of work."""
+            ticks.append('tick')
+            return 'ticked'
+
+        def parent(*capabilities: AbstractCapability[Any]) -> Agent[Any, str]:
+            worker = Agent(FunctionModel(busy, stream_function=stream_busy), tools=[tick])
+            return Agent(
+                scripted(call('delegate_task', agent_name='researcher', task='Go.'), echo_last_return),
+                name='durable',
+                capabilities=[
+                    controlled(researcher(worker, usage_limits=UsageLimits(request_limit=50))),
+                    *capabilities,
+                ],
+            )
+
+        counts: list[int] = []
+        for capabilities in ([], [RecordingDurability()]):
+            ticks.clear()
+            with anyio.fail_after(WAIT), pytest.raises(UsageLimitExceeded):
+                await parent(*capabilities).run('Go.', usage_limits=UsageLimits(request_limit=4))
+            counts.append(len(ticks))
+        # The parent's limit caps the task's own, with or without durability.
+        assert counts == [3, 3]
+
+    async def test_a_durable_task_keeps_its_outcome(self) -> None:
+        def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('boom')
+
+        recorder = Recorder()
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Go.'), echo_last_return),
+            name='durable',
+            capabilities=[
+                controlled(researcher(Agent(FunctionModel(broken)), on_failure='Gave up.')),
+                recorder,
+                RecordingDurability(),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        [failed] = recorder.of(TaskFailedEvent)
+        assert result.output == f'Task {failed.task_id} (failed):\nGave up.'
+
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            pytest.param(SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents()), id='dynamic_agents'),
+            pytest.param(controlled(), id='task_control'),
+        ],
+    )
+    async def test_a_bound_owner_refuses_durable_execution(self, capability: SubAgents[Any]) -> None:
+        agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
+        owner = DelegationTasks()
+        async with owner.opened():
+            with owner.bind(), pytest.raises(UserError, match='outside a `DelegationTasks` owner'):
                 await agent.run('Go.')
+
+    async def test_dynamic_agents_refuse_an_engine_that_records_their_tools(self) -> None:
+        class WrappingDurability(RecordingDurability):
+            engine_spec = replace(
+                RecordingDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}), tool_config_key='x'
+            )
+
+        dynamic = SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())
+        agent = Agent(TestModel(), name='durable', capabilities=[dynamic, WrappingDurability()])
+        with pytest.raises(UserError, match='on an engine that runs its tools in workflow code'):
+            await agent.run('Go.')
+
+    def test_durable_execution_requires_an_id(self) -> None:
+        with pytest.raises(UserError, match='needs an explicit `id`'):
+            Agent(
+                TestModel(),
+                name='durable',
+                capabilities=[SubAgents(agents=[researcher()], id=None), RecordingDurability()],
+            )
+
+    async def test_dynamic_agents_record_each_delegation_under_durable_execution(self) -> None:
+        def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ValueError('boom')
+
+        def factory(spec: DynamicAgentSpec) -> Agent[Any, str]:
+            model = FunctionModel(crash) if spec.name == 'broken' else TestModel(custom_output_text=spec.instructions)
+            return Agent(model)
+
+        def parent(*capabilities: AbstractCapability[Any]) -> Agent[Any, str]:
+            return Agent(
+                scripted(
+                    call('create_agent', name='poet', description='d', instructions='A poem.'),
+                    call('create_agent', name='broken', description='d', instructions='i'),
+                    call('delegate_task', agent_name='poet', task='Write.'),
+                    call('delegate_task', agent_name='broken', task='Write.'),
+                    call('delegate_task', agent_name='researcher', task='Look.'),
+                    text('Done.'),
+                ),
+                name='durable',
+                capabilities=[
+                    SubAgents(
+                        agents=[researcher()], dynamic_agents=DynamicAgents(factory=factory), contain_errors=True
+                    ),
+                    *capabilities,
+                ],
+            )
+
+        durability = RecordingDurability()
+        with anyio.fail_after(WAIT):
+            durable = await parent(durability).run('Go.')
+            plain = await parent().run('Go.')
+        # Recorded delegations, a crash's `ModelRetry` included, reach the model as they do without durability.
+        assert tool_returns(durable.all_messages()) == tool_returns(plain.all_messages())
+        assert tool_returns(plain.all_messages())[2:] == [
+            'A poem.',
+            '{"error":"Sub-agent \'broken\' crashed: ValueError: boom. Treat this as a recoverable failure and decide '
+            'from existing evidence."}',
+            'child output',
+        ]
+        delegations = [name for name, _ in durability.calls if name.endswith('.delegate')]
+        assert delegations == ['durable__capability__sub_agents.delegate'] * 3
 
     async def test_a_run_a_tool_starts_gets_an_owner_of_its_own(self) -> None:
         inner = Agent(

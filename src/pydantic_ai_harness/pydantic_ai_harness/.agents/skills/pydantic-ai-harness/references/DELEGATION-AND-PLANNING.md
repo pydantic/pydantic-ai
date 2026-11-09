@@ -209,8 +209,13 @@ orchestrator = Agent(
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
-  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Don't use either with the deprecated
+  wrapper agents (`TemporalAgent`, ...). On Temporal and DBOS, `dynamic_agents` and task control run each
+  delegation other than to `self` in a durable unit of its own; a durable task can't ask questions, take messages
+  or be resumed, `cancel_task` stops it right away, and its report arrives when the run would otherwise end.
+  `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
+  `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+  `DelegationTasks` owner.
 
 ## DelegationReports
 
@@ -347,7 +352,9 @@ Gotchas:
   `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
-  For durable runs use `mode='native'`; local execution is unsupported there.
+- Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
+  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
 
@@ -361,7 +368,7 @@ capability parts out. The tool's return value and files, then any `ToolReturn.co
 frame; `ToolReturn.metadata` is discarded.
 
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
-tags, the same tags Pydantic AI puts around tool files it sends on the user channel, with a note that
+tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user channel, with a note that
 the tool wrote it, not the user or the application. This tells the model the text is the tool's output
 rather than something the user said, and which pending call it completes. The output goes out as
 written: text in it that looks like `<tool_result>` or an application frame such as `<system>` gets a

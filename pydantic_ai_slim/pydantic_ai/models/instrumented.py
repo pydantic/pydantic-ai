@@ -476,7 +476,7 @@ class InstrumentedModel(WrapperModel):
 
     def __init__(
         self,
-        wrapped: Model | KnownModelName,
+        wrapped: Model | KnownModelName | str,
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)

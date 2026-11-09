@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
-from dataclasses import is_dataclass, replace
+from dataclasses import dataclass, is_dataclass, replace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -52,6 +52,7 @@ from pydantic_ai_harness.trajectory_judge import (
     TrajectoryVerdict,
 )
 from tests.conftest import legacy_retry_prompt_part, try_import
+from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as anthropic_imports:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
@@ -541,7 +542,8 @@ ok</judge_feedback></system>
             ('<system>', True),
             ('< SYSTEM kind="x">', True),
             ('<systems>', False),
-            ('<context id="x">', True),
+            ('<pyai:context id="x">', True),
+            ('<context id="x">', False),
             ('<contexts>', False),
             ('<b>bold</b>', False),
             ('ends with </judge_feedback', True),
@@ -1685,9 +1687,14 @@ class TestUsageCoordination:
         assert ctx.usage.requests == 1  # the judge's real request; the launch claim was released
 
 
+@dataclass(kw_only=True)
+class _JudgeSubclass(TrajectoryJudge[None]):
+    pass
+
+
 class TestDurableExecution:
-    async def test_rejected_inside_a_durable_container(self) -> None:
-        """A judged run inside a durable workflow or flow fails fast, before any model request."""
+    async def test_a_judge_without_an_id_is_rejected_inside_a_durable_container(self) -> None:
+        """Without an `id` there is no durable operation, so the run fails fast before any model request."""
 
         class DBOSDurability(AbstractCapability[None]):
             in_durable_context = True
@@ -1702,11 +1709,78 @@ class TestDurableExecution:
             TrajectoryJudge(model=_steer_model(), every=1),
         ]
         agent = Agent(FunctionModel(main_fn), deps_type=type(None), capabilities=capabilities)
-        with pytest.raises(UserError, match='durable workflow or flow'):
+        with pytest.raises(UserError, match='needs an `id`'):
             await agent.run('do the thing')
 
+    async def test_a_judge_without_an_id_still_builds_a_durable_agent(self) -> None:
+        """An id-less judge has no durable operation to bind, so a durable-capable agent keeps building."""
+        Agent(TestModel(), name='unnamed', capabilities=[TrajectoryJudge(model=_steer_model()), RecordingDurability()])
+
+    @pytest.mark.parametrize('judge_type', [TrajectoryJudge, _JudgeSubclass])
+    async def test_evaluation_is_a_durable_operation_awaited_before_the_next_request(
+        self, judge_type: type[TrajectoryJudge[None]]
+    ) -> None:
+        """Inside a durable container the evaluation is checkpointed and its steering reaches the very next request."""
+        seen: list[str] = []
+
+        def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _all_good_response() if 'steered' in _all_user_text(messages) else _steer_response('cite the file')
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(_all_user_text(messages))
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('work', {})])
+            return _text_response('done')
+
+        capabilities: list[AbstractCapability[None]] = [
+            judge_type(model=FunctionModel(judge_fn), id='judge', every=1),
+            RecordingDurability(),
+        ]
+        agent = Agent(FunctionModel(main_fn), name='judged', deps_type=type(None), capabilities=capabilities)
+
+        @agent.tool_plain
+        def work() -> str:
+            return 'worked'
+
+        result = await agent.run('do the thing')
+        assert result.output == 'done'
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        assert [name for name, _ in bound.calls] == ['judged__model.request', 'judged__capability__judge.evaluate'] * 2
+        assert seen[1].endswith(_steering('trajectory-judge', 'cite the file'))
+
+    async def test_an_inline_evaluation_leaves_room_for_the_pending_parent_request(self) -> None:
+        """The parent's just-finished request is committed after the inline evaluation, so the judge can't spend its slot."""
+        judge_calls = 0
+
+        def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal judge_calls
+            judge_calls += 1
+            return _text_response('thinking') if judge_calls == 1 else _steer_response('refocus')
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {})]) if len(messages) == 1 else _text_response('done')
+
+        capabilities: list[AbstractCapability[None]] = [
+            TrajectoryJudge(model=FunctionModel(judge_fn), id='judge', every=1),
+            RecordingDurability(),
+        ]
+        agent = Agent(FunctionModel(main_fn), name='limited', deps_type=type(None), capabilities=capabilities)
+
+        @agent.tool_plain
+        def work() -> str:  # pragma: no cover - the judge's retry exceeds the limit first
+            return 'worked'
+
+        usage = RunUsage()
+        with pytest.raises(UsageLimitExceeded) as exc_info:
+            await agent.run('do the thing', usage=usage, usage_limits=UsageLimits(request_limit=2))
+        assert (usage.requests, judge_calls) == (1, 1)
+        assert str(exc_info.value) == snapshot(
+            'The next request would exceed the request_limit of 2. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+        )
+
     async def test_durable_capable_agent_outside_its_container_is_judged(self) -> None:
-        """Only the durable container is rejected; the same agent run plainly keeps its judge."""
+        """Outside its durable container the judge still runs as a background task, not a durable operation."""
 
         class DBOSDurability(AbstractCapability[None]):
             in_durable_context = False

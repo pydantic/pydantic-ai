@@ -27,10 +27,10 @@ interactions:
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -87,10 +87,10 @@ interactions:
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -186,16 +186,16 @@ interactions:
           output: Saved.
         - role: system
           content: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: done.
-            </context>
+            </pyai:context>
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         previous_response_id: resp_0d04a176aae2f4c3006abc234789f887d1b29dff56b3717440
         reasoning:
@@ -253,10 +253,10 @@ interactions:
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol

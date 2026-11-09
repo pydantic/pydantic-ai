@@ -101,7 +101,7 @@ note naming its author. See <https://pydantic.dev/docs/ai/capabilities/custom/#c
 Only text that isn't a capability part, such as a transcript flattened for a second model, writes a tag into
 prompt text. It registers the tag once at module level with `pydantic_ai.framing.register_tag()` and renders
 it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
-`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
+`<pyai:tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
 `neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
 escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
 structure. Tag names are lowercase snake_case. See

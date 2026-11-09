@@ -29,7 +29,13 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceError
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceError,
+)
 from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
@@ -78,11 +84,18 @@ def specialists() -> dict[str, SubAgent[object]]:
 
 
 async def review_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
-    """Only the isolated Review specialist may leave a local session's directory."""
+    """Only the isolated Review specialist may leave a local session's directory.
+
+    Its workspace carries the parent's authority, never more: the model picks the directory, so its
+    instruction files are no more the operator's than the parent's own are.
+    """
     if request.agent_name != REVIEW_AGENT_NAME:
         raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')
     # `backend` unwraps policy layers; replacing it must not discard a sandbox.
-    if any(layer not in (LocalWorkspaceBackend, ReadOnlyWorkspace) for layer in workspace_layers(ctx.workspace)):
+    if any(
+        layer not in (LocalWorkspaceBackend, ReadOnlyWorkspace, AuthorityWorkspace)
+        for layer in workspace_layers(ctx.workspace)
+    ):
         raise ModelRetry(
             'Review directory selection requires a local parent workspace without sandbox or custom policy wrappers.'
         )
@@ -95,7 +108,8 @@ async def review_workspace(ctx: RunContext[object], request: DelegationWorkspace
         await workspace.working_dir()
     except (OSError, WorkspaceError) as exc:
         raise ModelRetry(f'Cannot use Review directory {directory!r}: {exc}') from exc
-    return workspace
+    authority = ctx.workspace.authority
+    return workspace if authority == 'operator' else AuthorityWorkspace(workspace, authority=authority)
 
 
 def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTask]]:
@@ -229,16 +243,7 @@ class TaskRouter:
             if isinstance(message, ModelResponse) and message.usage.input_tokens:
                 progress.context_tokens = context_tokens(message)
                 break
-        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-            self.partial[record.id] = event.part.content
-        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-            self.partial[record.id] = self.partial.get(record.id, '') + event.delta.content_delta
-        elif isinstance(event, (PartEndEvent, DelegationEndEvent)) or record.status == 'finished':
-            self.partial.pop(record.id, None)
-            self.partial_truncated.discard(record.id)
-        if len(self.partial.get(record.id, '')) > 65536:
-            self.partial[record.id] = self.partial[record.id][-65536:]
-            self.partial_truncated.add(record.id)
+        self._observe_partial(record, event)
         if event is not None:
             progress.observe(event)
         view = self.view(record.conversation_id)
@@ -254,6 +259,19 @@ class TaskRouter:
             self.started.pop(record.id, None)
         if view is not None:
             await view.deliver(update)
+
+    def _observe_partial(self, record: DelegationTask, event: AgentStreamEvent | None) -> None:
+        """Keep the last 64 KiB of the text `record` streams, until its part ends or it finishes."""
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            self.partial[record.id] = event.part.content
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+            self.partial[record.id] = self.partial.get(record.id, '') + event.delta.content_delta
+        elif isinstance(event, (PartEndEvent, DelegationEndEvent)) or record.status == 'finished':
+            self.partial.pop(record.id, None)
+            self.partial_truncated.discard(record.id)
+        if len(self.partial.get(record.id, '')) > 65536:
+            self.partial[record.id] = self.partial[record.id][-65536:]
+            self.partial_truncated.add(record.id)
 
 
 _CLOSED_BEFORE_START = 'This session closed before the task could start.'
@@ -453,30 +471,40 @@ class Tasks:
                 recent = True
                 if record.outcome == 'ok':
                     continue
-            descendants = sum(self._descends(child, record.id) for child in records)
-            activity = self.progress.get(record.id, Status(activity='starting')).activity
-            state = activity.removeprefix('running: ').removeprefix('tool: ')
-            state = state if record.status == 'running' else record.outcome
-            elapsed = (record.finished_at or now) - record.started_at
-            name = _display_name(record.agent_name)
-            mode = 'background' if record.background else 'foreground'
-            suffix = f' · {descendants} descendants' if descendants else ''
-            state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
-            if record.outcome in ('cancelled', 'interrupted'):
-                state_color = theme.WARNING
-            marker = glyph if record.status == 'running' else '!'
-            muted = theme.sgr(theme.MUTED)
-            rows.append(
-                f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
-                f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
-                f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
-            )
+            rows.append(self._panel_row(record, records, depth=depth, now=now, glyph=glyph))
         if rows or recent:
-            hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
-            if any(record.backgroundable for record in self._foreground_tasks()):
-                hint += f' · {theme.sgr(theme.ACCENT)}Ctrl+B{theme.sgr(theme.MUTED)} background'
-            rows.append(hint + '\x1b[0m')
+            rows.append(self._panel_hint())
         return tuple(rows)
+
+    def _panel_row(
+        self, record: DelegationTask, records: Sequence[DelegationTask], *, depth: int, now: float, glyph: str
+    ) -> str:
+        """One task's panel row, `depth` levels deep: its state, name, ID, age, mode, and descendants in `records`."""
+        descendants = sum(self._descends(child, record.id) for child in records)
+        activity = self.progress.get(record.id, Status(activity='starting')).activity
+        state = activity.removeprefix('running: ').removeprefix('tool: ')
+        state = state if record.status == 'running' else record.outcome
+        elapsed = (record.finished_at or now) - record.started_at
+        name = _display_name(record.agent_name)
+        mode = 'background' if record.background else 'foreground'
+        suffix = f' · {descendants} descendants' if descendants else ''
+        state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
+        if record.outcome in ('cancelled', 'interrupted'):
+            state_color = theme.WARNING
+        marker = glyph if record.status == 'running' else '!'
+        muted = theme.sgr(theme.MUTED)
+        return (
+            f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
+            f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
+            f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
+        )
+
+    def _panel_hint(self) -> str:
+        """The panel's last row: the keys that open `/tasks`, and that background tasks while one can be."""
+        hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
+        if any(record.backgroundable for record in self._foreground_tasks()):
+            hint += f' · {theme.sgr(theme.ACCENT)}Ctrl+B{theme.sgr(theme.MUTED)} background'
+        return hint + '\x1b[0m'
 
     def _descends(self, record: DelegationTask, ancestor: str) -> bool:
         parent = record.parent_id

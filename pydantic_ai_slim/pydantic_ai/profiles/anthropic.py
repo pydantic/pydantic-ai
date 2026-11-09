@@ -46,7 +46,8 @@ application's instructions correctly and followed steering after a tool result m
 `<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell
 (instruction changes, a genuine change next to a lookalike, request-scoped prompts), at +1.4% cost per cached
 conversation with the prefix unchanged. The unsealed fallback was worse than the entry on instruction history, so
-it's the sealed one or neither.
+it's the sealed one or neither. Request-scoped entries have their own list:
+`_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES` in `providers/anthropic.py`.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
@@ -120,7 +121,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch. Default: `False`.
 
     When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
-    which let Claude filter web results via code execution before they enter context.
+    which let Claude filter web results via code execution before they enter context. Anthropic web tool
+    `provider_settings` can select the `20260318` versions instead, which also support dynamic filtering.
     """
 
     anthropic_supports_xhigh_effort: bool
@@ -236,8 +238,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
     64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
 
-    It only applies when the native entry is used, which Haiku 5.5's default profile doesn't: that sends it the sealed
-    `<system>` rendering instead (`needs_sealed_system_blocks`).
+    It only applies when a native entry is used. Haiku 5.5's default profile sends its lasting system messages as
+    sealed `<system>` blocks instead (`needs_sealed_system_blocks`), so that leaves its request-scoped entries.
     """
 
     anthropic_accepts_file_and_container_ids: bool
@@ -285,7 +287,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_calls_cited_web_tools_directly: bool
-    """Whether a request that asks for citations sends the `20260209` web tools it cites with
+    """Whether a request that asks for citations sends the `20260209` or `20260318` web tools it cites with
     `allowed_callers=['direct']`, so their results are cited. Default: `False`.
 
     See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
@@ -644,6 +646,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    if model_name.startswith('claude-sonnet-4-6'):
+        # Sonnet 4.6 follows the application's `<system verified>` blocks and its own reminder tags only once told
+        # what they mean, so it gets the announcement from the first request (see the field's docstring). It has no
+        # native mid-conversation system role on any transport, where the announcement would be a system message.
+        profile['default_framing_announcement'] = 'always'
     return profile
 
 

@@ -26,10 +26,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -97,10 +97,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -111,9 +111,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context></system>
+            </pyai:context></system>
         model: deepseek/deepseek-chat
         stream: true
         stream_options:
@@ -177,10 +177,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -191,9 +191,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: B
         - role: user
@@ -261,10 +261,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -275,9 +275,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: B
         - role: user
@@ -288,9 +288,9 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context></system>
+            </pyai:context></system>
         model: deepseek/deepseek-chat
         stream: true
         stream_options:
@@ -356,10 +356,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -370,9 +370,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: B
         - role: user
@@ -383,18 +383,18 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: A
         - role: user
           content: A pallet of bottled water arrived at the dock. Where to?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             This context has been withdrawn, and the withdrawal stays in effect until replaced again.
-            </context></system>
+            </pyai:context></system>
         model: deepseek/deepseek-chat
         stream: true
         stream_options:
@@ -462,10 +462,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: >-
             I have a box of books from the library donation drive. Where should it be
@@ -476,9 +476,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: B
         - role: user
@@ -489,27 +489,27 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: A
         - role: user
           content: A pallet of bottled water arrived at the dock. Where to?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             This context has been withdrawn, and the withdrawal stays in effect until replaced again.
-            </context></system>
+            </pyai:context></system>
         - role: assistant
           content: UNASSIGNED
         - role: user
           content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
         - role: user
           content: |-
-            <system><context id="capability:memory:state">
+            <system><pyai:context id="capability:memory:state">
             Send parcels to warehouse C.
-            </context></system>
+            </pyai:context></system>
         model: deepseek/deepseek-chat
         stream: true
         stream_options:

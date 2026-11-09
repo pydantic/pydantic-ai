@@ -83,7 +83,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id
+from .._utils import get_ui_message_id, set_ui_message_id, without_internal_text_metadata
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -1504,7 +1504,8 @@ def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any]
     content: object = None if tool_result is None or tool_result.outcome != 'retried' else tool_result.content
     if not isinstance(content, list):
         return None
-    return tool_return_ta.dump_python(content, mode='json', by_alias=True)
+    items = cast(list[Any], content)
+    return tool_return_ta.dump_python(without_internal_text_metadata(items), mode='json', by_alias=True)
 
 
 def _validate_tool_output(output: Any) -> Any:

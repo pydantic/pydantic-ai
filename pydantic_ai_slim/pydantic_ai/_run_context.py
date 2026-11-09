@@ -27,7 +27,11 @@ from ._enqueue import (
     EnqueueGuard,
     PendingMessage,
     PendingMessagePriority,
+    PendingMessageQueue,
+    QueueChangeMethod,
     hand_built_capability_speech,
+    remove_pending,
+    set_pending_priority,
     stamp_capability_parts,
 )
 from ._warnings import PydanticAIDeprecationWarning
@@ -341,7 +345,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
-    to add messages rather than mutating it directly.
+    to add messages, and [`dequeue`][pydantic_ai.tools.RunContext.dequeue] or
+    [`set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority] to change them, rather than mutating it directly.
     """
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
@@ -1076,6 +1081,70 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 stacklevel=2,
             )
         return pending.enqueue_id
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] before it's delivered.
+
+        Safe to call from the same places as `enqueue`. The check and the removal happen under the
+        queue's lock, so a concurrent delivery and a dequeue can't both succeed.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run. No
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted for it.
+
+        Raises:
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
+        """
+        queue = self._changeable_queue('dequeue')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.dequeue(enqueue_id)
+        return remove_pending(queue, enqueue_id)  # a hand-built context's list, which nothing drains
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] is delivered.
+
+        The message keeps its place among queued messages and its `enqueue_id`, so the
+        [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] for its delivery still
+        carries that ID. A message enqueued at `'when_idle'` and promoted to `'asap'` is delivered at the
+        next model request, in its own [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Content
+        enqueued during a tool call and demoted to `'when_idle'` is delivered like other `'when_idle'`
+        content, as its own request, not next to that call's result; promoted back before the request
+        carrying that result is sent, it goes next to the result again.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run.
+
+        Raises:
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
+        """
+        queue = self._changeable_queue('set_enqueue_priority')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.set_enqueue_priority(enqueue_id, priority)
+        return set_pending_priority(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
+
+    def _changeable_queue(self, method: QueueChangeMethod) -> list[PendingMessage]:
+        queue = self.pending_messages
+        if queue is None:
+            raise UserError(
+                f'`{method}` is only available during an agent run (from tools, capability hooks, or '
+                f'`AgentRun.{method}`). This `RunContext` has no pending-message queue to change.'
+            )
+        if isinstance(queue, EnqueueGuard):
+            raise queue.change_error(method)
+        return queue
 
     def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
         """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) on the model request that follows.

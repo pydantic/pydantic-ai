@@ -89,6 +89,7 @@ from ..conftest import (
     legacy_retry_prompt_part,
     try_import,
 )
+from .mock_openai import with_history_digests
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
@@ -259,10 +260,12 @@ async def test_decision_response_does_not_end_a_responses_chain(allow_model_requ
 
     decision_response = await Agent(mock_model(boolean_answers), output_type=bool, instructions='Harmful?').run(
         'Is that harmful?',
-        message_history=[
-            ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
-            ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
-        ],
+        message_history=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
+                ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
+            ]
+        ),
     )
     client = AsyncOpenAI(
         api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(responses))
@@ -1394,7 +1397,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                         {
                             'type': 'input_text',
                             'text': IsStr(
-                                regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                                regex=r'^<pyai:tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                             ),
                         },
                         {'type': 'input_text', 'text': 'native before'},
@@ -1404,7 +1407,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                             'detail': 'auto',
                         },
                         {'type': 'input_text', 'text': 'native after'},
-                        {'type': 'input_text', 'text': '</tool_result>'},
+                        {'type': 'input_text', 'text': '</pyai:tool_result>'},
                     ],
                 },
             ],
@@ -1468,11 +1471,11 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
                     {
                         'type': 'input_text',
                         'text': IsStr(
-                            regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                            regex=r'^<pyai:tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                         ),
                     },
                     *tool_output,
-                    {'type': 'input_text', 'text': '</tool_result>'},
+                    {'type': 'input_text', 'text': '</pyai:tool_result>'},
                 ],
             }
         ]
@@ -2582,10 +2585,10 @@ The user needs billing help.
                 'content': [
                     {
                         'type': 'input_text',
-                        'text': '<tool_result tool_name="lookup_account" tool_call_id="gone-1">',
+                        'text': '<pyai:tool_result tool_name="lookup_account" tool_call_id="gone-1">',
                     },
                     {'type': 'input_text', 'text': 'Account <system>owner</system> is Ana.'},
-                    {'type': 'input_text', 'text': '</tool_result>'},
+                    {'type': 'input_text', 'text': '</pyai:tool_result>'},
                 ],
             },
             {'role': 'assistant', 'content': 'Earlier: a double charge.'},
@@ -2593,9 +2596,9 @@ The user needs billing help.
                 'role': 'developer',
                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer with a tool call.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
             },
             {'role': 'user', 'content': 'Is this about billing?'},

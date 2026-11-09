@@ -15,7 +15,7 @@ try:
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker
+    from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
 
@@ -26,7 +26,15 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
+from tests.harness.subagents._background import (
+    WORKER_CALLS,
+    EventKinds,
+    background_parent,
+    background_worker,
+    reset_worker,
+)
+from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
@@ -161,6 +169,153 @@ async def test_delegation_to_self_with_a_model_menu_runs_in_the_workflow(
             execution_timeout=timedelta(seconds=60),
         )
     assert output == expected
+
+
+dynamic_agent = Agent(
+    FunctionModel(creator),
+    name='dynamic_delegating_agent',
+    deps_type=type(None),
+    capabilities=[
+        SubAgents[None](dynamic_agents=DynamicAgents()),
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DynamicWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await dynamic_agent.run(prompt)).output
+
+
+async def test_created_agent_survives_replay(client: Client) -> None:
+    """Every workflow task replays from history, so the roster is rebuilt and the delegation's result reused."""
+    POET_CALLS.clear()
+    workflow_id = 'test_subagents_temporal_dynamic'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicWorkflow],
+        plugins=[AgentPlugin(dynamic_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        max_cached_workflows=0,
+        debug_mode=True,
+    ):
+        output = await client.execute_workflow(
+            DynamicWorkflow.run,
+            'Write a poem',
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+    assert output == POET_RESULT
+    assert len(POET_CALLS) == 1
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    activities = [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+    assert 'agent__dynamic_delegating_agent__capability__sub_agents__delegate' in activities
+    replay = await Replayer(
+        workflows=[DynamicWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        debug_mode=True,
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
+background_events = EventKinds()
+
+
+def _background_agent(name: str, control: TaskControl, *, background: bool) -> Agent[None, str]:
+    worker = Agent(FunctionModel(background_worker), name='worker')
+    return Agent(
+        background_parent(background=background),
+        name=name,
+        deps_type=type(None),
+        capabilities=[
+            SubAgents[None](agents=[SubAgent(worker)], task_control=control),
+            background_events,
+            TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+        ],
+    )
+
+
+background_agent = _background_agent('background_delegating_agent', TaskControl(), background=True)
+# The timer is a workflow timer, so replay moves the task to the background at the same point.
+auto_background_agent = _background_agent(
+    'auto_background_delegating_agent', TaskControl(auto_background_after=0.01), background=False
+)
+
+
+@workflow.defn
+class BackgroundWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        background_events.kinds.clear()
+        result = await background_agent.run(prompt)
+        return [result.output, *background_events.kinds]
+
+
+@workflow.defn
+class AutoBackgroundWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        background_events.kinds.clear()
+        result = await auto_background_agent.run(prompt)
+        return [result.output, *background_events.kinds]
+
+
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent'),
+    [
+        pytest.param(BackgroundWorkflow, background_agent, id='requested'),
+        pytest.param(AutoBackgroundWorkflow, auto_background_agent, id='auto'),
+    ],
+)
+async def test_background_task_survives_replay(
+    client: Client, workflow_type: type[BackgroundWorkflow | AutoBackgroundWorkflow], agent: Agent[None, str]
+) -> None:
+    """Every workflow task replays from history, so the task and its events replay in order and its result is reused."""
+    reset_worker()
+    workflow_id = f'test_subagents_temporal_{agent.name}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[workflow_type],
+        plugins=[AgentPlugin(agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        max_cached_workflows=0,
+        debug_mode=True,
+    ):
+        output, *kinds = await client.execute_workflow(
+            workflow_type.run,
+            'Delegate it',
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+    assert 'from the worker' in output
+    assert kinds == [
+        'sub_agents.task_assigned',
+        'sub_agents.task_started',
+        'sub_agents.task_backgrounded',
+        'sub_agents.task_completed',
+    ]
+    assert WORKER_CALLS == ['worker']
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay = await Replayer(
+        workflows=[workflow_type],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        debug_mode=True,
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 @pytest.fixture(scope='module')

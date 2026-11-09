@@ -30,6 +30,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.native_tools import (
         AdvisorTool,
         CodeExecutionTool,
@@ -40,7 +41,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
-    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -829,3 +830,25 @@ def test_anthropic_tool_deferral_mode_tracks_tool_search_support(model_name: str
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('tool_deferral_mode') == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'sealed'),
+    [
+        ('claude-sonnet-4-6', True),
+        ('claude-haiku-5-5', True),
+        ('claude-sonnet-4-5', False),
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-5-5', True),
+        ('claude-opus-5', False),
+        ('claude-haiku-4-5', False),
+    ],
+)
+def test_anthropic_sealed_system_block_models(model_name: str, sealed: bool):
+    """A sealed model never gets the native role: its blocks are the `<system>` fallback."""
+    profile = AnthropicModel(model_name, provider=AnthropicProvider(api_key='mock-api-key')).profile
+    assert profile.get('needs_sealed_system_blocks', False) is sealed
+    if sealed:
+        assert profile.get('supports_inline_system_prompts') is False
+        # Sonnet 4.6 rejects the entry; the other two take it, with the sealed block inside.
+        assert profile.get('supports_request_scoped_system_prompts') is (model_name != 'claude-sonnet-4-6')

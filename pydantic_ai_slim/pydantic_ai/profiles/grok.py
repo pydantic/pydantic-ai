@@ -20,7 +20,7 @@ _GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('non
 # profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
-# Grok 4.3 through 4.7 follow the fallback's mid-conversation `<system>` blocks better when they carry the seal.
+# Grok 4.3 through 4.7 follow the fallback's mid-conversation `<system>` blocks better when they carry the marker.
 # Measured with `OpenRouterModel` and `XaiModel`: a genuine change next to a user lookalike, steering after a tool
 # result and attribution (who said what) all improved sealed. Grok 4.20 is deliberately absent: it measured worse
 # sealed. The `-latest` aliases name the same models; the floating `grok-latest` and the retired slugs don't.

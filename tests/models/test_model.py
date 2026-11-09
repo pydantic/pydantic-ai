@@ -317,33 +317,33 @@ def test_infer_model_with_provider():
     [
         pytest.param('foobar', 'Unknown model: foobar', id='unqualified'),
         pytest.param(
-            'claude:sonnet-5',
-            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'claude:sonnet-5-5',
+            "Unknown model: claude:sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='close-match',
         ),
         pytest.param(
-            'claude:potato-5',
-            "Unknown model: claude:potato-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'claude:potato-5-5',
+            "Unknown model: claude:potato-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='loose-match',
         ),
         pytest.param(
-            'anthropicc:claude-sonnet-5',
-            "Unknown model: anthropicc:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'anthropicc:claude-sonnet-5-5',
+            "Unknown model: anthropicc:claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='provider-typo',
         ),
         pytest.param(
-            'unknown:claude-sonnet-5',
-            "Unknown model: unknown:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'unknown:claude-sonnet-5-5',
+            "Unknown model: unknown:claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='known-model-name',
         ),
         pytest.param(
-            'anthropic-claude-sonnet-5',
-            "Unknown model: anthropic-claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'anthropic-claude-sonnet-5-5',
+            "Unknown model: anthropic-claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='missing-colon',
         ),
         pytest.param(
-            'openia:gpt-5.2',
-            "Unknown model: openia:gpt-5.2. Did you mean 'openai:gpt-5.2'?",
+            'openia:gpt-5.6-sol',
+            "Unknown model: openia:gpt-5.6-sol. Did you mean 'openai:gpt-5.6-sol'?",
             id='prefer-direct-provider',
         ),
         pytest.param('unknown:potato', 'Unknown model: unknown:potato', id='no-match'),
@@ -355,8 +355,8 @@ def test_infer_str_unknown(model_name: str, message: str):
 
 
 def test_agent_suggests_known_model_name():
-    with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5'"):
-        Agent('claude:sonnet-5')
+    with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5-5'"):
+        Agent('claude:sonnet-5-5')
 
 
 def test_infer_model_allows_unknown_name_for_known_provider():
@@ -685,7 +685,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
-            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+            'from the user):\n<pyai:retry_feedback>\noutput invalid\n</pyai:retry_feedback>',
         ),
         ('UserPromptPart', 'file from c'),
     ]

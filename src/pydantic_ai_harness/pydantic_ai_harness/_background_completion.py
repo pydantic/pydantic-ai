@@ -25,9 +25,9 @@ class BackgroundToolResultPart(
 ):
     """A background tool call's result, delivered once the call finishes.
 
-    Data on the user channel in a `<tool_result>` tag naming the call, the same tag Pydantic AI puts around tool files it
-    sends on the user channel, with a note that the tool wrote it, not the user or the application. Its content is
-    what the tool returned, as text followed by any files, or the message of a failed call.
+    Data on the user channel in a `<tool_result>` tag naming the call, like the `<pyai:tool_result>` tag Pydantic AI puts
+    around tool files it sends on the user channel, with a note that the tool wrote it, not the user or the application.
+    Its content is what the tool returned, as text followed by any files, or the message of a failed call.
     """
 
     tool_name: str

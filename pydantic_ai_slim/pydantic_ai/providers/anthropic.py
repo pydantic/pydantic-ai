@@ -63,6 +63,25 @@ the way it does a plain system entry. Verified live per model, including `claude
 """
 
 
+_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that take a request-scoped `{'role': 'system'}` entry with `clear_at`.
+
+The list Anthropic publishes for the `mid-conversation-system-clear-at-2026-08-21` beta. It's separate from
+`_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-sonnet-5-5` and `claude-haiku-5-5` for their sealed
+`<system>` rendering of lasting system messages. Both bind thinking blocks, and a block that's gone from the next
+request invalidates every thinking block after it, while a cleared entry left in place doesn't. So these two get the
+entry, with the sealed block inside it. `claude-sonnet-5` accepts and clears these entries too (verified live), but it's
+left out because it ignores the role: see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.
+"""
+
+
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
     'claude-fable-5-1',
     'claude-mythos-5-1',
@@ -145,11 +164,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
-                # Request-scoped (`clear_at`) entries are published for the same models and transports as
-                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
-                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
-                # the same reason it's left out above.
-                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                supports_request_scoped_system_prompts=model_name.startswith(
+                    _REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES
+                ),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
             # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only

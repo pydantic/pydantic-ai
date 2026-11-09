@@ -113,8 +113,9 @@ The Vercel AI and AG-UI message conversions leave capability parts out, so follo
 server-side history.
 
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
-tags, the same tags Pydantic AI puts around tool files it sends on the user channel, with a note in
-the application's voice that the tool wrote it, not the user or the application. This tells the
+tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user
+channel, with a note in the application's voice that the tool wrote it, not the user or the
+application. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
 completes. The output goes out as the tool wrote it: text in it that looks like the frame's own tag
 or an application frame such as `<system>` gets a further note naming the tool as its author, so it

@@ -10,7 +10,7 @@ from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _utils
-from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
+from ..messages import FinishReason, ModelResponse, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -39,38 +39,22 @@ except ImportError as _import_error:
 __all__ = ('SnowflakeModel', 'SnowflakeModelName', 'SnowflakeModelSettings', 'SnowflakeReasoning')
 
 LatestSnowflakeModelNames = Literal[
-    'claude-4-sonnet',
-    'claude-fable-5',
-    'claude-haiku-4-5',
-    'claude-opus-4-5',
-    'claude-opus-4-6',
-    'claude-opus-4-7',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
     'claude-opus-4-8',
-    'claude-opus-5',
-    'claude-sonnet-4-5',
     'claude-sonnet-4-6',
-    'claude-sonnet-5',
-    'deepseek-r1',
-    'llama3.1-405b',
-    'llama3.1-70b',
-    'llama3.1-8b',
+    'claude-haiku-4-5',
+    'openai-gpt-6-sol',
+    'openai-gpt-6.1-terra',
+    'openai-gpt-6-luna',
+    'openai-gpt-6-astra',
+    'openai-gpt-5.6-sol',
+    'openai-gpt-5.6-terra',
+    'openai-gpt-5.6-luna',
     'llama4-maverick',
-    'mistral-7b',
-    'mistral-large',
+    'llama3.3-70b',
+    'mistral-large3',
     'mistral-large2',
-    'openai-gpt-4.1',
-    'openai-gpt-5',
-    'openai-gpt-5-6-luna',
-    'openai-gpt-5-6-sol',
-    'openai-gpt-5-6-terra',
-    'openai-gpt-5-chat',
-    'openai-gpt-5-mini',
-    'openai-gpt-5-nano',
-    'openai-gpt-5.1',
-    'openai-gpt-5.2',
-    'openai-gpt-5.4',
-    'openai-gpt-5.5',
-    'snowflake-llama-3.3-70b',
 ]
 
 SnowflakeModelName = str | LatestSnowflakeModelNames
@@ -261,6 +245,11 @@ class SnowflakeModel(OpenAIChatModel):
             return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
+
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        native = self.accepts_stateless_artifacts(message, part) and into_reasoning_detail(part)
+        return not native and super()._carries_thinking_in_user_turn(message, part)
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # pyright: ignore[reportPrivateUsage]
