@@ -214,7 +214,7 @@ One Lua script applies every window of a response, so no client sees it part-app
 
 Counters do not round: `HINCRBY` is 64-bit integer arithmetic on an increment passed as a string, and totals come back from `HMGET` as bulk strings, because Lua would turn `HINCRBY`'s integer replies into doubles that round past `2**53` billionths. Redis refuses a write past the signed 64-bit range, about $9.22 billion per key.
 
-Keys are `{prefix}:budget-key` with literal braces, a Redis Cluster hash tag: all of a store's keys share one slot, so one script can update several, and a cluster cannot spread them across nodes. An empty `prefix` or one containing a brace breaks the tag and is refused at construction. `BudgetStatus.key` omits the prefix. Dedup markers share the namespace under a `|dedup` prefix, which no budget key can start with.
+Keys are `{prefix}:budget-key` with literal braces, a Redis Cluster hash tag: all of a store's keys share one slot, so one script can update several, and a cluster cannot spread them across nodes. An empty `prefix` or one containing a brace breaks the tag and is refused at construction. `BudgetStatus.key` omits the prefix. Dedup markers share the namespace under a `|dedup` prefix, which no budget key can start with; only a caller driving the store directly with such a key would collide with a marker and fail with `WRONGTYPE`.
 
 Counters an earlier release wrote under the untagged name are read and added to the tagged total, so upgrading needs no migration. They are added, not moved, because an old-release worker can still write the old name during a rolling deploy. This costs one extra read per key, on reads and writes. The compatibility runs one way only:
 
@@ -294,7 +294,7 @@ from pydantic_ai_harness import SpendLimits
 SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'internal-7b' else None)
 ```
 
-`price` is called first, and a finite, non-negative amount is the complete response price, even when usage is incomplete. Anything else, or an exception from `price`, fails the run with `UserError`: a credit would move a budget away from its ceiling, and a `NaN` or infinity is a broken pricing function. The provider billed the response either way, so its tokens and request count are accrued and `on_spend` fires first. When one lifecycle committed several provider responses, the error waits until the rest accrue.
+`price` is called first, and a finite, non-negative amount is the complete response price, even when usage is incomplete. Any other amount (negative, `NaN` or infinite), or an exception from `price`, fails the run with `UserError`: a credit would move a budget away from its ceiling, and a `NaN` or infinity is a broken pricing function. The provider billed the response either way, so its tokens and request count are accrued and `on_spend` fires first. When one lifecycle committed several provider responses, a pricing or `on_spend` error waits until the rest accrue.
 
 `None` falls through to the registry. With incomplete usage, a known cost subtotal is recorded but the response stays unpriced, since its full cost is unknown. `on_unpriced` then applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues; `'raise'` fails the run with `UnpricedModelError` after recording the subtotal. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model with no complete price. If callers choose the model, prefer `'raise'` or supply `price`.
 
@@ -327,7 +327,7 @@ A response a `FallbackModel` rejected with a `fallback_on` response handler was 
 
 Attach the durability capability to the same agent as `SpendLimits`. Without `TemporalDurability`, a `SpendLimits` agent run inside a Temporal workflow reads the clock in workflow orchestration, and the sandbox error is translated into advice to attach durability.
 
-The journal covers replay while its records are available. The store token covers recovery that presents the same `SpendEntry` without consulting the recorded accrual, applying it once within `dedup_retain`. A deprecated `SpendStore` drops the token and cannot provide this second layer, and `InMemorySpendStore` provides it only within one process, so use `RedisSpendStore` or `PostgresSpendStore` when recovery can land on another worker.
+The journal covers replay while its records are available. The store token covers recovery that presents the same `SpendEntry` without consulting the recorded accrual, applying it once within `dedup_retain`. A deprecated `SpendStore` drops the token and cannot provide this second layer, and `InMemorySpendStore` provides it only within one process, so use a shared `BatchSpendStore`, such as `RedisSpendStore` or `PostgresSpendStore`, when recovery can land on another worker.
 
 `exhausted()` is a workflow admission check that needs no `RunContext`:
 
