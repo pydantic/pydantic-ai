@@ -2025,6 +2025,7 @@ def test_load_invalid_citations():
                 ),
                 TextUIPart(text='Bye', provider_metadata={'pydantic_ai': {'citations': 'not a list'}}),
                 TextUIPart(text='Again', provider_metadata={'pydantic_ai': {'provider_details': 'not a dict'}}),
+                ReasoningUIPart(text='Think', provider_metadata={'pydantic_ai': {'provider_details': 'not a dict'}}),
             ],
         )
     ]
@@ -2038,6 +2039,7 @@ def test_load_invalid_citations():
             ),
             TextPart(content='Bye'),
             TextPart(content='Again'),
+            ThinkingPart(content='Think'),
         ]
     )
 

@@ -742,7 +742,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=metadata.get('id'),
                             signature=metadata.get('signature'),
                             provider_name=metadata.get('provider_name'),
-                            provider_details=metadata.get('provider_details'),
+                            provider_details=(
+                                metadata.get('provider_details')
+                                if is_str_dict(metadata.get('provider_details'))
+                                else None
+                            ),
                         )
                     )
                     restore_canonical_system(builder, metadata.get('provider_name'), metadata.get('canonical_system'))
@@ -791,7 +795,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=binary_content,
                                 id=activity_content.get('id'),
                                 provider_name=activity_content.get('provider_name'),
-                                provider_details=activity_content.get('provider_details'),
+                                provider_details=(
+                                    activity_content.get('provider_details')
+                                    if is_str_dict(activity_content.get('provider_details'))
+                                    else None
+                                ),
                             )
                         )
                         restore_canonical_system(

@@ -104,7 +104,13 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
     """Load the Pydantic AI metadata from the provider metadata."""
-    return provider_metadata.get(PROVIDER_METADATA_KEY, {}) if provider_metadata else {}
+    metadata = provider_metadata.get(PROVIDER_METADATA_KEY, {}) if provider_metadata else {}
+    if not is_str_dict(metadata):
+        return {}
+    provider_details = metadata.get('provider_details')
+    if provider_details is not None and not is_str_dict(provider_details):
+        return {**metadata, 'provider_details': None}
+    return metadata
 
 
 def dump_provider_metadata(
