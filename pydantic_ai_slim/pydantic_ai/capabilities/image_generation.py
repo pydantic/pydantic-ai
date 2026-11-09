@@ -756,6 +756,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
+        # TODO(v3): when the deprecated `ImageGenerationTool` fields are removed, build the tool through
+        # `provider_settings['openai']` instead. Doing it before v3 would change what those fields read on
+        # the tool, which code reading `tool.quality` and similar still relies on.
         with suppress_provider_field_warnings():
             return ImageGenerationTool(**self._image_gen_kwargs())
 

@@ -88,6 +88,8 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             kwargs['enable_citations'] = self.enable_citations
         if self.max_content_tokens is not None:
             kwargs['max_content_tokens'] = self.max_content_tokens
+        # TODO(v3): when `WebFetchTool.enable_citations` and `max_content_tokens` are removed, pass them in
+        # `provider_settings['anthropic']` instead. Doing it before v3 would change what those fields read on the tool.
         with suppress_provider_field_warnings():
             return WebFetchTool(**kwargs)
 
