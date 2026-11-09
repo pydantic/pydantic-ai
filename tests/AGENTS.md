@@ -145,6 +145,8 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+Every cassette must be recorded by its own test. A cassette at `tests/<dir>/cassettes/<file_stem>/<test>.yaml` comes from a `--record-mode=rewrite` run of `<test>` in `tests/<dir>/<file_stem>.py`. Never copy a cassette from another test, and never edit its requests or responses by hand: replay would then test the code against an exchange no provider produced. To replay one recording in several tests, name it with `@pytest.mark.vcr('<name>.yaml')` and say why in the docstring.
+
 ### Realtime WebSocket cassettes
 
 Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
@@ -335,6 +337,10 @@ uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <
 ```
 
 Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method; a call on `FunctionModel` or `TestModel` counts as a request, recorded with the messages, model settings and model request parameters the model is handed. The module docstring says what it records and normalizes.
+
+## Dependency floors
+
+Never raise a dependency's minimum version in a `pyproject.toml` without a reason. Give the reason in a comment next to the requirement: what the code now needs from that version. The `test-lowest-versions` CI job installs the declared minimums, so each one is the oldest version the suite tests. A raised minimum moves every user onto the newer version, and without a recorded reason no later change can tell whether it can come down again.
 
 ## Directory Structure
 
