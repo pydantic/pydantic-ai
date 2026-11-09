@@ -120,9 +120,9 @@ async def test_supervisor_output_bound_preserves_captured_prefix(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # `head` exits with up to a pipe buffer of its output still unread, the byte over the limit last, and the
-    # supervisor drains that only for its grace. A long grace costs nothing here: the limit ends the drain, so a
-    # stalled runner cannot end it first and report a normal exit.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
+    # supervisor drains that only for its grace. A grace far beyond any runner stall costs nothing here: the limit
+    # ends the drain, so a stall between seeing the exit and reading that byte cannot end it first.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 3600.0)
     backend = workspace_harness.backend()
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['sh', '-c', 'head -c 10485761 /dev/zero'])
