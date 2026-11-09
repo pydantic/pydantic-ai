@@ -182,6 +182,47 @@ async def test_media_resolution_forwarding(
 
 
 @pytest.mark.parametrize(
+    'file,expected',
+    [
+        pytest.param(
+            BinaryContent(data=b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'}),
+            {'inline_data': {'data': b'\x89PNG', 'mime_type': 'image/png'}},
+            id='binary_image',
+        ),
+        pytest.param(
+            BinaryContent(data=b'%PDF', media_type='application/pdf', vendor_metadata={'detail': 'high'}),
+            {'inline_data': {'data': b'%PDF', 'mime_type': 'application/pdf'}},
+            id='binary_document',
+        ),
+        pytest.param(
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/image123',
+                provider_name='google',
+                media_type='image/png',
+                vendor_metadata={'detail': 'high'},
+            ),
+            {
+                'file_data': {
+                    'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/image123',
+                    'mime_type': 'image/png',
+                }
+            },
+            id='uploaded_image',
+        ),
+    ],
+)
+async def test_non_video_vendor_metadata_not_sent_as_video_metadata(
+    file: BinaryContent | UploadedFile, expected: dict[str, object], mapping_model: GoogleModel
+):
+    """Image and document parts don't get `video_metadata`, which google-genai rejects before sending,
+    so there is no request to record.
+    """
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[file]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == [expected]
+
+
+@pytest.mark.parametrize(
     'video',
     [
         pytest.param(
