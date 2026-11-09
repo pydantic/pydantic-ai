@@ -664,7 +664,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
     token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
     requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
-    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`. The ID comes from the message
+    history, which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so leave this off
+    with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_effort: AnthropicEffort | None

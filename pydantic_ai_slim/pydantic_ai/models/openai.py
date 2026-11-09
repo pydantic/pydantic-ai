@@ -1510,7 +1510,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `{'type': 'comparison_response_not_found'}` or `{'type': 'unavailable'}`.
 
     Diagnostics are free, don't affect caching or latency, and work with `openai_store=False`.
-    Set this to `False` to leave `comparison_response_id` off the request.
+    Set this to `False` to leave `comparison_response_id` off the request. The ID comes from the message history,
+    which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so set this to `False` with
+    history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
 
