@@ -685,6 +685,7 @@ def test_pr_review_checks_receipt_does_not_count_as_douwebot_finding():
         files=['a.py'],
         outcome='COMPLETE',
         findings=[],
+        dropped={},
         coverage='Reviewed a.py.',
         steps=1,
         tokens=1,
