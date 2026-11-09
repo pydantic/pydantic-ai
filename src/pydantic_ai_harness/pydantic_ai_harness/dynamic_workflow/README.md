@@ -56,11 +56,8 @@ orchestrator = Agent(
 )
 ```
 
-`reviewer` and `summarizer` are plain agents. Their `name` becomes the function name the model
-calls in the script, so pick names that are valid Python identifiers. Their `description` tells the
-model what each one is for; write it the way you would document a function.
-`DynamicWorkflow(agents=[...])` bundles them into one capability and hands the orchestrator a single
-`run_workflow` tool.
+Each agent's `name` becomes its sandbox function name and must be a valid Python identifier. Its
+`description` tells the model when to call it.
 
 ## What the model does with it
 
@@ -110,16 +107,12 @@ result['value']  # not result.value
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and
 reads them by subscript on its own.
 
-An `output_type` can include
-[`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) so a top-level
-caller can approve tools and resume the run, or
-[`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) so
-it can check on a model request the provider is still processing later. A workflow script cannot do
-either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends
-with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request
-it left pending is cancelled, best effort: a
-[batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
-it is still waiting.
+Sub-agents cannot pause for [tool
+approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or a [pending model
+response](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits). These
+output types are omitted from the catalog; returning `DeferredToolRequests` or
+`PendingModelResponse` raises `RuntimeError`. Pending requests are cancelled best effort; a batch is
+cancelled only when no other request in it is waiting.
 
 ## A complete, runnable example
 
@@ -306,21 +299,10 @@ default cap.
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 ```
 
-> **Info: what `max_duration_secs` measures**
->
-> Monty checks this limit once per bytecode step, so it measures the time your script spends
-> running sandbox code, not wall-clock time. While the script waits on a sub-agent (one at a time
-> or fanned out with `asyncio.gather`) it is suspended on the host and that time does not count, so
-> the cap will not fire on a normal workflow no matter how long the sub-agents take.
->
-> What it catches is a pure-CPU runaway: a `while True:` loop that never awaits. That loop burns a
-> core in the sandbox worker (and blocks the workflow thread under Temporal), and none of the
-> sub-agent budgets (`max_agent_calls`, `sub_agent_usage_limits`) can stop it because it never calls
-> a sub-agent. There is no default duration cap; set `max_duration_secs` yourself for that guard.
->
-> Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains.
-> A partial dict like `{'max_memory': ...}` merges onto the backstop, so you override only the caps
-> you name.
+`max_duration_secs` counts sandbox execution time, excluding waits for sub-agents. Set it to stop
+CPU-bound loops that never call a sub-agent and therefore bypass the agent budgets. A partial limits
+dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the
+separate 10 MiB print cap remains.
 
 ### Workflows do not nest
 
@@ -369,20 +351,15 @@ orchestrator = Agent('openai:gpt-5', capabilities=[workflow])
 workflow.reveal(fixer)
 ```
 
-The revealed sub-agent becomes callable on the next step. The model learns about it through a short
-system-level announcement message that carries the new function's signature. The `run_workflow`
-description itself stays frozen at the agents present when the run started, so even a runtime reveal
-never moves the prompt-cache prefix. If compaction or a history processor removes the announcement,
-the capability announces the sub-agent again on the next step.
+The new agent becomes callable on the next step, announced by a system message containing its
+signature. The tool description stays fixed to preserve the prompt-cache prefix. If compaction or a
+history processor removes the announcement, it is sent again.
 
-> **Note**
->
-> `reveal()` is append-only: once a sub-agent appears it stays for the rest of the run.
->
-> It validates right away. A missing name, an invalid identifier, a reserved keyword, or a name
-> collision raises `UserError` at the call site. And if you share one `DynamicWorkflow` instance
-> across concurrent runs, `reveal()` reaches all in-flight runs and joins the baseline for runs that
-> start afterward.
+`reveal()` is append-only. Missing names, invalid identifiers, reserved keywords, and collisions
+raise `UserError` immediately.
+
+When one `DynamicWorkflow` instance is shared across concurrent runs, `reveal()` reaches every
+in-flight run and joins the baseline for later runs.
 
 ## Loading it only when needed: `defer_loading`
 
