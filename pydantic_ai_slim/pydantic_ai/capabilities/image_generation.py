@@ -46,9 +46,10 @@ if TYPE_CHECKING:
 
 _NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
-# Derived from the native tool's own aliases so widening either can't silently start dropping values.
 # What `_apply_native_overrides` resets a deprecated top-level field to when an override replaces it.
 _IMAGE_GENERATION_TOOL_DEFAULTS: dict[str, Any] = {field.name: field.default for field in fields(ImageGenerationTool)}
+
+# Derived from the native tool's own aliases so widening either can't silently start dropping values.
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
 _NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
 
