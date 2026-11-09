@@ -572,7 +572,7 @@ class Session(Generic[DepsT, OutputT]):
             await self._ensure_unused(conversation_id)
             if self.repl_states is not None:
                 # A REPL left by a session deleted outside CLAI must not reach the new conversation.
-                self.repl_states.delete(conversation_id)
+                await to_thread.run_sync(self.repl_states.delete, conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
@@ -603,15 +603,15 @@ class Session(Generic[DepsT, OutputT]):
             model=self.model,
         )
         self.summary = await self.conversations.save(summary=await self._with_checkout(copy), messages=self._messages)
-        self._copy_repl(source.id, self.summary.id)
+        await self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
         return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
 
-    def _copy_repl(self, source: str, target: str) -> None:
+    async def _copy_repl(self, source: str, target: str) -> None:
         """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
         if self.repl_states is not None:
-            self.repl_states.copy(source=source, target=target)
+            await to_thread.run_sync(partial(self.repl_states.copy, source=source, target=target))
 
     async def _ensure_unused(self, conversation_id: str) -> None:
         if self.conversations is None:
@@ -751,7 +751,7 @@ class Session(Generic[DepsT, OutputT]):
                 # Recording the source makes this copy the one resuming the source continues next time.
                 copy = replace(fork_summary(saved.summary), forked_from=saved.summary.id)
                 summary = await self.conversations.save(summary=copy, messages=messages)
-                self._copy_repl(saved.summary.id, summary.id)
+                await self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{forking} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
