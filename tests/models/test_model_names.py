@@ -125,6 +125,9 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.deepseek.r1-v1:0',
         # Gateway rejects it with a 403 "The provider denied access to model `global.zai.glm-5.3`."
         'gateway/bedrock:global.zai.glm-5.3',
+        # Gateway rejects it with a 404 "No cost data available for model `claude-fable-5-2`" until genai-prices
+        # has its price.
+        'gateway/anthropic:claude-fable-5-2',
     }
 )
 
@@ -215,7 +218,7 @@ SDK_MODEL_LITERALS = [
         frozenset({'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'}),
     ),
     SdkModelLiteral('openai-embedding', 'openai', EmbeddingModel, LatestOpenAIEmbeddingModelNames),
-    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName),
+    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName, frozenset({'claude-fable-5-2'})),
     SdkModelLiteral('xai', 'xai-sdk', ChatModel, XaiModelName, frozenset({'grok-4.7'})),
     SdkModelLiteral(
         'xai-image',

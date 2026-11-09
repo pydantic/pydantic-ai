@@ -14,6 +14,7 @@ KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
         'anthropic:claude-fable-5-1',
+        'anthropic:claude-fable-5-2',
         'anthropic:claude-haiku-4-5',
         'anthropic:claude-haiku-5-5',
         'anthropic:claude-opus-4-8',
