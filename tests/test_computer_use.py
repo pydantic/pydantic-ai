@@ -88,7 +88,7 @@ def _computer_tool_def(*, defer_loading: bool = False) -> ToolDefinition:
 
 
 def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
-    model = FunctionModel(lambda m, i: None)  # pyright: ignore[reportArgumentType]  # supports every native tool
+    model = FunctionModel(lambda m, i: ModelResponse(parts=[]))  # supports every native tool
     return model.prepare_request(None, params)[1]
 
 
