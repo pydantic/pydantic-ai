@@ -1,6 +1,6 @@
 ---
-# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in host steps: these jobs and the
-# agent-start recheck below, never the agent container.
+# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in the provider_health job, the agent-start recheck below
+# and the record step of provider_health_record, never in the agent container.
 jobs:
   provider_health:
     name: Check Z.AI provider health
@@ -46,8 +46,8 @@ jobs:
   # failed one, this job reads the `agent` artifact's `agent-session.jsonl`, which gh-aw's parser wrote on the agent
   # host from the engine's verified recording. It confirms a provider-wide failure with its own Z.ai check and adds
   # the record to the `provider-health` artifact. It is a separate job because gh-aw allows no secret in post-steps.
-  # gh-aw also runs it only after threat detection passes cleanly. Without the record, as after a failed one, the
-  # monitor reads the `agent` artifact, which never confirms a provider failure, so the job never fails the run.
+  # gh-aw also runs it only after threat detection passes cleanly. `continue-on-error` keeps a failed record from
+  # failing the run. Without a record, the monitor reads the `agent` artifact, which never confirms a provider failure.
   provider_health_record:
     name: Record the terminal agent result on the host
     needs: [agent]

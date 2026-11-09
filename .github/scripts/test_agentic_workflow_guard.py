@@ -1954,6 +1954,12 @@ _AFTER_AGENT = (
     "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
     "((!cancelled()) && needs.agent.result != 'skipped') }}"
 )
+_CONTROLLER_CHECKOUT: dict[str, object] = {
+    'persist-credentials': False,
+    'ref': '${{ github.event.repository.default_branch }}',
+    'repository': '${{ github.repository }}',
+    'sparse-checkout': '.github/scripts/agent_provider_health.py',
+}
 _AGENT_DOWNLOAD: dict[str, str] = {'name': 'agent', 'path': 'agent'}
 _RECORD_UPLOAD_PATH = 'provider-health/provider-health.json\nprovider-health/run-result.json\n'
 
@@ -1962,52 +1968,60 @@ def _host_result_job(
     *,
     needs: tuple[str, ...] = ('agent', 'detection'),
     condition: str = _AFTER_AGENT,
-    job_env: dict[str, str] | None = None,
+    job_fields: dict[str, object] | None = None,
     continue_on_error: bool = True,
-    checkout_ref: str = '${{ github.event.repository.default_branch }}',
+    checkouts: tuple[dict[str, object], ...] = (_CONTROLLER_CHECKOUT,),
+    download_id: str = 'agent_artifact',
     download: dict[str, str] = _AGENT_DOWNLOAD,
     download_env: dict[str, str] | None = None,
     run: str = _RECORD_RUN,
+    record_fields: dict[str, object] | None = None,
     env: dict[str, str] = _RECORD_ENV,
     upload_path: str = _RECORD_UPLOAD_PATH,
+    record_first: bool = False,
     upload_first: bool = False,
 ) -> dict[str, object]:
     """The record job as gh-aw compiles it from `shared/provider-health.md`, trimmed, with one part changed."""
     download_step: dict[str, object] = {
         'name': "Download the agent's terminal session record",
+        'id': download_id,
         'uses': 'actions/download-artifact@sha',
         'with': download,
     }
     if download_env is not None:
         download_step['env'] = download_env
-    record: dict[str, object] = {'name': 'Record the terminal agent result', 'run': run, 'env': env}
+    downloads: list[dict[str, object]] = [
+        download_step,
+        {
+            'name': 'Download the health decision the run acted on',
+            'id': 'health_artifact',
+            'uses': 'actions/download-artifact@sha',
+            'with': {'name': 'provider-health', 'path': 'provider-health'},
+        },
+    ]
+    record: dict[str, object] = {
+        'name': 'Record the terminal agent result',
+        'if': "steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'",
+        'run': run,
+        'env': env,
+        **(record_fields or {}),
+    }
     upload: dict[str, object] = {
         'name': 'Add the host-recorded agent result to the health decision artifact',
         'uses': 'actions/upload-artifact@sha',
         'with': {'name': 'provider-health', 'overwrite': True, 'path': upload_path},
     }
-    job: dict[str, object] = {
+    if record_first:
+        after_checkout = [record, *downloads, upload]
+    else:
+        after_checkout = [*downloads, *([upload, record] if upload_first else [record, upload])]
+    return {
         'needs': list(needs),
         'if': condition,
         'continue-on-error': continue_on_error,
-        'steps': [
-            {
-                'uses': 'actions/checkout@sha',
-                'with': {
-                    'persist-credentials': False,
-                    'ref': checkout_ref,
-                    'repository': '${{ github.repository }}',
-                    'sparse-checkout': '.github/scripts/agent_provider_health.py',
-                },
-            },
-            download_step,
-            {'name': 'Download the health decision the run acted on', 'uses': 'actions/download-artifact@sha'},
-            *([upload, record] if upload_first else [record, upload]),
-        ],
+        'steps': [*({'uses': 'actions/checkout@sha', 'with': checkout} for checkout in checkouts), *after_checkout],
+        **(job_fields or {}),
     }
-    if job_env is not None:
-        job['env'] = job_env
-    return job
 
 
 def _write_host_result_workflow(workflows: Path, record_job: dict[str, object] | None) -> None:
@@ -2049,17 +2063,47 @@ def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Pa
         ),
         pytest.param(_host_result_job(continue_on_error=False), id='record-failure-fails-the-run'),
         pytest.param(
-            _host_result_job(checkout_ref='${{ github.event.pull_request.head.sha }}'), id='pr-head-controller'
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'ref': '${{ github.event.pull_request.head.sha }}'},)),
+            id='pr-head-controller',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'repository': 'someone/fork'},)),
+            id='other-repository-controller',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'persist-credentials': True},)),
+            id='checkout-keeps-credentials',
+        ),
+        pytest.param(
+            _host_result_job(checkouts=({**_CONTROLLER_CHECKOUT, 'sparse-checkout': '.github/scripts'},)),
+            id='checkout-beyond-the-controller',
+        ),
+        pytest.param(
+            _host_result_job(
+                checkouts=(
+                    _CONTROLLER_CHECKOUT,
+                    {'ref': '${{ github.event.pull_request.head.sha }}', 'persist-credentials': False},
+                )
+            ),
+            id='second-checkout',
         ),
         pytest.param(
             _host_result_job(download={'name': 'agent-output-fallback', 'path': 'agent'}), id='other-artifact'
         ),
         pytest.param(_host_result_job(download={**_AGENT_DOWNLOAD, 'run-id': '${{ inputs.run_id }}'}), id='other-run'),
+        pytest.param(_host_result_job(download_id='session_artifact'), id='download-the-record-step-does-not-check'),
+        pytest.param(_host_result_job(record_first=True), id='record-before-download'),
         pytest.param(
             _host_result_job(run=_RECORD_RUN.replace('agent/agent-session.jsonl', 'agent/agent-stdio.log')),
             id='reads-the-stdio-log',
         ),
         pytest.param(_host_result_job(run=_RECORD_RUN.replace('python3 -I ', 'python3 ', 1)), id='not-isolated'),
+        pytest.param(
+            _host_result_job(run=f'cp agent/agent_provider_health.py .github/scripts/\n{_RECORD_RUN}'),
+            id='command-before-record',
+        ),
+        pytest.param(_host_result_job(record_fields={'if': 'false'}), id='record-step-disabled'),
+        pytest.param(_host_result_job(record_fields={'working-directory': 'agent'}), id='record-in-another-directory'),
         pytest.param(
             _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
             id='no-zai-key',
@@ -2071,7 +2115,34 @@ def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Pa
         pytest.param(
             _host_result_job(download_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-another-step'
         ),
-        pytest.param(_host_result_job(job_env={'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}), id='key-in-job-env'),
+        pytest.param(
+            _host_result_job(download_env={'KEY': "${{ secrets['ZAI_API_KEY'] }}"}), id='bracket-key-in-another-step'
+        ),
+        pytest.param(
+            _host_result_job(download_env={'KEYS': '${{ toJSON(secrets) }}'}), id='all-secrets-in-another-step'
+        ),
+        pytest.param(_host_result_job(download_env={'KEY': '${{ secrets.OTHER }}'}), id='other-secret-in-another-step'),
+        pytest.param(
+            _host_result_job(job_fields={'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}), id='key-in-job-env'
+        ),
+        pytest.param(
+            _host_result_job(
+                job_fields={'container': {'image': 'ubuntu', 'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}}
+            ),
+            id='key-in-job-container',
+        ),
+        pytest.param(
+            _host_result_job(
+                job_fields={
+                    'services': {'cache': {'image': 'redis', 'env': {'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}'}}}
+                }
+            ),
+            id='key-in-job-services',
+        ),
+        pytest.param(
+            _host_result_job(job_fields={'defaults': {'run': {'working-directory': '${{ SECRETS.ZAI_API_KEY }}'}}}),
+            id='key-in-job-defaults',
+        ),
         pytest.param(_host_result_job(upload_path='provider-health/provider-health.json\n'), id='record-not-uploaded'),
         pytest.param(_host_result_job(upload_first=True), id='upload-before-record'),
     ],
@@ -2284,7 +2355,9 @@ jobs:
       github.event_name == 'workflow_run' &&
       (github.event.workflow_run.event != 'pull_request' ||
        (github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.actor.login != 'dependabot[bot]'))
+        github.event.workflow_run.actor.login != 'dependabot[bot]')) &&
+      (github.event.workflow_run.event != 'pull_request_review' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
       actions: read
       contents: read
@@ -2481,6 +2554,12 @@ jobs:
             '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
             "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             '       github.event.workflow_run.head_repository.full_name == github.repository)',
+        ),
+        # A gate that accepts a fork's `pull_request_review` run.
+        (
+            " &&\n      (github.event.workflow_run.event != 'pull_request_review' ||\n"
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+            '',
         ),
     ],
 )

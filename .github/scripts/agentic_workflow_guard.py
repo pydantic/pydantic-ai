@@ -120,6 +120,8 @@ DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
 # The job `shared/provider-health.md` adds after the agent job to record its terminal result on the host.
 HOST_RESULT_JOB = 'provider_health_record'
+# Expression context names are case-insensitive, and `secrets['X']` and `toJSON(secrets)` read the same context.
+SECRETS_CONTEXT = re.compile(r'\bsecrets\b', re.IGNORECASE)
 # The agent-start recheck fetches the controller through the contents API with no `ref`,
 # which serves the default branch, then runs `check` from the file it fetched. A workspace
 # copy can come from the PR head or its base branch.
@@ -1233,9 +1235,10 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
                     str(lock),
                     'provider-health-host-result',
                     f'The `{HOST_RESULT_JOB}` job must follow the agent job, including a failed one, check out only '
-                    "the default-branch controller, download this run's `agent` artifact, and run `record` with the "
-                    'gate identity and the Z.AI key, which no other step of the job holds. It must then upload '
-                    '`run-result.json` with the health decision, and a failed record must not fail the run.',
+                    "the default-branch controller, and download this run's `agent` artifact and health decision. "
+                    'Its record step must run exactly the `record` command, skipped only when a download failed, with '
+                    'the gate identity and the Z.AI key, which nothing else in the job references. It must then '
+                    'upload `run-result.json` with the health decision, and a failed record must not fail the run.',
                 )
             )
     return violations
@@ -1248,34 +1251,41 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
     steps = [_as_mapping(step) for step in raw_steps] if _is_object_sequence(raw_steps) else []
     checkouts = [step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')]
     checkout = _as_mapping(checkouts[0].get('with')) if len(checkouts) == 1 else {}
-    # This run's `agent` artifact only: no other artifact, run or repository.
-    download = next(
-        (
-            i
-            for i, step in enumerate(steps)
-            if str(step.get('uses', '')).startswith('actions/download-artifact@')
-            and _as_mapping(step.get('with')) == {'name': 'agent', 'path': 'agent'}
-        ),
-        None,
+    # This run's `agent` artifact and health decision only: no other artifact, run or repository.
+    downloads = {
+        str(step.get('id')): i
+        for i, step in enumerate(steps)
+        if str(step.get('uses', '')).startswith('actions/download-artifact@')
+        and (step.get('id'), _as_mapping(step.get('with')))
+        in (
+            ('agent_artifact', {'name': 'agent', 'path': 'agent'}),
+            ('health_artifact', {'name': 'provider-health', 'path': 'provider-health'}),
+        )
+    }
+    record_command = (
+        f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
+        '--output provider-health/run-result.json'
     )
     record = next(
         (
             i
             for i, step in enumerate(steps)
-            if f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
-            in ' '.join(str(step.get('run', '')).replace('\\\n', ' ').split()) + ' '
+            if ' '.join(str(step.get('run', '')).replace('\\\n', ' ').split()) == record_command
         ),
         None,
     )
-    if download is None or record is None or record < download:
+    if len(downloads) != 2 or record is None or record < max(downloads.values()):
         return False
-    record_env = _as_mapping(steps[record].get('env'))
+    record_step = steps[record]
+    record_env = _as_mapping(record_step.get('env'))
     identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
     # gh-aw wraps the authored condition in its clean-detection guard; the authored part also follows a failed agent.
     after_agent = _normalized_condition(
         "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
         "((!cancelled()) && needs.agent.result != 'skipped') }}"
     )
+    # The record step skips only when a download failed.
+    downloaded = "steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'"
     return (
         'agent' in _as_strings(job.get('needs'))
         and _normalized_condition(str(job.get('if', ''))) == after_agent
@@ -1284,9 +1294,11 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
         and checkout.get('ref') == '${{ github.event.repository.default_branch }}'
         and checkout.get('persist-credentials') is False
         and checkout.get('sparse-checkout') == controller
+        # A `shell` or `working-directory` would change what the exact command runs.
+        and set(record_step) <= {'name', 'if', 'env', 'run'}
+        and _normalized_condition(str(record_step.get('if', ''))) == _normalized_condition(downloaded)
         and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
-        and 'secrets.' not in str(job.get('env', ''))
-        and all('secrets.' not in str(step) for i, step in enumerate(steps) if i != record)
+        and not SECRETS_CONTEXT.search(str({**job, 'steps': steps[:record] + steps[record + 1 :]}))
         and any(
             str(step.get('uses', '')).startswith('actions/upload-artifact@')
             and _as_mapping(step.get('with')).get('name') == 'provider-health'
@@ -1360,13 +1372,16 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
         "github.event_name == 'workflow_run' && "
         "(github.event.workflow_run.event != 'pull_request' || "
         '(github.event.workflow_run.head_repository.full_name == github.repository && '
-        "github.event.workflow_run.actor.login != 'dependabot[bot]'))"
+        "github.event.workflow_run.actor.login != 'dependabot[bot]')) && "
+        "(github.event.workflow_run.event != 'pull_request_review' || "
+        'github.event.workflow_run.head_repository.full_name == github.repository)'
     ):
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-credential-gate',
-                'Triage must exclude fork and Dependabot `pull_request` completions.',
+                'Triage must exclude fork and Dependabot `pull_request` completions, and fork `pull_request_review` '
+                'completions.',
             )
         )
     # Only the incident work `triage` hands over may queue; `.github/workflows/AGENTS.md` explains the overflow.
