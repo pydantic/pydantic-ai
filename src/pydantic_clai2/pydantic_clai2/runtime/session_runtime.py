@@ -1294,6 +1294,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             except PromptWakeup:
                 if not self.tasks.waiting(self.session.summary.id):
                     continue
+                await self.process.imports_warmed()
                 with self._handling_input():
                     async with self.forks.busy():
                         if await self._turn(None):
@@ -1316,6 +1317,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 print_prompt(self.console, text)
             else:
                 self.console.print()
+            await self.process.imports_warmed()
             with self._handling_input():
                 if await self._dispatch_input(text):
                     return 'exit'

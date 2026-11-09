@@ -2,6 +2,7 @@
 
 import io
 import signal
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -24,6 +25,9 @@ from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.tasks import TaskRouter, Tasks
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_tasks import task
+
+READINESS_WAIT_TIMEOUT = 300
+"""Guards a wait on a test thread against a hang, so it is far longer than any runner stall and never decides an outcome."""
 
 
 def runtime_over(
@@ -66,6 +70,52 @@ async def test_a_runtime_without_a_terminal_serves_input_over_the_process_stores
     assert '> hello\n\nsuccess (no tool calls)' in output.getvalue()
     saved = await process.conversations.get(conversation_id=runtime.session.summary.id)
     assert saved.summary.workspace == str((tmp_path / 'project').resolve())
+
+
+class WarmingHeldUntilJoined(threading.Thread):
+    """A warming thread that finishes only once something waits for it, as if its imports never ended on their own.
+
+    Input handled while it still runs is input that overlapped warming.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(target=self._warm, name='clai-warm-imports')
+        self.release = threading.Event()
+        self.finished = False
+
+    def _warm(self) -> None:
+        assert self.release.wait(READINESS_WAIT_TIMEOUT)
+        self.finished = True
+
+    def join(self, timeout: float | None = None) -> None:
+        self.release.set()
+        super().join(timeout)
+
+
+async def test_input_waits_for_the_background_imports(tmp_path: Path) -> None:
+    """A turn runs only after the warming thread has finished, so it never imports a package that thread is importing."""
+    finished_at_turn: list[bool] = []
+    warming = WarmingHeldUntilJoined()
+
+    async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        finished_at_turn.append(warming.finished)
+        yield 'done'
+
+    process = ClaiProcess.open(SettingsStore(tmp_path / 'config.db'))
+    runtime, output = runtime_over(
+        process, tmp_path / 'project', Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+    )
+    warming.start()
+    process.warming = warming
+    try:
+        runtime.send_input('hello')
+        runtime.send_input('/exit')
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            assert await runtime.run() == 'exit'
+    finally:
+        warming.join(READINESS_WAIT_TIMEOUT)
+        assert not warming.is_alive()
+    assert finished_at_turn == [True], output.getvalue()
 
 
 async def test_runtimes_share_the_process_services(tmp_path: Path) -> None:

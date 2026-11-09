@@ -291,7 +291,7 @@ async def chat(
                                     # Applied once: a failed reload resumes the session shown without them.
                                     resume = session_id = resume_from = None
                                     fork_session = False
-                                warming = warming or warm_imports.start()
+                                warming = shell.process.warming = warming or warm_imports.start()
                                 reason = await shell.run()
                             finally:
                                 workers.cancel_scope.cancel()
