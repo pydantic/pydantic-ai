@@ -739,10 +739,20 @@ def test_model_json_schema_with_capabilities():
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AdvisorProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterAdvisorToolSettings'}},
+                    'title': 'AdvisorProviderSettings',
+                    'type': 'object',
+                },
                 'AdvisorTool': {
                     'properties': {
                         'kind': {'default': 'advisor', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/AdvisorProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'model': {
                             'anyOf': [
                                 {
@@ -1280,6 +1290,52 @@ def test_model_json_schema_with_capabilities():
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'OpenRouterAdvisorToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {'forward_transcript': {'title': 'Forward Transcript', 'type': 'boolean'}},
+                    'title': 'OpenRouterAdvisorToolSettings',
+                    'type': 'object',
+                },
+                'OpenRouterWebSearchToolSettings': {
+                    'additionalProperties': True,
+                    'properties': {
+                        'engine': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Engine',
+                        },
+                        'mode': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'instant',
+                                        'fast',
+                                        'auto',
+                                        'deep-lite',
+                                        'deep',
+                                        'deep-reasoning',
+                                        'turbo',
+                                        'basic',
+                                        'advanced',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Mode',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'max_total_results': {'title': 'Max Total Results', 'type': 'integer'},
+                        'max_characters': {'title': 'Max Characters', 'type': 'integer'},
+                    },
+                    'title': 'OpenRouterWebSearchToolSettings',
+                    'type': 'object',
+                },
                 'ToolOrOutput': {
                     'properties': {
                         'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
@@ -1373,10 +1429,20 @@ def test_model_json_schema_with_capabilities():
                     'title': 'WebFetchTool',
                     'type': 'object',
                 },
+                'WebSearchProviderSettings': {
+                    'additionalProperties': True,
+                    'properties': {'openrouter': {'$ref': '#/$defs/OpenRouterWebSearchToolSettings'}},
+                    'title': 'WebSearchProviderSettings',
+                    'type': 'object',
+                },
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'provider_settings': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchProviderSettings'}, {'type': 'null'}],
+                            'default': None,
+                        },
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],

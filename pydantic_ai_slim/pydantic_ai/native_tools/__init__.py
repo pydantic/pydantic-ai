@@ -14,6 +14,8 @@ from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
+    'OpenRouterWebSearchToolSettings',
+    'WebSearchProviderSettings',
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
@@ -27,6 +29,8 @@ __all__ = (
     'MCPServerTool',
     'FileSearchTool',
     'AdvisorModelName',
+    'OpenRouterAdvisorToolSettings',
+    'AdvisorProviderSettings',
     'AdvisorTool',
     'NATIVE_TOOL_TYPES',
     'SUPPORTED_NATIVE_TOOLS',
@@ -148,6 +152,40 @@ class AbstractNativeTool(ABC):
         return handler(tools_type)
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class OpenRouterWebSearchToolSettings(TypedDict, total=False):
+    """OpenRouter-specific settings for [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]."""
+
+    engine: Literal['auto', 'native', 'exa', 'firecrawl', 'parallel', 'perplexity'] | str
+    """The search engine OpenRouter should use.
+
+    Other strings are forwarded as they are, so an engine OpenRouter adds later works without a new release.
+    """
+
+    mode: Literal['instant', 'fast', 'auto', 'deep-lite', 'deep', 'deep-reasoning', 'turbo', 'basic', 'advanced'] | str
+    """The search mode, which depends on the engine.
+
+    Exa and Parallel each accept their own set of values, and other engines ignore this option. OpenRouter decides
+    whether a value fits the engine, so it isn't checked here.
+    """
+
+    max_results: int
+    """The maximum results returned by each search call."""
+
+    max_total_results: int
+    """The maximum results returned across all search calls in one request."""
+
+    max_characters: int
+    """The maximum content characters returned for each result."""
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class WebSearchProviderSettings(TypedDict, total=False):
+    """Provider-specific web search settings, keyed by the model class that reads them."""
+
+    openrouter: OpenRouterWebSearchToolSettings
+
+
 @dataclass(kw_only=True)
 class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
@@ -243,6 +281,9 @@ class WebSearchTool(AbstractNativeTool):
 
     OpenAI's legacy `web_search_preview` tool ignores this parameter.
     """
+
+    provider_settings: WebSearchProviderSettings | None = None
+    """Provider-specific web search settings, keyed by the model class that reads them."""
 
     kind: str = 'web_search'
     """The kind of tool."""
@@ -745,6 +786,21 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class OpenRouterAdvisorToolSettings(TypedDict, total=False):
+    """OpenRouter-specific settings for [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]."""
+
+    forward_transcript: bool
+    """Whether OpenRouter should include the conversation transcript in the advisor request."""
+
+
+@pydantic.with_config(pydantic.ConfigDict(extra='allow'))
+class AdvisorProviderSettings(TypedDict, total=False):
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
+
+    openrouter: OpenRouterAdvisorToolSettings
+
+
 @dataclass(kw_only=True)
 class AdvisorTool(AbstractNativeTool):
     """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
@@ -808,6 +864,9 @@ class AdvisorTool(AbstractNativeTool):
 
     OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
     """
+
+    provider_settings: AdvisorProviderSettings | None = None
+    """Provider-specific advisor settings, keyed by the model class that reads them."""
 
     kind: str = 'advisor'
     """The kind of tool."""
