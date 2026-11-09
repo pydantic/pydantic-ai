@@ -107,8 +107,8 @@ jobs:
 # holds the slot, these steps rerun the default-branch controller with the gate's identity
 # and replace its artifact, so the monitor reconciles the decision the run acted on.
 # They run on the host before any workspace script; the key never reaches the container.
-# A blocked decision fails the job before the engine starts: a `noop` would still send
-# the threat-detection pass to the blocked provider.
+# A blocked decision fails the job before the engine starts: a `noop` would still spend
+# a threat-detection pass.
 pre-agent-steps:
   - name: Recheck Z.AI provider health at agent start
     id: agent_start_health
