@@ -127,7 +127,7 @@ instrumentation and other capabilities still treat it as code.
 
 ### Tool Search
 
-Tools marked `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)) stay out of `run_code` until discovered; Tool Search handles discovery, and `dynamic_catalog` decides how they're offered meanwhile. `CodeMode` follows reveal state with `RunContext.is_tool_available` and folds a tool into `run_code` once the model discovers it or loads the deferred capability that owns it. The tool keeps `defer_loading=True` (its author's request); only its availability for the run changes.
+Tools or whole toolsets marked `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)) stay out of `run_code` until discovered; Tool Search handles discovery, and `dynamic_catalog` decides how they're offered meanwhile. `CodeMode` follows reveal state with `RunContext.is_tool_available` and folds a tool into `run_code` once the model discovers it or loads the deferred capability that owns it. The tool keeps `defer_loading=True` (its author's request); only its availability for the run changes.
 
 With the default `dynamic_catalog=True`, discoveries append to the conversation instead of rewriting it, so the prompt cache survives: the catalog of sandboxed-tool signatures lives in the instructions, not `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes). A Tool Search discovery also names the new functions in a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue); loading a capability appends only the catalog. Deferred tools that `run_code` will take over aren't declared until found (with the local `search_tools` or by loading their capability), then are callable only from `run_code`. Earlier requests' tool definitions and instructions stay as sent.
 
@@ -595,8 +595,8 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 ```
 
 The pool's `request_timeout` (default 10 seconds) adds a per-turn transport deadline, on top of
-`max_duration_secs` outside Temporal; inside a workflow only the transport deadline applies, since
-Code Mode disables the execution timer for deterministic replay.
+`max_duration_secs` outside Temporal; inside a workflow Code Mode disables the execution timer for
+deterministic replay, and the transport deadline still applies.
 
 Use `https://` unless the network is trusted: the connection carries your agent's tool calls and
 results.
@@ -787,8 +787,8 @@ CodeMode(mount=workspace)
 ```
 
 **`os_access` -- answer the sandbox's OS calls yourself.** Use it for environment variables, the
-current time, or filesystem behavior you control. Pass an OS implementation or a callback that
-decides each call, to inject only needed secrets, pin "now" for reproducible runs, or route file
+current time, or filesystem behavior you control. Pass a `pydantic_monty` OS implementation
+(`AbstractOS`, such as `OSAccess`) or a callback that decides each call, to inject only needed secrets, pin "now" for reproducible runs, or route file
 access to your own store.
 
 ```python
