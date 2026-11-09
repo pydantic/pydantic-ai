@@ -75,6 +75,20 @@ Anthropic has `response_inclusion` on `WebSearchTool` and `WebFetchTool` (`Anthr
 version; `response_inclusion` selects the `20260318` versions only when code execution may call the tool, since it
 has no effect on direct calls.
 
+Some provider-only options used to be top-level fields and now live in `provider_settings`. The top-level fields
+still work but emit a deprecation warning, so write new code with `provider_settings`, and read the value back from
+there too:
+
+- `WebFetchTool`: `enable_citations` and `max_content_tokens` under `anthropic` (`AnthropicWebFetchToolSettings`)
+- `ImageGenerationTool`: `action`, `background`, `input_fidelity`, `moderation`, `model`, `partial_images` and
+  `quality` under `openai` (`OpenAIImageGenerationToolSettings`)
+- `FileSearchTool`: `instructions` and `retrieval_mode` under `xai` (`XaiFileSearchToolSettings`)
+- `AdvisorTool`: `caching` under `anthropic` (`AnthropicAdvisorToolSettings`)
+
+For example, write `ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}})`, not
+`ImageGenerationTool(quality='high')`. The capabilities' own arguments, such as `ImageGeneration(quality='high')`,
+are not deprecated.
+
 ## Dynamic Native Tool Configuration
 
 Prepare native tools from `RunContext` when configuration depends on the current user or request. Wrap the prepare function in `NativeTool(...)`.

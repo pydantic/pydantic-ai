@@ -94,7 +94,9 @@ class TestAdvisor:
         await agent.run('Review this plan.')
 
         assert seen[0].function_tools == []
-        assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='5m')]
+        tool = seen[0].native_tools[0]
+        assert isinstance(tool, AdvisorTool)
+        assert (tool.model, tool.max_tokens, tool.caching) == ('claude-opus-4-8', 2048, '5m')
 
     @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
     @pytest.mark.parametrize('mode', ['auto', 'native'])
@@ -555,7 +557,9 @@ class TestAdvisor:
 
         await agent.run('Review this plan.')
 
-        assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='1h')]
+        tool = seen[0].native_tools[0]
+        assert isinstance(tool, AdvisorTool)
+        assert (tool.model, tool.max_tokens, tool.caching) == ('claude-opus-4-8', 2048, '1h')
 
     async def test_merged_local_advisor_uses_settings_only_one_instance_states(self) -> None:
         advisor_settings: list[ModelSettings | None] = []

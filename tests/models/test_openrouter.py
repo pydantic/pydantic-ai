@@ -1907,11 +1907,14 @@ async def test_openrouter_advisor_tool_request(
     assert kwargs['tools'] == [{'type': 'openrouter:advisor', 'parameters': expected_parameters}]
 
 
-@pytest.mark.parametrize('field_kwargs', [{'caching': '5m'}, {'max_uses': 3}])
+@pytest.mark.parametrize(
+    'field_kwargs',
+    [{'provider_settings': {'anthropic': {'caching': '5m'}}}, {'max_uses': 3}],
+)
 async def test_openrouter_advisor_tool_unsupported_fields(
     allow_model_requests: None, field_kwargs: dict[str, Any]
 ) -> None:
-    """OpenRouter silently ignores the unsupported `caching` and `max_uses` fields.
+    """OpenRouter ignores `max_uses` and the Anthropic `caching` setting.
 
     This mocked-client test pins the request body because the VCR matcher would not detect these
     unsupported fields accidentally being forwarded.
