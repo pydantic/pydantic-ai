@@ -20,7 +20,7 @@ from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinki
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ...capabilities.abstract import AbstractCapability
-from ...computer_use import DISPLAY_SIZE, ComputerResult, computer_tool_name
+from ...computer_use import COMPUTER_KIND, ComputerResult, ComputerReturnPart
 from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
@@ -62,6 +62,7 @@ from ...native_tools import (
     AbstractNativeTool,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -1109,6 +1110,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
+        computer_tool_version = _computer_tool_version_for_client(
+            _profile.get('anthropic_computer_tool_version'), client, self.model_name
+        )
+        if computer_tool_version is not None:
+            supported_native_tools = supported_native_tools | {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -1138,9 +1144,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_computer_tool_version=_computer_tool_version_for_client(
-                    _profile.get('anthropic_computer_tool_version'), client, self.model_name
-                ),
+                anthropic_computer_tool_version=computer_tool_version,
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
                 and not isinstance(client, _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS),
             ),
@@ -1215,7 +1219,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
         return frozenset(
-            {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
+            {
+                WebSearchTool,
+                CodeExecutionTool,
+                WebFetchTool,
+                MemoryTool,
+                MCPServerTool,
+                ToolSearchTool,
+                AdvisorTool,
+                ComputerTool,
+            }
         )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
@@ -2555,6 +2568,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
+            elif isinstance(tool, ComputerTool):
+                pass  # sent in place of the `computer` tool, with the function tools
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
@@ -2666,7 +2681,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if not (native_computer and t.name == native_computer.name)
         ]
         if native_computer and native_computer.name in tool_defs:
-            tools.append(native_computer.tool_param(tool_defs[native_computer.name]))
+            tools.append(native_computer.tool_param())
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -3790,16 +3805,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
     def _native_computer(self, model_request_parameters: ModelRequestParameters) -> NativeComputer | None:
-        """The `computer` tool's name and the Anthropic computer use tool this model takes in its place."""
+        """The `computer` tool's name and the Anthropic computer use tool sent in its place, for a `ComputerTool`."""
         version = self.profile.get('anthropic_computer_tool_version')
-        if version is None or (name := computer_tool_name(model_request_parameters)) is None:
+        computer = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
+        if version is None or computer is None:
             return None
-        # The earlier tools declare the display size, which the `computer` tool gives in its metadata.
-        if version != 'computer_toolset_20260801' and DISPLAY_SIZE not in (
-            model_request_parameters.tool_defs[name].metadata or {}
-        ):
-            return None
-        return NativeComputer(name, version)
+        name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+        return NativeComputer(name, version, computer.display_size) if name is not None else None
 
     async def _map_computer_results(
         self, part: ToolReturnPart, details: dict[str, Any]
@@ -3834,11 +3846,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Each member may have become several actions, such as a key sequence.
         counts: list[int] = details[COMPUTER_ACTION_COUNTS]
         ends = list(itertools.accumulate(counts))
-        raw_metadata: Any = part.metadata
-        # A result without its metadata, such as one rebuilt by a UI, reads as every call having run, and the last
+        outcome = part.result if isinstance(part, ComputerReturnPart) else None
+        # A result without its outcome, such as one rebuilt by a UI, reads as every call having run, and the last
         # one carries the summary, which says if one failed.
-        known = isinstance(raw_metadata, dict)
-        metadata: ComputerResult = cast(ComputerResult, raw_metadata) if known else {'performed': ends[-1]}
+        known = outcome is not None
+        metadata: ComputerResult = outcome if outcome is not None else {'performed': ends[-1]}
         performed = metadata.get('performed', ends[-1])
         error = metadata.get('error')
         # The content is a summary, what each action that returns something returned, then the screen (or the note

@@ -14,10 +14,8 @@ from anthropic.types.beta import (
     BetaToolUseBlock,
 )
 
-from ...computer_use import DISPLAY_SIZE
-from ...messages import ToolCallPart
+from ...computer_use import ComputerCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
-from ...tools import ToolDefinition
 
 COMPUTER_TOOL_BETAS: dict[str, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
@@ -28,19 +26,20 @@ COMPUTER_TOOL_BETAS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class NativeComputer:
-    """The `computer` tool and the Anthropic computer use tool sent in its place."""
+    """The `computer` tool and the Anthropic computer use tool sent in its place, from a `ComputerTool`."""
 
     name: str
     version: AnthropicComputerToolVersion
+    display_size: tuple[int, int]
 
     @property
     def is_toolset(self) -> bool:
         return self.version == 'computer_toolset_20260801'
 
-    def tool_param(self, tool_def: ToolDefinition) -> BetaToolUnionParam:
+    def tool_param(self) -> BetaToolUnionParam:
         if self.is_toolset:
             return BetaComputerToolset20260801Param(type='computer_toolset_20260801')
-        width, height = (tool_def.metadata or {})[DISPLAY_SIZE]
+        width, height = self.display_size
         if self.version == 'computer_20251124':
             return BetaToolComputerUse20251124Param(
                 type='computer_20251124',
@@ -61,7 +60,7 @@ class NativeComputer:
             return block.toolset_name == 'computer'
         return block.name == 'computer' and block.toolset_name is None
 
-    def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ToolCallPart:
+    def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ComputerCallPart:
         """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
         member_actions = [map_computer_member(*computer_member(block, self.version)) for block in blocks]
         actions = [action for member in member_actions for action in member]
@@ -71,7 +70,7 @@ class NativeComputer:
             # How many actions each call became, so results are matched to calls without mapping them again.
             COMPUTER_ACTION_COUNTS: [len(member) for member in member_actions],
         }
-        return ToolCallPart(
+        return ComputerCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
             {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
