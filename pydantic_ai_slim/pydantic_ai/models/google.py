@@ -1847,7 +1847,7 @@ class GeminiStreamedResponse(StreamedResponse):
             # See the signature-only media-processing comment in `_map_response_part`.
             pass
         else:
-            assert part.function_response is not None, f'Unexpected part: {part}'
+            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     def _track_text_run(self, part: Part) -> None:
         # A new request's first text starts a new part, like any text after a non-text part.
@@ -2284,7 +2284,8 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
             return ThinkingPart(content=part.text)
         return TextPart(content=part.text)
     if part.function_call:
-        assert part.function_call.name is not None
+        if part.function_call.name is None:
+            raise UnexpectedModelBehavior(f'Gemini returned a function call without a name: {part!r}')
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id
@@ -2296,7 +2297,8 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
     if inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
-        assert data and mime_type, 'Inline data must have data and mime type'
+        if not data or not mime_type:
+            raise UnexpectedModelBehavior(f'Gemini returned inline data without data and mime type: {part!r}')
         content = BinaryContent(data=data, media_type=mime_type)
         return FilePart(content=BinaryContent.narrow_type(content))
     if _is_signature_only_part(part):

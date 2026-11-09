@@ -238,6 +238,21 @@ def test_openai_unsupported_annotation_is_ignored(value: dict[str, Any]):
     assert part.provider_details is None
 
 
+def test_openai_unsupported_output_item_warns() -> None:
+    item = resp.ResponseComputerToolCall.model_construct(id='computer-1', type='computer_call')
+    response = response_message([item])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+
+    with pytest.warns(UserWarning, match='Handling of this item type is not yet implemented'):
+        result = model._process_response(  # pyright: ignore[reportPrivateUsage]
+            response,
+            OpenAIResponsesModelSettings(),
+            ModelRequestParameters(),
+        )
+
+    assert result.parts == []
+
+
 def test_openai_invalid_url_citation_range_is_unanchored():
     """Unit test: no recorded answer has a citation range outside its text."""
     annotation = AnnotationURLCitation(
