@@ -330,8 +330,14 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'src.py',
         'z b/src.py',
         'new.py',
-        # Git quotes a non-ASCII path in `diff --git` unless told not to.
+        # Git quotes these paths in `diff --git`, and `@tsv` escapes their backslash and tab in the index.
         'docs/café.md',
+        'docs/a"b\\c\td.md',
+        'docs/x\\y.md',
+        'docs/x\\\\y.md',
+        # Before the index escaped it, this path's tab and newline forged a `src.py` row naming `evil`'s diff.
+        'src.py\t+1 -0\tdiff/evil.diff\nzz',
+        'evil',
     ]
     renamed = {'q b/new.py': 'old.py'}
     kept = 'kept\n' * 5
@@ -339,12 +345,14 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         tmp_path,
         script=script,
         base={'README.md': '', 'old.py': kept},
-        pr={path: f'{path}\n' for path in added} | {'old.py': None, 'q b/new.py': kept},
+        pr={path: f'{path}\n' for path in added} | {'old.py': None, 'q b/new.py': f'{kept}q b/new.py\n'},
         in_ci=False,
     )
 
-    rows = [row.split('\t') for row in (context / 'changed-files.txt').read_text(encoding='utf-8').splitlines()]
-    assert {path: diff for path, _, diff in rows} == {
+    rows = [
+        row.split('\t', 2) for row in (context / 'changed-files.txt').read_text(encoding='utf-8').split('\n') if row
+    ]
+    names = {
         'pydantic_ai_slim/pydantic_ai/_ssrf.py': 'diff/pydantic_ai_slim%2Fpydantic_ai%2F_ssrf.py.diff',
         'pydantic_ai_slim__pydantic_ai___ssrf.py': 'diff/pydantic_ai_slim__pydantic_ai___ssrf.py.diff',
         '.github/ci.yml': 'diff/%2Egithub%2Fci.yml.diff',
@@ -356,7 +364,27 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'new.py': 'diff/new.py.diff',
         'q b/new.py': 'diff/q b%2Fnew.py.diff',
         'docs/café.md': 'diff/docs%2Fcafé.md.diff',
+        'docs/a"b\\c\td.md': 'diff/docs%2Fa"b%5Cc%09d.md.diff',
+        'docs/x\\y.md': 'diff/docs%2Fx%5Cy.md.diff',
+        'docs/x\\\\y.md': 'diff/docs%2Fx%5C%5Cy.md.diff',
+        'src.py\t+1 -0\tdiff/evil.diff\nzz': 'diff/src.py%09+1 -0%09diff%2Fevil.diff%0Azz.diff',
+        'evil': 'diff/evil.diff',
     }
-    assert {path: (context / diff).read_text(encoding='utf-8').splitlines()[0] for path, _, diff in rows} == {
-        path: f'diff --git a/{renamed.get(path, path)} b/{path}' for path in [*added, *renamed]
+    # The index is `@tsv`, which escapes a backslash, tab and newline in the path column.
+    assert sorted((path, diff) for path, _, diff in rows) == sorted(
+        (path.replace('\\', '\\\\').replace('\t', '\\t').replace('\n', '\\n'), diff) for path, diff in names.items()
+    )
+    # Each file's content is its own path, so the lines a diff adds show whose diff it is.
+    assert {
+        diff: [
+            line
+            for line in (context / diff).read_text(encoding='utf-8').split('\n')
+            if line.startswith('NL:') and ' +' in line
+        ]
+        for diff in names.values()
+    } == {
+        names[path]: [
+            f'NL:{6 if path in renamed else number} +{line}' for number, line in enumerate(path.split('\n'), 1)
+        ]
+        for path in [*added, *renamed]
     }

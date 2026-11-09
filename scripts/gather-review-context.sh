@@ -213,25 +213,59 @@ if [ -n "$MERGE_BASE" ]; then
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '
+  # Reads the C-style quoted path git writes for a path holding a quote, a
+  # backslash or a control character. s starts at the opening quote; qend is
+  # set to the closing quote, or 0 when there is none.
+  function unquote(s,    out, i, c, k) {
+    out = ""
+    for (i = 2; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "\"") { qend = i; return out }
+      if (c == "\\") {
+        c = substr(s, ++i, 1)
+        k = index("abtnvfr", c)
+        if (k) c = sprintf("%c", k + 6)
+        else if (c ~ /[0-7]/) {
+          k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
+          # awks disagree on the character %c makes from a byte above 0x7F.
+          if (k > 127) break
+          c = sprintf("%c", k)
+          i += 2
+        }
+      }
+      out = out c
+    }
+    qend = 0
+    return ""
+  }
+
   # Names the held file from its new (b/) path, so renamed files match the
   # GitHub API .filename field, then writes its held lines. "diff --git" alone
   # is ambiguous: a crafted "z b/src.py" reads as "src.py". A rename or copy
   # names its new path in the extended header; any other header repeats one
-  # path P as "a/P b/P", so P is its first half.
+  # path P as "a/P b/P", or quoted as "\"a/P\" \"b/P\"", so P is its first half.
   function open_held(    rest, n, i) {
     if (fname == "") {
       rest = substr(held[1], 12)
       n = (length(rest) - 5) / 2
-      if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
+      if (substr(rest, 1, 3) == "\"a/") {
+        fname = unquote(rest)
+        fname = (qend && substr(rest, qend + 1) == (" \"b/" substr(rest, 4, qend - 3))) ? substr(fname, 3) : ""
+      } else if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
           && substr(rest, 3, n) == substr(rest, n + 6))
         fname = substr(rest, 3, n)
     }
     skip = (fname == "" || fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
-      # non-hidden name that no other path shares.
+      # non-hidden name that no other path shares. Encoding a backslash, tab,
+      # newline and carriage return too leaves nothing for the index to escape.
       safe = fname
       gsub(/%/, "%25", safe)
+      gsub(/\\/, "%5C", safe)
+      gsub(/\t/, "%09", safe)
+      gsub(/\n/, "%0A", safe)
+      gsub(/\r/, "%0D", safe)
       gsub(/\//, "%2F", safe)
       sub(/^\./, "%2E", safe)
       outfile = dir "/" safe ".diff"
@@ -250,7 +284,11 @@ fi | awk -v dir="$CTX/diff" '
     held[1] = $0
     next
   }
-  nheld && /^(rename|copy) to / { fname = $0; sub(/^(rename|copy) to /, "", fname) }
+  nheld && /^(rename|copy) to / {
+    fname = $0
+    sub(/^(rename|copy) to /, "", fname)
+    if (substr(fname, 1, 1) == "\"") fname = unquote(fname)
+  }
   nheld && /^(old mode|new mode|deleted file mode|new file mode|copy from|copy to|rename from|rename to|similarity index|dissimilarity index|index) / {
     held[++nheld] = $0
     next
@@ -345,10 +383,11 @@ for diff_file in "$CTX/diff/"*.diff; do
   ' "$diff_file" > "${diff_file}.tmp" && mv "${diff_file}.tmp" "$diff_file"
 done
 
-# List of ALL changed files with change counts + diff file paths
+# List of ALL changed files with change counts + diff file paths. @tsv escapes a
+# tab or newline in a path, which would otherwise start a forged row.
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
-  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("%"; "%25") | gsub("/"; "%2F") | sub("^\\."; "%2E")).diff"' \
+  --jq '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' \
   | while IFS=$'\t' read -r fname counts diffname; do
     if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
       printf '%s\t%s\n' "$fname" "$counts"
