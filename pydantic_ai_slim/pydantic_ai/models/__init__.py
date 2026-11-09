@@ -206,8 +206,8 @@ else:
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
 
-# Vertex AI's 500 MiB request payload is the largest a supported provider accepts, so this refuses no request one
-# would take.
+# The largest request payload a supported provider accepts is Vertex AI's 500 MiB, and files are sent base64-encoded,
+# a third larger than they download. A request whose files pass this total is over every provider's limit anyway.
 _MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES = 500 * 1024 * 1024
 """Maximum total size of the [`FileUrl`][pydantic_ai.messages.FileUrl] downloads made for one model request."""
 
@@ -219,12 +219,13 @@ class _DownloadBudget:
     remaining: int
 
 
-# A mutable budget rather than a count, so a download made in a task the request spawned still charges the request.
+# Each download is capped at what was left when it started, so the total holds only while one request downloads its
+# files one at a time, as every model does.
 _request_download_budget: ContextVar[_DownloadBudget | None] = ContextVar('_request_download_budget', default=None)
 
 
 @contextmanager
-def _budget_request_downloads() -> Generator[None]:
+def _open_request_download_budget() -> Generator[None]:
     """Give the file URLs downloaded until exit one total of `_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES`."""
     token = _request_download_budget.set(_DownloadBudget(_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES))
     try:
@@ -1123,7 +1124,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
             @wraps(request)
             async def budgeted_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
-                with _budget_request_downloads():
+                with _open_request_download_budget():
                     return await request(self, *args, **kwargs)
 
             cls.request = budgeted_request
@@ -1139,7 +1140,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 async with AsyncExitStack() as stack:
                     # Files are downloaded while the request is built, before the stream opens. The budget ends there,
                     # since a stream can be closed from a task other than the one that opened it.
-                    with _budget_request_downloads():
+                    with _open_request_download_budget():
                         stream = await stack.enter_async_context(request_stream(self, *args, **kwargs))
                     yield stream
 

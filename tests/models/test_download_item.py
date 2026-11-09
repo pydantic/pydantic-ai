@@ -136,14 +136,30 @@ async def test_file_url_downloads_share_one_total_per_model_request(
         pytest.raises(ValueError, match=r'^File URL downloads for one model request exceed the total of 2560 bytes\.$'),
     ):
         if stream:
-            async with agent.run_stream(prompt) as result:
-                await result.get_output()  # pragma: no cover
+            async with agent.run_stream(prompt):
+                pass
         else:
             await agent.run(prompt)
 
     assert downloaded == snapshot(
         ['https://93.184.215.14/doc0.txt', 'https://93.184.215.14/doc1.txt', 'https://93.184.215.14/doc2.txt']
     )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_file_url_over_the_per_file_limit_in_a_model_request(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inside a model request, a file over the per-file limit raises the per-file error, not the total's."""
+    _serve_text_files(monkeypatch, 1024)
+    client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Done.', role='assistant')))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client)))
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 512),
+        pytest.raises(ValueError, match=r'^Download exceeds the maximum size of 512 bytes\.$'),
+    ):
+        await agent.run(['Summarize this.', DocumentUrl(url='https://93.184.215.14/doc.txt')])
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')

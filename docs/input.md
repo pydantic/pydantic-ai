@@ -241,8 +241,6 @@ from pydantic_ai import ImageUrl
 ImageUrl(url='https://example.com/receipt-123', media_type='image/png', force_download=True)
 ```
 
-Pydantic AI downloads at most 50 MiB per file, and at most 500 MiB in total for the files of one model request. A download past either limit raises a `ValueError`.
-
 !!! warning "Trust model for file URLs"
     When URLs are forwarded to the provider, the provider fetches them under its own credentials. For cloud-storage schemes like `s3://` (Bedrock) and `gs://` (Google Cloud), those credentials are your server's IAM role or service account, so whoever controls the URL effectively controls what the provider can read on your behalf.
 
