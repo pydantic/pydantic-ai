@@ -533,6 +533,9 @@ navigation:
           - page: "Background Tools"
             path: "harness/background-tools.md"
             slug: "harness/background-tools"
+          - page: "Teams"
+            path: "harness/teams.md"
+            slug: "harness/teams"
       - section: "Context Management"
         slug: ""
         contents:

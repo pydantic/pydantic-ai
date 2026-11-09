@@ -159,7 +159,7 @@ async def main() -> None:
 
 Each store uses its own table or key, so an existing `SqlitePlanStore`, `PostgresPlanStore` or `RedisPlanStore` database is left as it is. `RedisClaimablePlanStore` takes a client with `get` and `eval`, which `redis.asyncio.Redis` provides.
 
-`claim` and `release` are store operations, not tools. The `Planning` tools write through `set_items` and `update_item` and then reconcile dependencies in separate calls, so they are not the way agents should claim steps on a shared board. Store calls emit no run events; a caller that wants to report board changes emits its own event per `BoardChange` that `claim` or `release` returns. Each change carries the step before and after from the same atomic operation, so the caller never has to read the board again (which would race another writer) to know what changed. Such an event should carry `OwnedPlanItem`, which the `Plan*Event`s, declared with `PlanItem`, would drop `owner` from when serialized.
+`claim` and `release` are store operations, not tools. The `Planning` tools write through `set_items` and `update_item` and then reconcile dependencies in separate calls, so they are not the way agents should claim steps on a shared board. Store calls emit no run events; a caller that wants to report board changes emits one `BoardItemChangedEvent` (from `pydantic_ai_harness.teams`) per `BoardChange` that `claim` or `release` returns. Each change carries the step before and after from the same atomic operation, so the caller never has to read the board again (which would race another writer) to know what changed. `Team` does this for its board tools. It carries `OwnedPlanItem`, which the `Plan*Event`s, declared with `PlanItem`, would drop `owner` from when serialized.
 
 ## Events
 

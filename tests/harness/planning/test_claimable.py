@@ -29,6 +29,7 @@ from pydantic_ai_harness.planning import (
     SqliteClaimablePlanStore,
     TaskStatus,
 )
+from pydantic_ai_harness.teams import TEAMS_EVENTS, BoardItemChangedEvent
 from tests.harness._postgres_sqlite import SqlitePool
 
 BoardFactory = Callable[[], ClaimablePlanStore]
@@ -413,3 +414,12 @@ class TestBackends:
             }
         ]
         assert sorted(entry.name for entry in tmp_path.iterdir()) == ['board.json', 'board.json.lock']
+
+
+class TestBoardItemChangedEvent:
+    def test_carries_owned_items(self) -> None:
+        item = OwnedPlanItem(id='a', content='A', status=TaskStatus.in_progress, owner='alice')
+        event = BoardItemChangedEvent(item=item, previous=OwnedPlanItem(id='a', content='A'))
+
+        assert TEAMS_EVENTS == 'teams'
+        assert event.item.owner == 'alice' and event.previous is not None and event.previous.owner is None

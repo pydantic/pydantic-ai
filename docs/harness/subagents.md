@@ -521,6 +521,9 @@ steps, an event stream handler that keeps its history saved and feeds the observ
 conversation ID and run ID. A member never borrows the run that started it, which may have ended,
 so one reloaded from `directory` after a restart can still be woken.
 
+[Teams](teams.md) builds the whole team on this owner: a shared board, the lead's and members' tools, each
+member pinned to its own model, and gates. Use it rather than wiring members by hand.
+
 ```python
 from pathlib import Path
 
