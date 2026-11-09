@@ -183,7 +183,7 @@ async def main():
 
 Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
 
-A custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
+A custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. On Debian or Ubuntu, the first use of the display installs any of those four that's missing with `apt-get`, if commands run as root or can use `sudo` without a password; that can take a few minutes. It also needs `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

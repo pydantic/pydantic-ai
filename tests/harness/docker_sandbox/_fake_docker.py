@@ -189,6 +189,30 @@ exec "$@"
 """
 """Stands in for `setsid`, which macOS lacks."""
 
+_FAKE_ID = """#!/bin/sh
+[ "$1" = -u ] || exec /usr/bin/id "$@"
+cat "$(dirname "$0")/uid"
+"""
+"""Stands in for `id -u`, reporting the user in `uid`, so a test picks whether the start script runs as root."""
+
+_FAKE_SUDO = """#!/bin/sh
+bin=$(dirname "$0")
+[ -e "$bin/sudo-allowed" ] || { echo 'sudo: a password is required' >&2; exit 1; }
+[ "$1" != -n ] || shift
+exec "$@"
+"""
+"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, so a host's real one never runs."""
+
+_FAKE_APT_GET = """#!/bin/sh
+bin=$(dirname "$0")
+echo "$*" >> "$bin/apt-get-calls"
+if [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
+[ "$1" != install ] || mv "$bin"/uninstalled/* "$bin"/ 2>/dev/null
+exit 0
+"""
+"""Stands in for `apt-get`: logs each call and has `install` put back the programs `uninstall` took away, or fails if
+`apt-get-fails` exists."""
+
 
 class FakeDocker:
     def __init__(self, bin_dir: Path) -> None:
@@ -253,6 +277,26 @@ class FakeDocker:
     def x_lock_exists(self, name: str) -> bool:
         return (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').exists()
 
+    def uninstall(self, *programs: str) -> None:
+        """Take `programs` off `PATH` until the fake `apt-get` installs them."""
+        (self.bin_dir / 'uninstalled').mkdir(exist_ok=True)
+        for program in programs:
+            (self.bin_dir / program).rename(self.bin_dir / 'uninstalled' / program)
+
+    def run_as(self, uid: int, *, sudo: bool = False) -> None:
+        """Run commands as `uid`, with passwordless `sudo` if `sudo` is true."""
+        (self.bin_dir / 'uid').write_text(f'{uid}\n')
+        if sudo:
+            (self.bin_dir / 'sudo-allowed').touch()
+
+    def fail_installs(self) -> None:
+        (self.bin_dir / 'apt-get-fails').touch()
+
+    @property
+    def apt_get_calls(self) -> list[str]:
+        path = self.bin_dir / 'apt-get-calls'
+        return path.read_text().splitlines() if path.exists() else []
+
     @property
     def xvfb_starts(self) -> int:
         path = self.bin_dir / 'xvfb-starts'
@@ -281,8 +325,13 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
+        ('id', _FAKE_ID),
+        ('sudo', _FAKE_SUDO),
+        ('apt-get', _FAKE_APT_GET),
     ]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
-    return FakeDocker(bin_dir)
+    docker = FakeDocker(bin_dir)
+    docker.run_as(1000)
+    return docker
