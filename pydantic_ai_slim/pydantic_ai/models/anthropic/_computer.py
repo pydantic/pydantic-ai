@@ -13,15 +13,53 @@ from anthropic.types.beta import (
     BetaToolUnionParam,
     BetaToolUseBlock,
 )
+from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
 from ...computer_use import ComputerCallPart
+from ...messages import ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
 
-COMPUTER_TOOL_BETAS: dict[str, str] = {
+COMPUTER_TOOL_BETAS: dict[AnthropicComputerToolVersion, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
     'computer_20250124': 'computer-use-2025-01-24',
 }
 """The beta header each earlier computer use tool needs."""
+
+
+class ComputerBlock(TypedDict):
+    """A call of the computer use tool, as Claude made it."""
+
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+class ComputerReplay(TypedDict):
+    """What a `computer` call keeps in its `provider_details`, to send back the calls it came from as they were."""
+
+    computer_blocks: list[ComputerBlock]
+    computer_tool: AnthropicComputerToolVersion
+    computer_action_counts: list[int]
+    """How many actions each call became, so results are matched to calls without mapping them again."""
+
+
+_REPLAY = TypeAdapter(ComputerReplay)
+
+
+def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | None:
+    """The calls a `computer` call came from, or `None` to send it back as a plain call.
+
+    A history can come back from storage or a UI, so what it kept is validated, and one call per count is required.
+    """
+    if not isinstance(part, ComputerCallPart) or part.provider_name != provider_name:
+        return None
+    try:
+        replay = _REPLAY.validate_python(part.provider_details)
+    except ValidationError:
+        return None
+    blocks = replay['computer_blocks']
+    return replay if blocks and len(blocks) == len(replay['computer_action_counts']) else None
 
 
 @dataclass(frozen=True)
@@ -64,19 +102,18 @@ class NativeComputer:
         """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
         member_actions = [map_computer_member(*computer_member(block, self.version)) for block in blocks]
         actions = [action for member in member_actions for action in member]
-        provider_details: dict[str, Any] = {
-            'computer_blocks': blocks,
-            'computer_tool': self.version,
-            # How many actions each call became, so results are matched to calls without mapping them again.
-            COMPUTER_ACTION_COUNTS: [len(member) for member in member_actions],
-        }
+        replay = ComputerReplay(
+            computer_blocks=[ComputerBlock(id=b['id'], name=b['name'], input=b['input']) for b in blocks],
+            computer_tool=self.version,
+            computer_action_counts=[len(member) for member in member_actions],
+        )
         return ComputerCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
             {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
             tool_call_id=blocks[0]['id'],
             provider_name=provider_name,
-            provider_details=provider_details,
+            provider_details=dict(replay),
         )
 
 
@@ -87,9 +124,6 @@ def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion
     args = {key: value for key, value in block['input'].items() if key != 'action'}
     return block['input'].get('action', ''), args
 
-
-COMPUTER_ACTION_COUNTS = 'computer_action_counts'
-"""The `provider_details` key with how many `computer` tool actions each computer use call became."""
 
 RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
 """The calls whose result has content of its own, before the screenshot every result ends with; each is one action."""
