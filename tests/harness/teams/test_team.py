@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import anyio
@@ -185,6 +185,9 @@ async def hosting(
     member_usage_limits: UsageLimits | None = None,
     agents: dict[str, SubAgent[object]] | None = None,
     max_active: int | None = 1,
+    plan_reviewer: Literal['lead', 'user'] = 'lead',
+    usage_limits: UsageLimits | None = None,
+    shutdown_grace: float | None = None,
 ) -> AsyncGenerator[Host]:
     watch = Watch()
     owner = DelegationTasks(directory=directory, observer=watch, max_active=max_active, agents=agents)
@@ -196,6 +199,9 @@ async def hosting(
         models=team_models,
         member_usage_limits=member_usage_limits,
         observer=lambda event: _record(host_ref, event),
+        plan_reviewer=plan_reviewer,
+        usage_limits=usage_limits,
+        shutdown_grace=shutdown_grace,
     )
     owner.claims = team.claims
 
@@ -501,9 +507,15 @@ class TestTeamComposition:
             assert host.team.agent_types() == ['self', 'Reviewer']
 
     async def test_the_lead_assigns_an_item_and_the_member_hands_it_back(self, tmp_path: Path) -> None:
-        def member(messages: list[ModelMessage]) -> Reply:
-            assigned = 'You are assigned board item #1' in str(messages[-1])
-            return call('finish_task', item_id='1', status='pending') if assigned else 'ready'
+        lead_done = anyio.Event()
+
+        async def member(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            if 'You are assigned board item #1' not in str(messages[-1]):
+                yield 'ready'
+                return
+            # Handed back once the lead's turn is over, so its second `assign_task` finds the item taken.
+            await lead_done.wait()
+            yield {0: DeltaToolCall(name='finish_task', json_args='{"item_id": "1", "status": "pending"}')}
 
         lead_model = scripted(
             call('board_add', content='Fix it'),
@@ -513,8 +525,11 @@ class TestTeamComposition:
             call('finish_task', item_id='9'),
         )
         board = InMemoryClaimablePlanStore()
-        async with hosting(tmp_path, board, lead_model=lead_model, models={'m': model_of(member)}) as host:
+        async with hosting(
+            tmp_path, board, lead_model=lead_model, models={'m': FunctionModel(stream_function=member)}
+        ) as host:
             messages = await host.lead_turn('Plan.')
+            lead_done.set()
             (gus,) = host.owner.members('conv')
 
             def handed_back() -> bool:
@@ -585,10 +600,19 @@ class TestTeamBinding:
             'board_add',
             'board_list',
             'finish_task',
+            'review_plan',
             'send_message',
+            'shutdown_teammate',
             'spawn_teammate',
         ]
-        assert seen['member'][0] == ['board_add', 'board_list', 'claim_task', 'finish_task', 'send_message']
+        assert seen['member'][0] == [
+            'board_add',
+            'board_list',
+            'claim_task',
+            'finish_task',
+            'request_plan_approval',
+            'send_message',
+        ]
         assert seen['unbound'][0] == []
         assert 'You lead the team.' in seen['lead'][1] and '`self` (default model)' in seen['lead'][1]
         assert 'You are `fay`.' in seen['member'][1]

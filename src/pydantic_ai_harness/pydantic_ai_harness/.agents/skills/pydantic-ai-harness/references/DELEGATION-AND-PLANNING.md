@@ -273,6 +273,12 @@ A bound owner can run named, long-lived members for a lead conversation. Registe
   sub-agents get no team tools. `delegate_task(resume=<member>)` is refused; use `send_message`.
 - `lead_waker=` gives an idle lead one automated turn per `lead_wake_delay`, or once every member is idle.
   `claims=` hands a stopped, failed or interrupted member's in-progress board items back to `pending`.
+- `max_active=` (settable later as `tasks.max_active`) caps running members; the rest are `record.queued`
+  and start first come, first served.
+- `await tasks.shutdown(request, to=task_id, conversation_id=..., grace=None)` delivers `request` like `send`,
+  then shuts the member down when that turn ends: claims back to `pending`, report to the lead,
+  `record.shut_down` (only a user `str` wakes it). Queued or user-stopped members are shut down at once
+  (returns `None`).
 
 ## DynamicWorkflow
 
@@ -443,7 +449,8 @@ Gotchas:
 
 ## Team
 
-`Team(owner, board=..., gates=(), models={}, member_usage_limits=None, observer=None)` runs a team in a
+`Team(owner, board=..., gates=(), models={}, member_usage_limits=None, observer=None, plan_reviewer='lead',
+usage_limits=None, shutdown_grace=120.0)` runs a team in a
 conversation over a `DelegationTasks` owner (runs the members) and a `ClaimablePlanStore` (the board, one store
 or `lambda conversation_id: store`). Bind it to the lead (agent or run) inside `owner.bind()`, with a
 `conversation_id`. The member runner runs each turn with `team.member_run(record, self_agent=lead)`, which adds
@@ -488,15 +495,30 @@ lead = Agent('test', capabilities=[team])
 ```
 
 - Lead tools: `spawn_teammate(name, prompt, agent='self', model=None)`, `assign_task(item_id, teammate)`,
-  `board_add(content, depends_on)`, `board_list`, `finish_task(item_id, status)`, `send_message(to, text)`.
-  Member tools: `claim_task(item_id=None)`, `board_add`, `board_list`, `finish_task` (own items),
-  `send_message` (`to='lead'` for the lead). Sub-agents of members get none.
+  `board_add(content, depends_on)`, `board_list`, `finish_task(item_id, status)`, `send_message(to, text)`,
+  `shutdown_teammate(teammate, reason='')`, and `review_plan(teammate, approved, feedback='')` when
+  `plan_reviewer='lead'`. Member tools: `claim_task(item_id=None)`, `board_add`, `board_list`, `finish_task`
+  (own items), `send_message` (`to='lead'` for the lead), `request_plan_approval(plan)`. Sub-agents of
+  members get none.
+- Member states: `working`, `queued` (waiting under `max_active`), `idle`, `stopped`, `failed`.
+  `TeamMember.shutdown` is `'requested'`/`'done'` for a shutdown (vs `None` for a user stop).
+- Shutdown: `shutdown_teammate` or `await team.shutdown(conversation_id, name, reason='')` asks the member
+  to wrap up, then stops it when that turn ends; leftover claims go back (`BoardItemChangedEvent` to the
+  observer). A wrap-up longer than `shutdown_grace` seconds is cancelled.
+- Plan approval: `request_plan_approval(plan)` waits until the lead's `review_plan` or the user's
+  `team.approve(conversation_id, name, feedback='')` / `team.reject(conversation_id, name, feedback)`.
+  Pending plans are saved on the record (`TeamMember.plan`); after a restart, the review arrives as a
+  message that wakes the member. Events: `PlanApprovalRequestedEvent`, `PlanReviewedEvent`.
+- Usage: each member's turns add up on `TeamMember.usage` (a `RunUsage`, saved on the record), the lead's
+  runs on `TeamSnapshot.lead_usage` (saved with its inbox); `team.usage(conversation_id)` and
+  `TeamSnapshot.usage` are the total. `usage_limits=` caps the whole team before each model request.
 - Model pinning: spawn `model`, else `models[agent_type]` (aliases resolved), else the lead's model (or a
   specialist's own). Saved on `DelegationTask.model`: survives idle/wake/restart; shown in the roster.
 - Events (`teams` family): `BoardItemChangedEvent(item, previous)`, `TeammateSpawnedEvent`,
   `TeammateStateEvent(member, previous)`, `TeamMessageEvent(message)`; tool-caused ones go to the run's
   stream, owner/host-caused ones (`team.spawn`, `team.send`, `team.stop`, claim hand-backs, state) to
-  `observer`. `await team.snapshot(conversation_id)` -> `TeamSnapshot(members, board, messages)`.
+  `observer`. `await team.snapshot(conversation_id)` ->
+  `TeamSnapshot(members, board, messages, lead_usage, usage)`.
 - `owner.claims = team.claims` hands a failed/stopped member's claims back and reports the change.
 - `claim`/`release` on a `ClaimablePlanStore` return `BoardChange(item, previous)`, so board events carry the
   before/after of the same atomic step.

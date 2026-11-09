@@ -337,6 +337,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
     ),
     '_IdleGate': Anonymous("one per member run, added by `Team.member_capability` with the member's name"),
+    '_Accounting': Anonymous("inside its `Team`, which is one per agent; it counts that team's runs only"),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'DelegationReports': Anonymous(
         'one per task owner and conversation; each delivers only its own reports, so several coexist'

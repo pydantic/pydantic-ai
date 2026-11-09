@@ -67,6 +67,7 @@ from pydantic_ai_harness.subagents._team import (
     ClaimedItem,
     DeliveryStatus,
     MemberClaims,
+    PlanRequest,
     SentMessage,
     TeamMessages,
 )
@@ -118,6 +119,7 @@ __all__ = [
     'MemberRun',
     'ModelOption',
     'ParentMessage',
+    'PlanRequest',
     'Recipient',
     'RemoteSubAgent',
     'SentMessage',

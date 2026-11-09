@@ -9,8 +9,9 @@ import hashlib
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
@@ -42,7 +43,14 @@ from pydantic_ai_harness._task_report import make_task_output, make_task_questio
 from pydantic_ai_harness.planning import TaskStatus
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
-from pydantic_ai_harness.subagents._team import LEAD, AgentMessage, MemberClaims, SentMessage, TeamMessages
+from pydantic_ai_harness.subagents._team import (
+    LEAD,
+    AgentMessage,
+    MemberClaims,
+    PlanRequest,
+    SentMessage,
+    TeamMessages,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._toolset import SubAgent
@@ -113,6 +121,16 @@ class DelegationTask:
     run_id: str = field(default_factory=lambda: uuid4().hex)
     inbox: list[InboxMessage] = field(default_factory=list[InboxMessage])
     """A team member's messages that none of its runs has acknowledged yet, oldest first."""
+    queued: bool = False
+    """Whether a running team member waits for a turn under `DelegationTasks.max_active`."""
+    usage: RunUsage = field(default_factory=RunUsage, compare=False)
+    """The usage of a team member's turns so far, which `Team` adds up as they run."""
+    shutdown_request: str | None = None
+    """The ID of the shutdown request a team member is wrapping up for, until it is shut down."""
+    shut_down: bool = False
+    """Whether a team member was shut down by `DelegationTasks.shutdown`; only the user's message wakes it again."""
+    plan_request: PlanRequest | None = None
+    """A team member's plan that waits for approval, saved so a process exit doesn't lose it."""
 
     def report(self) -> UserPromptPart:
         """The settled task's report: the child's output, framed as `<task_output>` data on the user channel.
@@ -273,10 +291,45 @@ def _unregister(stacks: dict[_KeyT, list[_ItemT]], key: _KeyT, item: _ItemT) -> 
         del stacks[key]
 
 
+class _Turns:
+    """Turns among `max_active` team members, given first come, first served."""
+
+    def __init__(self, limit: int | None) -> None:
+        self.limit = limit
+        self.active = 0
+        self.waiting: deque[asyncio.Future[None]] = deque()
+
+    def take(self) -> asyncio.Future[None] | None:
+        """Take a turn, or `None` once taken; else a place in the queue, a future set once the turn is handed over."""
+        if not self.waiting and (self.limit is None or self.active < self.limit):
+            self.active += 1
+            return None
+        place = asyncio.get_running_loop().create_future()
+        self.waiting.append(place)
+        return place
+
+    def leave(self, place: asyncio.Future[None] | None) -> None:
+        """Give back the turn `take` returned, or the place in the queue it never got a turn for."""
+        if place is None or (place.done() and not place.cancelled()):
+            self.active -= 1
+            self.admit()
+        else:
+            place.cancel()
+
+    def admit(self) -> None:
+        """Hand free turns to the members waiting longest."""
+        while self.waiting and (self.limit is None or self.active < self.limit):
+            place = self.waiting.popleft()
+            if not place.done():
+                self.active += 1
+                place.set_result(None)
+
+
 @dataclass(kw_only=True)
 class _LeadInbox:
     conversation_id: str
     messages: list[InboxMessage]
+    usage: RunUsage = field(default_factory=RunUsage)
 
 
 _ADAPTER = TypeAdapter(DelegationTask)
@@ -337,7 +390,8 @@ class DelegationTasks:
             step_store: Where child runs checkpoint their steps.
             member_runner: Runs a turn of a team member, with `member_run`. Required to start or wake members,
                 including ones loaded from `directory`.
-            max_active: How many team members run at once; others wait for a turn. `None` sets no limit.
+            max_active: How many team members run at once; others are `queued` and start in the order they were
+                started or woken. `None` sets no limit.
             claims: The board of a conversation, whose claims a team member that stops, fails or was
                 interrupted by a process exit hands back to `pending`.
             lead_waker: Starts a run of a conversation's lead to read the messages and reports in its inbox,
@@ -353,7 +407,7 @@ class DelegationTasks:
         self.claims = claims
         self.lead_waker = lead_waker
         self.lead_wake_delay = lead_wake_delay
-        self._slots = anyio.Semaphore(max_active) if max_active is not None else None
+        self._turns = _Turns(max_active)
         self.instructions = instructions
         self.step_store = step_store
         self.observer = observer
@@ -387,7 +441,22 @@ class DelegationTasks:
         self._queued_messages: set[str] = set()
         self._message_acks: dict[str, tuple[str, str | None, str]] = {}
         self._lead_wakes: dict[str, anyio.Event] = {}
-        self._lead_tasks: set[asyncio.Task[None]] = set()
+        # The owner's own background work: lead wakes, and the deadlines of shutdowns.
+        self._owned_tasks: set[asyncio.Task[None]] = set()
+        self._deadlines: dict[str, asyncio.Task[None]] = {}
+        self._lead_usage: dict[str, RunUsage] = {}
+
+    @property
+    def max_active(self) -> int | None:
+        """How many team members run at once; others are `queued` and start in order as turns free up."""
+        return self._turns.limit
+
+    @max_active.setter
+    def max_active(self, value: int | None) -> None:
+        if value is not None and value < 1:
+            raise ValueError('`max_active` must be at least one')
+        self._turns.limit = value
+        self._turns.admit()
 
     @staticmethod
     def current() -> DelegationTasks | None:
@@ -446,9 +515,9 @@ class DelegationTasks:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
             self._open = False
             with anyio.move_on_after(10, shield=True) as cleanup:
-                for task in self._lead_tasks:
+                for task in self._owned_tasks:
                     task.cancel()
-                await asyncio.gather(*self._lead_tasks, return_exceptions=True)
+                await asyncio.gather(*self._owned_tasks, return_exceptions=True)
                 for worker in self._workers.values():
                     worker.cancel()
                 await asyncio.gather(*self._workers.values(), return_exceptions=True)
@@ -466,7 +535,7 @@ class DelegationTasks:
             snapshot = await self.step_store.latest_snapshot(run_id=record.run_id, include_interrupted=True)
             if snapshot is not None:
                 record.messages = snapshot.messages
-        record.status, record.outcome = 'finished', 'cancelled'
+        record.status, record.outcome, record.queued = 'finished', 'cancelled', False
         record.output = (
             'Execution interrupted by process exit while waiting for an answer to:\n'
             f'{record.pending_question}\nResume it with the answer. Inspect effects before resuming.'
@@ -484,6 +553,7 @@ class DelegationTasks:
             if path.name != f'{_inbox_name(saved.conversation_id)}.json':
                 raise ValueError(f'Invalid saved inbox identity in {path.name!r}')
             self._lead_inboxes[saved.conversation_id] = saved.messages
+            self._lead_usage[saved.conversation_id] = saved.usage
 
     async def _reconcile_members(self, interrupted: list[DelegationTask]) -> None:
         """Settle team members a process exit interrupted, and pass on reports that never reached the lead's inbox."""
@@ -491,6 +561,9 @@ class DelegationTasks:
             if record.name is not None:
                 await self._release_claims(record)
         for record in list(self.records.values()):
+            if record.name is not None and record.shutdown_request is not None:
+                # Its wrap-up turn was cut short by the exit: the shutdown it was asked for is done.
+                await self._finish_shutdown(record, notify=False)
             if record.name is not None and not record.delivered:
                 await self._report_to_lead(record)
         for conversation_id in list(self._lead_inboxes):
@@ -670,15 +743,17 @@ class DelegationTasks:
 
     async def _run(self, record: DelegationTask, run: Runner) -> str:
         token = _CHILD.set(record.id)
+        # Taken before the first await, so members get their turns in the order they were started or woken.
+        place = self._take_turn(record)
         try:
             await self.notify(record)
-            async with self._slot(record):
-                with capture_run_messages() as messages:
-                    try:
-                        record.output = await run(record)
-                    finally:
-                        if messages:
-                            record.messages = messages
+            await self._wait_turn(record, place)
+            with capture_run_messages() as messages:
+                try:
+                    record.output = await run(record)
+                finally:
+                    if messages:
+                        record.messages = messages
             record.outcome = record.outcome or 'ok'
         except (asyncio.CancelledError, RunCancelled):
             record.outcome, record.output = 'cancelled', STOPPED_OUTPUT
@@ -687,6 +762,7 @@ class DelegationTasks:
             record.output = f'{type(exc).__name__}: {exc}'
         finally:
             _CHILD.reset(token)
+            self._leave_turn(record, place)
             self._unsteered.pop(record.id, None)
             self._stops.discard(record.id)
             record.status, record.finished_at = 'finished', time.time()
@@ -708,9 +784,25 @@ class DelegationTasks:
                     await self._wake_if_messaged(record)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
 
-    def _slot(self, record: DelegationTask) -> AbstractAsyncContextManager[object]:
-        """A team member's turn among `max_active`; any other task runs at once."""
-        return self._slots if self._slots is not None and record.name is not None else nullcontext()
+    def _take_turn(self, record: DelegationTask) -> asyncio.Future[None] | None:
+        """Take a member's turn under `max_active`, or its place in the queue, marking it `queued`; see `_Turns`."""
+        place = self._turns.take() if record.name is not None else None
+        record.queued = place is not None
+        return place
+
+    async def _wait_turn(self, record: DelegationTask, place: asyncio.Future[None] | None) -> None:
+        """Wait for the turn of a queued member, `place` in the queue, and tell the observer it starts."""
+        if place is None:
+            return
+        await place
+        record.queued = False
+        await self.notify(record)
+
+    def _leave_turn(self, record: DelegationTask, place: asyncio.Future[None] | None) -> None:
+        """Give back a member's turn, or its place in the queue; any other task has neither."""
+        record.queued = False
+        if record.name is not None:
+            self._turns.leave(place)
 
     @staticmethod
     def _receipt(record: DelegationTask) -> str:
@@ -811,12 +903,21 @@ class DelegationTasks:
             or (task_id in self._workers and not self._workers[task_id].done())
         ):
             raise ValueError('Only a settled, resumable task can be resumed')
-        record.user_stopped = False
+        record.user_stopped = record.shut_down = False
         await self.save(record)
 
     def members(self, conversation_id: str) -> list[DelegationTask]:
         """The team members of a conversation, oldest first."""
         return [r for r in self.records.values() if r.name is not None and r.conversation_id == conversation_id]
+
+    def lead_usage(self, conversation_id: str) -> RunUsage:
+        """The usage that `add_lead_usage` added up for a conversation's lead, saved with its inbox."""
+        return copy.copy(self._lead_usage.get(conversation_id) or RunUsage())
+
+    async def add_lead_usage(self, conversation_id: str, usage: RunUsage) -> None:
+        """Add `usage` of a run of a conversation's lead to `lead_usage`, and save it."""
+        self._lead_usage[conversation_id] = self.lead_usage(conversation_id) + usage
+        await self._save_lead(conversation_id)
 
     def lead_inbox(self, conversation_id: str) -> list[InboxMessage]:
         """The messages and reports a conversation's lead has not received yet, oldest first.
@@ -958,12 +1059,18 @@ class DelegationTasks:
             part = make_team_message(content.text, sender=content.sender, message_id=message_id)
             await self._append_lead(conversation_id, InboxMessage(id=message_id, part=part))
             return SentMessage(id=message_id, status='running' if self._lead_active(conversation_id) else 'saved')
-        record = self.records.get(to)
+        return await self._send_member(self._member(to, conversation_id), content, message_id)
+
+    def _member(self, task_id: str, conversation_id: str) -> DelegationTask:
+        record = self.records.get(task_id)
         if record is None or record.name is None or record.conversation_id != conversation_id:
-            raise ValueError(f'Unknown team member {to!r} in this conversation')
+            raise ValueError(f'Unknown team member {task_id!r} in this conversation')
+        return record
+
+    async def _send_member(self, record: DelegationTask, content: str | AgentMessage, message_id: str) -> SentMessage:
         if isinstance(content, str):
             part = UserPromptPart(content)
-            record.user_stopped = False
+            record.user_stopped = record.shut_down = False
         else:
             part = make_team_message(content.text, sender=content.sender, message_id=message_id)
         record.inbox.append(InboxMessage(id=message_id, part=part))
@@ -978,6 +1085,85 @@ class DelegationTasks:
             return SentMessage(id=message_id, status='saved')
         await self._wake_member(record)
         return SentMessage(id=message_id, status='woken')
+
+    async def shutdown(
+        self, request: str | AgentMessage, *, to: str, conversation_id: str, grace: float | None = None
+    ) -> SentMessage | None:
+        """Ask a team member to wrap up, then stop it once the turn that reads `request` ends.
+
+        `request` is delivered like a message `send` delivers, so an idle member is woken to read it. When that
+        turn ends, the member is shut down: the board items it still holds go back to `pending` through
+        `claims`, its report reaches the lead, and it is `shut_down`, a stop only the user's message undoes. A
+        member that would get no turn to read it, one waiting for a turn under `max_active` or one the user
+        stopped, is shut down at once. So is one a process exit interrupts while it wraps up.
+
+        Args:
+            request: What the member is asked, as `send` takes it: the user's words, or another agent's message.
+            to: A team member's task ID.
+            conversation_id: The team's conversation.
+            grace: How many seconds the wrap-up may take before the member is stopped anyway. `None` waits.
+
+        Returns:
+            The request as `send` saved it, or `None` when the member was shut down at once.
+
+        Raises:
+            RuntimeError: The owner is closed.
+            ValueError: `to` isn't a member of the conversation, or it is shutting down or shut down already.
+        """
+        if not self._open:
+            raise RuntimeError('Delegation task owner is closed')
+        record = self._member(to, conversation_id)
+        if record.shut_down:
+            raise ValueError(f'Team member {record.name!r} is shut down already')
+        if record.shutdown_request is not None:
+            raise ValueError(f'Team member {record.name!r} is already shutting down')
+        message_id = uuid4().hex
+        record.shutdown_request = message_id
+        settled = record.status != 'running'
+        if record.queued or (settled and (record.user_stopped or not record.resumable)):
+            if record.queued:
+                await self.cancel(record.id, user=False)
+            else:
+                await self._finish_shutdown(record)
+            return None
+        sent = await self._send_member(record, request, message_id)
+        await self.notify(record)
+        if grace is not None:
+            task = asyncio.create_task(self._shutdown_deadline(record, grace), name=f'shutdown-{to}')
+            self._deadlines[record.id] = task
+            self._owned_tasks.add(task)
+            task.add_done_callback(self._owned_tasks.discard)
+        return sent
+
+    async def _shutdown_deadline(self, record: DelegationTask, grace: float) -> None:
+        """Stop a member still wrapping up after `grace` seconds; a shutdown that finishes first cancels this."""
+        await anyio.sleep(grace)
+        del self._deadlines[record.id]
+        await self.cancel(record.id, user=False)
+
+    def _wraps_up(self, record: DelegationTask) -> bool:
+        """Whether a member asked to shut down is woken again first, because its turn ended before reading the request."""
+        return (
+            record.outcome == 'ok'
+            and record.resumable
+            and not record.user_stopped
+            and any(message.id == record.shutdown_request for message in record.inbox)
+        )
+
+    def _mark_shut_down(self, record: DelegationTask) -> None:
+        """Mark a member shut down: stopped, as only the user's message undoes, with no plan waiting for approval."""
+        record.shutdown_request, record.shut_down, record.user_stopped = None, True, True
+        record.plan_request = None
+        if (deadline := self._deadlines.pop(record.id, None)) is not None:
+            deadline.cancel()
+
+    async def _finish_shutdown(self, record: DelegationTask, *, notify: bool = True) -> None:
+        """Shut a member down: hand back what it still holds, and stop it until the user's message wakes it."""
+        self._mark_shut_down(record)
+        await self._release_claims(record)
+        await self.save(record)
+        if notify:
+            await self.notify(record)
 
     def _schedule_member(self, record: DelegationTask) -> None:
         """Run a turn of a team member, bound to this owner and no other run, as a top-level task."""
@@ -1015,8 +1201,10 @@ class DelegationTasks:
         self._schedule_member(record)
 
     async def _hand_over(self, record: DelegationTask) -> None:
-        """Pass a settled member's report to the lead, and the board items it claimed back if it didn't succeed."""
-        if record.outcome != 'ok':
+        """Pass a settled member's report to the lead, and its board items back if it didn't succeed or shut down."""
+        if record.shutdown_request is not None and not self._wraps_up(record):
+            self._mark_shut_down(record)
+        if record.outcome != 'ok' or record.shut_down:
             await self._release_claims(record)
         await self._report_to_lead(record)
 
@@ -1067,7 +1255,11 @@ class DelegationTasks:
         folder = anyio.Path(self.directory / 'inbox')
         async with self._save_locks.setdefault(f'inbox-{name}', anyio.Lock()):
             await folder.mkdir(parents=True, exist_ok=True)
-            saved = _LeadInbox(conversation_id=conversation_id, messages=self.lead_inbox(conversation_id))
+            saved = _LeadInbox(
+                conversation_id=conversation_id,
+                messages=self.lead_inbox(conversation_id),
+                usage=self.lead_usage(conversation_id),
+            )
             temporary = folder / f'{name}.tmp'
             await temporary.write_bytes(_LEAD_INBOX_ADAPTER.dump_json(saved))
             await temporary.replace(folder / f'{name}.json')
@@ -1129,8 +1321,8 @@ class DelegationTasks:
         if due is None:
             due = self._lead_wakes[conversation_id] = anyio.Event()
             task = asyncio.create_task(self._wake_lead(conversation_id, due), name=f'lead-wake-{conversation_id}')
-            self._lead_tasks.add(task)
-            task.add_done_callback(self._lead_tasks.discard)
+            self._owned_tasks.add(task)
+            task.add_done_callback(self._owned_tasks.discard)
         if not self._members_working(conversation_id):
             due.set()
 

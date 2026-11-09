@@ -1,4 +1,4 @@
-"""Events of the `teams` family: board changes and gates.
+"""Events of the `teams` family: the roster, board changes, messages, plan approvals, and gates.
 
 Each gate is dispatched immediately, so its listeners run before `RunContext.emit` returns and can
 reject what the event announces with feedback. Several listeners can each add feedback; the emitter
@@ -55,7 +55,10 @@ class TeammateSpawnedEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='teamma
 
 @dataclass(kw_only=True)
 class TeammateStateEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='teammate_state'):
-    """A team member's state changed: it started or finished a turn, or was stopped."""
+    """A team member's state changed: it was queued, started or finished a turn, or was stopped or shut down.
+
+    It is also sent when a shutdown is requested, with `member.shutdown` set and the state unchanged.
+    """
 
     member: TeamMember
     """The member as it is now."""
@@ -69,6 +72,46 @@ class TeamMessageEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='team_messa
     """A message was sent between the team's lead, a member, or the user."""
 
     message: TeamMessage
+
+
+@dataclass(kw_only=True)
+class PlanApprovalRequestedEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='plan_approval_requested'):
+    """A team member submitted a plan with `request_plan_approval`, and waits for it to be approved or rejected."""
+
+    member: str
+    """The member's name."""
+
+    request_id: str
+    """The ID of the `PlanRequest`, which `TeamMember.plan` carries until it is reviewed."""
+
+    plan: str
+    """The plan, cut at `MAX_EVENT_TEXT_CHARS`."""
+
+    truncated: bool = False
+    """Whether `plan` was cut."""
+
+
+@dataclass(kw_only=True)
+class PlanReviewedEvent(CapabilityEvent, namespace=TEAMS_EVENTS, name='plan_reviewed'):
+    """A team member's plan was approved or rejected."""
+
+    member: str
+    """The member's name."""
+
+    request_id: str
+    """The ID of the `PlanRequest` that was reviewed."""
+
+    approved: bool
+    """Whether the plan was approved."""
+
+    feedback: str
+    """What the reviewer told the member, cut at `MAX_EVENT_TEXT_CHARS`."""
+
+    reviewer: str
+    """Who reviewed it: `'lead'` or `'user'`."""
+
+    truncated: bool = False
+    """Whether `feedback` was cut."""
 
 
 @dataclass(kw_only=True)

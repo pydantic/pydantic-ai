@@ -70,10 +70,43 @@ The lead and the teammates get different tools. A teammate's own sub-agents, and
 | `assign_task(item_id, teammate)` | ✓ | | Hands an item to a teammate, and messages it, so an idle teammate wakes to work on it |
 | `finish_task(item_id, status='completed')` | ✓ | ✓ | Completes, cancels, or hands back (`pending`) an item in progress; the lead may finish anyone's. Completing an item unblocks its dependents in the same atomic step |
 | `send_message(to, text)` | ✓ | ✓ | Messages a teammate by name, or the lead as `lead`. An idle teammate is woken with it |
+| `shutdown_teammate(teammate, reason='')` | ✓ | | Asks a teammate to wrap up, then stops it when that turn ends; the items it still holds go back to the board |
+| `request_plan_approval(plan)` | | ✓ | Submits a plan, and waits until it is approved or rejected with feedback |
+| `review_plan(teammate, approved, feedback='')` | ✓ | | Approves or rejects the plan a teammate waits on; only with `plan_reviewer='lead'`, the default |
 
 A teammate goes idle when its turn ends, and its final output reaches the lead's inbox. The lead's active run reads it when its current work is done. With `DelegationTasks(lead_waker=...)`, an idle lead gets one automated turn for a batch of reports, rather than one per teammate. Messages and reports from another agent arrive framed as data, never as the user's words, and can't grant the user's approval.
 
 The tool names are fixed, so an agent has one team: two `Team`s on one agent over different owners or boards raise. The same `Team` on the agent and again for a run is one team. `Team` replaces the `TeamMessages` capability the owner adds to a teammate's run on its own, so don't bind both. Another capability that also offers `send_message` collides with `Team` on the tool name; wrap one of them in `PrefixTools` to keep both.
+
+## Lifecycle
+
+A teammate is `working` while a turn of it runs, `idle` once its last turn succeeded, `stopped` when the user stopped it or it was shut down, and `failed` when its last turn failed. A message wakes an idle or failed teammate; only the user's message wakes a stopped one.
+
+### Queued turns
+
+With `DelegationTasks(max_active=...)`, at most that many teammates run at once. A teammate started or woken beyond it is `queued`, and queued teammates start in the order they were queued, as turns free up. `owner.max_active` can be changed while the team runs: raising it starts queued teammates at once.
+
+### Shutting a teammate down
+
+The lead's `shutdown_teammate`, or `await team.shutdown(conversation_id, name, reason='')` for the user, asks a teammate to wrap up: it gets the request as a message, which wakes it if idle, and its instructions tell it to finish or hand back the item it holds, then end its turn. When that turn ends, the teammate is shut down:
+
+- the board items it still holds go back to `pending`, each with a `BoardItemChangedEvent` to the observer;
+- its report reaches the lead, as any turn's does;
+- it is `stopped`, with `TeamMember.shutdown == 'done'`, which tells it apart from a teammate the user stopped (`shutdown is None`). Only the user's message wakes it again.
+
+While it wraps up, `TeamMember.shutdown` is `'requested'`. A teammate that would get no turn to read the request, because it is queued or the user stopped it, is shut down at once. A wrap-up that takes longer than `Team(shutdown_grace=...)` seconds (120 by default) is stopped, and so is one a process exit interrupts.
+
+### Plan approval
+
+A teammate can submit a plan with `request_plan_approval(plan)` and wait for the answer before it acts, for example when its prompt says to plan first. With `Team(plan_reviewer='lead')`, the default, the lead gets the plan as a message and answers with `review_plan`; with `plan_reviewer='user'`, only the application does, through `await team.approve(conversation_id, name, feedback='')` or `await team.reject(conversation_id, name, feedback)`. The user can review either way. A rejection needs feedback, and the teammate revises its plan and submits it again.
+
+The plan waiting for review is saved on the teammate's record and shown as `TeamMember.plan`, so it survives a restart. If the teammate's run ends while it waits, as on a restart, its review arrives as a message that wakes it: the user's own words for the user's review, or a message from the lead.
+
+## Usage and budget
+
+The team adds up what its runs use as they go: each teammate's turns on `TeamMember.usage`, saved with its record, and the lead's runs while it leads the team on `TeamSnapshot.lead_usage`, saved with the lead's inbox. `TeamSnapshot.usage`, or `team.usage(conversation_id)`, is the whole team's total, with each teammate counted on its own model. Each is a `RunUsage`: requests, tokens, and `cost` when the models' prices are known.
+
+`Team(usage_limits=UsageLimits(...))` caps the whole team, the lead and every teammate together, and is checked before each of their model requests; a request over it fails the run that would make it with `UsageLimitExceeded`. `member_usage_limits` caps each teammate's turn on its own.
 
 ## Models
 
@@ -96,11 +129,13 @@ Every board change a tool makes is emitted into that run's event stream as a `Bo
 | Event | Fields | Emitted when |
 |---|---|---|
 | `TeammateSpawnedEvent` | `member`, `prompt`, `truncated` | A teammate starts |
-| `TeammateStateEvent` | `member`, `previous` | A teammate starts or finishes a turn, or is stopped |
+| `TeammateStateEvent` | `member`, `previous` | A teammate is queued, starts or finishes a turn, is stopped, or is asked to shut down or shut down |
 | `TeamMessageEvent` | `message` | A message is sent |
+| `PlanApprovalRequestedEvent` | `member`, `request_id`, `plan`, `truncated` | A teammate submits a plan |
+| `PlanReviewedEvent` | `member`, `request_id`, `approved`, `feedback`, `reviewer`, `truncated` | A plan is approved or rejected |
 | `BoardItemChangedEvent` | `item`, `previous` | A board item changes; `previous` is `None` for a new one |
 
-A change a tool call makes is emitted into the run that made it. A change made outside any run goes to `Team(observer=...)` instead: teammates' state, claims the owner hands back, and what the application does through `team.spawn`, `team.send` (the user's message to a teammate) and `team.stop`. A UI starts from `await team.snapshot(conversation_id)`, a `TeamSnapshot` of the roster (`TeamMember`: name, agent type, model, state and current task), the board and the latest messages, then reduces the events.
+A change a tool call makes is emitted into the run that made it. A change made outside any run goes to `Team(observer=...)` instead: teammates' state, claims the owner hands back, and what the application does through `team.spawn`, `team.send` (the user's message to a teammate), `team.stop`, `team.shutdown`, `team.approve` and `team.reject`. A UI starts from `await team.snapshot(conversation_id)`, a `TeamSnapshot` of the roster (`TeamMember`: name, agent type, model, state, current task, shutdown, plan waiting for review, and usage), the board, the latest messages and the team's usage, then reduces the events.
 
 ## Gates
 

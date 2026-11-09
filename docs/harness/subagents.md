@@ -564,7 +564,9 @@ async def converse():
   a member must be wakeable. `model` is a model ID for the runner to resolve. A member is a
   top-level task with no parent, so no member's tool call ever becomes another's parent, and its
   own `delegate_task` children are owned by the owner wherever the wake came from. Names are unique
-  in their conversation, which has one team. `max_active` caps how many members run at once.
+  in their conversation, which has one team. `max_active` caps how many members run at once; a
+  member started or woken beyond it is `queued` (`DelegationTask.queued`), and queued members start
+  first come, first served. `max_active` can be changed while the owner is open.
 - **Idle and wake.** A member is idle once its run settles. Its report goes to the lead's inbox
   (`lead_inbox(conversation_id)`), not to `reports`, so a later wake can't overwrite it.
   `send(content, to=task_id, conversation_id=...)` saves a message on the member's record first.
@@ -588,9 +590,15 @@ async def converse():
   addressing a teammate by name or the lead as `lead`. A member's sub-agents, and any other
   delegation, get no team tools. `delegate_task(resume=...)` refuses a member with a retry that
   points at `send_message`, and `steer` returns `False` for one.
+- **Shutdown.** `shutdown(request, to=task_id, conversation_id=..., grace=None)` delivers `request`
+  as `send` does, so an idle member wakes to read it, and shuts the member down when that turn ends:
+  its claims go back, its report reaches the lead, and it is `shut_down`, a stop only the user's
+  message undoes. A member that is queued or that the user stopped is shut down at once, and one
+  still wrapping up after `grace` seconds is stopped.
 - **Restarts.** A member a process exit interrupted is loaded as cancelled, its report moves to the
   lead's inbox, and with `claims=`, the board items it held in progress go back to `pending`
-  through `MemberClaims.release`. A failed or stopped member hands its claims back the same way.
+  through `MemberClaims.release`. A failed or stopped member hands its claims back the same way, and
+  a member interrupted while it wrapped up for a shutdown is shut down.
 
 ## Discovery
 

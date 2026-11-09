@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+from uuid import uuid4
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
@@ -62,6 +64,20 @@ class SentMessage:
 
     status: DeliveryStatus
     """See `DeliveryStatus`."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanRequest:
+    """A team member's plan, waiting for the lead's or the user's approval before the member goes on."""
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    """The request's ID."""
+
+    plan: str
+    """The plan, as the member wrote it."""
+
+    requested_at: float = field(default_factory=time.time)
+    """When the member asked, as a Unix timestamp."""
 
 
 class ClaimedItem(Protocol):

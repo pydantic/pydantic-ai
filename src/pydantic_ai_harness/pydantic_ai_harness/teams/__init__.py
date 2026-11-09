@@ -1,9 +1,12 @@
 """Agent teams: a lead and named members working one shared board, checked by the same gates."""
 
+from pydantic_ai_harness.subagents import PlanRequest
 from pydantic_ai_harness.teams._capability import USER, BoardResolver, Team, TeamEvent, TeamObserver
 from pydantic_ai_harness.teams._events import (
     TEAMS_EVENTS,
     BoardItemChangedEvent,
+    PlanApprovalRequestedEvent,
+    PlanReviewedEvent,
     TeammateIdleEvent,
     TeammateSpawnedEvent,
     TeammateStateEvent,
@@ -12,7 +15,7 @@ from pydantic_ai_harness.teams._events import (
     TeamTaskCreatingEvent,
 )
 from pydantic_ai_harness.teams._gates import check_task_completing, check_task_creating
-from pydantic_ai_harness.teams._types import MemberState, TeamMember, TeamMessage, TeamSnapshot
+from pydantic_ai_harness.teams._types import MemberState, ShutdownState, TeamMember, TeamMessage, TeamSnapshot
 
 __all__ = [
     'TEAMS_EVENTS',
@@ -20,6 +23,10 @@ __all__ = [
     'BoardItemChangedEvent',
     'BoardResolver',
     'MemberState',
+    'PlanApprovalRequestedEvent',
+    'PlanRequest',
+    'PlanReviewedEvent',
+    'ShutdownState',
     'Team',
     'TeamEvent',
     'TeamMember',

@@ -2,29 +2,42 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.planning import OwnedPlanItem
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.subagents import DelegationTask, PlanRequest
 
-MemberState = Literal['working', 'idle', 'stopped', 'failed']
+MemberState = Literal['working', 'queued', 'idle', 'stopped', 'failed']
 """Where a team member is.
 
-- `'working'`: a turn of it is running, or waiting for a turn under `DelegationTasks(max_active=...)`.
+- `'working'`: a turn of it is running.
+- `'queued'`: it was started or woken, and waits for a turn under `DelegationTasks(max_active=...)`. Queued
+  members start in the order they were queued.
 - `'idle'`: its last turn succeeded; a message wakes it.
-- `'stopped'`: the user stopped it, or its turn was cancelled; a message from the user wakes it.
+- `'stopped'`: the user stopped it, it was shut down, or its turn was cancelled; a message from the user wakes it.
 - `'failed'`: its last turn failed, for example on its usage limit; a new message wakes it.
 """
+
+ShutdownState = Literal['requested', 'done']
+"""Where a team member's shutdown is: `'requested'` while it wraps up, `'done'` once it is shut down."""
 
 
 def member_state(record: DelegationTask) -> MemberState:
     """The state of the team member `record`."""
     if record.status == 'running':
-        return 'working'
-    if record.user_stopped or record.outcome == 'cancelled':
+        return 'queued' if record.queued else 'working'
+    if record.shut_down or record.user_stopped or record.outcome == 'cancelled':
         return 'stopped'
     return 'idle' if record.outcome == 'ok' else 'failed'
+
+
+def shutdown_state(record: DelegationTask) -> ShutdownState | None:
+    """Where the shutdown of the team member `record` is, or `None` when none was asked for."""
+    if record.shut_down:
+        return 'done'
+    return 'requested' if record.shutdown_request is not None else None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,6 +61,15 @@ class TeamMember:
 
     current_task: str | None = None
     """The ID of the board item the member is working on, if it holds one `in_progress`."""
+
+    shutdown: ShutdownState | None = None
+    """Where its shutdown is, which tells a member shut down (`'done'`) from one the user stopped (`None`)."""
+
+    plan: PlanRequest | None = None
+    """Its plan, while it waits for approval."""
+
+    usage: RunUsage = field(default_factory=RunUsage, compare=False)
+    """The usage of all its turns so far: requests, tokens, and cost when its model's prices are known."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -85,3 +107,9 @@ class TeamSnapshot:
 
     messages: list[TeamMessage]
     """The latest messages, oldest first, up to `Team(max_messages=...)`, since the process started."""
+
+    lead_usage: RunUsage = field(default_factory=RunUsage, compare=False)
+    """The usage of the lead's runs while it led the team."""
+
+    usage: RunUsage = field(default_factory=RunUsage, compare=False)
+    """The whole team's usage: the lead's and every member's."""

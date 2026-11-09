@@ -9,10 +9,15 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolPrepar
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.planning import BoardChange, ClaimablePlanStore, OwnedPlanItem, PlanItem, TaskStatus
 from pydantic_ai_harness.planning._toolset import is_blocked
-from pydantic_ai_harness.subagents import SELF_AGENT_NAME
+from pydantic_ai_harness.subagents import SELF_AGENT_NAME, PlanRequest
 from pydantic_ai_harness.subagents._events import bounded_text
 from pydantic_ai_harness.subagents._team import LEAD, send_team_message, team_role
-from pydantic_ai_harness.teams._events import BoardItemChangedEvent, TeammateSpawnedEvent, TeamMessageEvent
+from pydantic_ai_harness.teams._events import (
+    BoardItemChangedEvent,
+    PlanApprovalRequestedEvent,
+    TeammateSpawnedEvent,
+    TeamMessageEvent,
+)
 from pydantic_ai_harness.teams._gates import check_task_completing, check_task_creating
 
 if TYPE_CHECKING:
@@ -49,6 +54,9 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.board_list, prepare=self._either)
         self.add_function(self.finish_task, prepare=self._either)
         self.add_function(self.send_message, prepare=self._either)
+        self.add_function(self.shutdown_teammate, prepare=lead)
+        self.add_function(self.review_plan, prepare=self._reviewer)
+        self.add_function(self.request_plan_approval, prepare=member)
 
     def _role(self, ctx: RunContext[AgentDepsT]) -> tuple[str, str]:
         role = team_role(self.team.owner, ctx)
@@ -66,6 +74,10 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
 
     async def _either(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         return tool_def if team_role(self.team.owner, ctx) is not None else None
+
+    async def _reviewer(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
+        found = team_role(self.team.owner, ctx)
+        return tool_def if found is not None and found[1] == LEAD and self.team.plan_reviewer == LEAD else None
 
     async def _emit_changes(self, ctx: RunContext[AgentDepsT], changes: list[BoardChange]) -> None:
         for change in changes:
@@ -207,6 +219,76 @@ class TeamToolset(FunctionToolset[AgentDepsT]):
         """
         conversation_id, sender = self._role(ctx)
         return await self._send(ctx, conversation_id, sender, to, text)
+
+    async def shutdown_teammate(self, ctx: RunContext[AgentDepsT], teammate: str, reason: str = '') -> str:
+        """Shut a teammate down: it is asked to wrap up, finishing or handing back its board item, then stopped.
+
+        Use it for a teammate you no longer need. Board items it still holds go back to the board, and its last
+        report reaches you. Only the user can wake it again.
+
+        Args:
+            ctx: The run context.
+            teammate: The teammate's name.
+            reason: Why, for the teammate.
+        """
+        conversation_id, _ = self._role(ctx)
+        try:
+            message = await self.team.request_shutdown(conversation_id, teammate, sender=LEAD, reason=reason)
+        except ValueError as exc:
+            raise ModelRetry(str(exc)) from exc
+        if message is None:
+            return f'{teammate} was not running, and is shut down.'
+        await ctx.emit(TeamMessageEvent(message=message))
+        return f'Asked {teammate} to wrap up. It is shut down when its turn ends, and its report reaches you.'
+
+    async def request_plan_approval(self, ctx: RunContext[AgentDepsT], plan: str) -> str:
+        """Submit your plan, and wait until it is approved or rejected with feedback, before you act on it.
+
+        Args:
+            ctx: The run context.
+            plan: What you will do, step by step, and how you will know it is done.
+        """
+        conversation_id, name = self._role(ctx)
+        if not plan.strip():
+            raise ModelRetry('The plan must not be empty.')
+        task_id = self.team.owner.child_id()
+        assert task_id is not None, 'Only offered to a member.'
+
+        async def announce(request: PlanRequest) -> None:
+            text, truncated = bounded_text(plan)
+            await ctx.emit(
+                PlanApprovalRequestedEvent(member=name, request_id=request.id, plan=text, truncated=truncated)
+            )
+            if self.team.plan_reviewer == LEAD:
+                request_text = (
+                    f'Plan approval requested. Approve or reject it with `review_plan(teammate={name!r}, ...)`.'
+                    f'\n\n{plan}'
+                )
+                await self._send(ctx, conversation_id, name, LEAD, request_text)
+
+        try:
+            return await self.team.submit_plan(task_id, plan, announce=announce)
+        except ValueError as exc:
+            raise ModelRetry(str(exc)) from exc
+
+    async def review_plan(self, ctx: RunContext[AgentDepsT], teammate: str, approved: bool, feedback: str = '') -> str:
+        """Approve or reject the plan a teammate is waiting on; it goes on with your feedback.
+
+        Args:
+            ctx: The run context.
+            teammate: The teammate's name.
+            approved: Whether it may go ahead with the plan.
+            feedback: What to change, required when rejecting; or notes on an approved plan.
+        """
+        conversation_id, _ = self._role(ctx)
+        try:
+            event = await self.team.review(
+                conversation_id, teammate, approved=approved, feedback=feedback, reviewer=LEAD
+            )
+        except ValueError as exc:
+            raise ModelRetry(str(exc)) from exc
+        await ctx.emit(event)
+        return f'{"Approved" if approved else "Rejected"} the plan of {teammate}.'
 
     async def _send(self, ctx: RunContext[AgentDepsT], conversation_id: str, sender: str, to: str, text: str) -> str:
         sent, reply = await send_team_message(
