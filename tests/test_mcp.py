@@ -2499,6 +2499,21 @@ class TestSamplingMessageMapping:
             [ModelRequest(parts=[SpeechPart(speaker='user'), ToolAvailabilityDeltaPart(tools_added=['weather'])])]
         ) == ('', [])
 
+    async def test_map_joins_system_prompt_blocks_with_separator(self):
+        """Separate system prompt blocks must remain distinct in MCP sampling requests."""
+        system_prompt, sampling_messages = _mcp.map_from_pai_messages(
+            [
+                ModelRequest(
+                    parts=[SystemPromptPart(content='first block')],
+                    instructions='request instructions',
+                ),
+                ModelRequest(parts=[SystemPromptPart(content='second block')]),
+            ]
+        )
+
+        assert system_prompt == 'request instructions\n\nfirst block\n\nsecond block'
+        assert sampling_messages == []
+
     async def test_map_handles_image_audio_and_role_transitions(self):
         from pydantic_ai import _mcp as _mcp_helpers
 
