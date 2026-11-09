@@ -26,10 +26,12 @@ from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeVar, cast
 
+from ._capability_parts import effective_authority
 from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     CachePoint,
+    CapabilityPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -486,6 +488,12 @@ def _break_part(part: _PartT) -> _PartT:
         new_part = _break_tool_return(cast('BaseToolReturnPart[Any]', part))
     elif isinstance(part, BaseToolCallPart):
         new_part = _break_tool_call(cast('BaseToolCallPart[Any]', part))
+    elif isinstance(part, CapabilityPart) and effective_authority(part) != 'operator':
+        # Framed on the user channel, like the user prompt or tool output it often carries; the stored part is kept.
+        stored = part.model_content()
+        content = _break_content(stored)
+        if content is not stored:
+            new_part = replace(part, content=content)
     elif (
         isinstance(part, TextPart)
         or isinstance(part, ThinkingPart)
