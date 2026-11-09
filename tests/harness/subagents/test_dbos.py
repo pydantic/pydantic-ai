@@ -1,4 +1,4 @@
-"""`SubAgents(dynamic_agents=...)` under `DBOSDurability`: recovery rebuilds the roster and reuses the delegation."""
+"""`SubAgents` under `DBOSDurability`: recovery rebuilds created agents and background tasks, and reuses delegations."""
 
 from __future__ import annotations
 
@@ -10,8 +10,15 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.harness.subagents._background import (
+    WORKER_CALLS,
+    EventKinds,
+    background_parent,
+    background_worker,
+    reset_worker,
+)
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 
 with try_import() as imports_successful:
@@ -63,3 +70,45 @@ async def test_created_agent_survives_recovery(dbos: DBOS) -> None:
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
     assert await handle.get_result(polling_interval_sec=0.01) == POET_RESULT
     assert len(POET_CALLS) == 1, 'recovery ran the created agent again'
+
+
+async def test_background_task_survives_recovery(dbos: DBOS) -> None:
+    events = EventKinds()
+    worker = Agent(FunctionModel(background_worker), name='worker')
+    agent = Agent(
+        background_parent(),
+        name='subagents_background',
+        deps_type=type(None),
+        capabilities=[
+            SubAgents[None](agents=[SubAgent(worker)], task_control=TaskControl()),
+            events,
+            DBOSDurability[None](),
+        ],
+    )
+
+    @DBOS.workflow(name='subagents_background')
+    async def workflow() -> list[str]:
+        events.kinds.clear()
+        return [(await agent.run('Delegate it')).output, *events.kinds]
+
+    reset_worker()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        output, *kinds = await workflow()
+    assert 'from the worker' in output
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert 'subagents_background__capability__sub_agents.delegate' in {step['function_name'] for step in steps}
+
+    # Re-execute the workflow function from its last step, the way recovery does.
+    handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
+    recovered, *recovered_kinds = await handle.get_result(polling_interval_sec=0.01)
+    assert 'from the worker' in recovered
+    # DBOS doesn't journal how the task interleaves with the delegating tool call, which announces the backgrounding.
+    for order in (kinds, recovered_kinds):
+        assert [kind for kind in order if kind != 'sub_agents.task_backgrounded'] == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_completed',
+        ]
+        assert order.count('sub_agents.task_backgrounded') == 1
+    assert WORKER_CALLS == ['worker'], 'recovery ran the background task again'
