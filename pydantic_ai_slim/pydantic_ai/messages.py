@@ -2666,15 +2666,17 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         if not files:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
-        tool_content_parts: list[str] = []
+        tool_content_parts: list[Any] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str', wrap_if_error=False):
+        # Items keep their JSON form, so a dict beside a file is sent as a JSON object in the array, as it is
+        # without the file, rather than as a string holding its JSON text.
+        for item in self.content_items(mode='jsonable', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
                 file_content.extend([open_tag, item, close_tag])
-            elif isinstance(item, str):  # pragma: no branch
+            else:
                 tool_content_parts.append(item)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:

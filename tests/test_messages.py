@@ -3209,6 +3209,12 @@ def test_tool_return_part_model_response_str_and_user_content():
         ]
     )
 
+    # Structured items beside a file stay JSON values in the array, as they are without the file,
+    # rather than strings holding their JSON text.
+    p_structured = ToolReturnPart(tool_name='t', content=[{'temp': 20}, 3, img], tool_call_id='c7')
+    text, _ = p_structured.model_response_str_and_user_content()
+    assert text == snapshot('[{"temp":20},3,"See file d5a901."]')
+
 
 def test_args_as_dict_valid_json():
     """args_as_dict should return parsed dict for valid JSON args."""
