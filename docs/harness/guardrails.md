@@ -227,7 +227,7 @@ A guard may take a [`RunContext`][pydantic_ai.tools.RunContext] first for run st
 
 - A required second positional parameter, or `*args` alongside another parameter, means `RunContext` comes first.
 - If the second parameter has a default, the first one's annotation decides: `RunContext` (also in a union or `Annotated`) means the run context, any other type the guarded value. No annotation, `Any`, `object`, or an unresolvable type still gets `RunContext`, with a `HarnessDeprecationWarning` unless the unresolved annotation names `RunContext`.
-- Keyword-only parameters are left to the guard, so prompt-only guards declare nothing.
+- Keyword-only parameters are left to the guard. A guard that needs only the prompt declares no `RunContext`.
 
 ```python
 from dataclasses import dataclass
@@ -290,7 +290,7 @@ Guard exceptions propagate as-is: raise `InputBlocked`, `OutputBlocked`, `ToolBl
 
 ## Tool calls
 
-`InputGuardrail` screens only the user prompt, on a run's first model request, so tool arguments and results pass unchecked without a `ToolGuardrail`. Its `guard` sees the validated arguments before the tool runs; `result_guard` sees the return value before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, since that text reaches the model; a screened failure stays a failure. Capabilities ordered inside this one (another `position='innermost'` capability) run in the same screening window, so their raw retries are screened too, except one from an error hook, which closes the window; those ordered outside pass through. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
+`InputGuardrail` screens only the user prompt, on a run's first model request, so tool arguments and results pass unchecked without a `ToolGuardrail`. A `ToolGuardrail`'s `guard` sees the validated arguments before the tool runs; `result_guard` sees the return value before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, since that text reaches the model; a screened failure stays a failure. Capabilities ordered inside this one (another `position='innermost'` capability) run in the same screening window, so their raw retries are screened too, except one from an error hook, which closes the window; those ordered outside pass through. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
 
 ```python
 import re
@@ -477,7 +477,7 @@ In a durable workflow or flow (Temporal, DBOS, Prefect), each guard chain is a d
 - The guarded value and the verdict cross the engine's serializer, so keep them serializable.
 - On a JSON transport such as Temporal, a structured output or tool result (including a `ToolReturn`) reaches the guard as plain JSON data, so serialize it with `pydantic_core.to_json(value)`, not a model method. A replacement of the original value's type is rebuilt as that type.
 - Under Temporal the guard's `RunContext` carries only its serialized fields, without `messages` or `prompt`.
-- `GuardrailError`, `InputBlocked`, `OutputBlocked`, `ToolBlocked`, `ApprovalRequired` and `ModelRetry` raised by a guard reach the run on every engine. Under Temporal any other exception type fails the activity, which is retried under its retry policy (unbounded by default).
+- `GuardrailError`, `InputBlocked`, `OutputBlocked`, `ToolBlocked`, `ApprovalRequired` and `ModelRetry` raised by a guard reach the run on every engine; only these exact types are carried, not subclasses. Under Temporal any other exception type, including a subclass, fails the activity, which is retried under its retry policy (unbounded by default).
 
 Each guardrail on a durable-capable agent needs an explicit, distinct `id`, which addresses its operations: `InputGuardrail(guard=no_secrets, id='input-guard')`. Without one, Pydantic AI refuses to bind the agent and names the fix. Outside durable execution `id` is optional.
 
