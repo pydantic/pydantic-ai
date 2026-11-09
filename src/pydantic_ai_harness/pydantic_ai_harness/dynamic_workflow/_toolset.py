@@ -63,6 +63,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 
 if TYPE_CHECKING:
+    from aws_durable_execution_sdk_python.config import ParallelConfig
     from dbos import StepReservation
 
     from pydantic_ai.durable_exec.dbos._operation_backend import SnapshotStepReservation
@@ -225,7 +226,7 @@ def _lambda_bridge() -> StepBridge | None:
 
 @dataclass
 class _LambdaBranches:
-    """Collects sub-agent runs and runs them as the branches of one Lambda `parallel` operation.
+    """Collects sub-agent runs and runs them as the branches of a Lambda `parallel` operation.
 
     Lambda numbers a context's steps in the order they start, so the steps of concurrent sub-agents
     would interleave by timing, and replay could hand one sub-agent's checkpoints to another. In a
@@ -235,32 +236,39 @@ class _LambdaBranches:
 
     bridge: StepBridge
     name: str
-    _pending: list[tuple[Callable[[], Awaitable[Any]], asyncio.Future[Any]]] = field(
-        default_factory=list[tuple[Callable[[], Awaitable[Any]], 'asyncio.Future[Any]']]
+    _pending: list[tuple[Callable[[], Awaitable[Any]], ParallelConfig | None, asyncio.Future[Any]]] = field(
+        default_factory=list[tuple[Callable[[], Awaitable[Any]], 'ParallelConfig | None', 'asyncio.Future[Any]']]
     )
 
-    def submit(self, operation: Callable[[], Awaitable[Any]]) -> asyncio.Future[Any]:
+    def submit(
+        self, agent: AbstractAgent[Any, object], operation: Callable[[], Awaitable[Any]]
+    ) -> asyncio.Future[Any] | None:
+        """Add the run to the batch if `agent` runs under `AWSLambdaDurability`, else return `None`."""
+        # The bridge is only active in a durable handler, which imported this.
+        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, parallel_config
+
+        durability = BaseDurabilityCapability.from_agent(agent)
+        if not isinstance(durability, AWSLambdaDurability) or not durability.in_durable_context:
+            return None
         future = asyncio.get_running_loop().create_future()
-        self._pending.append((operation, future))
+        self._pending.append((operation, parallel_config(durability), future))
         return future
 
     async def flush(self) -> None:
-        """Run the runs collected so far as one batch. `MontyExecutor` calls this before it resolves futures."""
+        """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
         # Let a call dispatched in the last loop iteration reach `submit`.
         await asyncio.sleep(0)
         pending, self._pending = self._pending, []
-        if not pending:
-            return
-        # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
-        results = await self.bridge.run_parallel(self.name, [operation for operation, _ in pending])
-        for (_, future), result in zip(pending, results):
-            if not future.done():  # pragma: no branch - only a cancelled dispatch is done early
-                future.set_result(result)
-
-
-def _durable(agent: AbstractAgent[Any, object]) -> bool:
-    durability = BaseDurabilityCapability.from_agent(agent)
-    return durability is not None and durability.in_durable_context
+        # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
+        groups: dict[int, list[tuple[Callable[[], Awaitable[Any]], ParallelConfig | None, asyncio.Future[Any]]]] = {}
+        for entry in pending:
+            groups.setdefault(id(entry[1]), []).append(entry)
+        for group in groups.values():
+            # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
+            results = await self.bridge.run_parallel(self.name, [operation for operation, _, _ in group], group[0][1])
+            for (_, _, future), result in zip(group, results):
+                if not future.done():  # pragma: no branch - only a cancelled dispatch is done early
+                    future.set_result(result)
 
 
 def _reserve_dbos_step(agent: AbstractAgent[Any, object]) -> StepReservation | SnapshotStepReservation | None:
@@ -805,9 +813,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             raise _BudgetExhausted(self.max_agent_calls)
         self._call_count += 1
         agent = self._by_name[agent_name].agent
-        if branches is not None and _durable(agent):
-            # Also suspension-free: concurrent dispatches join the batch in dispatch order.
-            recorded = await branches.submit(partial(self._run_recorded, agent_name, task, ctx))
+        # Also suspension-free: concurrent dispatches join the batch in dispatch order.
+        branch = branches.submit(agent, partial(self._run_recorded, agent_name, task, ctx)) if branches else None
+        if branch is not None:
+            recorded = await branch
             if 'error' in recorded:
                 raise RuntimeError(recorded['error'])
             return recorded['output']

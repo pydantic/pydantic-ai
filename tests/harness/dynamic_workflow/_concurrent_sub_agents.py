@@ -60,6 +60,7 @@ def build_orchestrator(
     summarize: FunctionModel,
     *,
     durable_orchestrator: bool = True,
+    durable_sub_agents: bool = True,
     script: str = SCRIPT,
 ) -> Agent[None, str]:
     """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`."""
@@ -68,7 +69,7 @@ def build_orchestrator(
         name='summarize',
         description='Summarize a text.',
         tools=[noop],
-        capabilities=[durability()],
+        capabilities=[durability()] if durable_sub_agents else [],
     )
     return Agent(
         _orchestrator_model(script),

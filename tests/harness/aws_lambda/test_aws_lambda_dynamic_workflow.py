@@ -6,6 +6,7 @@ and replay are the SDK's own.
 
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 from dataclasses import replace
@@ -38,6 +39,7 @@ from aws_durable_execution_sdk_python.lambda_service import (
     StepDetails,
 )
 from aws_durable_execution_sdk_python.retries import RetryPresets
+from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES, SerDes, SerDesContext
 
 _ARN = 'arn:aws:lambda:us-east-1:000000000000:function:test/durable-execution/run/invocation'
 _STATUS = {
@@ -196,3 +198,38 @@ def test_a_failed_sub_agent_is_recorded_in_its_branch() -> None:
 
     assert service.invoke(orchestrator) == output
     assert calls == ['alpha 1']
+
+
+def test_sub_agents_without_durability_run_outside_any_branch() -> None:
+    calls: list[str] = []
+    orchestrator = build_orchestrator(AWSLambdaDurability, summarize_model(calls), durable_sub_agents=False)
+    service = _Service()
+    assert service.invoke(orchestrator) == EXPECTED
+    assert [operation.name for operation in service.operations.values()] == ['orchestrator__model.request'] * 2
+
+
+class _Sealed(SerDes[Any]):
+    """Stands in for a serializer that encrypts what it checkpoints."""
+
+    def serialize(self, value: Any, serdes_context: SerDesContext) -> str:
+        return 'sealed:' + base64.b64encode(DEFAULT_JSON_SERDES.serialize(value, serdes_context).encode()).decode()
+
+    def deserialize(self, data: str, serdes_context: SerDesContext) -> Any:
+        return DEFAULT_JSON_SERDES.deserialize(base64.b64decode(data.removeprefix('sealed:')).decode(), serdes_context)
+
+
+def test_parallel_checkpoints_use_the_sub_agents_serializer() -> None:
+    calls: list[str] = []
+    orchestrator = build_orchestrator(
+        lambda: AWSLambdaDurability(step_config={'serdes': _Sealed()}), summarize_model(calls)
+    )
+    service = _Service()
+    assert service.invoke(orchestrator) == EXPECTED
+    payloads = [
+        (operation.step_details or operation.context_details or StepDetails()).result
+        for operation in service.operations.values()
+    ]
+    assert not [payload for payload in payloads if payload and 'summary of' in payload]
+
+    assert service.invoke(orchestrator) == EXPECTED
+    assert len(calls) == 4

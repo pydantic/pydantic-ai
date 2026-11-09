@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from aws_durable_execution_sdk_python.config import StepConfig
+from aws_durable_execution_sdk_python.config import ParallelConfig, StepConfig
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 
 from pydantic_ai.agent import EventStreamHandler
@@ -127,3 +127,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
             default_model_id=self.default_model_id,
             config=self._operation_config,
         )
+
+
+def parallel_config(durability: AWSLambdaDurability[Any]) -> ParallelConfig | None:
+    """The config that checkpoints a `parallel` operation's results with `durability`'s `serdes`, if it sets one."""
+    return durability._operation_config.parallel_config  # pyright: ignore[reportPrivateUsage]

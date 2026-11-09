@@ -45,7 +45,7 @@ import anyio
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import StepConfig
+    from aws_durable_execution_sdk_python.config import ParallelConfig, StepConfig
 
 T = TypeVar('T')
 
@@ -111,6 +111,7 @@ class _DurableParallelContext(DurableStepContext, Protocol):
         self,
         functions: Sequence[Callable[[Any], Any]],
         name: str | None = None,
+        config: Any = None,
     ) -> Any: ...
 
 
@@ -280,7 +281,9 @@ class StepBridge:
         body = functools.partial(_run_step_body, loop, name, operation)
         return await self._request(functools.partial(self._context.step, body, name=name, config=config))
 
-    async def run_parallel(self, name: str, operations: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
+    async def run_parallel(
+        self, name: str, operations: Sequence[Callable[[], Awaitable[T]]], config: ParallelConfig | None = None
+    ) -> list[T]:
         """Run `operations` concurrently as the branches of one durable `parallel` operation. Runs on the agent loop.
 
         Each branch gets a child context of its own, whose step IDs derive from the branch's index, so
@@ -292,7 +295,7 @@ class StepBridge:
         # The real `DurableContext` has `parallel`. `DurableStepContext` declares only `step`, so stand-ins
         # that only checkpoint steps still satisfy it.
         context = cast(_DurableParallelContext, self._context)
-        batch = await self._request(functools.partial(context.parallel, branches, name=name))
+        batch = await self._request(functools.partial(context.parallel, branches, name=name, config=config))
         return [item.result for item in sorted(batch.all, key=lambda item: item.index)]
 
     async def _request(self, run: Callable[[], Any]) -> Any:

@@ -245,7 +245,8 @@ added to the run's usage again.
 the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
 named after the tool, in the order the script made them. Sub-agents still run concurrently. Each
 branch has a child context of its own, whose step IDs derive from the branch's position, so a
-sub-agent's model requests and tool calls keep their own checkpoints. Recovery returns each finished
+sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
+with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
 
 Under other engines, sub-agents run concurrently.
