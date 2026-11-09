@@ -711,7 +711,8 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
             children=[
                 BasicSpan(
-                    content='Found propagated trace context. See https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing.'
+                    # logfire < 5.5 says 'trace context'
+                    content=IsStr(regex=r'Found propagated (trace )?context\. See .+')
                 ),
                 BasicSpan(
                     content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
