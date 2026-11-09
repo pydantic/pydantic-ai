@@ -2,8 +2,8 @@
 
 Coordinate sub-agents in parallel, chain their results, or retry them in one tool call. Use
 `DynamicWorkflow` when this coordination can run as Python rather than needing the orchestrator's
-judgment after each step. On success, intermediate results stay out of the orchestrator's context unless the
-script returns or prints them.
+judgment after each step. On success, intermediate results stay out of the orchestrator's context
+unless the script returns or prints them.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
@@ -13,14 +13,15 @@ script returns or prints them.
 
 `DynamicWorkflow` gives the orchestrator one tool, `run_workflow`. The model writes a Python script
 that runs in the [Monty](https://github.com/pydantic/monty) sandbox, with each named sub-agent
-available as an async function. Like [Code Mode](../code_mode/README.md), it replaces repeated tool calls
-with code; unlike Code Mode, it calls whole agents rather than individual tools.
+available as an async function. Like [Code Mode](../code_mode/README.md), it replaces repeated tool
+calls with code; unlike Code Mode, it calls whole agents rather than individual tools.
 
 ## How this relates to Subagents
 
-Use [`SubAgents`](../subagents/README.md) for occasional delegations or when the parent needs to judge each
-result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting, or retries.
-You can switch between them without changing the underlying agents. Start with `SubAgents` if you are unsure.
+Use [`SubAgents`](../subagents/README.md) for occasional delegations or when the parent needs to
+judge each result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting,
+or retries. You can switch between them without changing the underlying agents. Start with
+`SubAgents` if you are unsure.
 
 ## Install
 
