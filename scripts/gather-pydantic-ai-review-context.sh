@@ -33,17 +33,20 @@ if [ "${1:-}" = "--partition-files" ]; then
 
   # Keep the historical ordering files for consumers that use them. Resolve
   # equal-size ties by path so assignments do not depend on GitHub API order.
+  # Generated files match the per-file diff split's pattern. jq's `$` also
+  # matches before a final newline and its `.` skips one, so `\z` and `(?s)`
+  # give it awk's meaning.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | reverse | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
 
   PARTITIONS=$(jq '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
     | ($files | length) as $file_count
     | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
@@ -74,7 +77,7 @@ if [ "${1:-}" = "--partition-files" ]; then
   # Existing largest.txt remains the ordered source used for first-pass
   # assignments. Assign each next-largest file to the least-loaded delegate.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
     | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
@@ -286,10 +289,11 @@ if [ -n "$MERGE_BASE" ]; then
   git -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
-fi | awk -v dir="$CTX/diff" '
+fi | LC_ALL=C awk -v dir="$CTX/diff" '
   # Reads the C-style quoted path git writes for a path holding a quote, a
-  # backslash or a control character. s starts at the opening quote; qend is
-  # set to the closing quote, or 0 when there is none.
+  # backslash or a control character. The API diff also quotes a non-ASCII
+  # path. s starts at the opening quote; qend is set to the closing quote, or 0
+  # when there is none. Under LC_ALL=C, %c turns each octal escape into its byte.
   function unquote(s,    out, i, c, k) {
     out = ""
     for (i = 2; i <= length(s); i++) {
@@ -301,8 +305,6 @@ fi | awk -v dir="$CTX/diff" '
         if (k) c = sprintf("%c", k + 6)
         else if (c ~ /[0-7]/) {
           k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
-          # awks disagree on the character %c makes from a byte above 0x7F.
-          if (k > 127) break
           c = sprintf("%c", k)
           i += 2
         }
@@ -329,7 +331,10 @@ fi | awk -v dir="$CTX/diff" '
           && substr(rest, 3, n) == substr(rest, n + 6))
         fname = substr(rest, 3, n)
     }
-    skip = (fname == "" || fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
+    # Generated files are each `uv.lock` and the `.yaml` cassettes under a
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
+    skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
       # non-hidden name that no other path shares. Encoding a backslash, tab,
@@ -343,7 +348,10 @@ fi | awk -v dir="$CTX/diff" '
       gsub(/\//, "%2F", safe)
       sub(/^\./, "%2E", safe)
       outfile = dir "/" safe ".diff"
-      for (i = 1; i <= nheld; i++) print held[i] > outfile
+      # A typechange diffs its path twice, as a deletion and then an addition.
+      # Truncating each name only on its first open keeps both.
+      if (!(outfile in opened)) { printf "" > outfile; close(outfile); opened[outfile] = 1 }
+      for (i = 1; i <= nheld; i++) print held[i] >> outfile
     }
     nheld = 0
   }
@@ -368,7 +376,7 @@ fi | awk -v dir="$CTX/diff" '
     next
   }
   nheld { open_held() }
-  !skip && outfile { print > outfile }
+  !skip && outfile { print >> outfile }
   END { if (nheld) open_held() }
 '
 
@@ -465,7 +473,7 @@ gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   | jq -s 'add // []' > "$FILES_JSON"
 jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' "$FILES_JSON" \
   | while IFS=$'\t' read -r fname counts diffname; do
-    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+    if echo "$fname" | grep -qE '(^|/)uv\.lock$|/cassettes/.*\.yaml$'; then
       printf '%s\t%s\n' "$fname" "$counts"
     else
       printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
@@ -481,8 +489,8 @@ mkdir -p "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
-FILE_COUNT=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)] | length' "$FILES_JSON")
-DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
+FILE_COUNT=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)] | length' "$FILES_JSON")
+DIFF_LINES=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
@@ -629,7 +637,9 @@ the surrounding code before posting.
   reasons differ deliberately across providers. Check the provider's
   SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
   before asserting a "bug".
-- **Cassettes / `uv.lock` / generated files** — never review.
+- **Generated files** — never review a `uv.lock`, a `.yaml` cassette under a
+  `cassettes/` directory below the root, or another generated file. Review
+  every other file under `cassettes/` like any source file.
 - **Theoretical performance** — `O(n²)` is only a problem if `n` is
   realistically large in this use case. Don't flag without evidence of
   real-world impact.

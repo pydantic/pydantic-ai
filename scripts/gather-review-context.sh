@@ -212,10 +212,11 @@ if [ -n "$MERGE_BASE" ]; then
   git -C "$PR_HEAD_DIR" -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
-fi | awk -v dir="$CTX/diff" '
+fi | LC_ALL=C awk -v dir="$CTX/diff" '
   # Reads the C-style quoted path git writes for a path holding a quote, a
-  # backslash or a control character. s starts at the opening quote; qend is
-  # set to the closing quote, or 0 when there is none.
+  # backslash or a control character. The API diff also quotes a non-ASCII
+  # path. s starts at the opening quote; qend is set to the closing quote, or 0
+  # when there is none. Under LC_ALL=C, %c turns each octal escape into its byte.
   function unquote(s,    out, i, c, k) {
     out = ""
     for (i = 2; i <= length(s); i++) {
@@ -227,8 +228,6 @@ fi | awk -v dir="$CTX/diff" '
         if (k) c = sprintf("%c", k + 6)
         else if (c ~ /[0-7]/) {
           k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
-          # awks disagree on the character %c makes from a byte above 0x7F.
-          if (k > 127) break
           c = sprintf("%c", k)
           i += 2
         }
@@ -255,7 +254,10 @@ fi | awk -v dir="$CTX/diff" '
           && substr(rest, 3, n) == substr(rest, n + 6))
         fname = substr(rest, 3, n)
     }
-    skip = (fname == "" || fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
+    # Generated files are each `uv.lock` and the `.yaml` cassettes under a
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
+    skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
     if (!skip) {
       # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
       # non-hidden name that no other path shares. Encoding a backslash, tab,
@@ -269,7 +271,10 @@ fi | awk -v dir="$CTX/diff" '
       gsub(/\//, "%2F", safe)
       sub(/^\./, "%2E", safe)
       outfile = dir "/" safe ".diff"
-      for (i = 1; i <= nheld; i++) print held[i] > outfile
+      # A typechange diffs its path twice, as a deletion and then an addition.
+      # Truncating each name only on its first open keeps both.
+      if (!(outfile in opened)) { printf "" > outfile; close(outfile); opened[outfile] = 1 }
+      for (i = 1; i <= nheld; i++) print held[i] >> outfile
     }
     nheld = 0
   }
@@ -294,7 +299,7 @@ fi | awk -v dir="$CTX/diff" '
     next
   }
   nheld { open_held() }
-  !skip && outfile { print > outfile }
+  !skip && outfile { print >> outfile }
   END { if (nheld) open_held() }
 '
 rm -f "$PY_ATTRIBUTES"
@@ -389,7 +394,7 @@ echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   --jq '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' \
   | while IFS=$'\t' read -r fname counts diffname; do
-    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+    if echo "$fname" | grep -qE '(^|/)uv\.lock$|/cassettes/.*\.yaml$'; then
       printf '%s\t%s\n' "$fname" "$counts"
     else
       printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
