@@ -804,6 +804,7 @@ async def test_interrupted_restore_and_copy_history(tmp_path: Path) -> None:
         await delegate(owner)
         (record,) = owner.records.values()
         record.messages = [ModelResponse(parts=[TextPart('saved')])]
+        await owner.save(record)
         copied = owner.history(record.id)
         copied.clear()
         assert record.messages
@@ -892,6 +893,7 @@ async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path
             ModelRequest(parts=[UserPromptPart('start')]),
             ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
         ]
+        await owner.save(record)
     path = tmp_path / f'{record.id}.json'
     data = json.loads(path.read_text())
     data['status'] = 'running'
@@ -1055,8 +1057,7 @@ async def test_promoted_foreground_wait_cancellation_keeps_child() -> None:
         await owner.cancel(record.id)
 
 
-@pytest.mark.parametrize('operation', ['close', 'cancel'])
-async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     original = anyio.move_on_after
 
     def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
@@ -1073,21 +1074,112 @@ async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch, operation: 
             await super().save(record)
 
     owner = SlowOwner()
-    if operation == 'close':
-        with pytest.raises(RuntimeError, match='cleanup timed out'):
-            async with owner.opened():
-                await delegate(owner)
-                owner.stall = True
-    else:
-        async with owner.opened():
-            await delegate(owner)
-            (record,) = owner.records.values()
-            owner.stall = True
+    async with owner.opened():
+        await delegate(owner)
+        (record,) = owner.records.values()
+        owner.stall = True
+        try:
+            with pytest.raises(RuntimeError, match='cancellation cleanup'):
+                await owner.cancel(record.id)
+        finally:
+            owner.stall = False
+
+
+async def test_stuck_child_does_not_mask_the_closing_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A child that ignores cancellation past the drain bound is logged, and the error that closed the owner propagates."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.01, shield=shield)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stuck(record: DelegationTask) -> str:
+        started.set()
+        while not release.is_set():
             try:
-                with pytest.raises(RuntimeError, match='cancellation cleanup'):
-                    await owner.cancel(record.id)
-            finally:
-                owner.stall = False
+                await release.wait()
+            except asyncio.CancelledError:
+                pass
+        return 'done'
+
+    owner = DelegationTasks()
+    with pytest.raises(ValueError, match='closing error'):
+        async with owner.opened():
+            await owner.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=stuck,
+            )
+            await started.wait()
+            raise ValueError('closing error')
+    (record,) = owner.records.values()
+    assert 'did not release their resources' in caplog.text and record.id in caplog.text
+    release.set()
+    (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
+    await worker
+
+
+async def test_close_drains_many_children_concurrently(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Closing settles 48 children whose cleanup is slow within the drain bound, saving only the children that ran."""
+    original = anyio.move_on_after
+
+    def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
+        return original(0.1, shield=shield)
+
+    monkeypatch.setattr(anyio, 'move_on_after', short)
+    history = DelegationTasks(directory=tmp_path)
+    for index in range(8):
+        record = DelegationTask(
+            id=f'{index:032x}', agent_name='worker', prompt='old', conversation_id='old', status='finished'
+        )
+        await history.restore(record)
+    saved: list[str] = []
+    running = 0
+    all_running = anyio.Event()
+
+    class SlowOwner(DelegationTasks):
+        closing: bool = False
+
+        async def save(self, record: DelegationTask) -> None:
+            if self.closing:
+                saved.append(record.id)
+                await anyio.sleep(0.005)
+            await super().save(record)
+
+    async def hang(record: DelegationTask) -> str:
+        nonlocal running
+        running += 1
+        if running == 48:
+            all_running.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    owner = SlowOwner(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            for _ in range(48):
+                await owner.delegate(
+                    agent_name='worker',
+                    prompt='go',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=hang,
+                )
+            await all_running.wait()
+            owner.closing = True
+    children = [record for record in owner.records.values() if record.conversation_id == 'root']
+    assert sorted(saved) == sorted(record.id for record in children)
+    assert {record.outcome for record in children} == {'cancelled'}
 
 
 async def test_child_budget_cannot_hide_parent_usage() -> None:
@@ -1178,6 +1270,7 @@ async def test_restore_adds_a_finished_task_unless_it_has_run_since(tmp_path: Pa
         assert await owner.restore(replace(task, output='Again'))
         assert [update.task.output for update in seen] == ['Again']
         owner.records[task.id] = replace(task, run_id='c' * 32, output='Resumed')
+        await owner.save(owner.records[task.id])
         assert not await owner.restore(task)
     # A closed owner finds the later run on disk.
     assert not await DelegationTasks(directory=tmp_path / 'tasks').restore(task)

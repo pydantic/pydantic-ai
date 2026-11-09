@@ -245,7 +245,10 @@ class DelegationTasks:
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
-        """Restore saved children, then cancel and drain workers before releasing resources."""
+        """Restore saved children, then cancel and drain workers before releasing resources.
+
+        A drain that times out is logged rather than raised, so it never masks the error that closed the owner.
+        """
         if self._open:
             raise RuntimeError('Delegation task owner is already open')
         self._open = True
@@ -264,16 +267,28 @@ class DelegationTasks:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
             self._open = False
             with anyio.move_on_after(10, shield=True) as cleanup:
-                for worker in self._workers.values():
-                    worker.cancel()
-                await asyncio.gather(*self._workers.values(), return_exceptions=True)
-                for record in self.records.values():
-                    if record.status == 'running':
-                        record.status, record.outcome = 'finished', 'cancelled'
-                        record.finished_at = time.time()
-                    await self.save(record)
+                await self._drain()
             if cleanup.cancel_called:
-                raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
+                # Raising would mask the error that closed the owner, and crash a host that is shutting down.
+                stuck = [task_id for task_id, worker in self._workers.items() if not worker.done()]
+                logging.getLogger(__name__).error(
+                    'Delegation cleanup timed out; tasks %s did not release their resources', stuck
+                )
+
+    async def _drain(self) -> None:
+        """Cancel every worker, wait for all of them at once, then settle and save the children that never ran."""
+        for worker in self._workers.values():
+            worker.cancel()
+        if self._workers:
+            # Unlike `gather`, a timed-out `wait` doesn't wait for a child that ignores cancellation.
+            await asyncio.wait(self._workers.values())
+        # Workers save their own records, and the loaded ones are unchanged.
+        for record in self.records.values():
+            if record.status == 'running':
+                self._settle_unstarted(record)
+            elif record.id in self._workers or record.id not in self._released:
+                continue
+            await self.save(record)
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
         """Settle a saved child that was still running when its process exited."""

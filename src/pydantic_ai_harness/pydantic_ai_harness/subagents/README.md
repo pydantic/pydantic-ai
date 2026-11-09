@@ -439,7 +439,8 @@ async def converse():
             # Keep this owner open across subsequent parent turns.
 ```
 
-`opened()` drains workers on exit. A task still running when its process exited is
+`opened()` cancels and drains workers on exit, and logs a child that hasn't released its
+resources within ten seconds instead of raising. A task still running when its process exited is
 loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
 names the question, so the parent can resume it with the answer. Keep workspace and plugin
 resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
