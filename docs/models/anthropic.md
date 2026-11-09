@@ -655,7 +655,7 @@ model = AnthropicModel(
 
 ## Fast mode
 
-Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, **Claude Opus 5**, **Claude Opus 5.5**, **Claude Fable 5.2**, and **Claude Mythos 5.2**. On some of these models it is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, **Claude Opus 5**, **Claude Opus 5.5**, **Claude Fable 5.2**, and **Claude Mythos 5.2**. Anthropic lists it as generally available on Claude Fable 5.2, Mythos 5.2 and Opus 5.5, and as a research preview on Claude Opus 4.8 and 5. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 ```python
 from pydantic_ai import Agent
