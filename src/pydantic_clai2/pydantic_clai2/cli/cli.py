@@ -423,10 +423,12 @@ def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
 
 async def _latest_session(store: 'SettingsStore') -> str | None:
     """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from anyio import to_thread
+
     from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    workspace = str(await to_thread.run_sync(lambda: Path.cwd().resolve()))  # As `Session.workspace` saves it.
     offset = 0
     # The listing spans every directory, newest first, so page through it until one was saved here.
     while page := await conversations.listing(limit=200, offset=offset, archived=False):

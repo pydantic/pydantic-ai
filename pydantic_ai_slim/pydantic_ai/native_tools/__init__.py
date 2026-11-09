@@ -56,29 +56,23 @@ The direct image API takes the wider
 ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
 """Supported sizes for image generation tools."""
 
-ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
+ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
 
 AdvisorModelName = (
     Literal[
         'claude-fable-5-1',
-        'claude-fable-5',
-        'claude-mythos-5-1',
-        'claude-mythos-5',
         'claude-opus-5-5',
-        'claude-opus-5',
-        'claude-opus-4-8',
-        'claude-opus-4-7',
-        'claude-opus-4-6',
         'claude-sonnet-5-5',
-        'claude-sonnet-4-6',
         'claude-haiku-5-5',
+        'claude-opus-4-8',
+        'claude-sonnet-4-6',
     ]
     | str
 )
 """Known Anthropic advisor model names, or any other model ID string.
 
-These are the models Anthropic currently accepts as the *advisor* — the stronger model an
+The literals list the latest models Anthropic accepts as the *advisor* — the stronger model an
 executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
 The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
 (e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
