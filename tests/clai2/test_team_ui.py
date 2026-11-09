@@ -308,7 +308,7 @@ def snapshot_of(*members: TeamMember, board: list[OwnedPlanItem] | None = None) 
 
 def test_the_roster_renders_any_state_and_collapses_idle_members() -> None:
     working = TeamMember(
-        name='alice', task_id='a', agent_name='self', model='vllm:kimi', state='working', current_task='1'
+        name='alice', task_id='a', agent_name='self', model='test:member', state='working', current_task='1'
     )
     queued = TeamMember(name='bob', task_id='b', agent_name='Review', model=None, state='queued')  # type: ignore[arg-type]
     board = [OwnedPlanItem(id='1', content='Write the haiku', status=TaskStatus.in_progress, owner='alice')]
@@ -322,7 +322,7 @@ def test_the_roster_renders_any_state_and_collapses_idle_members() -> None:
     plain = [_plain(row) for row in rows]
     assert plain == [
         'team 1 working · 1 queued · board 0/1 ✓',
-        '* alice general-purpose · vllm:kimi · 12s · write_file #1 Write the haiku',
+        '* alice general-purpose · test:member · 12s · write_file #1 Write the haiku',
         '• bob Review · session model · queued',
         'ctrl-x a team · ctrl-t board',
     ]
