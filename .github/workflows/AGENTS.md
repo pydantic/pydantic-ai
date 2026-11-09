@@ -65,7 +65,7 @@ A host-verified closed PR or changed head needs no review and cannot alter the n
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, so
 `shared/engine-zai.md` sets `engine.concurrency` for every importer: one agent run at a
-time per workflow, and one per PR for `Pydantic AI UI Security Review`. A workflow cannot override it. gh-aw allows one `engine` across a
+time per workflow. A workflow cannot override it. gh-aw allows one `engine` across a
 workflow and its imports, and strict mode rejects secrets in a workflow's own
 `engine.env`.
 

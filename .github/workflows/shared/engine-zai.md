@@ -66,9 +66,8 @@ engine:
     GH_AW_HARNESS_MAX_RETRIES: "0"
   # One agent run at a time per workflow, on the shared Z.AI account. gh-aw applies this
   # group by default, but drops it for a workflow with `pull_request*` triggers.
-  # UI Security runs one review per PR, so reviews of different PRs run in parallel.
   concurrency:
-    group: "gh-aw-pydantic-ai-${{ github.workflow }}${{ github.workflow == 'Pydantic AI UI Security Review' && format('-{0}', github.event.pull_request.number || github.ref) || '' }}"
+    group: "gh-aw-pydantic-ai-${{ github.workflow }}"
     queue: max
 # gh-aw caps the agent job at 60 minutes and detection at 10 by default. Keep GitHub's
 # 360-minute job maximum, so each source's engine step budget fits, and a 20-minute detector.
