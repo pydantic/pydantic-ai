@@ -2445,6 +2445,53 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
+@pytest.mark.parametrize(
+    'header',
+    # Ids that differ by more than case, so the cassettes don't collide on a case-insensitive file system.
+    [
+        pytest.param('anthropic-beta', id='lowercase'),
+        pytest.param('Anthropic-Beta', id='titlecase'),
+        pytest.param('ANTHROPIC-BETA', id='uppercase'),
+    ],
+)
+@pytest.mark.parametrize(
+    'value,anthropic_betas,expected',
+    [
+        pytest.param('files-api-2025-04-14', [], ['files-api-2025-04-14'], id='header-only'),
+        pytest.param(
+            'files-api-2025-04-14',
+            ['interleaved-thinking-2025-05-14'],
+            ['files-api-2025-04-14,interleaved-thinking-2025-05-14'],
+            id='with-setting',
+        ),
+        # Outside the declared type, but what an unset environment variable reads as.
+        pytest.param(None, ['interleaved-thinking-2025-05-14'], ['interleaved-thinking-2025-05-14'], id='no-value'),
+    ],
+)
+async def test_anthropic_beta_extra_header_merges_in_any_spelling(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    header: str,
+    value: str | None,
+    anthropic_betas: list[str],
+    expected: list[str],
+):
+    """An `anthropic-beta` in `extra_headers` merges with the other betas whatever the spelling of its name.
+
+    The SDK folds header names case-insensitively, so a per-request `Anthropic-Beta` would replace the header it
+    builds from `betas` and drop every other beta.
+    """
+    settings = AnthropicModelSettings(
+        extra_headers={header: value},  # pyright: ignore[reportArgumentType]
+        anthropic_betas=anthropic_betas,
+    )
+    await Agent(anthropic_model('claude-haiku-4-5', capture=True)).run('Hello', model_settings=settings)
+
+    [request_headers] = request_capture.headers
+    assert request_headers.get_list('anthropic-beta') == expected
+
+
 async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -4529,7 +4576,9 @@ async def test_anthropic_citations_request_setting(
 
     await Agent(
         model,
-        capabilities=[NativeTool(WebFetchTool(enable_citations=enable_citations))],
+        capabilities=[
+            NativeTool(WebFetchTool(provider_settings={'anthropic': {'enable_citations': enable_citations}}))
+        ],
         model_settings=ModelSettings(citations=citations),
     ).run(
         [
@@ -9418,8 +9467,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     web_fetch_tool = WebFetchTool(
         max_uses=5,
         allowed_domains=['example.com', 'ai.pydantic.dev'],
-        enable_citations=True,
-        max_content_tokens=50000,
+        provider_settings={'anthropic': {'enable_citations': True, 'max_content_tokens': 50000}},
     )
 
     model_request_parameters = ModelRequestParameters(
@@ -9495,7 +9543,14 @@ def test_anthropic_advisor_tool_request_shape():
     m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
 
     full = ModelRequestParameters(
-        native_tools=[AdvisorTool(model='claude-opus-4-8', max_uses=2, max_tokens=2048, caching='1h')],
+        native_tools=[
+            AdvisorTool(
+                model='claude-opus-4-8',
+                max_uses=2,
+                max_tokens=2048,
+                provider_settings={'anthropic': {'caching': '1h'}},
+            )
+        ],
     )
     tools, _, beta_features = m._add_native_tools([], full, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     advisor_param = next(t for t in tools if t.get('name') == 'advisor')
