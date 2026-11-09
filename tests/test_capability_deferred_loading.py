@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     EnqueuedMessagesEvent,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -4172,3 +4173,79 @@ async def test_load_capability_after_the_run_ended_raises() -> None:
 
     with pytest.raises(UserError, match='is not available because the agent run has ended'):
         stored[0].load_capability('refunds')
+
+
+def _compaction_reload_agent(model_fn):
+    """Agent with one deferred capability, driven by `model_fn`, for the compaction-reload scenario."""
+    return Agent(
+        model=FunctionModel(function=model_fn),
+        capabilities=[Capability[object](id='search', instructions='Search instructions.', defer_loading=True)],
+    )
+
+
+def test_deferred_capability_reload_after_compaction_part_in_same_response_is_accepted():
+    """A `load_capability` call in the same response as a `CompactionPart` runs as a real load.
+
+    The boundary resets what history says is loaded, so the reload must not be swallowed as
+    already-active: the post-boundary request carries its load record.
+    """
+    calls: list[int] = []
+    final_parts: list = []
+
+    def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'search'}, tool_call_id='call-0')],
+                model_name='function:test',
+            )
+        if len(calls) == 2:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content='dropped earlier turns'),
+                    ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'search'}, tool_call_id='call-1'),
+                ],
+                model_name='function:test',
+            )
+        final_parts.extend(messages[-1].parts)
+        return ModelResponse(parts=[TextPart(content='done')], model_name='function:test')
+
+    agent = _compaction_reload_agent(model)
+    result = agent.run_sync('find it')
+
+    assert result.output == 'done'
+    assert any(isinstance(part, LoadCapabilityReturnPart) and part.tool_call_id == 'call-1' for part in final_parts), (
+        f'reload not executed as a real load after the boundary: {final_parts!r}'
+    )
+
+
+def test_deferred_capability_instructions_delivered_after_compaction_boundary_reload():
+    """The reloaded capability's instructions reach the first post-boundary model request."""
+    calls: list[int] = []
+    final_parts: list = []
+
+    def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'search'}, tool_call_id='call-0')],
+                model_name='function:test',
+            )
+        if len(calls) == 2:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content='dropped earlier turns'),
+                    ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'search'}, tool_call_id='call-1'),
+                ],
+                model_name='function:test',
+            )
+        final_parts.extend(messages[-1].parts)
+        return ModelResponse(parts=[TextPart(content='done')], model_name='function:test')
+
+    agent = _compaction_reload_agent(model)
+    result = agent.run_sync('find it')
+
+    assert result.output == 'done'
+    assert any(isinstance(part, UserPromptPart) and 'Search instructions.' in part.content for part in final_parts), (
+        f'instructions missing from the post-boundary request: {final_parts!r}'
+    )

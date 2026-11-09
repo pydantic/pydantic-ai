@@ -4077,6 +4077,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # executed yet, so its capability stays unavailable and its tools stay uncallable until the
         # next request carries the capability's instructions.
         _refresh_discovered_tool_names(ctx)
+        # And for load evidence: a `CompactionPart` in this response reset what history says is
+        # loaded, so the same-response `load_capability` reload that follows must not be swallowed
+        # as already-active. Parsing counts only *completed* loads, so this response's
+        # not-yet-dispatched call contributes nothing and stays a real load.
+        _refresh_loaded_capability_ids(ctx)
 
         run_context = build_run_context(ctx)
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
@@ -4541,7 +4546,10 @@ def _with_reveals(
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Refresh the history-derived loaded capability ids from the current graph state."""
+    """Refresh the history-derived loaded capability ids from the current graph state, post-compaction."""
+    # `CompactionPart` resets what history says is loaded (`post_compaction_window`), so a response
+    # carrying one must not keep earlier load evidence alive: the same-response reload that follows
+    # would otherwise be swallowed as already-active and its instructions never delivered.
     # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
     # when a deferred capability is configured — the same condition that injects the loader. Without
     # one, the set can never change during the run, so the seeded value stays in sync without rescanning.
@@ -4551,7 +4559,9 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
         return
 
-    loaded_capability_ids = registered_loaded_capability_ids(ctx.state.message_history, ctx.deps.capabilities.keys())
+    loaded_capability_ids = registered_loaded_capability_ids(
+        _messages.post_compaction_window(ctx.state.message_history), ctx.deps.capabilities.keys()
+    )
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
     # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
