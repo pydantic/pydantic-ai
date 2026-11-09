@@ -707,6 +707,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
     `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
     Skills beta.
+
+    Reuse from history trusts the message history for the `container_id`, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, set a
+    container id you saved on your server, or `False`; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_code_execution_tool_version: AnthropicCodeExecutionToolVersion | Literal['auto']
