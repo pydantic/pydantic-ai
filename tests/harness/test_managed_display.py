@@ -14,6 +14,7 @@ from pydantic_ai.workspaces import (
     Point,
     PressKeys,
     Region,
+    SupportsRestartCount,
     WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -128,6 +129,24 @@ async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None
     await display.act(Click(x=2, y=2))
     # The next action uses the display that started, without starting it again.
     assert (driver.acted, driver.starts) == ([Click(x=2, y=2)], 1)
+
+
+async def test_a_new_display_launched_after_one_ran_counts_as_a_restart() -> None:
+    """`ComputerUse` compares the count around each call to report a restart; the first launch isn't one."""
+    driver = FakeDriver()
+
+    async def start() -> FakeDriver:
+        display.started_fresh()
+        return await driver.start()
+
+    display = ManagedDisplay(start)
+    assert isinstance(display, SupportsRestartCount)
+    await display.screenshot()
+    assert display.restart_count == 0
+    # The display stopped: the look fails, and its retry launches a new one.
+    driver.failures.append(RuntimeError('the X server is gone'))
+    await display.screenshot()
+    assert (display.restart_count, driver.starts) == (1, 2)
 
 
 async def test_a_refused_action_keeps_the_display() -> None:

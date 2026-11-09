@@ -4,6 +4,7 @@ import posixpath
 import struct
 import zlib
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, Self
 
 import anyio
@@ -12,8 +13,6 @@ from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
-    DISPLAY_SIZE,
-    NATIVE_TOOL,
     ComputerResult,
     ComputerToolAction,
     CursorPosition,
@@ -22,6 +21,7 @@ from pydantic_ai.computer_use import (
     Zoom,
 )
 from pydantic_ai.messages import BinaryImage, ToolReturn
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -565,13 +565,14 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-def computer_toolset(
-    *, requires_approval: bool = False, display_size: tuple[int, int] | None = None, native: bool = True
-) -> FunctionToolset[Any]:
+def computer_capability(
+    *, requires_approval: bool = False, display_size: tuple[int, int] = FAKE_DISPLAY_SIZE, native: bool = True
+) -> AbstractCapability[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
-    It runs the actions on the workspace's display until one fails, then returns a summary, what zoom and
-    cursor-position actions returned, and a screenshot, with the outcome in the result's metadata.
+    With `native`, it also adds a `ComputerTool` declaring `display_size`, as `ComputerUse` does. The tool runs the
+    actions on the workspace's display until one fails, then returns a summary, what zoom and cursor-position actions
+    returned, and a screenshot, with the outcome in the result's metadata.
     """
 
     async def computer(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
@@ -601,10 +602,19 @@ def computer_toolset(
         name='computer',
         tool_kind=COMPUTER_KIND,
         requires_approval=requires_approval,
-        metadata={
-            **({DISPLAY_SIZE: display_size} if display_size else {}),
-            **({} if native else {NATIVE_TOOL: False}),
-        }
-        or None,
     )
-    return FunctionToolset([tool])
+    return _FakeComputerUse(FunctionToolset([tool]), display_size if native else None)
+
+
+@dataclass
+class _FakeComputerUse(AbstractCapability[Any]):
+    toolset: FunctionToolset[Any]
+    display_size: tuple[int, int] | None
+    """The `ComputerTool`'s display size, or `None` for no `ComputerTool`."""
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        return self.toolset
+
+    def get_native_tools(self) -> list[ComputerTool]:
+        size = self.display_size
+        return [ComputerTool(display_size=size, optional=True)] if size else []

@@ -49,6 +49,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -1965,8 +1966,8 @@ class TestCodeMode:
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
 
     async def test_computer_tool_not_sandboxed(self) -> None:
-        """`ComputerUse`'s `computer` tool stays native: providers map it to their own computer tool."""
-        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind='computer')
+        """`ComputerUse`'s `computer` tool stays native: the model itself has to see the screenshot it returns."""
+        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind=COMPUTER_KIND)
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
         wrapper = CodeMode[object]().get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
@@ -1976,7 +1977,7 @@ class TestCodeMode:
         description = tools['run_code'].tool_def.description
         assert description is not None
         assert 'async def computer' not in description
-        assert tools['computer'].tool_def.tool_kind == 'computer'
+        assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
 
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.

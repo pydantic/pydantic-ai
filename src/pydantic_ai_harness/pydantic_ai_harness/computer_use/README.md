@@ -80,7 +80,7 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | `requires_approval` | `False` | Ask before any call that does more than look, zoom or wait. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). |
 | `keep_screenshots` | `None` | Send only the newest N screenshots, to cap the cost of long runs. Older ones are dropped 25 at a time so prompt caching keeps working. Don't use it on Claude Fable 5.1 or the Claude 5.5 models: they lose their earlier reasoning. |
 | `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
-| `native` | `True` | Use the model's own computer use tool where it has one. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
+| `native` | `True` | Use the model's own computer use tool where it has one, by adding a `ComputerTool` that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 OpenAI can flag a call with safety checks. A flagged call always needs approval, so give the agent a deferred tool
 handler such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/); without one, the run ends with an error.
@@ -116,6 +116,19 @@ A cloud desktop's `live_view_url()` gives a link to watch the run live, or take 
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save or show them as the run goes.
 
+Each finished call also emits [capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in
+the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events()`:
+
+| Event | Payload |
+|---|---|
+| `ActionsPerformedEvent` | `performed`, `error`, `screenshot_size` |
+| `DisplayRestartedEvent` | none: the display restarted during the call, so what was on screen may be gone |
+
+They are emitted once per call, also under durable execution. The same facts stay in the history: the `computer`
+tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call a provider
+flagged is a `ComputerCallPart` whose `safety_checks` say what the person approving it should check. The events add
+no telemetry spans; core already traces the tool call.
+
 ## Limitations
 
 - Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
@@ -129,7 +142,8 @@ Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
   deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
-- If the display restarts, the model isn't told; its next screenshot shows the new screen.
+- If the display restarts, the model isn't told; its next screenshot shows the new screen. The app gets a
+  `DisplayRestartedEvent` from displays that report restarts, such as the Docker sandbox's desktop.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
