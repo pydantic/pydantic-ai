@@ -226,7 +226,8 @@ import pytest
 def close_the_event_loop_left_behind():
     yield
     with warnings.catch_warnings():
-        # Python 3.12 and 3.13 create a loop to return here, and warn, when none was set.
+        # When none was set, Python 3.11 to 3.13 create a loop to return here (3.12 and 3.13 also warn), and 3.14
+        # raises.
         warnings.simplefilter('ignore', DeprecationWarning)
         try:
             loop = asyncio.get_event_loop()

@@ -64,6 +64,10 @@ if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
 
 T = TypeVar('T')
 
+# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall and never
+# decides a test's outcome.
+READINESS_WAIT_TIMEOUT = 300
+
 
 def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:
     return RunContext(
@@ -747,11 +751,6 @@ async def test_comprehensive_toolset_composition():
             ),
         ]
     )
-
-
-# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall and never
-# decides a test's outcome.
-READINESS_WAIT_TIMEOUT = 300
 
 
 def in_process_mcp_toolset() -> MCPToolset:
