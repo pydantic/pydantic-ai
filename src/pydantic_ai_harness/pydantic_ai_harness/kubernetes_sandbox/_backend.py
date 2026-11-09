@@ -387,7 +387,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             warm_pool = self._warm_pool
             assert warm_pool is not None  # `__init__` requires a ref or a warm pool.
             # Named here rather than by the SDK, so the claim is known whatever ends the claim before it
-            # is Ready. A cancelled scope cancels again at every await, so the delete runs shielded.
+            # is Ready, and the backend deletes it if it never becomes Ready.
             claim_name = f'pydantic-ai-{uuid.uuid4().hex}'
             ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
             try:
@@ -398,11 +398,16 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                     shutdown_after_seconds=self._sandbox_timeout,
                 )
             except BaseException as error:
-                with anyio.move_on_after(_API_SERVER_TIMEOUT, shield=True):
-                    try:
-                        await client.k8s_helper.delete_sandbox_claim(claim_name, self._namespace)
-                    except Exception:
-                        logger.warning('Could not delete Kubernetes sandbox claim %s', ref.id, exc_info=True)
+
+                async def delete_unready_claim() -> None:
+                    with anyio.move_on_after(_API_SERVER_TIMEOUT):
+                        try:
+                            await client.k8s_helper.delete_sandbox_claim(claim_name, self._namespace)
+                        except Exception:
+                            logger.warning('Could not delete Kubernetes sandbox claim %s', ref.id, exc_info=True)
+
+                # Not a bare shield: a native `Task.cancel()` gets through one, and a second could cut the delete short.
+                await run_to_completion(delete_unready_claim)
                 if isinstance(error, SandboxWarmPoolNotFoundError | SandboxClaimFailedError):
                     raise WorkspaceUnavailableError(
                         f'Could not claim a sandbox from warm pool {warm_pool!r}: {error}'
