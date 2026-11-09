@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import AbstractAsyncContextManager, aclosing
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, cast, overload
 
 import anyio
 from pydantic import ValidationError
@@ -52,6 +52,10 @@ __all__ = (
     'OutputValidatorFunc',
     'StreamedRunResultSync',
 )
+
+
+_StreamItemT = TypeVar('_StreamItemT')
+"""An item of a stream `StreamedRunResult` hands out."""
 
 
 @dataclass(kw_only=True)
@@ -104,17 +108,22 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return
 
         last_response: _messages.ModelResponse | None = None
-        async for response in self.stream_response(debounce_by=debounce_by):
-            if self._raw_stream_response.final_result_event is None or (
-                last_response and response.parts == last_response.parts
-            ):
-                continue
-            last_response = response
+        responses = self.stream_response(debounce_by=debounce_by)
+        try:
+            async for response in responses:
+                if self._raw_stream_response.final_result_event is None or (
+                    last_response and response.parts == last_response.parts
+                ):
+                    continue
+                last_response = response
 
-            try:
-                yield await self.validate_response_output(response, allow_partial=True)
-            except (ValidationError, exceptions.ModelRetry):
-                pass
+                try:
+                    yield await self.validate_response_output(response, allow_partial=True)
+                except (ValidationError, exceptions.ModelRetry):
+                    pass
+        finally:
+            # Closed with this generator rather than left to asyncio's finalizer hook; see `stream_text()`.
+            await _utils.aclose_if_supported(responses)
 
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
             response = self.response
@@ -664,6 +673,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self._stream_response = stream_response
         self._on_complete = on_complete
         self._run_result = run_result
+        self._open_streams: list[AsyncGenerator[Any]] = []
+        """The streams `stream_output()`, `stream_text()` and `stream_response()` handed out, held so `run_stream()`
+        closes them as it exits rather than leaving them to asyncio's finalizer hook."""
         self._traceparent_value: str | None = None
         """Captured when the stream finishes, while the agent run span is still open.
 
@@ -781,7 +793,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
+    def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Stream the output as an async iterable.
 
         The pydantic validator for structured data will be called in
@@ -796,17 +808,25 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the response data.
         """
+        return self._held(self._stream_output(debounce_by=debounce_by))
+
+    async def _stream_output(self, *, debounce_by: float | None) -> AsyncGenerator[OutputDataT]:
         if self._run_result is not None:
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
-            async for output in self._stream_response.stream_output(debounce_by=debounce_by):
-                yield output
+            outputs = self._stream_response.stream_output(debounce_by=debounce_by)
+            try:
+                async for output in outputs:
+                    yield output
+            finally:
+                # Closed with this generator rather than left to asyncio's finalizer hook; see `AgentStream.stream_text()`.
+                await _utils.aclose_if_supported(outputs)
             await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
+    def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
 
         !!! note
@@ -821,6 +841,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
+        return self._held(self._stream_text(delta=delta, debounce_by=debounce_by))
+
+    async def _stream_text(self, *, delta: bool, debounce_by: float | None) -> AsyncGenerator[str]:
         if self._run_result is not None:  # pragma: no cover
             # We can't really get here, as `_run_result` is only set in `run_stream` when `CallToolsNode` produces `DeferredToolRequests` output
             # as a result of a tool function raising `CallDeferred` or `ApprovalRequired`.
@@ -841,7 +864,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
+    def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Stream the response as an async iterable of `ModelResponse` snapshots.
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
@@ -856,14 +879,22 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of `ModelResponse` snapshots.
         """
+        return self._held(self._stream_response_snapshots(debounce_by=debounce_by))
+
+    async def _stream_response_snapshots(self, *, debounce_by: float | None) -> AsyncGenerator[_messages.ModelResponse]:
         if self._run_result is not None:
             yield self.response
             await self._marked_completed()
         elif self._stream_response is not None:
             last_msg: _messages.ModelResponse | None = None
-            async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
-                yield msg
-                last_msg = msg
+            responses = self._stream_response.stream_response(debounce_by=debounce_by)
+            try:
+                async for msg in responses:
+                    yield msg
+                    last_msg = msg
+            finally:
+                # Closed with this generator rather than left to asyncio's finalizer hook; see `AgentStream.stream_text()`.
+                await _utils.aclose_if_supported(responses)
             # `AgentStream.stream_response` always yields the final response, so `last_msg` is set.
             # Pass it to `_marked_completed` so `run_id` and `conversation_id` are stamped onto the
             # same instance the caller still holds a reference to in their iteration.
@@ -871,6 +902,29 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(last_msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def _held(self, stream: AsyncGenerator[_StreamItemT]) -> AsyncGenerator[_StreamItemT]:
+        self._open_streams.append(stream)
+        return stream
+
+    @asynccontextmanager
+    async def _closing_streams(self) -> AsyncGenerator[Self]:
+        """Yield this result, then close every stream it handed out once the caller is done with it.
+
+        A stream the caller stopped iterating early is still suspended inside the run, with a pending read to cancel.
+        Closed here, its cleanup finishes before `run_stream()` exits. Dropped instead, it would be closed by a task
+        that asyncio's finalizer hook schedules and nothing awaits, so the cleanup could outlive the run.
+        """
+        try:
+            yield self
+        finally:
+            # A stream that is running is still being stepped by its consumer, as when `run_stream_sync()` times out
+            # mid-pull, and `aclose()` would refuse it; that consumer finishes it. One suspended was abandoned.
+            streams = [stream for stream in self._open_streams if not getattr(stream, 'ag_running', False)]
+            self._open_streams = []
+            # Run teardown can happen inside an already-cancelled scope, as in `AgentStream.aclose_events()`.
+            with anyio.CancelScope(shield=True):
+                await _utils.aclose_all(streams)
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
