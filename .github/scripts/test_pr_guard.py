@@ -282,7 +282,7 @@ def test_a_self_filed_issue_gets_the_assignment_explanation(tmp_path: Path):
 
 
 @requires_tools
-def test_the_missing_issue_comment_does_not_offer_a_new_issue_as_the_way_back(tmp_path: Path):
+def test_the_missing_issue_comment_says_opening_an_issue_is_not_enough(tmp_path: Path):
     _, actions = _run_guard(Case(id='links-a-pull-request', closed=True, issue_is_pull_request=True), tmp_path)
 
     assert (
