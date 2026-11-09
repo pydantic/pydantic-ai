@@ -164,7 +164,7 @@ _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
     ("str | Literal['a'] -> Literal['a']", (set(), {'str'})),
     ("ModelParam -> Literal['a', 'b']", ({'a', 'b'}, {'ModelParam'})),
     ("TypeAliasType('Names', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
-    ("Literal['a', 1] -> Literal['a']", ({'a'}, {"Literal['a', 1]"})),
+    ("Literal['a', 1] -> Literal['a']", (set(), {"Literal['a', 1]"})),
     ("ModelParam -> str | Literal['a']", None),
     ('LatestNames -> str | LatestNames', None),
     ("ModelParam -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),

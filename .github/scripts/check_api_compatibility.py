@@ -301,7 +301,7 @@ def _collection_entries(value: str) -> tuple[str, set[str]] | None:
 
 def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
     """Split a type alias value into its `TypeAliasType` name, the source of each arm that isn't a string `Literal`,
-    and the members of those that are."""
+    and the string members of its `Literal` arms."""
     node = ast.parse(value, mode='eval').body
     alias_name = ''
     if (
@@ -328,8 +328,8 @@ def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
                 for element in elements
                 if isinstance(element, ast.Constant) and isinstance(element.value, str)
             ]
+            members.update(strings)
             if len(strings) == len(elements):
-                members.update(strings)
                 continue
         other_arms.add(ast.unparse(arm))
     return alias_name, other_arms, members
