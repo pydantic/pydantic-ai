@@ -236,9 +236,11 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 `DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
 interleave by timing and recovery could replay one sub-agent's results into another call. When a
 sub-agent carries it, each call to that sub-agent is instead recorded as a single DBOS step, whose ID
-is drawn in the order the script makes the calls. Sub-agents still run concurrently. Recovery returns
-each finished call's recorded output and runs an unfinished call again from the start, and a replayed
-call's usage is not added to the run's usage again.
+is drawn in the order the script makes the calls. Sub-agents still run concurrently. Inside that step,
+DBOS runs the sub-agent's own steps, including tools decorated with `@DBOS.step`, as plain function
+calls, without their own checkpoints or DBOS role checks. Recovery returns each finished call's
+recorded output and runs an unfinished call again from the start, and a replayed call's usage is not
+added to the run's usage again.
 
 `AWSLambdaDurability` runs an agent's tool calls one at a time, because Lambda matches a replayed step
 to its recording by the order the steps start. When sub-agents carry it, the script runs them one at
