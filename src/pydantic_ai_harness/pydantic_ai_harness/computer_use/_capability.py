@@ -114,7 +114,11 @@ once no call holds or waits for it."""
 
 _SEEN_RESTARTS: weakref.WeakKeyDictionary[object, dict[str | None, int]] = weakref.WeakKeyDictionary()
 """For each display, its restart count when each run's last `computer` call took its screenshot, in this process, so
-each run sharing a screen is told of a restart, including one between its calls."""
+each run sharing a screen is told of a restart, including one between its calls. Only the latest `_RUNS_PER_DISPLAY`
+runs are kept, so a long-lived display shared by every run doesn't grow without limit."""
+
+_RUNS_PER_DISPLAY = 64
+"""How many runs `_SEEN_RESTARTS` keeps per display. An older run's next call counts restarts from that call's start."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
@@ -432,7 +436,7 @@ def _restarts_before(ctx: RunContext[Any]) -> int | None:
         return None
     count = display.restart_count
     try:
-        return _SEEN_RESTARTS.setdefault(display, {}).setdefault(ctx.run_id, count)
+        return _SEEN_RESTARTS.get(display, {}).get(ctx.run_id, count)
     except TypeError:
         return count
 
@@ -444,7 +448,10 @@ def _restarted(ctx: RunContext[Any], before: int | None) -> bool:
         return False
     count = display.restart_count
     with suppress(TypeError):
-        _SEEN_RESTARTS[display][ctx.run_id] = count
+        runs = _SEEN_RESTARTS.get(display, {})
+        runs.pop(ctx.run_id, None)
+        runs[ctx.run_id] = count
+        _SEEN_RESTARTS[display] = dict(list(runs.items())[-_RUNS_PER_DISPLAY:])
     return count != before
 
 
