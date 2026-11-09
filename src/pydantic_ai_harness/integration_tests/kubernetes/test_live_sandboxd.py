@@ -27,7 +27,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -138,8 +137,9 @@ class Client:
         self.channels: list[grpc.aio.Channel] = []
         self.k8s_helper = Helper(cluster)
 
-    async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> Sandbox:
-        claim_name = f'sandbox-claim-{uuid.uuid4().hex[:8]}'  # As the SDK names claims.
+    async def create_sandbox(
+        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: Any
+    ) -> Sandbox:
         daemon = Daemon(self.cluster.base / namespace / claim_name)
         self.cluster.claims[namespace, claim_name] = daemon
         await daemon.ready()
@@ -213,7 +213,7 @@ class Sandbox:
 def cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Cluster]:
     """Replace the SDK's client with one whose claims are served by real sandboxd processes."""
     fake = Cluster(tmp_path.resolve())
-    monkeypatch.setattr('k8s_agent_sandbox.async_sandbox_client.AsyncSandboxClient', fake.client)
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend.AsyncSandboxClient', fake.client)
     yield fake
     fake.close()
 

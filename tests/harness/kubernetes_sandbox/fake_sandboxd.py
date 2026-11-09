@@ -326,8 +326,6 @@ class FakeCluster:
         self.create_gate: anyio.Event | None = None
         """When set, `create_sandbox` creates the claim, sets `create_started`, then waits for the gate."""
         self.create_started = anyio.Event()
-        self.rolled_back: list[str] = []
-        """Claims whose cancelled `create_sandbox` finished deleting them."""
         self.lookup_error = False
         """When set, `get_sandbox` fails although the claim exists, as the SDK reports any failed lookup."""
         self.delete_error: Exception | None = None
@@ -360,14 +358,16 @@ class FakeClient:
         self.sandboxes: list[FakeSandbox] = []
         self.k8s_helper = FakeK8sHelper(cluster)
 
-    async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> FakeSandbox:
+    async def create_sandbox(
+        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: Any
+    ) -> FakeSandbox:
+        """Like the SDK given a `claim_name`: a claim that fails or is cancelled is left for the caller to delete."""
         from k8s_agent_sandbox.exceptions import SandboxWarmPoolNotFoundError
 
         if self.cluster.create_error is not None:
             raise self.cluster.create_error
         if warmpool not in self.cluster.pools:
             raise SandboxWarmPoolNotFoundError(f"SandboxWarmPool '{warmpool}' not found in namespace '{namespace}'")
-        claim_name = f'sandbox-claim-{uuid.uuid4().hex[:8]}'  # As the SDK names claims.
         root = self.cluster.root(namespace, claim_name)
         root.mkdir(parents=True)
         sandboxd = FakeSandboxd(root)
@@ -376,13 +376,7 @@ class FakeClient:
         self.cluster.created.append((warmpool, namespace, kwargs))
         if self.cluster.create_gate is not None:
             self.cluster.create_started.set()
-            try:
-                await self.cluster.create_gate.wait()
-            except asyncio.CancelledError:
-                # As the SDK rolls back a claim it named.
-                await asyncio.shield(self.cluster.delete((namespace, claim_name)))
-                self.cluster.rolled_back.append(claim_name)
-                raise
+            await self.cluster.create_gate.wait()
         return self._handle(claim_name, namespace, sandboxd)
 
     async def get_sandbox(self, claim_name: str, namespace: str = 'default') -> FakeSandbox:

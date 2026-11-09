@@ -59,7 +59,9 @@ def test_refs_name_a_namespace_and_a_claim() -> None:
 
 @pytest.mark.parametrize('module', ['k8s_agent_sandbox', 'grpc'])
 def test_missing_kubernetes_extra_has_an_install_hint(module: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, module, None)
+    # As when it is not installed: its already-imported submodules would still import.
+    for name in [module, *(name for name in sys.modules if name.startswith(f'{module}.'))]:
+        monkeypatch.setitem(sys.modules, name, None)
     for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.kubernetes_sandbox')]:
         monkeypatch.delitem(sys.modules, name)
     with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[kubernetes\]` to use KubernetesSandbox\.$'):
@@ -130,11 +132,11 @@ async def test_the_sdk_client_matches_the_connection(cluster: FakeCluster) -> No
 @pytest.mark.parametrize('anyio_backend', ['trio'])
 async def test_trio_is_refused() -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
-    with pytest.raises(UserError, match='needs asyncio'):
+    with pytest.raises(UserError, match='needs the asyncio event loop'):
         await backend.run(['true'])
-    with pytest.raises(UserError, match='needs asyncio'):
+    with pytest.raises(UserError, match='needs the asyncio event loop'):
         await backend.get_sandbox()
-    with pytest.raises(UserError, match='needs asyncio'):
+    with pytest.raises(UserError, match='needs the asyncio event loop'):
         await KubernetesSandbox(warm_pool='pool').destroy(WorkspaceRef(provider='kubernetes', id='agents/claim'))
 
 
@@ -145,7 +147,7 @@ async def test_a_claim_uses_the_pool_namespace_and_timeout(
     backend = KubernetesSandboxBackend(warm_pool='pool', namespace='agents', sandbox_timeout=60)
     with caplog.at_level('INFO', logger='pydantic_ai_harness.kubernetes_sandbox._backend'):
         await backend.run(['true'])
-    assert backend.ref is not None and backend.ref.id.startswith('agents/sandbox-claim-')
+    assert backend.ref is not None and backend.ref.id.startswith('agents/pydantic-ai-')
     [(pool, namespace, kwargs)] = cluster.created
     assert (pool, namespace, kwargs['shutdown_after_seconds']) == ('pool', 'agents', 60)
     # Logged when claimed, so a claim whose run ends before its ref is stored can still be found.
@@ -232,13 +234,21 @@ async def test_an_unreadable_working_dir_is_unavailable(cluster: FakeCluster) ->
 
 
 @asyncio_only
-async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(cluster: FakeCluster) -> None:
+async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(
+    cluster: FakeCluster, caplog: pytest.LogCaptureFixture
+) -> None:
     with pytest.raises(WorkspaceUnavailableError, match="warm pool 'missing'"):
         await KubernetesSandboxBackend(warm_pool='missing').run(['true'])
     cluster.create_error = SandboxClaimFailedError('SandboxClaim failed: PodFailed')
+    # A claim that cannot be deleted afterwards is logged, and the claim's own failure raised.
+    cluster.delete_error = RuntimeError('403 Forbidden')
     backend = KubernetesSandboxBackend(warm_pool='pool')
-    with pytest.raises(WorkspaceUnavailableError, match='PodFailed'):
-        await backend.run(['true'])
+    with caplog.at_level('WARNING', logger='pydantic_ai_harness.kubernetes_sandbox._backend'):
+        with pytest.raises(WorkspaceUnavailableError, match='PodFailed'):
+            await backend.run(['true'])
+    [message] = caplog.messages
+    assert message.startswith('Could not delete Kubernetes sandbox claim default/pydantic-ai-')
+    cluster.delete_error = None
     assert backend.ref is None
     clients = len(cluster.clients)
     # The next operation claims again, with the same client.
@@ -256,8 +266,8 @@ async def test_a_claim_cancelled_while_it_is_made_is_deleted(cluster: FakeCluste
         group.start_soon(backend.run, ['true'])
         await cluster.create_started.wait()
         group.cancel_scope.cancel()
-    assert cluster.rolled_back and not cluster.claims
-    assert backend.ref is None
+    # Deleted by the backend, which named it, although the scope's cancellation reached every await.
+    assert not cluster.claims and backend.ref is None
     await backend.aclose()
 
 
@@ -349,7 +359,7 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(
             await backend.run(['true'])
         cluster.sandbox_lookup_error = None
         cluster.sandbox_lookup_gate = anyio.Event()
-        monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._GONE_CHECK_TIMEOUT', 0.1)
+        monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._API_SERVER_TIMEOUT', 0.1)
         with pytest.raises(ConnectionError):
             await backend.run(['true'])
     assert [record.getMessage() for record in caplog.records] == [

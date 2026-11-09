@@ -30,7 +30,7 @@ if _HAS_SDK:  # pragma: no branch
     async def cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FakeCluster]:
         """Replace the SDK's client with one on a fake cluster; every claim it makes is stopped afterwards."""
         fake = FakeCluster(tmp_path)
-        monkeypatch.setattr('k8s_agent_sandbox.async_sandbox_client.AsyncSandboxClient', fake.client)
+        monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend.AsyncSandboxClient', fake.client)
         try:
             yield fake
         finally:
