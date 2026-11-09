@@ -10,10 +10,8 @@ name: Package Label
 # run never holds it pending.
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target runs the default branch's copy, so
-  # a PR cannot edit the check it has to pass. Nothing here checks out or executes PR code: it
-  # reads the PR's labels via the API.
-  pull_request_target:
+  # A read-only token suffices, fork PRs included: the check reads the PR's labels via the API.
+  pull_request:
     # `labeled` and `unlabeled` re-run the check when the labels change, so adding the label
     # turns it green without a push. `synchronize` runs it on every new head commit.
     types: [opened, reopened, synchronize, labeled, unlabeled]
