@@ -89,6 +89,7 @@ from ..capabilities import (
     AgentCapability,
     AgentModel,
     CombinedCapability,
+    GatewayRoutingFacts,
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
@@ -5178,6 +5179,7 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     ToolSearchCap,
     PendingMessageDrainCapability,
+    GatewayRoutingFacts,
 )
 """Infrastructure capabilities auto-injected when not already present."""
 

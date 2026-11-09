@@ -1,5 +1,6 @@
 import os
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -12,9 +13,11 @@ import pytest
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import raises, snapshot
-from ..conftest import TestEnv, try_import
+from ..conftest import RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client
@@ -441,6 +444,97 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
     assert result.usage.cost == snapshot(Decimal('0.000011165'))
+
+
+@pytest.mark.parametrize(
+    'route',
+    [
+        pytest.param('openai-chat', marks=pytest.mark.vcr('test_gateway_provider_with_openai.yaml')),
+        pytest.param('openai-responses', marks=pytest.mark.vcr('test_gateway_provider_with_openai_responses.yaml')),
+        pytest.param('groq', marks=pytest.mark.vcr('test_gateway_provider_with_groq.yaml')),
+        pytest.param('google-cloud', marks=pytest.mark.vcr('test_gateway_provider_with_google_cloud.yaml')),
+        pytest.param('anthropic', marks=pytest.mark.vcr('test_gateway_provider_with_anthropic.yaml')),
+        pytest.param('bedrock', marks=pytest.mark.vcr('test_gateway_provider_with_bedrock.yaml')),
+    ],
+)
+async def test_gateway_routing_facts_reach_the_wire(
+    route: str, allow_model_requests: None, gateway_api_key: str, request_capture: RequestCapture
+):
+    """Every Gateway route sends the `GatewayRoutingFacts` headers with its request.
+
+    Replays the `test_gateway_provider_with_*` recordings, which match on method and URL only, and reads the headers
+    off the request as it goes out: with an httpx request hook, or, for Bedrock, which sends through botocore, a
+    `before-send` handler. The headers aren't part of the match, so the recording alone wouldn't show them.
+    """
+    base_url = 'http://localhost:8787'
+    sent: list[Mapping[str, str | bytes]] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request.headers)
+
+    def record_bedrock(request: Any, **_: Any) -> None:
+        sent.append(dict(request.headers.items()))
+
+    async with httpx.AsyncClient(event_hooks={'request': [record]}) as legacy_client:
+        model_settings: ModelSettings = {}
+        model: Model
+        match route:
+            case 'openai-chat':
+                provider = gateway_provider(
+                    route, api_key=gateway_api_key, base_url=base_url, http_client=request_capture.client
+                )
+                model = OpenAIChatModel('gpt-5', provider=provider)
+            case 'openai-responses':
+                provider = gateway_provider(
+                    route, api_key=gateway_api_key, base_url=base_url, http_client=request_capture.client
+                )
+                model = OpenAIResponsesModel('gpt-5', provider=provider)
+            case 'groq':
+                provider = gateway_provider(
+                    route, api_key=gateway_api_key, base_url=base_url, http_client=legacy_client
+                )
+                model = GroqModel('llama-3.3-70b-versatile', provider=provider)
+            case 'google-cloud':
+                provider = gateway_provider(
+                    route, api_key=gateway_api_key, base_url=base_url, http_client=request_capture.client
+                )
+                model = GoogleModel('gemini-2.5-flash', provider=provider)
+            case 'anthropic':
+                provider = gateway_provider(
+                    route, api_key=gateway_api_key, base_url=base_url, http_client=request_capture.client
+                )
+                model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+                # Below the SDK's non-streaming limit, as in the recording.
+                model_settings = {'max_tokens': 4096}
+            case _:
+                assert route == 'bedrock'
+                provider = gateway_provider(route, api_key=gateway_api_key, base_url=base_url)
+                bedrock_model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
+                bedrock_model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', record_bedrock)
+                model = bedrock_model
+        agent = Agent(model, name='support_agent', model_settings=model_settings)
+
+        await agent.run('What is the capital of France?', conversation_id='conversation-1')
+
+    sent.extend(request_capture.headers)
+    assert [
+        {
+            name.lower(): value.decode() if isinstance(value, bytes) else value
+            for name, value in headers.items()
+            if name.lower().startswith(('x-pydantic-agent-', 'x-routing-'))
+        }
+        for headers in sent
+    ] == snapshot(
+        [
+            {
+                'x-pydantic-agent-name': 'support_agent',
+                'x-pydantic-agent-step': '1',
+                'x-pydantic-agent-request-kind': 'user_prompt',
+                'x-pydantic-agent-retry': '0',
+                'x-routing-conversation-id': 'conversation-1',
+            }
+        ]
+    )
 
 
 @patch.dict(

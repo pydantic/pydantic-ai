@@ -44,6 +44,7 @@ from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
 from .file_understanding import FileUnderstanding
+from .gateway_routing_facts import GatewayRoutingFacts
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -86,6 +87,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Citations,
         RaiseContentFilterError,
         FileUnderstanding,
+        GatewayRoutingFacts,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
@@ -145,6 +147,7 @@ __all__ = [
     'Citations',
     'CAPABILITY_TYPES',
     'FileUnderstanding',
+    'GatewayRoutingFacts',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',

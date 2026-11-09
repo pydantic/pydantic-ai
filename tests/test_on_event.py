@@ -38,6 +38,7 @@ from pydantic_ai.capabilities._on_event import (
     _OnEventMethod,  # pyright: ignore[reportPrivateUsage]
     collect_on_event_methods,
 )
+from pydantic_ai.capabilities._ordering import is_innermost
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
@@ -1179,10 +1180,12 @@ async def test_agent_without_listeners_registers_no_capability() -> None:
 
     after, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
 
-    # Once one is, it joins last (`CombinedCapability` flattens, so the agent's own capabilities
-    # keep their order ahead of it) and nothing else about the tree changes.
-    assert after.capabilities[-1] is hooks
-    assert list(after.capabilities[:-1]) == list(before.capabilities)
+    # Once one is, it joins after the agent's own capabilities (`CombinedCapability` flattens, so they keep
+    # their order), ahead only of the `innermost` tier, and nothing else about the tree changes.
+    outer = [cap for cap in before.capabilities if not is_innermost(cap)]
+    innermost = [cap for cap in before.capabilities if is_innermost(cap)]
+    assert innermost, 'the auto-injected `GatewayRoutingFacts` is innermost'
+    assert list(after.capabilities) == [*outer, hooks, *innermost]
 
     await agent.run('hello')
     assert seen == ['x']

@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     Citations,
     FileUnderstanding,
+    GatewayRoutingFacts,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -159,6 +160,10 @@ def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
+def _check_gateway_routing_facts(merged: GatewayRoutingFacts) -> None:
+    assert merged.enabled is False, 'a scalar takes the later value'
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -240,6 +245,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'the later configuration replaces the earlier one whole',
         lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
+    ),
+    'GatewayRoutingFacts': Combines(
+        'an agent either sends the routing facts or does not',
+        lambda: (GatewayRoutingFacts(), GatewayRoutingFacts(enabled=False)),
+        _check_gateway_routing_facts,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
