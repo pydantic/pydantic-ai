@@ -1932,9 +1932,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set,
-        auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
-        and ensuring `User-Agent` is set.
+        Starts from the betas in the client's `default_headers`, then merges a custom `anthropic-beta` header from
+        `extra_headers`, auto-attaches the Files API beta when messages contain an Anthropic `UploadedFile`, and
+        ensures `User-Agent` is set.
         """
         extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
