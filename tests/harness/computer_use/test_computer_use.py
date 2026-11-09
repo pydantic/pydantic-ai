@@ -31,6 +31,7 @@ from pydantic_ai.computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
     ComputerCallPart,
+    ComputerReturnPart,
     SafetyCheck,
 )
 from pydantic_ai.messages import BinaryContent, BinaryImage
@@ -335,7 +336,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # What an app shows the person deciding.
         assert isinstance(approval, ComputerCallPart)
         assert approval.safety_checks == [
-            SafetyCheck(code='malicious_instructions', message='The page asks for a password.')
+            SafetyCheck(code='malicious_instructions', message='The page asks for a password.', id='sc_1')
         ]
         assert provider.actions == []
 
@@ -483,17 +484,29 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # the last screenshot's size. With `native=False`, every model gets the function tool.
         assert natives == ([ComputerTool(display_size=(1280, 800), optional=True)] if native else [])
 
+    @pytest.mark.parametrize('between_calls', [False, True], ids=['during-a-call', 'between-calls'])
     async def test_each_call_emits_what_it_did_and_whether_the_display_restarted(
-        self, durability: list[AbstractCapability[Any]]
+        self, durability: list[AbstractCapability[Any]], between_calls: bool
     ) -> None:
         class RestartingDisplay(DisplayOnlyBackend):
-            """Restarts while it acts, as a display whose process stopped is restarted."""
+            """Restarts while it acts, or when its size is read for the second time.
+
+            The second read is the one before the second model request, for the native tool's display size, so a
+            display that died while the model was thinking restarts between the calls.
+            """
 
             restart_count = 0
+            size_reads = 0
 
             async def act(self, action: ComputerAction) -> None:
                 self.restart_count += 1
                 await super().act(action)
+
+            async def display_size(self) -> tuple[int, int]:
+                self.size_reads += 1
+                if between_calls and self.size_reads == 2:
+                    self.restart_count += 1
+                return await super().display_size()
 
         display = RestartingDisplay(InMemoryProvider().backend(None))
 
@@ -501,7 +514,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> RestartingDisplay:
                 return display
 
-        model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
+        second_call = [{'type': 'screenshot'}] if between_calls else [{'type': 'click', 'x': 1, 'y': 1}]
+        model = _scripted([{'type': 'screenshot'}], second_call)
         agent = Agent(
             model, name='computer', capabilities=[SuppliesDisplay(), ComputerUse(settle_seconds=0), *durability]
         )
@@ -510,12 +524,14 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             messages = stream.all_messages()
         # Once each, even when the call is a durable unit.
         assert [type(e) for e in events] == [ActionsPerformedEvent, ActionsPerformedEvent, DisplayRestartedEvent]
-        first, second = events[0], events[1]
-        assert isinstance(first, ActionsPerformedEvent) and isinstance(second, ActionsPerformedEvent)
+        first = events[0]
+        assert isinstance(first, ActionsPerformedEvent)
         assert (first.performed, first.error, first.screenshot_size) == (1, None, (1280, 800))
         # The history keeps the restart too, for code reading it later.
-        restarted = [part.metadata.get('display_restarted') for part in _returns(messages)]
-        assert restarted == [None, True]
+        results = [
+            part.result for message in messages for part in message.parts if isinstance(part, ComputerReturnPart)
+        ]
+        assert [result and result.get('display_restarted') for result in results] == [None, True]
 
     @pytest.mark.parametrize(
         'workspace',
