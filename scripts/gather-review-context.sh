@@ -207,8 +207,9 @@ fi
 if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
-  # needing to read the full source file separately.
-  git -C "$PR_HEAD_DIR" -c core.attributesFile="$PY_ATTRIBUTES" diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
+  # needing to read the full source file separately. core.quotePath=false keeps a non-ASCII path
+  # unquoted, so its header names it.
+  git -C "$PR_HEAD_DIR" -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '

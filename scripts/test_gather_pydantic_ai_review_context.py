@@ -330,6 +330,8 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'src.py',
         'z b/src.py',
         'new.py',
+        # Git quotes a non-ASCII path in `diff --git` unless told not to.
+        'docs/café.md',
     ]
     renamed = {'q b/new.py': 'old.py'}
     kept = 'kept\n' * 5
@@ -353,6 +355,7 @@ def test_a_crafted_path_cannot_replace_another_files_diff(tmp_path: Path, script
         'z b/src.py': 'diff/z b%2Fsrc.py.diff',
         'new.py': 'diff/new.py.diff',
         'q b/new.py': 'diff/q b%2Fnew.py.diff',
+        'docs/café.md': 'diff/docs%2Fcafé.md.diff',
     }
     assert {path: (context / diff).read_text(encoding='utf-8').splitlines()[0] for path, _, diff in rows} == {
         path: f'diff --git a/{renamed.get(path, path)} b/{path}' for path in [*added, *renamed]
