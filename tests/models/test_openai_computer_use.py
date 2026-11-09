@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import struct
 import zlib
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -25,6 +26,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click
 
@@ -104,7 +106,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
     (approval,) = paused.output.approvals
     # What an app shows the person deciding.
     assert isinstance(approval, ComputerCallPart)
-    assert approval.safety_checks == [SafetyCheck(code=CHECK['code'], message=CHECK['message'])]
+    assert approval.safety_checks == [SafetyCheck(code=CHECK['code'], message=CHECK['message'], id=CHECK['id'])]
     assert provider.actions == []
 
     decision = True if approve else ToolDenied('Not on this page.')
@@ -465,19 +467,30 @@ async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_r
     }
 
 
+def _without_native_tools(profile: ModelProfile) -> ModelProfile:
+    """A profile that doesn't list its native tools, as for an OpenAI-compatible model, so it lists every type."""
+    trimmed = profile.copy()
+    trimmed.pop('supported_native_tools', None)
+    return trimmed
+
+
 @pytest.mark.parametrize(
-    'model_name, native',
+    'model_name, native, profile',
     [
-        pytest.param('gpt-5.2', True, id='a-model-without-it'),
+        pytest.param('gpt-5.2', True, None, id='a-model-without-it'),
+        pytest.param('gpt-5.2', True, _without_native_tools, id='a-profile-that-lists-every-native-tool'),
         # As `ComputerUse(native=False)` asks, so the model gets the tool's own actions.
-        pytest.param('gpt-5.5', False, id='a-tool-that-opts-out'),
+        pytest.param('gpt-5.5', False, None, id='a-tool-that-opts-out'),
     ],
 )
 async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_function(
-    allow_model_requests: None, model_name: str, native: bool
+    allow_model_requests: None,
+    model_name: str,
+    native: bool,
+    profile: Callable[[ModelProfile], ModelProfile] | None,
 ) -> None:
     client = MockOpenAIResponses.create_mock(_done())
-    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client), profile=profile)
     capabilities = [computer_capability(native=native), InMemoryProvider().capability()]
     await Agent(model, capabilities=capabilities).run('Go.')
 
