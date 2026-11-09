@@ -146,6 +146,9 @@ class SafetyCheck:
     code: str | None = None
     """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
 
+    id: str | None = None
+    """The provider's identifier for this check, which it needs back when the call is approved."""
+
 
 _SAFETY_CHECKS = 'safety_checks'
 """The `provider_details` key under which a model adapter keeps a call's safety checks, as `SafetyCheck` dicts."""

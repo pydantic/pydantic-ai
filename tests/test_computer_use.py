@@ -44,7 +44,7 @@ def test_a_computer_call_is_promoted_and_reads_its_actions() -> None:
     call = response.parts[0]
     assert isinstance(call, ComputerCallPart)
     assert call.actions == [Click(x=1, y=2)]
-    assert call.safety_checks == [SafetyCheck(code='malicious', message='Check it.')]
+    assert call.safety_checks == [SafetyCheck(code='malicious', message='Check it.', id='sc_1')]
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))[0]
     assert isinstance(restored, ModelResponse) and restored.parts == response.parts
 
