@@ -12,28 +12,35 @@ call with a type it doesn't know.
 A result's content is text and images: a short summary, then what each action that returns something returned, in
 action order, then the screenshot. The last image is always the screen after the call. The summary's wording isn't
 stable; [`ComputerResult`][pydantic_ai.computer_use.ComputerResult] in the result's `metadata` is.
+
+The tool's parts are promoted to [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
+[`ComputerReturnPart`][pydantic_ai.computer_use.ComputerReturnPart], so code reads them with `isinstance` and typed
+properties, whatever the tool is called.
 """
 
 from __future__ import annotations as _annotations
 
 from typing import Annotated, Literal, NotRequired, TypeAlias
 
+import pydantic
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
-from .messages import BinaryImage, ToolKind
+from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Region, Scroll, TypeText
 from .workspaces.computer import ACTION_CONFIG
 
 __all__ = (
     'COMPUTER_KIND',
-    'DISPLAY_SIZE',
-    'NATIVE_TOOL',
-    'SAFETY_CHECKS',
+    'ComputerArgs',
+    'ComputerCallPart',
+    'ComputerContent',
     'ComputerResult',
+    'ComputerReturnPart',
     'ComputerToolAction',
     'CursorPosition',
+    'SafetyCheck',
     'Screenshot',
     'Wait',
     'Zoom',
@@ -91,14 +98,19 @@ ComputerToolAction: TypeAlias = Annotated[
 """What the `computer` tool accepts: the workspace's display actions, plus waiting and looking."""
 
 
-class _ComputerArgs(TypedDict):
+class ComputerArgs(TypedDict):
     """The `computer` tool's arguments."""
 
     actions: list[ComputerToolAction]
+    """The actions to perform, in order."""
+
+
+ComputerContent: TypeAlias = list[str | BinaryImage]
+"""What the model sees from a `computer` call; see the module docstring for its order."""
 
 
 class ComputerResult(TypedDict):
-    """A `computer` call's outcome, kept in the tool return's `metadata` for model adapters and UIs."""
+    """A `computer` call's outcome, returned as its `metadata` for model adapters, UIs and later calls."""
 
     performed: int
     """How many actions ran: all of them, or those before the one that failed."""
@@ -115,28 +127,66 @@ class ComputerResult(TypedDict):
     them: `performed` counts the ones that ran, and the summary says what they were. A model adapter then sends the
     summary rather than reporting the model's own actions as run."""
 
+    display_restarted: NotRequired[bool]
+    """Set when the display restarted during the call, such as after its process stopped, so what was on the screen
+    before may be gone. The model isn't told; the screenshot shows the screen as it is now."""
 
-_ComputerContent: TypeAlias = list[str | BinaryImage]
-"""What the model sees from a `computer` call; see the module docstring for its order."""
 
-SAFETY_CHECKS = 'safety_checks'
-"""The `provider_details` key under which a model adapter puts the checks a provider asks a person to approve.
+@dataclass(frozen=True, kw_only=True)
+class SafetyCheck:
+    """A check a provider asks a person to make before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
 
-Its value is a list of dicts, each with at least a `message` for the person; other keys are the provider's own, kept
-to send back when the call is approved.
-"""
+    A call with safety checks waits for approval; see
+    [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks].
+    """
 
-DISPLAY_SIZE = 'display_size'
-"""The `ToolDefinition.metadata` key under which the `computer` tool gives the `(width, height)` of the screenshots
-the model sees, which may be smaller than the display.
+    message: str | None = None
+    """What the person should check, in the provider's words."""
 
-A provider whose native tool declares a display size, such as Claude's `computer_20251124`, sends this one.
-"""
+    code: str | None = None
+    """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
 
-NATIVE_TOOL = 'native_tool'
-"""The `ToolDefinition.metadata` key under which the `computer` tool can say `False`: no model adapter sends it as its
-provider's native computer tool, so every model gets it as a function tool, with the tool's own actions.
-"""
 
-COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
-"""The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
+_SAFETY_CHECKS = 'safety_checks'
+"""The `provider_details` key under which a model adapter keeps a call's safety checks, as `SafetyCheck` dicts."""
+
+_SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
+
+
+COMPUTER_KIND = ToolKind(
+    'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
+)
+"""The kind of the `computer` tool, whose calls a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends to a
+provider's native computer tool."""
+
+
+class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
+    """A call of the `computer` tool."""
+
+    @property
+    def actions(self) -> list[ComputerToolAction] | None:
+        """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
+        typed = self.typed_args
+        return typed['actions'] if typed is not None else None
+
+    @property
+    def safety_checks(self) -> list[SafetyCheck]:
+        """The checks the provider asks a person to make before this call runs; empty when there are none."""
+        checks = (self.provider_details or {}).get(_SAFETY_CHECKS)
+        return _SAFETY_CHECKS_TA.validate_python(checks) if checks else []
+
+
+class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
+    """A successful result of the `computer` tool."""
+
+    @property
+    def result(self) -> ComputerResult | None:
+        """The call's outcome, or `None` when the result has none, such as one a UI rebuilt without its metadata."""
+        return self.typed_metadata
+
+    @property
+    def screenshot(self) -> BinaryImage | None:
+        """The screen after the call, or `None` if the result doesn't end with one, such as once it was dropped."""
+        content = self.typed_content
+        last = content[-1] if content else None
+        return last if isinstance(last, BinaryImage) else None
