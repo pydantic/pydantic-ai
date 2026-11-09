@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import re
 import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, cast
@@ -12,7 +11,7 @@ import pytest
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
-from ..conftest import TestEnv, try_import
+from ..conftest import TestEnv, google_user_agents, try_import
 
 with try_import() as imports_successful:
     from google.auth import crypt
@@ -278,11 +277,7 @@ async def test_google_extra_headers_user_agent_replaces_ours(
         agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
         await agent.run('What is the capital of France?', model_settings=settings)
 
-    user_agents = [
-        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value).replace(get_user_agent(), 'pydantic-ai')
-        for value in requests[0].headers.get_list('user-agent')
-    ]
-    assert user_agents == expected
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.parametrize(
@@ -323,11 +318,7 @@ async def test_google_extra_headers_user_agent_replaces_user_built_client_user_a
         agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
         await agent.run('What is the capital of France?', model_settings=settings)
 
-    user_agents = [
-        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value)
-        for value in requests[0].headers.get_list('user-agent')
-    ]
-    assert user_agents == expected
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.parametrize('vertexai', [False, True], ids=['google', 'google-cloud'])

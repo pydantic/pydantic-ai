@@ -51,12 +51,12 @@ from pydantic_ai.images import (
     merge_image_generation_settings,
 )
 from pydantic_ai.messages import UploadedFileProviderName
-from pydantic_ai.models import get_user_agent, override_allow_model_requests
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, google_user_agents, try_import
 
 pytestmark = [
     pytest.mark.usefixtures('allow_model_requests'),
@@ -1102,11 +1102,7 @@ async def test_google_image_generation_extra_headers_user_agent_replaces_ours(
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
         await model.generate('a robot', settings={'extra_headers': extra_headers})
 
-    user_agents = [
-        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value).replace(get_user_agent(), 'pydantic-ai')
-        for value in requests[0].headers.get_list('user-agent')
-    ]
-    assert user_agents == expected
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1153,11 +1149,7 @@ async def test_google_image_generation_extra_headers_user_agent_replaces_user_bu
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
         await model.generate('a robot', settings={'extra_headers': extra_headers})
 
-    user_agents = [
-        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value)
-        for value in requests[0].headers.get_list('user-agent')
-    ]
-    assert user_agents == expected
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
