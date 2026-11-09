@@ -726,7 +726,8 @@ def _with_handles(
 
     A list or tuple stays a list, with the handles appended as one dict item: that is the
     shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
-    items that are not events, so wrapping it in a dict would silently drop them.
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
     """
     handles: dict[str, object] = {}
     if value_handle is not None:
@@ -738,6 +739,8 @@ def _with_handles(
     if isinstance(existing, list | tuple):
         items: list[object] = list(cast('list[object] | tuple[object, ...]', existing))
         return [*items, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
 
     base: dict[str, object] = {}
     if is_mapping(existing):
@@ -746,6 +749,22 @@ def _with_handles(
         base['original_metadata'] = existing
     base.update(handles)
     return base
+
+
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:  # pragma: no cover
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:

@@ -69,7 +69,8 @@ def _agent(tmp_path: Path, metadata: object) -> Agent[None, str]:
 
 
 @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
-async def test_spilled_return_keeps_ag_ui_events(tmp_path: Path) -> None:
+@pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+async def test_spilled_return_keeps_ag_ui_events(tmp_path: Path, as_list: bool) -> None:
     event = CustomEvent(type=EventType.CUSTOM, name='cards', value={'n': 100})
     run_input = RunAgentInput(
         thread_id='t',
@@ -80,7 +81,7 @@ async def test_spilled_return_keeps_ag_ui_events(tmp_path: Path) -> None:
         context=[],
         forwarded_props={},
     )
-    adapter = AGUIAdapter(agent=_agent(tmp_path, [event]), run_input=run_input)
+    adapter = AGUIAdapter(agent=_agent(tmp_path, [event] if as_list else event), run_input=run_input)
     events = [e async for e in adapter.run_stream()]
 
     customs = [e for e in events if isinstance(e, CustomEvent)]
@@ -89,9 +90,10 @@ async def test_spilled_return_keeps_ag_ui_events(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not vercel_imports_successful(), reason='vercel ai dependencies not installed')
-async def test_spilled_return_keeps_vercel_ai_chunks(tmp_path: Path) -> None:
+@pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+async def test_spilled_return_keeps_vercel_ai_chunks(tmp_path: Path, as_list: bool) -> None:
     chunk = DataChunk(type='data-search-results', data={'count': 100})
-    result = await _agent(tmp_path, [chunk]).run('hi')
+    result = await _agent(tmp_path, [chunk] if as_list else chunk).run('hi')
 
     part = next(
         p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'search'
