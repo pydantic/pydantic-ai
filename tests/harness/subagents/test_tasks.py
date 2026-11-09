@@ -1109,10 +1109,11 @@ async def test_close_lets_a_settling_child_finish_saving(tmp_path: Path) -> None
     assert json.loads((tmp_path / f'{record.id}.json').read_text())['outcome'] == 'ok'
 
 
+@pytest.mark.parametrize('closing_error', [True, False])
 async def test_stuck_child_does_not_mask_the_closing_error(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, closing_error: bool
 ) -> None:
-    """A child that ignores cancellation past the drain bound is logged, and the error that closed the owner propagates."""
+    """A child that ignores cancellation past the drain bound raises on a clean close, and is only logged on error."""
     original = anyio.move_on_after
 
     def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
@@ -1131,7 +1132,8 @@ async def test_stuck_child_does_not_mask_the_closing_error(
         return 'done'
 
     owner = DelegationTasks()
-    with pytest.raises(ValueError, match='closing error'):
+    expected = (ValueError, 'closing error') if closing_error else (RuntimeError, 'cleanup timed out')
+    with pytest.raises(expected[0], match=expected[1]):
         async with owner.opened():
             await owner.delegate(
                 agent_name='worker',
@@ -1143,9 +1145,10 @@ async def test_stuck_child_does_not_mask_the_closing_error(
                 run=stuck,
             )
             await started.wait()
-            raise ValueError('closing error')
+            if closing_error:
+                raise ValueError('closing error')
     (record,) = owner.records.values()
-    assert 'did not release their resources' in caplog.text and record.id in caplog.text
+    assert (record.id in caplog.text) is closing_error
     release.set()
     (worker,) = [task for task in asyncio.all_tasks() if task.get_name() == f'delegate-{record.id}']
     await worker

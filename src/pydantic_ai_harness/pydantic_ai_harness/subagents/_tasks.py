@@ -6,6 +6,7 @@ import asyncio
 import copy
 import logging
 import re
+import sys
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -247,7 +248,8 @@ class DelegationTasks:
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
         """Restore saved children, then cancel and drain workers before releasing resources.
 
-        A drain that times out is logged rather than raised, so it never masks the error that closed the owner.
+        A drain that times out raises `RuntimeError`, or is logged when an error is closing the owner, so it never
+        masks that error.
         """
         if self._open:
             raise RuntimeError('Delegation task owner is already open')
@@ -270,7 +272,9 @@ class DelegationTasks:
             with anyio.move_on_after(10, shield=True) as cleanup:
                 await self._drain()
             if cleanup.cancel_called:
-                # Raising would mask the error that closed the owner, and crash a host that is shutting down.
+                if sys.exc_info()[1] is None:
+                    raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
+                # Raising would mask the error that is closing the owner.
                 stuck = [task_id for task_id, worker in self._workers.items() if not worker.done()]
                 logging.getLogger(__name__).error(
                     'Delegation cleanup timed out; tasks %s did not release their resources', stuck
