@@ -1402,7 +1402,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     Either way, the message history is trusted for the response ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so don't use this setting with
-    history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
+    history from a client. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete
+    `openai_conversation_id` instead to turn it off; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
