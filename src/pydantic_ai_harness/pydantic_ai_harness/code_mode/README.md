@@ -218,6 +218,8 @@ When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-t
 
 Printed output over 10 MiB makes `run_code` return a model retry.
 
+### Resource limits
+
 `resource_limits` defaults to 30 seconds of execution time and a 256 MiB heap. `max_duration_secs`
 applies per snippet, stopping runaway loops; time awaiting nested tools doesn't count. A snippet
 that hits it is stopped and its session reset, losing variables, imports, and definitions; the retry
@@ -850,7 +852,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`,
   `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the
   built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance
-  in [Return values](#return-values), and in a Temporal workflow a sleep is a durable timer
+  in [Resource limits](#resource-limits), and in a Temporal workflow a sleep is a durable timer
 - No `import *`
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an
   `os_access` handler

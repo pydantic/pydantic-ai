@@ -196,6 +196,8 @@ When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-r
 
 Printed output over 10 MiB makes `run_code` return a model retry.
 
+### Resource limits
+
 `resource_limits` defaults to 30 seconds of execution time and a 256 MiB heap. `max_duration_secs` applies per snippet, stopping runaway loops; time awaiting nested tools doesn't count. A snippet that hits it is stopped and its session reset, losing variables, imports, and definitions; the retry says so and reports the nested calls already made.
 
 Sleep isn't execution time and has its own per-snippet allowance of `max_duration_secs`; a sleep past it raises `TimeoutError` without waiting and keeps the session. The allowance applies even in a Temporal workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes it.
@@ -672,7 +674,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib` (each must be imported before use).
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
-- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance in [Return values](#return-values); in a Temporal workflow a sleep is a durable timer.
+- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance in [Resource limits](#resource-limits); in a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error the model sees as a retry.
