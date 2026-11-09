@@ -90,6 +90,13 @@ def _tool_message_texts(messages: list[Any]) -> list[str]:
     return [cast(str, message['content']) for message in messages if message.get('role') == 'tool']
 
 
+def _completion(message: ChatCompletionMessage) -> ChatCompletion:
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    return ChatCompletion.model_construct(
+        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+
+
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_openai_chat_sends_the_json_string_field(allow_model_requests: None):
     client = MockOpenAI.create_mock(_completion(ChatCompletionMessage.model_construct(role='assistant', content='Ok.')))
@@ -358,13 +365,6 @@ def test_a_note_in_place_of_an_unreadable_file_goes_out_as_written():
     assert [part.content for part in request.parts if isinstance(part, ToolReturnPart)] == [
         unsupported_file_note(BinaryContent(b'RIFF', media_type='audio/wav'), 'audio files')
     ]
-
-
-def _completion(message: ChatCompletionMessage) -> ChatCompletion:
-    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
-    return ChatCompletion.model_construct(
-        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
-    )
 
 
 def _tool_call(call_id: str, city: str) -> ChatCompletion:
