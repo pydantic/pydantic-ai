@@ -242,11 +242,12 @@ jobs:
           # only then; otherwise filing an issue is a way past the assignment rule that needs
           # nobody's sign-off (#12483 linked #12482, which its author filed one second
           # earlier, right after this guard closed their previous PR). Engagement needs
-          # write-or-higher access on this repo, and bots never count: pydanty triages
-          # every new issue, commenting, labeling and assigning a maintainer, before any
-          # maintainer has read it. Bots are skipped before the role lookup, which 404s for
-          # them. An unreadable timeline or role stops the run without acting (see
-          # `cannot_verify`).
+          # write-or-higher access on this repo. Triage, which the bypasses above trust,
+          # doesn't count: labeling issues is that role's routine work, not a maintainer's
+          # sign-off. Bots never count either: pydanty triages every new issue, commenting,
+          # labeling and assigning a maintainer, before any maintainer has read it. Bots are
+          # skipped before the role lookup, which 404s for them. An unreadable timeline or
+          # role stops the run without acting (see `cannot_verify`).
           maintainer_engaged() {
             local timeline actor role
             if ! timeline=$(gh api "repos/${REPO}/issues/$1/timeline" --paginate --jq '.[] | select(.event == "commented" or .event == "labeled" or .event == "assigned") | .actor.login' 2>/dev/null); then
