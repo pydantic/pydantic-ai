@@ -194,6 +194,9 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   concurrently scheduled tool calls could claim each other's checkpoints when the execution
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one
   the agent keeps its configured parallelism.
+  [`DynamicWorkflow`](dynamic-workflow.md#running-under-other-durable-engines) sub-agents are the
+  exception: they run concurrently, each in a branch of a Lambda `parallel` operation, which numbers
+  its steps on its own.
 - **Changing the shape of the run breaks in-flight executions.** A resumed execution matches
   checkpoints by the order operations are reached, so anything that changes the number or order of
   steps breaks executions started under the old code: adding or removing a tool or MCP server,

@@ -1,4 +1,4 @@
-"""Two concurrent sub-agents whose steps start in a different order on the first run than on replay."""
+"""Two sub-agents gathered by a script, where the one dispatched first finishes last."""
 
 from __future__ import annotations
 
@@ -16,21 +16,39 @@ SCRIPT = "import asyncio\nawait asyncio.gather(summarize(task='alpha'), summariz
 EXPECTED = "done: ['summary of alpha', 'summary of beta']"
 
 
-async def _summarize_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    (task,) = [part.content for part in messages[0].parts if isinstance(part, UserPromptPart)]
-    if len(messages) == 1:
+def summarize_model(calls: list[str], on_call: Callable[[str], None] | None = None) -> FunctionModel:
+    """A sub-agent model that records its requests in `calls` as `'<task> <message count>'`, then calls `on_call`.
+
+    Alpha's first request waits until beta has finished, so the two must run concurrently, and
+    alpha, dispatched first, finishes last. A dispatch that runs them one at a time fails on the
+    timeout rather than hanging.
+    """
+    beta_done = asyncio.Event()
+
+    async def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        (task,) = [part.content for part in messages[0].parts if isinstance(part, UserPromptPart)]
+        calls.append(f'{task} {len(messages)}')
+        if on_call is not None:
+            on_call(calls[-1])
+        if len(messages) > 1:
+            if task == 'beta':
+                beta_done.set()
+            return ModelResponse(parts=[TextPart(f'summary of {task}')])
         if task == 'alpha':
-            # Let beta's second step start before alpha's, unlike the replay, where no model runs.
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(beta_done.wait(), timeout=5)
         return ModelResponse(parts=[ToolCallPart('noop')])
-    return ModelResponse(parts=[TextPart(f'summary of {task}')])
+
+    return FunctionModel(summarize)
 
 
-def _orchestrator_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
-    if not returns:
-        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': SCRIPT})])
-    return ModelResponse(parts=[TextPart(f'done: {returns[0].content}')])
+def _orchestrator_model(script: str) -> FunctionModel:
+    def orchestrate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': script})])
+        return ModelResponse(parts=[TextPart(f'done: {returns[0].content}')])
+
+    return FunctionModel(orchestrate)
 
 
 def noop() -> str:
@@ -39,20 +57,21 @@ def noop() -> str:
 
 def build_orchestrator(
     durability: Callable[[], AbstractCapability[Any]],
+    summarize: FunctionModel,
     *,
     durable_orchestrator: bool = True,
-    summarize_model: FunctionModel | None = None,
+    script: str = SCRIPT,
 ) -> Agent[None, str]:
-    """An orchestrator whose script gathers two `summarize` sub-agents, which carry `durability()`."""
-    summarize = Agent(
-        summarize_model or FunctionModel(_summarize_model),
+    """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`."""
+    summarize_agent = Agent(
+        summarize,
         name='summarize',
         description='Summarize a text.',
         tools=[noop],
         capabilities=[durability()],
     )
     return Agent(
-        FunctionModel(_orchestrator_model),
+        _orchestrator_model(script),
         name='orchestrator',
-        capabilities=[DynamicWorkflow(agents=[summarize]), *([durability()] if durable_orchestrator else [])],
+        capabilities=[DynamicWorkflow(agents=[summarize_agent]), *([durability()] if durable_orchestrator else [])],
     )

@@ -13,6 +13,11 @@ threads and a queue:
 A step body dispatched on the handler thread schedules its async operation back onto the agent
 loop and blocks on the result, so the loop stays free while the handler thread waits.
 
+`run_parallel` runs operations as the branches of one `context.parallel(...)`. The SDK runs each
+branch on a thread of its own, against a child context whose step IDs derive from the branch's
+position, and that thread services the branch operation's steps the way the handler thread services
+the root context's.
+
 The active bridge is published in a `ContextVar` rather than passed around, so the capability
 does not have to be handed a `DurableContext` per invocation.
 
@@ -29,11 +34,11 @@ import functools
 import inspect
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overload
 
 import anyio
 
@@ -96,6 +101,16 @@ class DurableStepContext(Protocol):
         func: Callable[[Any], Any],
         name: str | None = None,
         config: StepConfig | None = None,
+    ) -> Any: ...
+
+
+class _DurableParallelContext(DurableStepContext, Protocol):
+    """A `DurableContext` that also runs `parallel` operations, which the real one always does."""
+
+    def parallel(  # pragma: no cover - structural declaration, never executed
+        self,
+        functions: Sequence[Callable[[Any], Any]],
+        name: str | None = None,
     ) -> Any: ...
 
 
@@ -231,9 +246,8 @@ and the handler thread runs them one at a time.
 
 @dataclass
 class _StepRequest:
-    name: str
-    body: Callable[[Any], Any]
-    config: StepConfig | None
+    run: Callable[[], Any]
+    """Creates the durable operation on the consuming thread and returns its result."""
     reply: Callable[[bool, Any], None]
     context: contextvars.Context
 
@@ -262,6 +276,27 @@ class StepBridge:
         config: StepConfig | None = None,
     ) -> T:
         """Checkpoint `operation` as a durable step. Runs on the agent loop."""
+        loop = asyncio.get_running_loop()
+        body = functools.partial(_run_step_body, loop, name, operation)
+        return await self._request(functools.partial(self._context.step, body, name=name, config=config))
+
+    async def run_parallel(self, name: str, operations: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
+        """Run `operations` concurrently as the branches of one durable `parallel` operation. Runs on the agent loop.
+
+        Each branch gets a child context of its own, whose step IDs derive from the branch's index, so
+        the steps of one operation replay into it however the branches interleave. Each operation runs
+        on the agent loop with a bridge of its own, serviced by the thread the SDK runs its branch on.
+        """
+        loop = asyncio.get_running_loop()
+        branches = [functools.partial(_run_branch, loop, contextvars.copy_context(), op) for op in operations]
+        # The real `DurableContext` has `parallel`. `DurableStepContext` declares only `step`, so stand-ins
+        # that only checkpoint steps still satisfy it.
+        context = cast(_DurableParallelContext, self._context)
+        batch = await self._request(functools.partial(context.parallel, branches, name=name))
+        return [item.result for item in sorted(batch.all, key=lambda item: item.index)]
+
+    async def _request(self, run: Callable[[], Any]) -> Any:
+        """Queue `run` for the consuming thread, in request order, and wait for its result."""
         if _in_step_body.get():
             raise UserError(
                 f'A durable step was requested from inside another {ENGINE_NAME} durable step. Lambda '
@@ -272,10 +307,8 @@ class StepBridge:
             )
 
         loop = asyncio.get_running_loop()
-        body = functools.partial(_run_step_body, loop, name, operation)
-
         async with self._order:
-            future: asyncio.Future[T] = loop.create_future()
+            future: asyncio.Future[Any] = loop.create_future()
 
             def reply(succeeded: bool, value: Any) -> None:
                 try:
@@ -288,9 +321,7 @@ class StepBridge:
                     # supplies the actionable AgentLoopGone error when no callback can be delivered.
                     pass
 
-            self._queue.put(
-                _StepRequest(name=name, body=body, config=config, reply=reply, context=contextvars.copy_context())
-            )
+            self._queue.put(_StepRequest(run=run, reply=reply, context=contextvars.copy_context()))
             return await future
 
     def finish(self, result: Any = None, error: BaseException | None = None) -> None:
@@ -311,7 +342,7 @@ class StepBridge:
                     raise item.error
                 return item.result
             try:
-                value = item.context.run(self._context.step, item.body, name=item.name, config=item.config)
+                value = item.context.run(item.run)
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
@@ -325,6 +356,42 @@ class StepBridge:
                 item.reply(True, value)
 
 
+def _run_branch(
+    loop: asyncio.AbstractEventLoop,
+    context: contextvars.Context,
+    operation: Callable[[], Awaitable[T]],
+    branch_context: DurableStepContext,
+) -> T:
+    # Runs on the thread the SDK runs this branch on, which services the operation's steps
+    # against the branch's own child context, as the handler thread does for the root context.
+    bridge = StepBridge(branch_context)
+    context = context.copy()
+    context.run(_active_bridge.set, bridge)
+
+    async def run() -> None:
+        try:
+            bridge.finish(result=await operation())
+        except BaseException as exc:
+            bridge.finish(error=exc)
+
+    _schedule(loop, 'a parallel branch', lambda: loop.create_task(run(), context=context))
+    return bridge.consume()
+
+
+def _schedule(loop: asyncio.AbstractEventLoop, what: str, callback: Callable[[], object]) -> None:
+    """Hand `callback` to the agent loop from another thread, failing if the loop has stopped."""
+    try:
+        if not loop.is_running():
+            raise RuntimeError
+        loop.call_soon_threadsafe(callback)
+    except RuntimeError:
+        raise AgentLoopGone(
+            f'The {ENGINE_NAME} agent event loop stopped before {what} could be scheduled, so its '
+            'result can never arrive. This should not happen; please report it at '
+            'https://github.com/pydantic/pydantic-ai/issues.'
+        ) from None
+
+
 def _run_step_body(
     loop: asyncio.AbstractEventLoop, name: str, operation: Callable[[], Awaitable[T]], _step_context: object
 ) -> T:
@@ -334,16 +401,11 @@ def _run_step_body(
     step_context = contextvars.copy_context()
     step_context.run(_in_step_body.set, True)
 
-    try:
-        if not loop.is_running():
-            raise RuntimeError
-        loop.call_soon_threadsafe(_schedule_step_operation, loop, step_context, operation, result)
-    except RuntimeError:
-        raise AgentLoopGone(
-            f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
-            'scheduled, so its result can never arrive. This should not happen; please report '
-            'it at https://github.com/pydantic/pydantic-ai/issues.'
-        ) from None
+    _schedule(
+        loop,
+        f'durable step {name!r}',
+        functools.partial(_schedule_step_operation, loop, step_context, operation, result),
+    )
     while True:
         try:
             return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Generator
 from pathlib import Path
@@ -10,10 +9,8 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
-from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator
+from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator, summarize_model
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -52,23 +49,8 @@ def model_calls() -> list[str]:
 
 @pytest.fixture
 def orchestrator(dbos: DBOS, model_calls: list[str]) -> Agent[None, str]:
-    beta_done = asyncio.Event()
-
-    async def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        (task,) = [part.content for part in messages[0].parts if isinstance(part, UserPromptPart)]
-        model_calls.append(f'{task} {len(messages)}')
-        if len(messages) > 1:
-            if task == 'beta':
-                beta_done.set()
-            return ModelResponse(parts=[TextPart(f'summary of {task}')])
-        if task == 'alpha':
-            # Alpha, dispatched first, finishes only after beta: the sub-agents run concurrently.
-            # The timeout fails a dispatch that runs them one at a time, rather than hanging it.
-            await asyncio.wait_for(beta_done.wait(), timeout=5)
-        return ModelResponse(parts=[ToolCallPart('noop')])
-
     # Built outside the event loop: registering a DBOS workflow reads its source.
-    return build_orchestrator(DBOSDurability, summarize_model=FunctionModel(summarize))
+    return build_orchestrator(DBOSDurability, summarize_model(model_calls))
 
 
 @pytest.fixture
