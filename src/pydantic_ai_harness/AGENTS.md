@@ -165,8 +165,9 @@ definitions the Harness durable engines (`absurd`, `aws_lambda`, `azure_durable_
 harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
 an engine change leaves it stale: see
 [Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).
-`.github/CODEOWNERS` gives each of these engine directories to the durable runtime owners, so a PR
-that adds a Harness durable engine adds its directory there too.
+`.github/CODEOWNERS` gives each of these engine directories to the durable runtime owners, so a new
+Harness durable engine's directory needs an entry there too. `Protect .github` accepts that edit
+only from an author with write access; any other author asks a maintainer to add the entry.
 
 ### Workspace and Python versions
 
