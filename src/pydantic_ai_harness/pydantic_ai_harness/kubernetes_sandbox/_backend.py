@@ -9,8 +9,8 @@ v1.0.7, and a kind cluster running the v1.0.7 controller, and re-checked 2026-11
   under `asyncio.shield`, which a second cancellation abandons); `get_sandbox` attaches to a
   claim by name, waits 30 seconds for a claim that does not exist, and raises `SandboxNotFoundError`
   for any failed lookup;
-* `client.k8s_helper.get_sandbox_claim` returns `None` only for a 404, and `delete_sandbox_claim`
-  ignores only a 404; `AsyncSandbox.status()` reports `SandboxNotFound` only for a 404;
+* `client.k8s_helper.get_sandbox_claim` and `get_sandbox` return `None` only for a 404, and
+  `delete_sandbox_claim` ignores only a 404; the Sandbox object they read is the one a claim binds;
 * `AsyncSandbox.commands.start()` runs a string under `/bin/sh -c` over sandboxd's streaming
   `ProcessService.Start`, reached over a `kubectl port-forward` or an in-cluster address depending
   on the connection config, and sends the config's `auth_token`. It restarts a port-forward that
@@ -212,6 +212,9 @@ async def _run_on_sandbox(
 _ASYNCIO_ONLY = '`KubernetesSandboxBackend` needs asyncio: the agent-sandbox SDK and `grpc.aio` do not run on Trio.'
 
 
+_GONE_CHECK_TIMEOUT = 10
+"""Seconds to wait for the API server to say whether a sandbox still exists after a command fails."""
+
 _T = TypeVar('_T')
 
 
@@ -354,9 +357,10 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                     f'working_dir {self._working_dir!r} does not exist in Kubernetes sandbox {self._ref.id!r}. '
                     'Create it there, or pass a working_dir that exists.'
                 )
-            if result.exit_code > 128:
+            if result.exit_code > 128 or result.exit_code < 0:
                 # Deleting a sandbox stops its pod with SIGTERM, and sandboxd reports the command it
                 # interrupted as an ordinary exit, 143. A command killed by a signal may be one of those.
+                # sandboxd before v1.0.7 reports a signal death as -1, as `ProcessExitEvent` still documents.
                 await self._raise_if_gone(sandbox, None)
             return result
 
@@ -418,7 +422,10 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             sandbox = await client.create_sandbox(
                 warm_pool, namespace=self._namespace, shutdown_after_seconds=self._sandbox_timeout
             )
-            self._ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{sandbox.claim_name}')
+            # Typed optional because the SDK clears it when the handle is deleted; a new handle has it.
+            claim_name = sandbox.claim_name
+            assert claim_name is not None
+            self._ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
             self._sandbox = sandbox
             # Logged at claim time, so the claim can be found whatever ends the run before its ref is stored.
             logger.info('Claimed Kubernetes sandbox %s', self._ref.id)
@@ -434,18 +441,29 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _raise_if_gone(self, sandbox: AsyncSandbox, error: Exception | None) -> None:
         """Raise `WorkspaceUnavailableError` if the sandbox is gone; otherwise return, leaving the outcome as it is."""
         # A lost connection looks the same whether the pod was deleted or the network blinked, so
-        # ask the API server. Only a deleted Sandbox is gone for good: one that is not Ready, such as
-        # a pod the controller is recreating, comes back, so its failure is one durable engines may retry.
-        state, message = 'SandboxReady', ''
-        with anyio.move_on_after(10, shield=True):
+        # ask the API server. Only a deleted Sandbox is gone for good: one whose pod the controller is
+        # recreating still exists and comes back, so its failure is one durable engines may retry.
+        # The helper's `None` for a 404 is the same check `status()` makes, without its status strings.
+        assert self._ref is not None
+        gone = False
+        with anyio.move_on_after(_GONE_CHECK_TIMEOUT, shield=True) as scope:
             try:
-                state, message = await sandbox.status()
+                gone = await sandbox.k8s_helper.get_sandbox(sandbox.sandbox_id, sandbox.namespace) is None
             except Exception:
-                # The API server cannot say either: keep the original outcome.
-                pass
-        if state == 'SandboxNotFound':
+                logger.warning(
+                    'Could not ask the API server whether Kubernetes sandbox %s still exists',
+                    self._ref.id,
+                    exc_info=True,
+                )
+        if scope.cancelled_caught:
+            logger.warning(
+                'The API server did not say within %g seconds whether Kubernetes sandbox %s exists',
+                _GONE_CHECK_TIMEOUT,
+                self._ref.id,
+            )
+        if gone:
             raise WorkspaceUnavailableError(
-                f'Kubernetes sandbox {sandbox.claim_name!r} is gone ({state}: {message})'
+                f'Kubernetes sandbox {self._ref.id!r} is gone: its Sandbox was deleted'
             ) from error
 
 

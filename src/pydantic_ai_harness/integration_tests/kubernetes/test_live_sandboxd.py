@@ -136,7 +136,7 @@ class Client:
     def __init__(self, cluster: Cluster) -> None:
         self.cluster = cluster
         self.channels: list[grpc.aio.Channel] = []
-        self.k8s_helper = self
+        self.k8s_helper = Helper(cluster)
 
     async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> Sandbox:
         claim_name = f'sandbox-claim-{uuid.uuid4().hex[:8]}'  # As the SDK names claims.
@@ -152,7 +152,21 @@ class Client:
             raise SandboxNotFoundError(f"SandboxClaim '{claim_name}' not found")
         return Sandbox(self, namespace, claim_name)
 
+    async def close(self) -> None:
+        for channel in self.channels:
+            await channel.close()
+
+
+class Helper:
+    """The SDK's `AsyncK8sHelper`: a claim and the Sandbox it binds share a name here."""
+
+    def __init__(self, cluster: Cluster) -> None:
+        self.cluster = cluster
+
     async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
+        return {} if (namespace, name) in self.cluster.claims else None
+
+    async def get_sandbox(self, name: str, namespace: str) -> dict[str, Any] | None:
         return {} if (namespace, name) in self.cluster.claims else None
 
     async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
@@ -160,10 +174,6 @@ class Client:
         if daemon is not None:
             # Off the event loop: it waits for the daemon and its commands to exit.
             await anyio.to_thread.run_sync(daemon.stop)
-
-    async def close(self) -> None:
-        for channel in self.channels:
-            await channel.close()
 
 
 class Sandbox:
@@ -176,6 +186,8 @@ class Sandbox:
         self.client = client
         self.namespace = namespace
         self.claim_name = claim_name
+        self.sandbox_id = claim_name
+        self.k8s_helper = client.k8s_helper
         self.connector = self
         # The executor only calls the connector methods this class has.
         connector: Any = self
@@ -195,11 +207,6 @@ class Sandbox:
         channel = grpc.aio.insecure_channel(f'127.0.0.1:{daemon.grpc_port}')
         self.client.channels.append(channel)
         return channel
-
-    async def status(self) -> tuple[str, str]:
-        if (self.namespace, self.claim_name) in self.client.cluster.claims:
-            return 'SandboxReady', ''
-        return 'SandboxNotFound', 'Sandbox object not found in Kubernetes.'
 
 
 @pytest.fixture

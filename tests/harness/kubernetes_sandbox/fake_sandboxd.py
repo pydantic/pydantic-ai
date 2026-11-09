@@ -102,6 +102,10 @@ class FakeSandboxd:
         """When false, `Start` ends its stream without the exit event."""
         self.start_error: grpc.StatusCode | None = None
         """When set, `Start` fails with this code."""
+        self.negative_signal_exits = False
+        """When set, a signal death exits -1, as sandboxd before v1.0.7 reports it."""
+        self.sandbox_id = f'sandbox-{uuid.uuid4().hex[:8]}'
+        """The name of the Sandbox object the claim binds."""
 
     async def start(self) -> None:
         self.server = grpc.aio.server()
@@ -179,7 +183,9 @@ class FakeSandboxd:
                     yield event
             code = await waiter
             if self.send_exit:
-                yield Response(exit={'exit_code': 128 - code if code < 0 else code})
+                yield Response(
+                    exit={'exit_code': code if code >= 0 else -1 if self.negative_signal_exits else 128 - code}
+                )
         finally:
             # Reached on cancellation too, which is how sandboxd stops a command whose call ends.
             if not waiter.done():
@@ -268,21 +274,16 @@ class FakeSandbox:
     cluster: FakeCluster
     connector: FakeConnector = field(init=False)
     commands: AsyncCommandExecutor = field(init=False)
+    sandbox_id: str = field(init=False)
+    k8s_helper: FakeK8sHelper = field(init=False)
 
     def __post_init__(self) -> None:
+        self.sandbox_id = self.sandboxd.sandbox_id
+        self.k8s_helper = FakeK8sHelper(self.cluster)
         self.connector = FakeConnector(self)
         # The executor only calls the connector methods `FakeConnector` has.
         connector: Any = self.connector
         self.commands = AsyncCommandExecutor(connector, tracer=None, trace_service_name='sandbox-client')
-
-    async def status(self) -> tuple[str, str]:
-        if self.cluster.status_error is not None:
-            raise self.cluster.status_error
-        if self.cluster.claims.get((self.namespace, self.claim_name or '')) is not self.sandboxd:
-            return 'SandboxNotFound', 'Sandbox object not found in Kubernetes.'
-        if self.cluster.restarting:
-            return 'SandboxNotReady', 'Pod exists with phase: Pending'
-        return 'SandboxReady', ''
 
 
 class FakeConnector:
@@ -325,9 +326,10 @@ class FakeCluster:
         self.pools = {'pool'}
         self.clients: list[FakeClient] = []
         self.created: list[tuple[str, str, dict[str, Any]]] = []
-        self.status_error: Exception | None = None
-        self.restarting = False
-        """When set, sandboxes report not Ready, as while the controller recreates a deleted pod."""
+        self.sandbox_lookup_error: Exception | None = None
+        """When set, reading a Sandbox object fails, as when the API server is unreachable."""
+        self.sandbox_lookup_gate: anyio.Event | None = None
+        """When set, reading a Sandbox object waits for the gate, as an API server that does not answer."""
         self.channel_error: Exception | None = None
         self.create_error: Exception | None = None
         self.create_gate: anyio.Event | None = None
@@ -426,6 +428,14 @@ class FakeK8sHelper:
 
     def __init__(self, cluster: FakeCluster) -> None:
         self.cluster = cluster
+
+    async def get_sandbox(self, name: str, namespace: str) -> dict[str, Any] | None:
+        if self.cluster.sandbox_lookup_gate is not None:
+            await self.cluster.sandbox_lookup_gate.wait()
+        if self.cluster.sandbox_lookup_error is not None:
+            raise self.cluster.sandbox_lookup_error
+        bound = (sandboxd for (ns, _), sandboxd in self.cluster.claims.items() if ns == namespace)
+        return {'metadata': {'name': name}} if any(sandboxd.sandbox_id == name for sandboxd in bound) else None
 
     async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
         return {'metadata': {'name': name}} if (namespace, name) in self.cluster.claims else None

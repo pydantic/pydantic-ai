@@ -382,31 +382,58 @@ async def test_a_dropped_connection_is_reopened(cluster: FakeCluster) -> None:
 
 
 @asyncio_only
-async def test_a_lost_connection_to_a_live_sandbox_propagates(cluster: FakeCluster) -> None:
+async def test_a_lost_connection_to_a_live_sandbox_propagates(
+    cluster: FakeCluster, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
+    assert backend.ref is not None
     cluster.channel_error = ConnectionError('port-forward dropped')
-    # The sandbox is still Ready, so the error is transient and left for durable engines to retry.
+    # The Sandbox still exists, so the error is transient and left for durable engines to retry.
     with pytest.raises(ConnectionError):
         await backend.run(['true'])
-    # An API server that cannot be asked leaves the original error too.
-    cluster.status_error = RuntimeError('API server unreachable')
-    with pytest.raises(ConnectionError):
-        await backend.run(['true'])
-    # So does a sandbox whose pod the controller is recreating: it comes back.
-    cluster.status_error = None
-    cluster.restarting = True
-    with pytest.raises(ConnectionError):
-        await backend.run(['true'])
+    # An API server that cannot be asked, or does not answer, leaves the original error too, and says so.
+    cluster.sandbox_lookup_error = RuntimeError('API server unreachable')
+    with caplog.at_level('WARNING', logger='pydantic_ai_harness.kubernetes_sandbox._backend'):
+        with pytest.raises(ConnectionError):
+            await backend.run(['true'])
+        cluster.sandbox_lookup_error = None
+        cluster.sandbox_lookup_gate = anyio.Event()
+        monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._GONE_CHECK_TIMEOUT', 0.1)
+        with pytest.raises(ConnectionError):
+            await backend.run(['true'])
+    assert [record.getMessage() for record in caplog.records] == [
+        f'Could not ask the API server whether Kubernetes sandbox {backend.ref.id} still exists',
+        f'The API server did not say within 0.1 seconds whether Kubernetes sandbox {backend.ref.id} exists',
+    ]
     await backend.aclose()
 
 
 @asyncio_only
-async def test_a_command_killed_by_a_signal_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster) -> None:
-    # Only a sandbox that was deleted turns a signal exit into `WorkspaceUnavailableError`.
+@pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
+async def test_a_signal_exit_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster, negative: bool) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
-    assert (await backend.run(['sh', '-c', 'kill -TERM $$'])).exit_code == 143
+    await backend.run(['true'])
+    _sandboxd(cluster, backend.ref).negative_signal_exits = negative
+    assert (await backend.run(['sh', '-c', 'kill -TERM $$'])).exit_code == (-1 if negative else 143)
     await backend.aclose()
+
+
+@asyncio_only
+@pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
+async def test_a_signal_exit_in_a_deleted_sandbox_is_unavailable(cluster: FakeCluster, negative: bool) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    assert backend.ref is not None
+    sandboxd = _sandboxd(cluster, backend.ref)
+    sandboxd.negative_signal_exits = negative
+    # The API server no longer has the Sandbox, while its sandboxd still answers until the pod stops.
+    namespace, claim_name = backend.ref.id.split('/')
+    del cluster.claims[namespace, claim_name]
+    with pytest.raises(WorkspaceUnavailableError, match='is gone: its Sandbox was deleted'):
+        await backend.run(['sh', '-c', 'kill -TERM $$'])
+    await backend.aclose()
+    await sandboxd.stop()
 
 
 @asyncio_only
