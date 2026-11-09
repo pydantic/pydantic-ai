@@ -138,7 +138,10 @@ async def test_file_url_downloads_share_one_total_per_model_request(
 
     with (
         patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 2560),
-        pytest.raises(ValueError, match=r'^File URL downloads for one model request exceed the total of 2560 bytes\.$'),
+        pytest.raises(
+            ValueError,
+            match=r'^File URL downloads for one model request exceed the total of 2560 bytes; pass large files as `BinaryContent` instead\.$',
+        ),
     ):
         if stream:
             async with agent.run_stream(prompt):
@@ -219,7 +222,10 @@ async def test_counting_batching_or_compacting_shares_one_download_total(
 
     with (
         patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 2560),
-        pytest.raises(ValueError, match=r'^File URL downloads for one model request exceed the total of 2560 bytes\.$'),
+        pytest.raises(
+            ValueError,
+            match=r'^File URL downloads for one model request exceed the total of 2560 bytes; pass large files as `BinaryContent` instead\.$',
+        ),
     ):
         if method == 'count_tokens':
             await model.count_tokens(messages, None, ModelRequestParameters())

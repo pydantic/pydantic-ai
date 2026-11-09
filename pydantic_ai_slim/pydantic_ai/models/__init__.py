@@ -218,7 +218,7 @@ _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
 
 # Set at Vertex AI's documented 500 MiB request payload limit, the largest of OpenAI, Anthropic, the Gemini API and
-# Vertex AI. Files are sent base64-encoded, so their uncompressed payload is a third larger than this total.
+# Vertex AI. Files are sent base64-encoded, so the request body is about a third larger than the bytes counted here.
 _MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES = 500 * 1024 * 1024
 """Maximum total size of the [`FileUrl`][pydantic_ai.messages.FileUrl] downloads made for one model request."""
 
@@ -3203,7 +3203,8 @@ async def _download_within_request_budget(url: str, *, allow_local: bool) -> htt
         if max_bytes == _MAX_FILE_URL_DOWNLOAD_BYTES:
             raise
         raise ValueError(
-            f'File URL downloads for one model request exceed the total of {_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES} bytes.'
+            f'File URL downloads for one model request exceed the total of {_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES} bytes; '
+            'pass large files as `BinaryContent` instead.'
         ) from e
     if budget is not None:
         budget.remaining -= len(response.content)
