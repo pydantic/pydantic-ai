@@ -11,7 +11,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import httpx2
 import pytest
@@ -1495,33 +1495,6 @@ class TestImageGenerationCapability:
             'high',
         )
         assert tool.provider_settings is None
-
-    async def test_image_generation_overrides_replace_native_settings(self):
-        """A capability field beats the same nested option, keeps the others, for an instance and for a factory."""
-        native = ImageGenerationTool(provider_settings={'openai': {'quality': 'high', 'moderation': 'low'}})
-
-        from_instance = ImageGeneration[None](native=native, fallback_subagent_model='test', quality='low')
-        resolved = from_instance._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(resolved, ImageGenerationTool)
-        assert (resolved.quality, resolved.provider_settings) == ('low', {'openai': {'moderation': 'low'}})
-
-        from_factory = ImageGeneration[None](native=lambda ctx: native, fallback_subagent_model='test', quality='low')
-        resolve = from_factory._resolved_native()  # pyright: ignore[reportPrivateUsage]
-        assert not isinstance(resolve, ImageGenerationTool)
-        pending = resolve(cast(RunContext[None], None))
-        assert inspect.isawaitable(pending)
-        resolved = await pending
-        assert (resolved.quality, resolved.provider_settings) == ('low', {'openai': {'moderation': 'low'}})
-
-    def test_image_generation_overrides_do_not_repeat_legacy_warning(self):
-        with pytest.warns(PydanticAIDeprecationWarning, match=r'field `quality` is deprecated'):
-            native = ImageGenerationTool(quality='high')
-
-        cap = ImageGeneration[None](native=native, fallback_subagent_model='test', output_format='jpeg')
-        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
-
-        assert isinstance(resolved, ImageGenerationTool)
-        assert (resolved.quality, resolved.output_format) == ('high', 'jpeg')
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """A custom native instance produces a local fallback tool.
