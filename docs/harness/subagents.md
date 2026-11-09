@@ -189,7 +189,7 @@ The caller owns the returned workspace and keeps it alive until background child
 
 A *soft outcome* returns a steering message as a normal tool result, so the parent model decides what to do next instead of re-delegating at once, as a `ModelRetry` invites. Timeouts, reached `usage_limits`, and exhausted `max_calls` are always soft; `on_failure` replaces their default message.
 
-A child run that ends with `DeferredToolRequests` (a tool needed approval or was deferred) is soft too, since the parent can't approve the child's calls or resume it, and re-delegating would likely stop the same way. The tool returns a steering message saying which sub-agent stopped and why, or `on_failure`. A sub-agent that resolves its own deferred calls, e.g. with [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md), returns its output as usual. A run ending with `PendingModelResponse` (a model request left waiting on the provider, e.g. in a batch) also returns a steering message, including on a remote worker, and the request is cancelled, best effort: a [batch](../batch.md) is only cancelled once none of its other requests is waiting.
+A child run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is soft too, since the parent can't approve the child's calls or resume it, and re-delegating would likely stop the same way. The tool returns a steering message saying which sub-agent stopped and why, or `on_failure`. A sub-agent that resolves its own deferred calls, e.g. with [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md), returns its output as usual. A run ending with `PendingModelResponse` (its `output_type` includes it and a model request was left waiting on the provider, e.g. in a batch) also returns a steering message, including on a remote worker, and the request is cancelled, best effort: a [batch](../batch.md) is only cancelled once none of its other requests is waiting.
 
 A *soft model error* in the child (`ModelRetry`, or `UnexpectedModelBehavior`, e.g. exhausted retries) becomes a parent `ModelRetry` by default: the parent sees `Sub-agent '<name>' failed: ...` and can re-delegate. `tool_retries` (default `2`; `None` inherits the parent agent's default) bounds consecutive delegate failures before the parent run aborts; a successful delegation resets the count. With `on_failure`, the error returns that message as a normal tool result instead.
 
@@ -235,7 +235,7 @@ agent = Agent(
 
 To stream the child run's model output, pass an `event_stream_handler`. See [capability events](../capabilities/overview.md#capability-events) for how `@on_event` works.
 
-Plain delegation adds no OpenTelemetry spans: the child's core run spans nest under the parent's tool-call span. Task control records decisions core's spans don't show as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes including `sub_agents.agent_name` (only as content for a created agent, whose name the model chose) and, for a task, `sub_agents.task_id`:
+Plain delegation adds no OpenTelemetry spans: the child's core run spans nest under the parent's tool-call span. Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes including `sub_agents.agent_name` (only as content for a created agent, whose name the model chose) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
 | --- | --- | --- |
