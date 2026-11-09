@@ -730,7 +730,7 @@ in its place if one is provided, an `optional=True` tool is left out, and a
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Unlike the other native tools, its calls aren't run by the provider: the model adapter turns them into calls of that local tool, and its results back into the provider's format. The tools it needs are named by its [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by] kinds. Without a tool of that kind, it is left out of the request when it is `optional`, and the request is refused when it isn't.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), its calls aren't run by the provider: the model adapter turns them into calls of that local tool, and its results back into the provider's format. The local tool is found by its kind rather than its name: the kinds a native tool needs are its [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]. Without a tool of each of those kinds that isn't deferred, it is left out of the request when it is `optional`, and the request is refused when it isn't.
 
 `ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 
