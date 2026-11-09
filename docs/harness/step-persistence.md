@@ -51,7 +51,7 @@ Each [`Agent.run`][pydantic_ai.agent.Agent.run] call gets its own `run_id`, matc
 - **`agent_name` set, `run_id` unset** derives a path-safe base64url encoding of the complete `(agent_name, ctx.run_id)` pair. It is injective within `FileStepStore`'s 200-character limit, so replay addresses the same stored run without collisions. A longer derived id raises `ValueError` on every store.
 - **Neither set** uses `ctx.run_id`. A missing context run id raises `RuntimeError`, since inventing one would disconnect replayed writes.
 
-Records carry `agent_name`, falling back to the agent's `name` (inferred from the variable name without `Agent(name=...)`). The fallback doesn't change the store key, so a run stays addressable by the id passed to or returned from `Agent.run`.
+The run record, events and snapshots carry `agent_name`, falling back to the agent's `name` (inferred from the variable name without `Agent(name=...)`). The fallback doesn't change the store key, so a run stays addressable by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
 
@@ -164,7 +164,7 @@ By default `continue_run` returns the latest `complete` snapshot, whose tool wor
 
 - after every `CallToolsNode` whose tool calls all returned, with the pending tool-return request folded in, so the point is saved before the next model request is sent;
 - at `after_run`, if the run ended past that boundary (it reached none, or an [`Agent.run_stream`][pydantic_ai.agent.Agent.run_stream] closing response landed after the last one);
-- on failure, from the live history if it contains a model response: `complete` when a model request raises after a clean tool cycle, `interrupted` (carrying every completed cycle) after a crash mid-tool-cycle.
+- on failure, from the live history if it contains a model response (with `capture_frontier=True`, any messages): `complete` when a model request raises after a clean tool cycle, `interrupted` (carrying every completed cycle) after a crash mid-tool-cycle.
 
 An `interrupted` snapshot can be sent, but may not be safe. Resuming it without a new prompt re-executes the pending calls. With a new prompt, pending calls are closed out with a synthesized `interrupted` return if some of their batch returned; if none did, the run raises [`UserError`][pydantic_ai.exceptions.UserError] rather than abandon them, so close them out first with [`repair_messages`][pydantic_ai.messages.repair_messages]. Neither path tells you whether the original side effect happened; the tool-effect ledger does. So check `list_unresolved_tool_effects` before passing `include_interrupted=True` to `continue_run`, `fork_run`, or `latest_snapshot`. With no matching snapshot, `continue_run` raises `LookupError`.
 
@@ -490,7 +490,7 @@ class MediaContext:
 - `SqliteMediaStore`: `metadata` in a JSON column, `media_type` in its own column.
 - `S3MediaStore`: `metadata` as signed `x-amz-meta-*` headers (read back from HEAD), `media_type` as `Content-Type`. Keys must match `[A-Za-z0-9-]+` and come back lowercased.
 - `DiskMediaStore`: a sidecar `<resolved>.meta.json` per blob, written atomically through a uniquely named temporary file.
-- `MongoMediaStore`: `metadata` as a JSON string and `media_type` as a field on the manifest document (`media` collection by default); as one string, metadata keys escape BSON field-name rules.
+- `MongoMediaStore`: `metadata` as a JSON string and `media_type` as a field on the manifest document (`media` collection by default); as one string, metadata keys aren't subject to BSON field-name rules.
 - `PostgresMediaStore`: `metadata` as a JSON string in a `TEXT` column, `media_type` in its own column.
 
 ### `key_strategy`: controlling the backend storage path

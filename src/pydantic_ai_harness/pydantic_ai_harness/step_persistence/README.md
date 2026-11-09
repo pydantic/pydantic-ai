@@ -70,8 +70,8 @@ turns with `conversation_id=` (see
 - **Neither set** uses `ctx.run_id`. A missing context run id raises
   `RuntimeError`, since inventing one would disconnect replayed writes.
 
-Records carry `agent_name`, falling back to the agent's `name` (inferred from
-the variable name without `Agent(name=...)`). The fallback doesn't change the
+The run record, events and snapshots carry `agent_name`, falling back to the
+agent's `name` (inferred from the variable name without `Agent(name=...)`). The fallback doesn't change the
 store key, so a run stays addressable by the id passed to or returned from
 `Agent.run`.
 
@@ -196,9 +196,10 @@ work was settled when captured. Snapshots are written:
   request is sent;
 - at `after_run`, if the run ended past that boundary (it reached none, or an
   `Agent.run_stream` closing response landed after the last one);
-- on failure, from the live history if it contains a model response: `complete`
-  when a model request raises after a clean tool cycle, `interrupted` (carrying
-  every completed cycle) after a crash mid-tool-cycle.
+- on failure, from the live history if it contains a model response (with
+  `capture_frontier=True`, any messages): `complete` when a model request raises
+  after a clean tool cycle, `interrupted` (carrying every completed cycle) after
+  a crash mid-tool-cycle.
 
 An `interrupted` snapshot can be sent, but may not be safe. Resuming it without
 a new prompt re-executes the pending calls. With a new prompt, pending calls are
@@ -696,7 +697,7 @@ key, which a custom `key_strategy` may not.
   atomically through a uniquely named temporary file.
 - `MongoMediaStore`: `metadata` as a JSON string and `media_type` as a field on
   the manifest document (`media` collection by default); as one string, metadata
-  keys escape BSON field-name rules.
+  keys aren't subject to BSON field-name rules.
 - `PostgresMediaStore`: `metadata` as a JSON string in a `TEXT` column,
   `media_type` in its own column.
 
