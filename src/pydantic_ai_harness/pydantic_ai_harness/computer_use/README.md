@@ -51,6 +51,7 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 | [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) | A Modal cloud sandbox |
 | [`SpritesSandbox(desktop=True)`](../sprites_sandbox/#give-the-agent-a-desktop) | A Fly.io Sprite |
 | [`BoxLiteSandbox(desktop=True)`](../boxlite_sandbox/#give-the-agent-a-desktop) | A BoxLite micro-VM on your machine |
+| [`SmolSandbox(desktop=True)`](../smol_sandbox/#give-the-agent-a-desktop) | A smolvm microVM on your machine |
 
 To give your own sandbox a screen, implement [`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay); see
 [Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display).
