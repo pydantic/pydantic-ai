@@ -382,6 +382,12 @@ def test_infer_model_preserves_provider_initialization_error():
         infer_model('openai:gpt-5')
 
 
+@pytest.mark.parametrize('provider', ['elevenlabs', 'sentence-transformers', 'voyageai'])
+def test_infer_model_rejects_embedding_or_realtime_only_providers(provider: str):
+    with pytest.raises(UserError, match=rf'Provider {re.escape(provider)!r} does not support chat models'):
+        infer_model(f'{provider}:example-model', lambda _: object())
+
+
 @pytest.mark.parametrize(
     ('model_id', 'expected'),
     [

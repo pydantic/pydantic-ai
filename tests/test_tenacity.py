@@ -670,8 +670,8 @@ class TestWaitRetryAfter:
 
         assert (retry_time - after).total_seconds() <= wait_seconds <= (retry_time - before).total_seconds()
 
-    def test_retry_after_http_date_past_time_uses_fallback(self):
-        """Test that past dates in Retry-After fall back to fallback strategy."""
+    def test_retry_after_http_date_past_time_returns_zero(self):
+        """Past Retry-After dates mean the retry may happen immediately."""
         fallback = Mock(return_value=1.0)
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
@@ -692,8 +692,8 @@ class TestWaitRetryAfter:
 
         result = wait_func(retry_state)
 
-        assert result == 1.0
-        fallback.assert_called_once_with(retry_state)
+        assert result == 0.0
+        fallback.assert_not_called()
 
     def test_retry_after_http_date_respects_max_wait(self):
         """Test that max_wait is respected for HTTP date format."""

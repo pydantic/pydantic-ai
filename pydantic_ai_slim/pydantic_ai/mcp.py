@@ -2395,8 +2395,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         ValidationError: If the configuration does not match the `mcpServers` shape above. This is
             a `ValueError` subclass, so catching `ValueError` covers it too.
         ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
-            or an environment variable referenced in the configuration is not defined and no
-            default is provided.
+            both `command` and `url`, or an environment variable referenced in the configuration is not defined
+            and no default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
@@ -2408,6 +2408,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in config['mcpServers'].items():
+        if 'command' in server and 'url' in server:
+            raise ValueError(f'MCP server config {name!r} must not specify both `command` and `url`')
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],

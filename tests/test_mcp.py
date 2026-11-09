@@ -2989,6 +2989,14 @@ class TestLoadMCPToolsets:
             with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
                 load_mcp_toolsets(config_path)
 
+    async def test_load_mcp_toolsets_rejects_ambiguous_server_entry(self):
+        config = {'mcpServers': {'alpha': {'command': 'python', 'url': 'https://example.com/mcp'}}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must not specify both"):
+                load_mcp_toolsets(config_path)
+
     async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):
         """Non-string/dict/list values (ints, bools, null) in the config flow through
         `_expand_env_vars` unchanged."""

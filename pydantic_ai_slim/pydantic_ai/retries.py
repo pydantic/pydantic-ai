@@ -593,7 +593,7 @@ def wait_retry_after(
                         now = datetime.now(UTC)
                         wait_seconds = (retry_time - now).total_seconds()
 
-                        if wait_seconds > 0:
+                        if wait_seconds >= 0:
                             return min(wait_seconds, max_wait)
                     except (ValueError, TypeError, AssertionError, OverflowError):
                         # If date parsing fails, fall back to fallback strategy

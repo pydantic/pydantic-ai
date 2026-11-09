@@ -2932,6 +2932,10 @@ def infer_model(  # noqa: C901
                 message += f". Did you mean '{suggested_name}'?"
             raise UserError(message) from None
 
+    if provider_name in {'elevenlabs', 'sentence-transformers', 'voyageai'}:
+        interface = 'infer_realtime_model' if provider_name == 'elevenlabs' else 'infer_embedding_model'
+        raise UserError(f'Provider {provider_name!r} does not support chat models; use {interface} instead.')
+
     provider = provider_factory(provider_name)
 
     model_kind = provider_name
