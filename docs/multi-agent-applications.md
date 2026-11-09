@@ -573,7 +573,7 @@ async def find_disputed_charges(ctx: RunContext[CaseFile]) -> str:
     return f'{len(result.output.charge_ids)} charge(s) disputed.'  # (5)!
 
 
-@case_agent.tool
+@case_agent.tool(sequential=True)
 async def check_eligibility(ctx: RunContext[CaseFile]) -> str:
     case = ctx.deps
     if case.disputed is None:
@@ -599,7 +599,7 @@ async def handle_dispute(case: CaseFile) -> str:
 3. The delegate's validated output is stored as-is, so nothing downstream has to parse it back out of text.
 4. A later result invalidates what was derived from the earlier one: if the model finds the disputed charges again, the eligibility check has to run again on the new set.
 5. The parent model sees the state through tool results like this summary, which is enough to decide what to do next. Rendering the case file into [instructions](agent.md#instructions) instead would change them on every step and invalidate the [prompt cache](capabilities/caching.md#what-invalidates-a-cache).
-6. The second delegate gets its input from the typed state the first one produced, not from the parent model restating it.
+6. The second delegate gets its input from the typed state the first one produced, not from the parent model restating it. The tool is [`sequential`](tools-advanced.md#parallel-tool-calls-concurrency), so if the model calls both tools in one response, a `find_disputed_charges` call can't replace the disputed charges while their eligibility is being checked.
 7. Your code acts on the typed state, not on the reply the parent model wrote to the customer. This combines with [extract, decide, write](#extract-decide-write): the delegates extract, and your code decides and writes.
 
 The delegation tools are written by hand here because Pydantic AI Harness's [`SubAgents`](harness/subagents.md) capability returns a delegate's output to the parent as text.
