@@ -5,7 +5,7 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, Mon
 
 # Step Persistence
 
-Use Step Persistence to resume or fork an agent run after a crash, in any process, or to continue a delegate's investigation with a follow-up question. `StepPersistence` snapshots the run's message history at every settled step and on failure, to memory, files, SQLite, MongoDB, PostgreSQL, or your own store, and keeps an append-only step-event trail and a ledger of tool side effects, so after a crash you can tell which tool calls completed and which may or may not have run.
+Use Step Persistence to resume an agent run or fork it from an earlier step, in the same process or another one, including after a crash, or to continue a delegate's investigation with a follow-up question. `StepPersistence` snapshots the run's message history at every settled step and on failure, to memory, files, SQLite, MongoDB, PostgreSQL, or your own store, and keeps an append-only step-event trail and a ledger of tool side effects, so after a crash you can tell which tool calls completed and which may or may not have run.
 
 Snapshots hold only the message history: capability state, workspace files, and resuming from the middle of a step are tracked in `pydantic-ai-harness` issues #149 and #196. For recovery inside a step, also run the agent on [durable execution](../durable_execution/overview.md).
 
@@ -439,7 +439,7 @@ URIs are content-addressed (`media+sha256://<hex>`), so a blob resolves the same
 
 ### Exposing externalized bytes as URLs
 
-All five media stores accept a `public_url=` resolver that maps the `media+sha256://<hex>` URI to a URL the model can fetch, for when a CDN, local HTTP server, or signed-URL service fronts the bytes. Without one, `public_url(...)` returns `None` and the model sees no URL. If the target model doesn't accept that URL type, Pydantic AI providers download the bytes, so a URL costs a download, not a failed request. For a static base URL (public R2 bucket, CDN):
+All five media stores accept a `public_url=` resolver that maps the `media+sha256://<hex>` URI to a URL the model can fetch, for when a CDN, local HTTP server, or signed-URL service fronts the bytes. Without one, or when it returns `None`, `public_url(...)` returns `None` and the model sees no URL. If the target model doesn't accept that URL type, Pydantic AI providers download the bytes, so a URL costs a download, not a failed request. For a static base URL (public R2 bucket, CDN):
 
 ```python
 from pydantic_ai_harness.media import S3MediaStore, make_static_public_url
