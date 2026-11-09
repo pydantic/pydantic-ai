@@ -17,7 +17,6 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._framework_frame import framework_frame_text, is_framework_frame
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
@@ -14064,9 +14063,10 @@ async def test_dispatch_request_forwards_manage_message_history():
 
 
 def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
-    """A frame's mark in `TextContent` metadata never reaches the client; the application's own keys do."""
-    marked = framework_frame_text('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', author='tool')
-    with_origin = framework_frame_text('<report>\nDone.\n</report>', metadata={'origin': 'app'})
+    """The reserved namespace of `TextContent` metadata never reaches the client; the application's own keys do."""
+    reserved = {'__pydantic_ai__': {'framework_frame': True}}
+    marked = TextContent('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', metadata=reserved)
+    with_origin = TextContent('<report>\nDone.\n</report>', metadata={**reserved, 'origin': 'app'})
     content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Go.')]),
@@ -14095,4 +14095,4 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'origin' in dumped
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
-    assert is_framework_frame(marked)
+    assert marked.metadata == reserved
