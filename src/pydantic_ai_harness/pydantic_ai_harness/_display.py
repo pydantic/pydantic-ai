@@ -87,7 +87,7 @@ class ManagedDisplay:
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
         self._starts = 0
-        self._ran = False
+        self._had_display = False
         self._restarts = 0
 
     @property
@@ -103,7 +103,7 @@ class ManagedDisplay:
     def started_fresh(self) -> None:
         """Record that `start` launched a new display, without the windows that were open before."""
         self._starts += 1
-        if self._ran:
+        if self._had_display:
             self._restarts += 1
 
     async def _driver_or_start(self) -> DisplayDriver:
@@ -112,7 +112,7 @@ class ManagedDisplay:
         async with self._lock:
             if self._driver is None:
                 self._driver = await self._start()
-                self._ran = True
+                self._had_display = True
             return self._driver
 
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
