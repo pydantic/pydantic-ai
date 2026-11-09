@@ -636,9 +636,10 @@ class MemoryTool(AbstractNativeTool):
 class ComputerTool(AbstractNativeTool):
     """A provider's native computer use tool, whose calls a local `computer` tool runs.
 
-    That is the request's tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind. Pydantic AI Harness's `ComputerUse` adds it with the display size of each step. A model adapter sends it in place
-    of that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns
-    the results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+    That is the request's tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind. Pydantic AI
+    Harness's `ComputerUse` adds it with the display size of each step. A model adapter sends it in place of that
+    tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
+    results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
     """
 
     display_size: tuple[int, int]
