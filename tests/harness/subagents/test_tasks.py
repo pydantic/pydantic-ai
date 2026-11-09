@@ -1154,7 +1154,7 @@ async def test_stuck_child_does_not_mask_the_closing_error(
 async def test_close_drains_many_children_concurrently(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
-    """Closing settles 48 children whose cleanup is slow within the drain bound, saving only the children that ran."""
+    """Closing releases 48 children at once within the drain bound, and leaves the saved history alone."""
     original = anyio.move_on_after
 
     def short(delay: float | None, *, shield: bool = False) -> anyio.CancelScope:
@@ -1169,7 +1169,7 @@ async def test_close_drains_many_children_concurrently(
         await history.restore(record)
     saved: list[str] = []
     running = 0
-    all_running = anyio.Event()
+    all_running, all_saving = anyio.Event(), anyio.Event()
 
     class SlowOwner(DelegationTasks):
         closing: bool = False
@@ -1177,7 +1177,13 @@ async def test_close_drains_many_children_concurrently(
         async def save(self, record: DelegationTask) -> None:
             if self.closing:
                 saved.append(record.id)
-                await anyio.sleep(0.025)
+                if record.conversation_id == 'old':
+                    # Re-saving history, as a drain that saves every record does, never finishes in time.
+                    await anyio.sleep_forever()
+                if len(saved) == 48:
+                    all_saving.set()
+                # Each child's cleanup waits for all the others, so only a concurrent release finishes.
+                await all_saving.wait()
             await super().save(record)
 
     async def hang(record: DelegationTask) -> str:
