@@ -74,8 +74,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
 
     assert len(display.starts) == 1
     assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
-    # E2B's locale is POSIX, under which `xdotool type` stops at the first character outside ASCII.
-    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
+    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
 
 
 async def test_backends_on_one_sandbox_name_one_screen(fake_e2b: FakeE2B, display: FakeDisplay) -> None:

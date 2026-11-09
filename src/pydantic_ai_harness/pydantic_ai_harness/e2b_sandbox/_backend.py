@@ -292,7 +292,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     `UserError` before it reaches E2B.
 
     With `desktop` the sandbox has a display, started on first use and driven with `xdotool` and
-    `scrot`, so a custom template needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
+    `scrot`, so a custom template needs Xvfb, `xdotool`, `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.

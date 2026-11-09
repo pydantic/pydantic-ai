@@ -187,7 +187,9 @@ async def main():
 
 A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent also gets the sandbox's shell and files, so `Coder` and `ComputerUse` can share it.
 
-A custom `template` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
+A custom `template` needs Xvfb, `xdotool`, `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 `sandbox_timeout` is the sandbox's total lifetime, an hour by default, not an idle timeout. A run still going when the timeout ends fails, so set it longer than your longest task.
 
