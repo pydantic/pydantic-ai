@@ -343,7 +343,7 @@ One `computer` tool: the model sends a list of mouse and keyboard actions, they 
 implements `SupportsDisplay` and a model that accepts images; a run without either fails at its start
 or before the request.
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import ComputerUse, DockerSandbox
