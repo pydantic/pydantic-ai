@@ -2682,6 +2682,51 @@ class TestModelRequestErrorHooks:
             ]
         )
 
+    async def test_recovered_response_rejected_when_a_limit_stops_the_run_keeps_it_after_the_request(self):
+        """A limit the recovered response crosses keeps both it and the request it answered in history."""
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            raise RuntimeError('model exploded')
+
+        @dataclass
+        class RecoverThenRejectCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(
+                    parts=[TextPart('recovered response')], usage=RequestUsage(input_tokens=10, output_tokens=5)
+                )
+
+            async def after_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                raise ModelRetry('try again')  # pragma: no cover
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverThenRejectCap()])
+        with capture_run_messages() as messages:
+            with pytest.raises(UsageLimitExceeded, match='Exceeded the total_tokens_limit of 1'):
+                await agent.run('hello', usage_limits=UsageLimits(total_tokens_limit=1))
+
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=10, output_tokens=5),
+                    model_id='function:function:failing_model:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='interrupted',
+                ),
+            ]
+        )
+
     async def test_on_model_request_error_not_called_on_success(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
