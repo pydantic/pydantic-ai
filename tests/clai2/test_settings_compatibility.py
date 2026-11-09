@@ -16,6 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.aoe import AoePlugin
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
 from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
@@ -990,6 +991,47 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
     await loader.close('exit')
 
 
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'titles'),
+    [('{}', True, False), ('{"titles": true}', True, True), ('{"titles": true}', False, False)],
+    ids=['saved-before-titles', 'this-build', 'build-without-titles'],
+)
+async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, titles: bool
+) -> None:
+    """An `aoe` saved before `titles` existed keeps titles off; a build lacking the feature drops the setting."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'aoe',
+                '{"id": "aoe", "factory": "pydantic_clai2.builtin_plugins.aoe", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'titles' in stored:
+        store.save_plugin(store.plugins()[0], requires={'titles': frozenset({'aoe-titles'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'aoe-titles'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'aoe']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, AoePlugin)
+    assert entry.loaded.plugin.settings.titles is titles
+    assert entry.ignored == (None if supported else 'aoe: ignored saved titles (needs aoe-titles); using defaults.')
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
 async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_feature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1400,6 +1442,33 @@ def test_project_cannot_register_worktree_commands(tmp_path: Path) -> None:
     project.write_text('{"worktree_remove_commands": {"/repo": ["command"]}}')
     with pytest.raises(ValueError, match='user-only'):
         load_project_settings(tmp_path)
+
+
+def test_kept_worktrees_preserve_existing_database(tmp_path: Path) -> None:
+    """The additive table leaves version-1 settings readable and survives unrelated writes."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test:model"'))
+        connection.execute('PRAGMA user_version = 1')
+    store = SettingsStore(path)
+    checkout = tmp_path / 'checkout'
+    assert store.kept_worktree(checkout) is None
+    store.keep_worktree(checkout, checkout='first')
+    # Older builds only access the tables they know; they accept the same schema version.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('future.setting', '{"kept":true}'))
+    reopened = SettingsStore(path)
+    assert reopened.load().model == 'test:model'
+    assert reopened.kept_worktree(checkout) == 'first'
+    reopened.set('display.thinking', False)
+    reopened.keep_worktree(checkout, checkout='replacement')
+    assert SettingsStore(path).kept_worktree(checkout) == 'replacement'
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT value_json FROM settings WHERE key = ?', ('future.setting',)).fetchone() == (
+            '{"kept":true}',
+        )
 
 
 def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

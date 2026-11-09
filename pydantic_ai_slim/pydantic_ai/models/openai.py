@@ -61,7 +61,6 @@ from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
@@ -220,7 +219,7 @@ try:
         OpenAIError,
         omit,
     )
-    from openai.types import AllModels, chat, responses
+    from openai.types import chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -462,22 +461,25 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
-"""
-Possible OpenAI model names.
+OpenAIModelName = (
+    str
+    | Literal[
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+    ]
+)
+"""Possible OpenAI model names.
 
-Since OpenAI supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The `Literal` lists the models to pick from, for autocomplete: per line, the newest model of the newest
+generation and of the previous one. Any other model id the API accepts works too, as a `str`.
 See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
-Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
-`openai` extra declares; it arrived in `openai` 3.21.0
-(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
-`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
-Drop its bridge once the SDK floor includes the release that adds it.
+This is used for the OpenAI-compatible models of other providers too (ie, Ollama, Deepseek).
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -1391,7 +1393,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     chosen while it and those messages are unchanged: each response created with this setting, or with
     `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
-    history processor or compaction has changed either since, the full history is sent instead.
+    history processor or compaction has changed either since, the full history is sent instead. The same goes
+    for a response without a digest, as there's no telling whether it has changed.
+    A history missing its earlier messages counts as changed too, so pass `all_messages()` rather than
+    `new_messages()`, or the model won't see what was left out.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -2941,7 +2946,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
             text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
-            text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
+            text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
         )
 
@@ -3982,24 +3987,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
         The server created it from the history the suspended response recorded, so if that, or the suspended response,
-        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
-        matches, so it isn't continued from.
+        has changed since, or it recorded none, none is returned: the merged response keeps the suspended one's digest,
+        if any, which no longer matches, so it isn't continued from.
         """
-        if self._history_changed(suspended, history):
+        if not self._history_known_unchanged(suspended, history):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
-    def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response`, or `history`, the messages before it, changed since the response was created.
+    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `response`, and `history`, the messages before it, are as they were when the response was created.
 
-        A response with no recorded digest, from before it was recorded or from a request that didn't
-        continue server-side state, is trusted as before.
+        Without a recorded digest there's no telling, so a response that has none doesn't count.
         """
         if response.history_digest is None:
             return False
-        return all(
+        return any(
             response.history_digest
-            != _continuation_digest(
+            == _continuation_digest(
                 _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
             )
             for with_instructions in (False, True)
@@ -5365,7 +5369,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
-                if self._history_changed(m, messages[:index]):
+                if not self._history_known_unchanged(m, messages[:index]):
                     return None, messages, True
                 # A response cached only on another socket, or one that's gone, means replaying the history.
                 if not self._is_response_id_reachable(m, store, websocket_mode=websocket_mode):
