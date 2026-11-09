@@ -35,7 +35,7 @@ def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
                 raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
 
 
-def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path) -> None:
+def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
     """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
     api_key = os.environ['OPENCODE_API_KEY']
     if not api_key:
@@ -90,6 +90,7 @@ def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path) -> None:
                 env=env,
                 stdout=stream,
                 check=True,
+                timeout=timeout,
             )
 
 

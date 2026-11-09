@@ -95,6 +95,8 @@ def test_verdict_splits_reasons_into_the_full_result(detection_dir: Path, monkey
         'json',
     ]
     assert call['cwd'] == detection_dir
+    assert isinstance(call['timeout'], float)
+    assert 0 < call['timeout'] <= gh_aw_opencode_detect.DEADLINE_SECONDS
     assert isinstance(call['input'], str)
     assert call['input'].startswith('# Threat Detection Analysis\n')
     assert 'repository workspace are unavailable' in call['input']
@@ -158,7 +160,29 @@ def test_retry_recovers_from_an_incomplete_stream(detection_dir: Path, monkeypat
     gh_aw_opencode_detect.main()
 
     assert len(invoked) == 2
+    streams = (detection_dir.parent / 'runner-temp').glob('gh-aw-opencode-detector-*.ndjson')
+    assert sorted(stream.name for stream in streams) == [
+        'gh-aw-opencode-detector-1.ndjson',
+        'gh-aw-opencode-detector-2.ndjson',
+    ]
     assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
+
+
+def test_deadline_stops_retries_and_reports_a_timeout(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that reaches the deadline is not retried, so the status line is written before the step limit."""
+    attempts: list[list[str]] = []
+
+    def slow_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        attempts.append(args)
+        raise subprocess.TimeoutExpired(args, 1)
+
+    monkeypatch.setattr(subprocess, 'run', slow_run)
+
+    with pytest.raises(SystemExit):
+        gh_aw_opencode_detect.main()
+
+    assert len(attempts) == 1
+    assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=engine_timeout exit=2'
 
 
 def test_escaping_symlink_stops_before_opencode_runs(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

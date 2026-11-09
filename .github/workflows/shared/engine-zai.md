@@ -181,9 +181,10 @@ safe-outputs:
             const directory = '/tmp/gh-aw/threat-detection';
             const read = name => fs.existsSync(name) ? fs.readFileSync(name, 'utf8') : '';
             const log = read(path.join(directory, 'detection.log'));
-            // Read only step counters: the stream's text is model-authored.
-            const steps = read(path.join(process.env.RUNNER_TEMP, 'gh-aw-opencode-detector.ndjson'))
-              .split('\n').filter(line => line.includes('"step_finish"')).map(line => JSON.parse(line))
+            // One stream per OpenCode attempt. Read only step counters: the streams' text is model-authored.
+            const streams = fs.readdirSync(process.env.RUNNER_TEMP).filter(name => /^gh-aw-opencode-detector-\d+\.ndjson$/.test(name));
+            const steps = streams.flatMap(name => read(path.join(process.env.RUNNER_TEMP, name)).split('\n'))
+              .filter(line => line.includes('"step_finish"')).map(line => JSON.parse(line))
               .filter(event => event.type === 'step_finish').map(event => event.part);
             const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
             const verdictText = read(path.join(directory, 'detection_result.json'));
@@ -197,6 +198,7 @@ safe-outputs:
               'gh-aw.detector.outcome': outcome,
               'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
               'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
+              'gh-aw.detector.attempts': streams.length,
               'gh-aw.detector.requests': steps.length,
               'gh-aw.detector.usage_available': steps.length > 0,
               'gh-aw.detector.usage.input_tokens': sum(step => step.tokens.input),

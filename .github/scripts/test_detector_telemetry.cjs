@@ -11,7 +11,7 @@ const body = source.split('          script: |\n')[1].split('\n---')[0]
   .split('\n').map(line => line.replace(/^ {12}/, '')).join('\n');
 const execute = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', body);
 const directory = '/tmp/gh-aw/threat-detection';
-const streamPath = '/runner/gh-aw-opencode-detector.ndjson';
+const streamPath = '/runner/gh-aw-opencode-detector-1.ndjson';
 const cleanVerdict = { prompt_injection: false, secret_leak: false, malicious_patch: false, reasons: [] };
 const stepFinish = (input, output, cacheRead, cost) => JSON.stringify({
   type: 'step_finish', timestamp: 1794165925626,
@@ -24,6 +24,7 @@ async function report(files, outcome = 'success', cancelled = false) {
     if (name === 'fs') return {
       existsSync: file => Object.hasOwn(files, file),
       readFileSync: file => files[file],
+      readdirSync: directory => Object.keys(files).filter(file => path.dirname(file) === directory).map(file => path.basename(file)),
     };
     if (name === 'path') return path;
     assert.equal(name, '/runner/gh-aw/actions/otlp.cjs');
@@ -54,6 +55,7 @@ test('OpenCode step usage is summed without model-authored text', async () => {
     'gh-aw.detector.outcome': 'success',
     'gh-aw.detector.reason': 'result_recorded',
     'gh-aw.detector.verdict': 'clean',
+    'gh-aw.detector.attempts': 1,
     'gh-aw.detector.requests': 2,
     'gh-aw.detector.usage_available': true,
     'gh-aw.detector.usage.input_tokens': 2215,
@@ -78,6 +80,17 @@ test('step usage does not depend on event key order, and counts only step_finish
   });
   assert.equal(spans[0].attributes['gh-aw.detector.requests'], 1);
   assert.equal(spans[0].attributes['gh-aw.detector.usage.output_tokens'], 204);
+});
+
+test('retried attempts all count toward usage', async () => {
+  const spans = await report({
+    [streamPath]: stepFinish(1644, 306, 0, 0.01) + '\n',
+    '/runner/gh-aw-opencode-detector-2.ndjson': stepFinish(571, 228, 1536, 0.002) + '\n',
+    '/runner/unrelated.ndjson': stepFinish(1, 1, 1, 1) + '\n',
+  });
+  assert.equal(spans[0].attributes['gh-aw.detector.attempts'], 2);
+  assert.equal(spans[0].attributes['gh-aw.detector.requests'], 2);
+  assert.equal(spans[0].attributes['gh-aw.detector.usage.input_tokens'], 2215);
 });
 
 test('an invalid report keeps its usage and status reason', async () => {

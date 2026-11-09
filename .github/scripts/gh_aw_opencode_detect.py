@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 DETECTION_DIR = Path('/tmp/gh-aw/threat-detection')
 RESULT_PREFIX = 'THREAT_DETECTION_RESULT:'
+# The detection step's timeout-minutes is 15. Stop retrying in time to record why no verdict exists.
+DEADLINE_SECONDS = 13 * 60
 # Appended to the detection prompt gh-aw renders, which assumes a shell and the repository checkout.
 TOOL_GUIDANCE = (
     '\n\nYou have read, grep, and glob tools only, inside /tmp/gh-aw/threat-detection. '
@@ -57,15 +60,19 @@ def main() -> None:
     full_path = DETECTION_DIR / 'detection_result_full.json'
     for path in (result_path, full_path):
         path.unlink(missing_ok=True)
-    stream = Path(os.environ['RUNNER_TEMP']) / 'gh-aw-opencode-detector.ndjson'
+    deadline = time.monotonic() + DEADLINE_SECONDS
     retries = int(os.environ['GH_AW_HARNESS_MAX_RETRIES'])
     try:
         check_symlinks(DETECTION_DIR)
         prompt = Path(os.environ['GH_AW_PROMPT']).read_text(encoding='utf-8') + TOOL_GUIDANCE
         attempt = 1
         while True:
+            # One stream per attempt, so the usage report counts the retried attempts too.
+            stream = Path(os.environ['RUNNER_TEMP']) / f'gh-aw-opencode-detector-{attempt}.ndjson'
             try:
-                run_read_only(prompt, cwd=DETECTION_DIR, agent='detector', output=stream)
+                run_read_only(
+                    prompt, cwd=DETECTION_DIR, agent='detector', output=stream, timeout=deadline - time.monotonic()
+                )
                 text = final_text(stream)
                 break
             except (ValueError, subprocess.CalledProcessError) as exc:
@@ -73,6 +80,9 @@ def main() -> None:
                     raise
                 print(f'OpenCode threat detection attempt {attempt} failed: {type(exc).__name__}; retrying')
                 attempt += 1
+    except subprocess.TimeoutExpired:
+        report_status('engine_timeout', 2)
+        sys.exit('OpenCode threat detection ran out of time')
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         report_status('engine_error', 2)
         sys.exit(f'OpenCode threat detection failed: {type(exc).__name__}')
