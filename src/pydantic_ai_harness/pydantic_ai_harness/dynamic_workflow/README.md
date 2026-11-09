@@ -20,7 +20,7 @@ with code; unlike Code Mode, it calls whole agents rather than individual tools.
 
 Use [`SubAgents`](../subagents/README.md) for occasional delegations or when the parent needs to judge each
 result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting, or retries.
-Both accept the same agents. Start with `SubAgents` if you are unsure.
+You can switch between them without changing the underlying agents. Start with `SubAgents` if you are unsure.
 
 ## Install
 
@@ -447,8 +447,7 @@ DynamicWorkflow(  # all parameters are keyword-only
     forward_usage=True,
     inherit_model=False,  # True -> sub-agents run with the parent run's resolved model
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
-    resource_limits=None,  # None -> backstop (256 MB, no time cap);
-    # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
+    resource_limits=None,  # None -> 256 MB, no time cap; dict merges; 'unlimited' -> sandbox limits off
     id=None,  # required when defer_loading=True
     description=None,  # one-line catalog entry shown while deferred
     defer_loading=False,

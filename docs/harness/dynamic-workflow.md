@@ -5,10 +5,7 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 
 # Dynamic Workflow
 
-Coordinate sub-agents in parallel, chain their results, or retry them in one tool call. Use
-`DynamicWorkflow` when this coordination can run as Python rather than needing the orchestrator's
-judgment after each step. On success, intermediate results stay out of the orchestrator's context unless the
-script returns or prints them.
+Coordinate sub-agents in parallel, chain their results, or retry them in one tool call. Use `DynamicWorkflow` when this coordination can run as Python rather than needing the orchestrator's judgment after each step. On success, intermediate results stay out of the orchestrator's context unless the script returns or prints them.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -16,16 +13,11 @@ script returns or prints them.
 
 ## The idea
 
-`DynamicWorkflow` gives the orchestrator one tool, `run_workflow`. The model writes a Python script
-that runs in the [Monty](https://github.com/pydantic/monty) sandbox, with each named sub-agent
-available as an async function. Like [Code Mode](code-mode.md), it replaces repeated tool calls
-with code; unlike Code Mode, it calls whole agents rather than individual tools.
+`DynamicWorkflow` gives the orchestrator one tool, `run_workflow`. The model writes a Python script that runs in the [Monty](https://github.com/pydantic/monty) sandbox, with each named sub-agent available as an async function. Like [Code Mode](code-mode.md), it replaces repeated tool calls with code; unlike Code Mode, it calls whole agents rather than individual tools.
 
 ## How this relates to Subagents
 
-Use [`SubAgents`](subagents.md) for occasional delegations or when the parent needs to judge each
-result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting, or retries.
-Both accept the same agents. Start with `SubAgents` if you are unsure.
+Use [`SubAgents`](subagents.md) for occasional delegations or when the parent needs to judge each result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting, or retries. You can switch between them without changing the underlying agents. Start with `SubAgents` if you are unsure.
 
 ## Installation
 
@@ -52,8 +44,7 @@ orchestrator = Agent(
 )
 ```
 
-Each agent's `name` becomes its sandbox function name and must be a valid Python identifier.
-Its `description` tells the model when to call it.
+Each agent's `name` becomes its sandbox function name and must be a valid Python identifier. Its `description` tells the model when to call it.
 
 ## What the model does with it
 
@@ -69,12 +60,9 @@ reports = await asyncio.gather(
 await summarizer(task='Summarize these review findings:\n' + '\n\n'.join(reports))
 ```
 
-Call sub-agents with `await` and a keyword-only `task`. `asyncio.gather` runs calls concurrently;
-the last expression supplies the tool result.
+Call sub-agents with `await` and a keyword-only `task`. `asyncio.gather` runs calls concurrently; the last expression supplies the tool result.
 
-Each call is an isolated `Agent.run` with its own model loop, history, tools, and output.
-Include all required context in `task`: calls do not remember earlier runs. Each run costs tokens;
-use the [budgets below](#keeping-it-safe-budgets) to limit usage.
+Each call is an isolated `Agent.run` with its own model loop, history, tools, and output. Include all required context in `task`: calls do not remember earlier runs. Each run costs tokens; use the [budgets below](#keeping-it-safe-budgets) to limit usage.
 
 ## Sub-agents can return structured data
 
@@ -101,11 +89,7 @@ result['value']  # not result.value
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
 
-Sub-agents cannot pause for [tool approval](../deferred-tools.md) or a
-[pending model response](../batch.md#ending-a-run-while-it-waits). These output types are omitted
-from the catalog; returning `DeferredToolRequests` or `PendingModelResponse` raises `RuntimeError`.
-Pending requests are cancelled best effort; a batch is cancelled only when no other request in it
-is waiting.
+Sub-agents cannot pause for [tool approval](../deferred-tools.md) or a [pending model response](../batch.md#ending-a-run-while-it-waits). These output types are omitted from the catalog; returning `DeferredToolRequests` or `PendingModelResponse` raises `RuntimeError`. Pending requests are cancelled best effort; a batch is cancelled only when no other request in it is waiting.
 
 ## How results come back
 
@@ -154,10 +138,7 @@ These limits guard the orchestration script's own memory, not the sub-agents it 
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 ```
 
-`max_duration_secs` counts sandbox execution time, excluding waits for sub-agents. Set it to
-stop CPU-bound loops that never call a sub-agent and therefore bypass the agent budgets.
-A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource
-limits; the separate 10 MiB print cap remains.
+`max_duration_secs` counts sandbox execution time, excluding waits for sub-agents. Set it to stop CPU-bound loops that never call a sub-agent and therefore bypass the agent budgets. A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap remains.
 
 ### Workflows do not nest
 
@@ -195,12 +176,9 @@ orchestrator = Agent('{{ openai:medium }}', capabilities=[workflow])
 workflow.reveal(fixer)
 ```
 
-The new agent becomes callable on the next step, announced by a system message containing its
-signature. The tool description stays fixed to preserve the prompt-cache prefix. If compaction or
-a history processor removes the announcement, it is sent again.
+The new agent becomes callable on the next step, announced by a system message containing its signature. The tool description stays fixed to preserve the prompt-cache prefix. If compaction or a history processor removes the announcement, it is sent again.
 
-`reveal()` is append-only. Missing names, invalid identifiers, reserved keywords, and collisions
-raise `UserError` immediately.
+`reveal()` is append-only. Missing names, invalid identifiers, reserved keywords, and collisions raise `UserError` immediately.
 
 ## Loading it only when needed: `defer_loading`
 
@@ -235,12 +213,7 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 ## Running inside a Temporal workflow
 
-Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
-sub-agent whose model requests should run as activities, then register every agent with its own
-`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
-and is re-executed during replay against the recorded sub-agent results.
-Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
-runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
+Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each sub-agent whose model requests should run as activities, then register every agent with its own `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability), and is re-executed during replay against the recorded sub-agent results. Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## Observability
 
@@ -257,8 +230,7 @@ DynamicWorkflow(  # all parameters are keyword-only
     forward_usage=True,
     inherit_model=False,  # True -> sub-agents run with the parent run's resolved model
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
-    resource_limits=None,  # None -> backstop (256 MB, no time cap);
-    # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
+    resource_limits=None,  # None -> 256 MB, no time cap; dict merges; 'unlimited' -> sandbox limits off
     id=None,  # required when defer_loading=True
     description=None,  # one-line catalog entry shown while deferred
     defer_loading=False,
