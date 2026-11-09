@@ -4,14 +4,16 @@ import posixpath
 import struct
 import zlib
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, Self, cast
 
 import anyio
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, NATIVE_TOOL, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
 from pydantic_ai.messages import BinaryImage, ToolReturn
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -555,10 +557,10 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-def computer_toolset(*, requires_approval: bool = False, native: bool = True) -> FunctionToolset[Any]:
+def computer_capability(*, requires_approval: bool = False, native: bool = True) -> AbstractCapability[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
-    It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
+    With `native`, it also adds a `ComputerTool`, as `ComputerUse` does. It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
     the outcome in the result's metadata.
     """
 
@@ -584,6 +586,17 @@ def computer_toolset(*, requires_approval: bool = False, native: bool = True) ->
         name='computer',
         tool_kind=COMPUTER_KIND,
         requires_approval=requires_approval,
-        metadata=None if native else {NATIVE_TOOL: False},
     )
-    return FunctionToolset([tool])
+    return _FakeComputerUse(FunctionToolset([tool]), native)
+
+
+@dataclass
+class _FakeComputerUse(AbstractCapability[Any]):
+    toolset: FunctionToolset[Any]
+    native: bool
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        return self.toolset
+
+    def get_native_tools(self) -> list[ComputerTool]:
+        return [ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)] if self.native else []
