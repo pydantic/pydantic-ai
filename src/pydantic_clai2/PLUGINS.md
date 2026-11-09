@@ -1563,6 +1563,19 @@ continues its saved history, its reply streams into its transcript, and the sess
 conversation and the agent never see it. `POST /api/tasks/ID/resume`, which the page no longer
 calls, still asks the agent to resume a finished task, as `/tasks resume` does.
 
+While the shown session leads an agent team (`team.enabled` on), the sidebar shows **Team (N)** with
+how many teammates are in each state, from `host.team` and `on_team_progress`. It opens the Team
+pane: a tile per teammate with its type, model, state, and the board item it works on, plus the end of
+its transcript while the tile is in view. Click a tile to open that teammate's transcript; its
+**Message** box sends it a message, which it reads at its next model request (an idle teammate wakes),
+and **Stop** stops it until your next message. Below the tiles is the shared board, one column per
+status (Pending, In progress, Blocked, Done, Cancelled), each item showing its owner and `⛓ #3, #5` for
+the items it still waits for: **Assign** hands a pending item to a teammate, **Unclaim** hands one in
+progress back, and **Cancel** cancels one that is not done, as `/board` does. Then comes the feed of
+messages between the lead, its teammates, and you. A page gets a team's changes only while it watches
+that team, and a teammate's streamed text only while its tile or transcript is in view, so a large team
+does not flood it. With teams off, there is no Team pane.
+
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,

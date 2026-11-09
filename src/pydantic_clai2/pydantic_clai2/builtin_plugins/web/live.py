@@ -2,6 +2,7 @@
 
 Each browser watches some live sessions, by conversation ID: it gets their messages and the global
 ones. One that never says which watches the default session, as every browser did before CLAI ran several.
+Only the browsers showing a session's team get its team messages, and a teammate's transcript.
 """
 
 import asyncio
@@ -24,6 +25,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ServerMessage,
     SessionMessage,
     Snapshot,
+    TaskItems,
+    TeamDelta,
     dump,
     dump_session,
     questions_info,
@@ -45,6 +48,10 @@ class Client:
     """Conversation IDs; `None` until it sends `watch`, meaning the default session."""
     unwatch: dict[str, Callable[[], None]] = field(default_factory=dict[str, Callable[[], None]])
     """What stops counting it as a watcher of each live session it watches, by `LiveSession.id`."""
+    teams: set[str] = field(default_factory=set[str])
+    """The conversation IDs whose Team pane it shows, from `team_watch`; only these get team messages."""
+    members: set[str] = field(default_factory=set[str])
+    """The task IDs of the teammates whose transcript it shows; only these teammates' `TaskItems` reach it."""
 
     def watches(self, session: str, *, default: str | None) -> bool:
         return session == default if self.watching is None else session in self.watching
@@ -83,12 +90,25 @@ class Hub:
                 clients, dump(message) if isinstance(message, Snapshot) else dump_session(message, session=session)
             )
 
+    def publish_team(self, message: TeamDelta, *, session: str) -> None:
+        """Queue a change to the team of the session holding conversation `session` for the browsers showing it."""
+        if clients := [client for client in self._clients if session in client.teams]:
+            self.send(clients, dump_session(message, session=session))
+
+    def publish_member(self, message: TaskItems, *, session: str) -> None:
+        """Queue a teammate's transcript change for the browsers watching its session that show that teammate."""
+        if clients := [client for client in self.watchers(session) if message.id in client.members]:
+            self.send(clients, dump_session(message, session=session))
+
     def rename(self, old: str, new: str) -> None:
         """A session switched from conversation `old` to `new`: the browsers watching it watch `new` now."""
         for client in self._clients:
             if client.watching is not None and old in client.watching:
                 client.watching.discard(old)
                 client.watching.add(new)
+            if old in client.teams:
+                client.teams.discard(old)
+                client.teams.add(new)
 
     def send(self, clients: Iterable[Client], text: str) -> None:
         """Queue `text` for `clients`; one too far behind is dropped and told to reconnect."""

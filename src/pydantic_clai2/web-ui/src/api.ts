@@ -21,6 +21,9 @@ import type {
   Steering,
   Switch,
   TaskTranscript,
+  TeammateTranscript,
+  TeamWatchMessage,
+  DeliveryStatus,
   Transcript,
   WatchMessage,
 } from './protocol'
@@ -163,6 +166,20 @@ export function sessionApi(id: string | null) {
       call<MenuEdited>('POST', `${fieldsPath(base, target)}/${encodeURIComponent(key)}${menuQuery(target)}`, { value }),
     runAction: (target: MenuTarget, key: string) =>
       call<MenuEdited>('POST', `${fieldsPath(base, target)}/${encodeURIComponent(key)}/action${menuQuery(target)}`),
+    /** A teammate of the team this session leads, with its history so far. */
+    teammate: (name: string) => call<TeammateTranscript>('GET', `${base}/team/members/${encodeURIComponent(name)}`),
+    /** Send a teammate your message, which it reads at its next model request; an idle one wakes. */
+    messageTeammate: (name: string, text: string) =>
+      call<{ status: DeliveryStatus }>('POST', `${base}/team/members/${encodeURIComponent(name)}/message`, { text }),
+    /** Stop a teammate; only your next message wakes it. */
+    stopTeammate: (name: string) => call<void>('POST', `${base}/team/members/${encodeURIComponent(name)}/stop`),
+    /** Hand a pending board item to a teammate, and tell it. */
+    assign: (item: string, owner: string) =>
+      call<void>('POST', `${base}/team/board/${encodeURIComponent(item)}/assign`, { owner }),
+    /** Hand a board item in progress back, so any teammate can claim it. */
+    unclaim: (item: string) => call<void>('POST', `${base}/team/board/${encodeURIComponent(item)}/unclaim`),
+    /** Cancel a board item that is not done, unblocking the items that wait only on it. */
+    cancelItem: (item: string) => call<void>('POST', `${base}/team/board/${encodeURIComponent(item)}/cancel`),
   }
 }
 
@@ -236,11 +253,18 @@ export async function interrupt(onError: (message: string) => void, stop: () => 
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'expired'
 
-/** The open WebSocket: `watch` names the live sessions the page keeps, so only their messages come. */
+/**
+ * The open WebSocket: `watch` names the live sessions the page keeps, so only their messages come; `watchTeam` the
+ * sessions whose team it shows and the teammates (by task ID) whose transcript it shows.
+ */
 export interface Socket {
   watch: (ids: readonly string[]) => void
+  watchTeam: (sessions: readonly string[], members: readonly string[]) => void
   close: () => void
 }
+
+/** What a new connection shows of teams until the page says, as the server starts it. */
+const NO_TEAM: TeamWatchMessage = { type: 'team_watch', sessions: [], members: [] }
 
 /** What a new connection watches again: the sessions the page keeps, and the one of them it shows. */
 export interface Watching {
@@ -299,6 +323,15 @@ export function connect(
     const message: WatchMessage = { type: 'watch', sessions: [...ids] }
     socket.send(JSON.stringify(message))
   }
+  // The teams and teammates the page shows, sent again on each new connection, and what this connection was sent.
+  let team: TeamWatchMessage = NO_TEAM
+  let teamSent = JSON.stringify(NO_TEAM)
+  const sendTeam = () => {
+    const key = JSON.stringify(team)
+    if (socket?.readyState !== WebSocket.OPEN || key === teamSent) return
+    teamSent = key
+    socket.send(key)
+  }
   let stopped = false
   let delay = 500
   let failures = 0
@@ -321,9 +354,11 @@ export function connect(
     delay = 500
     failures = 0
     watched = null
+    teamSent = JSON.stringify(NO_TEAM)
     const { shown, sessions } = watching()
     if (shown !== null) onWatch(shown)
     send(sessions)
+    sendTeam()
     onState('open')
   }
   // The version of the CLAI this bundle came from, as its first snapshot says.
@@ -366,6 +401,10 @@ export function connect(
   open()
   return {
     watch: send,
+    watchTeam: (sessions, members) => {
+      team = { type: 'team_watch', sessions: [...sessions].sort(), members: [...members].sort() }
+      sendTeam()
+    },
     close: () => {
       stopped = true
       window.clearTimeout(timer)

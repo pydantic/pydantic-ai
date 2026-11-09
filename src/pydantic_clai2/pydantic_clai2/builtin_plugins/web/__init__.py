@@ -34,6 +34,7 @@ from pydantic_clai2.plugins import (
     PluginHost,
     SessionEnd,
     TaskProgress,
+    TeamProgress,
     TurnEnd,
 )
 from pydantic_clai2.runtime.permissions import approval_handler
@@ -208,6 +209,9 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_task_progress(self, event: TaskProgress) -> None:
         self.service.task_progress(event)
+
+    async def on_team_progress(self, event: TeamProgress) -> None:
+        self.service.team_progress(event)
 
     async def on_fork_end(self, event: ForkEnd) -> None:
         self.service.fork_ended(event)

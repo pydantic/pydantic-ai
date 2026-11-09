@@ -46,15 +46,19 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     SessionsChanged,
     SettingsChanged,
     TaskTranscript,
+    TeamChanged,
+    TeammateTranscript,
     ThemeChanged,
     ThemeInfo,
     Transcript,
     UpdateChanged,
     UpdateInfo,
     dump,
+    dump_session,
     history_items,
 )
 from pydantic_clai2.builtin_plugins.web.sidebar import project_folder, project_names, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.team import member_entry
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -74,6 +78,7 @@ from pydantic_clai2.plugins import (
     SidePanel,
     TaskCatalog,
     TaskProgress,
+    TeamProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
@@ -389,6 +394,9 @@ class WebService:
     def task_progress(self, event: TaskProgress) -> None:
         self.current().workers.observe(event)
 
+    def team_progress(self, event: TeamProgress) -> None:
+        self.current().team.observe(event)
+
     def fork_ended(self, event: ForkEnd) -> None:
         self.current().fork_ended(event)
 
@@ -627,6 +635,27 @@ class WebService:
         if steered:
             channel.workers.steered(task_id, text)
         return steered
+
+    # The Team pane: the team each live session leads.
+
+    def team_watch(self, client: Client, sessions: Sequence[str], members: Sequence[str]) -> None:
+        """Replace whose Team pane and which teammates' transcripts `client` shows, sending each newly shown one."""
+        teams, shown = set(sessions) - client.teams, set(members) - client.members
+        client.teams, client.members = set(sessions), set(members)
+        for channel in self.channels():
+            if channel.id in teams:
+                self.hub.send([client], dump_session(TeamChanged(team=channel.team_state()), session=channel.id))
+            for task_id in shown:
+                if (transcript := channel.workers.transcript(task_id)) is not None:
+                    self.hub.send([client], dump_session(transcript, session=channel.id))
+
+    def teammate(self, channel: SessionChannel, name: str) -> TeammateTranscript:
+        """A teammate of the team `channel`'s session leads, with its history so far."""
+        catalog = channel.team_catalog()
+        member = next((member for member in catalog.snapshot().members if member.name == name), None)
+        if member is None:
+            raise LookupError(f'No teammate {name!r} in this conversation.')
+        return TeammateTranscript(member=member_entry(member), items=history_items(catalog.history(name)))
 
     # Side panels.
 

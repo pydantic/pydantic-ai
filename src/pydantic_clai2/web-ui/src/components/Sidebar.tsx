@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { LiveEntry, Project, SessionEntry, TaskEntry, ThemeInfo } from '../protocol'
+import type { LiveEntry, Project, SessionEntry, TaskEntry, TeamState, ThemeInfo } from '../protocol'
 import {
   REMOVED,
   WORKING,
@@ -27,6 +27,7 @@ import {
 } from '../sidebarModel'
 import { useNow } from '../workers'
 import { WorkersTree } from './WorkersTree'
+import { teamSummary } from './TeamPane'
 import {
   ArchiveIcon,
   ChevronIcon,
@@ -36,6 +37,7 @@ import {
   MoreIcon,
   OrchestratorIcon,
   PaletteIcon,
+  TeamIcon,
   GearIcon,
   PuzzleIcon,
   SearchIcon,
@@ -73,6 +75,11 @@ interface Props {
   orchestrating: boolean
   orchestratorRunning: boolean
   onOrchestrator: () => void
+  /** The team the shown session leads, whose entry shows only then; `null` while teams are off. */
+  team: TeamState | null
+  /** Whether the main pane shows the Team pane. */
+  teaming: boolean
+  onTeam: () => void
   onCollapse: () => void
   onPlugins: () => void
   onSettings: () => void
@@ -148,6 +155,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     orchestrating,
     orchestratorRunning,
     onOrchestrator,
+    team,
+    teaming,
+    onTeam,
     onCollapse,
     onPlugins,
     onSettings,
@@ -607,6 +617,18 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <span>Orchestrator</span>
         {orchestratorRunning && <span className="state running" aria-label="Working" />}
       </button>
+      {team && (
+        <button
+          className={`new-session orchestrator-entry team-entry ${teaming ? 'active' : ''}`}
+          onClick={onTeam}
+          title="The teammates the session's lead runs, their board, and their messages"
+          aria-pressed={teaming}
+        >
+          <TeamIcon size={16} />
+          <span>Team ({team.members.length})</span>
+          <span className="team-entry-summary">{teamSummary(team)}</span>
+        </button>
+      )}
       <label className="search">
         <SearchIcon size={14} />
         <input

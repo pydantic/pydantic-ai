@@ -2221,8 +2221,12 @@ more than four teammates, the idle ones fold into one `N idle` count.
 - **`/tasks resume NAME`** wakes an idle or stopped teammate with your word to continue, and
   **`/tasks stop NAME`** stops one; a teammate's name works wherever `/tasks` takes an ID.
 
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the sidebar's **Team (N)** opens a Team
+pane with the same roster and board: a live tile per teammate, its transcript with a **Message** box,
+the board with **Assign**, **Unclaim**, and **Cancel**, and the team's messages.
+
 The board is saved beside the tasks, in `<database-name>.tasks/boards/`. With teams off, nothing changes:
-no roster or board shows, and Ctrl+X A and Ctrl+T only say how to turn teams on.
+no roster, board, or Team pane shows, and Ctrl+X A and Ctrl+T only say how to turn teams on.
 
 Task metadata and independent histories are stored beside the session database
 in `<database-name>.tasks/`. Each database has its own task directory; in-memory

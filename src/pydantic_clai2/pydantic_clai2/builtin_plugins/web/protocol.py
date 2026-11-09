@@ -413,6 +413,8 @@ class Snapshot:
     update: UpdateInfo | None = None
     replaces: str | None = None
     """The conversation the session held before, when it switched to this one; its watchers watch this one now."""
+    team: 'TeamState | None' = None
+    """The team the session leads; `None` while teams are off, so the page shows no Team pane."""
 
 
 @dataclass(kw_only=True)
@@ -763,6 +765,119 @@ class TaskItems:
     id: str
     """The task's ID."""
     messages: list[ItemMessage]
+    reset: bool = False
+    """The task's transcript starts over from these messages, as when a browser starts showing a teammate."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamMemberEntry:
+    """A teammate as the Team pane's roster shows it."""
+
+    name: str
+    task_id: str
+    """The ID of its delegated task, which names its transcript in `TaskItems`."""
+    agent: str
+    """Its agent type: `general-purpose` for the lead's own agent."""
+    model: str | None
+    """The model it is pinned to; `None` for the session's."""
+    state: str
+    """Such as `working`, `idle`, `stopped`, or `failed`; a newer CLAI may add others."""
+    current_task: str | None
+    """The ID of the board item it works on."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoardItemEntry:
+    """An item of the team's board."""
+
+    id: str
+    content: str
+    status: str
+    """`pending`, `in_progress`, `completed`, `cancelled`, or `blocked`."""
+    owner: str | None
+    depends_on: list[str]
+    blocked_by: list[str]
+    """The items of `depends_on` not completed or cancelled yet."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamMessageEntry:
+    """A message between the lead, its teammates, and the user."""
+
+    id: str
+    sender: str
+    recipient: str
+    text: str
+    truncated: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamState:
+    """The team a session leads: its roster, its board, and its latest messages, oldest first."""
+
+    members: list[TeamMemberEntry]
+    board: list[BoardItemEntry]
+    messages: list[TeamMessageEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeammateTranscript:
+    """A teammate with its history so far."""
+
+    member: TeamMemberEntry
+    items: list[Item]
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamChanged:
+    """The whole team, replacing what the Team pane shows; `None` once the session leads no team."""
+
+    type: Literal['team'] = 'team'
+    team: TeamState | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamMemberChanged:
+    """A teammate joined, or its row changed."""
+
+    type: Literal['team_member'] = 'team_member'
+    member: TeamMemberEntry
+
+
+@dataclass(frozen=True, kw_only=True)
+class BoardItemChanged:
+    """A board item was added or changed; `previous` is what browsers were sent of it before."""
+
+    type: Literal['board_item'] = 'board_item'
+    item: BoardItemEntry
+    previous: BoardItemEntry | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamMessageAdded:
+    """A message joined the team's feed."""
+
+    type: Literal['team_message'] = 'team_message'
+    message: TeamMessageEntry
+
+
+TeamDelta = TeamChanged | TeamMemberChanged | BoardItemChanged | TeamMessageAdded
+"""What changes a Team pane; only the browsers showing that session's team get these."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeamWatch:
+    """From the browser: the sessions whose Team pane it shows, and the teammates whose transcript it shows.
+
+    Each replaces what it named before. A newly named session's team comes as `TeamChanged`, and a newly
+    named teammate's transcript so far as `TaskItems` with `reset`.
+    """
+
+    type: Literal['team_watch'] = 'team_watch'
+    sessions: list[str]
+    """Conversation IDs."""
+    members: list[str]
+    """Teammates' task IDs."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -813,6 +928,7 @@ ServerMessage = (
     | QueueChanged
     | UpdateChanged
     | LiveChanged
+    | TeamDelta
 )
 SessionMessage = (
     ItemMessage
@@ -826,6 +942,7 @@ SessionMessage = (
     | TaskChanged
     | TaskItems
     | QueueChanged
+    | TeamDelta
 )
 """The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)

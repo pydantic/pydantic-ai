@@ -13,6 +13,7 @@ import type {
   SessionMessage,
   StatusInfo,
   TaskEntry,
+  TeamState,
   ThemeInfo,
   TurnSummary,
   UpdateInfo,
@@ -50,6 +51,8 @@ export interface Chat {
   taskItems: Record<string, Entry[]>
   /** The input waiting for the running turn or command, oldest first, as the session's prompt holds it. */
   queue: QueuedItem[]
+  /** The team the session leads; `null` while teams are off. Current only while the page watches it. */
+  team: TeamState | null
 }
 
 export const initialChat: Chat = {
@@ -62,7 +65,35 @@ export const initialChat: Chat = {
   tasks: [],
   taskItems: {},
   queue: [],
+  team: null,
 }
+
+/** The most team messages a chat keeps, as the server keeps the latest ones too. */
+const TEAM_MESSAGES = 200
+
+/** `entry` in place of the one `key` matches, or after the others. */
+function upsert<T>(entries: T[], entry: T, key: (entry: T) => string): T[] {
+  const id = key(entry)
+  const found = entries.some((other) => key(other) === id)
+  return found ? entries.map((other) => (key(other) === id ? entry : other)) : [...entries, entry]
+}
+
+/** Apply one change to the team; one about a team the page has no state of waits for the next whole team. */
+function reduceTeam(team: TeamState | null, message: TeamChange): TeamState | null {
+  if (message.type === 'team') return message.team
+  if (team === null) return null
+  switch (message.type) {
+    case 'team_member':
+      return { ...team, members: upsert(team.members, message.member, (member) => member.name) }
+    case 'board_item':
+      return { ...team, board: upsert(team.board, message.item, (item) => item.id) }
+    case 'team_message':
+      if (team.messages.some((other) => other.id === message.message.id)) return team
+      return { ...team, messages: [...team.messages, message.message].slice(-TEAM_MESSAGES) }
+  }
+}
+
+type TeamChange = Extract<SessionMessage, { type: 'team' | 'team_member' | 'board_item' | 'team_message' }>
 
 export type Snapshot = Extract<ServerMessage, { type: 'snapshot' }>
 
@@ -240,8 +271,14 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
       return { ...chat, entries: applyItem(chat.entries, message) }
     case 'task':
       return taskChanged(chat, message.task)
+    case 'team':
+    case 'team_member':
+    case 'board_item':
+    case 'team_message':
+      return { ...chat, team: reduceTeam(chat.team, message) }
     case 'task_items': {
-      const items = message.messages.reduce(applyItem, chat.taskItems[message.id] ?? [])
+      const start = message.reset ? [] : (chat.taskItems[message.id] ?? [])
+      const items = message.messages.reduce(applyItem, start)
       return { ...chat, taskItems: { ...chat.taskItems, [message.id]: items } }
     }
     case 'turn_started':
@@ -310,6 +347,7 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
     tasks: message.tasks,
     taskItems: message.task_items,
     queue: message.queue,
+    team: message.team ?? null,
   }
 }
 

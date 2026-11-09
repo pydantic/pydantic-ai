@@ -19,7 +19,8 @@ import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
-import { WorkerView } from './components/WorkerView'
+import { TeamPane } from './components/TeamPane'
+import { WorkerView, type Teammate } from './components/WorkerView'
 import { DiffIcon, SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
@@ -28,8 +29,8 @@ import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, ty
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
-/** What the main pane shows: the session, or the orchestrator chat. */
-type Pane = 'session' | 'orchestrator'
+/** What the main pane shows: the session, the orchestrator chat, or the team the session leads. */
+type Pane = 'session' | 'orchestrator' | 'team'
 
 /** The session picked in the sidebar, until it shows; its header paints from the row at once. */
 interface Opening {
@@ -91,9 +92,10 @@ export function App() {
   const chats = state.chats
   const session = useMemo(() => sessionApi(shown), [shown])
   const [orchestration, dispatchOrchestrator] = useReducer(reduceOrchestrator, initialOrchestrator)
-  const [pane, setPane] = useState<Pane>(() =>
-    localStorage.getItem('clai-pane') === 'orchestrator' ? 'orchestrator' : 'session',
-  )
+  const [pane, setPane] = useState<Pane>(() => {
+    const saved = localStorage.getItem('clai-pane')
+    return saved === 'orchestrator' || saved === 'team' ? saved : 'session'
+  })
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
@@ -335,6 +337,7 @@ export function App() {
   const shownTitle = opening?.title ?? chat.session?.title
   useEffect(() => {
     if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
+    else if (pane === 'team') document.title = shownTitle ? `Team · ${shownTitle} · CLAI` : 'Team · CLAI'
     else document.title = shownTitle ? `${shownTitle} · CLAI` : 'CLAI'
   }, [shownTitle, pane])
 
@@ -569,6 +572,34 @@ export function App() {
   const workerTask = worker === null ? null : (chat.tasks.find((task) => task.id === worker) ?? null)
   const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: openWorker }), [chat.tasks, openWorker])
 
+  // The Team pane shows while the session leads a team; a teammate opened from it shows over it.
+  const team = chat.team
+  const teaming = pane === 'team' && team !== null
+  const memberName = (team?.members ?? []).find((member) => member.task_id === worker)?.name ?? null
+  const teammate = useMemo<Teammate | null>(
+    () =>
+      memberName === null
+        ? null
+        : {
+            name: memberName,
+            transcript: () => session.teammate(memberName),
+            message: (text) => session.messageTeammate(memberName, text),
+            stop: () => session.stopTeammate(memberName),
+          },
+    [memberName, session],
+  )
+  // The tiles in view, whose teammates' transcripts stream to the page.
+  const [tiles, setTiles] = useState<string[]>([])
+  // The team's changes come while the session leads one, so its sidebar entry stays current; a teammate's transcript
+  // only while its tile is in view or it is open.
+  const teamSessions = team !== null && shown !== null ? [shown] : []
+  const teamMembers = [...(teaming && !workerTask ? tiles : []), ...(teammate && worker !== null ? [worker] : [])]
+  const teamKey = JSON.stringify([teamSessions, teamMembers])
+  // By `teamKey`: the lists are new on every render, what they hold is not.
+  useEffect(() => {
+    if (connection === 'open') socket.current?.watchTeam(teamSessions, teamMembers)
+  }, [teamKey, connection])
+
   // Esc stops the turn of what the main pane shows: the orchestrator's, or the shown session's alone.
   const orchestrating = pane === 'orchestrator'
   const running = orchestrating ? orchestration.chat.running : chat.running
@@ -606,6 +637,7 @@ export function App() {
       } else if (
         event.key === 'Escape' &&
         running &&
+        !teaming &&
         (orchestrating || (!workerTask && !preview)) &&
         !event.defaultPrevented &&
         !event.isComposing
@@ -621,7 +653,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions, toggleAttention])
+  }, [running, stop, orchestrating, teaming, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions, toggleAttention])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -638,7 +670,8 @@ export function App() {
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
   // The watched session whose kept transcript shows; `null` while the main pane shows anything else.
-  const kept = !orchestrating && !workerTask && !fresh && !preview && shown !== null && shown in chats ? shown : null
+  const kept =
+    !orchestrating && !teaming && !workerTask && !fresh && !preview && shown !== null && shown in chats ? shown : null
   const composerElement = (
     <Composer
       ref={composer}
@@ -695,6 +728,13 @@ export function App() {
             setPane('orchestrator')
             setPreview(null)
           }}
+          team={team}
+          teaming={teaming}
+          onTeam={() => {
+            setPane('team')
+            setWorker(null)
+            setPreview(null)
+          }}
           onCollapse={() => setSidebar(false)}
           onPlugins={openPlugins}
           onSettings={openSettings}
@@ -712,6 +752,17 @@ export function App() {
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
             onOpenSession={show}
+            onError={showError}
+          />
+        ) : teaming && team !== null && !workerTask ? (
+          <TeamPane
+            team={team}
+            title={chat.session?.title ?? 'New session'}
+            taskItems={chat.taskItems}
+            session={session}
+            onOpen={openWorker}
+            onVisible={setTiles}
+            onShowSidebar={sidebar ? null : () => setSidebar(true)}
             onError={showError}
           />
         ) : (
@@ -807,6 +858,7 @@ export function App() {
             {workerTask ? (
               <WorkerView
                 task={workerTask}
+                teammate={teammate}
                 tasks={chat.tasks}
                 live={chat.taskItems[workerTask.id]}
                 onOpen={openWorker}
@@ -848,7 +900,7 @@ export function App() {
               <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} onError={showError} />
             </Activity>
           ))}
-        {!orchestrating && !workerTask && !fresh && (
+        {!orchestrating && !teaming && !workerTask && !fresh && (
           <footer className="bottom">
             {!preview &&
               chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}

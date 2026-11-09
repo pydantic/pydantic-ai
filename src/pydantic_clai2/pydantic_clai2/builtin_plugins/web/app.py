@@ -29,10 +29,11 @@ from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_ai_harness.subagents import DeliveryStatus
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel, Switch
 from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
-from pydantic_clai2.builtin_plugins.web.live import RESYNC
+from pydantic_clai2.builtin_plugins.web.live import RESYNC, Client
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
@@ -44,6 +45,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     PluginRow,
     Project,
     TaskTranscript,
+    TeammateTranscript,
+    TeamState,
+    TeamWatch,
     Transcript,
     Watch,
     dump,
@@ -51,7 +55,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.sidebar import completions
+from pydantic_clai2.builtin_plugins.web.team import team_state
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
+from pydantic_clai2.plugins import TeamCatalog
 from pydantic_clai2.runtime import git_actions
 from pydantic_clai2.runtime.git_actions import GitStatus, PullRequestDraft
 from pydantic_clai2.runtime.image_codec import decode_images
@@ -318,6 +324,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     _plugins(app, service)
     _commands(app, service)
     _tasks(app, service)
+    _team(app, service)
     _panels(app, service)
     _workspaces(app, service)
     _git(app, service)
@@ -705,6 +712,62 @@ def _tasks(app: FastAPI, service: WebService) -> None:
         await _wait(service.task_action(task_id, action))
 
 
+class MessageSent(BaseModel):
+    """What sending a teammate a message did: `running` reads it at its next model request, `woken` started again."""
+
+    status: DeliveryStatus
+
+
+class Assignment(BaseModel):
+    """The teammate to hand a board item to."""
+
+    owner: str = Field(min_length=1, max_length=200)
+
+
+def _team(app: FastAPI, service: WebService) -> None:
+    """The Team pane: the team a live session leads, a teammate's transcript, and what the user does to them.
+
+    Each route is there twice, as the composer's are. Each answers 404 while the session leads no team.
+    """
+
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+
+    def catalog(conversation_id: str | None) -> TeamCatalog:
+        return _run(session(conversation_id).team_catalog)
+
+    async def state(conversation_id: str | None = None) -> TeamState:
+        return team_state(catalog(conversation_id).snapshot())
+
+    async def member(name: str, conversation_id: str | None = None) -> TeammateTranscript:
+        channel = session(conversation_id)
+        return _run(lambda: service.teammate(channel, name))
+
+    async def message(name: str, body: Input, conversation_id: str | None = None) -> MessageSent:
+        return MessageSent(status=await _wait(catalog(conversation_id).send(name, body.text)))
+
+    async def stop(name: str, conversation_id: str | None = None) -> None:
+        await _wait(catalog(conversation_id).stop(name))
+
+    async def assign(item_id: str, body: Assignment, conversation_id: str | None = None) -> None:
+        await _wait(catalog(conversation_id).assign(item_id, body.owner))
+
+    async def unclaim(item_id: str, conversation_id: str | None = None) -> None:
+        await _wait(catalog(conversation_id).unclaim(item_id))
+
+    async def cancel(item_id: str, conversation_id: str | None = None) -> None:
+        await _wait(catalog(conversation_id).cancel(item_id))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/team')(state)
+        app.get(f'{prefix}/team/members/{{name}}')(member)
+        app.post(f'{prefix}/team/members/{{name}}/message')(message)
+        app.post(f'{prefix}/team/members/{{name}}/stop', status_code=204)(stop)
+        app.post(f'{prefix}/team/board/{{item_id}}/assign', status_code=204)(assign)
+        app.post(f'{prefix}/team/board/{{item_id}}/unclaim', status_code=204)(unclaim)
+        app.post(f'{prefix}/team/board/{{item_id}}/cancel', status_code=204)(cancel)
+
+
 def _panels(app: FastAPI, service: WebService) -> None:
     """Plugins' side panels, as they are now; the page asks again when a turn starts or ends."""
 
@@ -796,7 +859,7 @@ def _events(app: FastAPI, service: WebService) -> None:
     """The WebSocket: the default session's snapshot, `live`, and the orchestrator on connect, then what is published.
 
     The browser may send `watch` to choose the live sessions it gets the messages of; until then it gets
-    the default session's.
+    the default session's. It sends `team_watch` to choose whose team and which teammates it shows.
     """
 
     @app.websocket('/ws')
@@ -836,19 +899,26 @@ def _events(app: FastAPI, service: WebService) -> None:
                     connection.start_soon(forward)
                     try:
                         while True:
-                            text = await socket.receive_text()
-                            try:
-                                watch = _WATCH.validate_json(text)
-                            except ValidationError:
-                                continue  # Nothing else is sent; an older or newer page's message is ignored.
-                            service.watch(client, watch.sessions)
+                            _received(service, client, await socket.receive_text())
                     except WebSocketDisconnect:
                         connection.cancel_scope.cancel()
             finally:
                 service.unwatch(client)
 
 
-_WATCH = TypeAdapter(Watch)
+_WATCH: TypeAdapter[Watch | TeamWatch] = TypeAdapter(Annotated[Watch | TeamWatch, Field(discriminator='type')])
+
+
+def _received(service: WebService, client: Client, text: str) -> None:
+    """Apply what the page sent: the live sessions it watches, or whose team and teammates it shows."""
+    try:
+        watch = _WATCH.validate_json(text)
+    except ValidationError:
+        return  # Nothing else is sent; an older or newer page's message is ignored.
+    if isinstance(watch, TeamWatch):
+        service.team_watch(client, watch.sessions, watch.members)
+    else:
+        service.watch(client, watch.sessions)
 
 
 Failure = Literal[400, 404, 409]

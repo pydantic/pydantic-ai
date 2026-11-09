@@ -68,10 +68,14 @@ class Workers:
         self._sent: dict[str, TaskEntry] = {}
         self._live: dict[str, _Live] = {}
         self._runs = 0
+        self.members: set[str] = set()
+        """The task IDs of team members, whose `TaskItems` reach only the browsers showing them."""
 
     def observe(self, event: TaskProgress) -> None:
         """Send a changed row, and what the task's own run did, to browsers."""
         task = event.task
+        if task.name is not None:
+            self.members.add(task.id)
         entry = task_entry(task)
         if self._sent.get(task.id) != entry:
             self._sent[task.id] = entry
@@ -122,7 +126,15 @@ class Workers:
         """Each running task's transcript so far, for a browser that connects now."""
         return {task_id: list(live.log.items.values()) for task_id, live in self._live.items()}
 
+    def transcript(self, task_id: str) -> TaskItems | None:
+        """A running task's transcript so far, to start a browser that starts showing it over; `None` for another."""
+        live = self._live.get(task_id)
+        if live is None:
+            return None
+        return TaskItems(id=task_id, messages=[ItemAdded(item=item) for item in live.log.items.values()], reset=True)
+
     def reset(self) -> None:
         """Forget the tasks of a conversation the shell no longer holds."""
         self._sent.clear()
         self._live.clear()
+        self.members.clear()

@@ -978,6 +978,7 @@ def test_legacy_tags_give_a_page_from_before_the_renames_the_tags_it_knows() -> 
         'type': 'task_event',
         'id': 't1',
         'messages': [{'type': 'delta', 'id': 'i1', 'text': 'hi'}, {'type': 'tool_output', 'id': 'i2', 'text': 'out'}],
+        'reset': False,
     }
     started = OrchestratorMessage(message=TurnStarted())
     assert json.loads(legacy_tags(dump(started))) == {

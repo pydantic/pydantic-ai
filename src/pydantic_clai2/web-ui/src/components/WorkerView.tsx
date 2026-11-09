@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import type { TaskEntry } from '../protocol'
+import type { Item, TaskEntry } from '../protocol'
 import type { Entry } from '../state'
 import { WorkersContext, elapsed, shortModel, state, useNow } from '../workers'
 import { ArrowUpIcon } from './icons'
@@ -9,8 +9,19 @@ import { WorkerMark } from './WorkersTree'
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+/** A teammate's own controls, which replace a worker's: its box messages it, and Stop stops it as the user. */
+export interface Teammate {
+  name: string
+  /** Its history so far, which shows once it is not working. */
+  transcript: () => Promise<{ items: Item[] }>
+  message: (text: string) => Promise<unknown>
+  stop: () => Promise<unknown>
+}
+
 interface Props {
   task: TaskEntry
+  /** Set when the worker is a teammate. */
+  teammate?: Teammate | null
   tasks: TaskEntry[]
   /** What the running task has done so far; a finished one's saved history is fetched instead. */
   live: Entry[] | undefined
@@ -20,7 +31,7 @@ interface Props {
 }
 
 /** One worker's transcript, live while it runs, with its controls and a box that steers it, or prompts it once it has finished. */
-export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props) {
+export function WorkerView({ task, teammate = null, tasks, live, onOpen, onBack, onError }: Props) {
   const finished = task.status === 'finished'
   const [saved, setSaved] = useState<Entry[] | null>(null)
   const now = useNow(!finished)
@@ -30,18 +41,19 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
     setSaved(null)
     if (!finished) return
     let current = true
-    api.task(task.id).then(
+    const load: Promise<{ items: Item[] }> = teammate ? teammate.transcript() : api.task(task.id)
+    load.then(
       (found) => current && setSaved(found.items),
       (error: unknown) => current && onError(message(error)),
     )
     return () => {
       current = false
     }
-  }, [task.id, finished, onError])
+  }, [task.id, finished, teammate, onError])
 
   const act = async (action: 'stop' | 'background') => {
     try {
-      await api.taskAction(task.id, action)
+      await (teammate && action === 'stop' ? teammate.stop() : api.taskAction(task.id, action))
     } catch (error) {
       onError(message(error))
     }
@@ -57,6 +69,7 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
         </button>
         <span className="worker-banner-state">
           <WorkerMark task={task} />
+          {teammate && <span className="worker-agent">{teammate.name}</span>}
           <span className="worker-agent">{task.agent}</span>
           {task.model && <span className="worker-model">{shortModel(task.model)}</span>}
           <span className="worker-time">{elapsed(task, now)}</span>
@@ -65,7 +78,7 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
             {state(task)}
           </span>
         </span>
-        {task.backgroundable && (
+        {task.backgroundable && !teammate && (
           <button
             className="ghost small"
             onClick={() => void act('background')}
@@ -92,10 +105,10 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
         />
       </WorkersContext.Provider>
       <footer className="bottom">
-        {finished && !task.resumable ? (
+        {finished && !task.resumable && !teammate ? (
           <div className="worker-note">This worker has finished. It is one-shot, so it takes no follow-ups.</div>
         ) : (
-          <TaskBox key={task.id} task={task} onError={onError} />
+          <TaskBox key={task.id} task={task} teammate={teammate} onError={onError} />
         )}
       </footer>
     </>
@@ -104,9 +117,18 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
 
 /**
  * Enter sends the worker a message, Shift+Enter adds a line. While it runs, it reads the message at its next
- * model request; once it has finished, the message prompts it on its own, apart from the session.
+ * model request; once it has finished, the message prompts it on its own, apart from the session. A teammate's
+ * box messages it through its team, which wakes it when idle.
  */
-function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string) => void }) {
+function TaskBox({
+  task,
+  teammate,
+  onError,
+}: {
+  task: TaskEntry
+  teammate: Teammate | null
+  onError: (message: string) => void
+}) {
   const finished = task.status === 'finished'
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -125,7 +147,10 @@ function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string
     if (!value || sending) return
     setSending(true)
     try {
-      if (finished) {
+      if (teammate) {
+        await teammate.message(value)
+        setText('')
+      } else if (finished) {
         await api.promptTask(task.id, value)
         setText('')
       } else if ((await api.steer(task.id, value)).steered) {
@@ -152,7 +177,7 @@ function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string
           ref={area}
           rows={1}
           value={text}
-          placeholder={finished ? `Message ${task.agent}…` : `Steer ${task.agent}…`}
+          placeholder={teammate ? `Message ${teammate.name}…` : finished ? `Message ${task.agent}…` : `Steer ${task.agent}…`}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -160,13 +185,15 @@ function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string
               void send()
             }
           }}
-          aria-label={`Message ${task.agent}`}
+          aria-label={`Message ${teammate?.name ?? task.agent}`}
         />
         <div className="composer-bar">
           <span className="hint">
-            {finished
-              ? 'Continues this worker on its own; the session does not see it.'
-              : 'It reads this at its next model request.'}
+            {teammate
+              ? 'Message: it reads this at its next model request, and wakes if idle.'
+              : finished
+                ? 'Continues this worker on its own; the session does not see it.'
+                : 'It reads this at its next model request.'}
           </span>
           <button
             className="send"

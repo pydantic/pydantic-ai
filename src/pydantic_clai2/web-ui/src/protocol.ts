@@ -233,6 +233,58 @@ export interface TaskTranscript {
   items: Item[]
 }
 
+/** A teammate as the Team pane's roster shows it. */
+export interface TeamMemberEntry {
+  name: string
+  /** Its delegated task's ID, which names its transcript in `task_items`. */
+  task_id: string
+  /** Its agent type: `general-purpose` for the lead's own agent. */
+  agent: string
+  /** The model it is pinned to; `null` for the session's. */
+  model: string | null
+  /** Such as `working`, `idle`, `stopped`, or `failed`; a newer CLAI may add others. */
+  state: string
+  /** The ID of the board item it works on. */
+  current_task: string | null
+}
+
+/** An item of the team's board. */
+export interface BoardItemEntry {
+  id: string
+  content: string
+  /** `pending`, `in_progress`, `completed`, `cancelled`, or `blocked`. */
+  status: string
+  owner: string | null
+  depends_on: string[]
+  /** The items of `depends_on` not completed or cancelled yet. */
+  blocked_by: string[]
+}
+
+/** A message between the lead, its teammates, and the user. */
+export interface TeamMessageEntry {
+  id: string
+  sender: string
+  recipient: string
+  text: string
+  truncated: boolean
+}
+
+/** The team a session leads: its roster, its board, and its latest messages, oldest first. */
+export interface TeamState {
+  members: TeamMemberEntry[]
+  board: BoardItemEntry[]
+  messages: TeamMessageEntry[]
+}
+
+/** What `GET .../team/members/{name}` answers: a teammate with its history so far. */
+export interface TeammateTranscript {
+  member: TeamMemberEntry
+  items: Item[]
+}
+
+/** What messaging a teammate did: `running` reads it at its next model request, `woken` started again. */
+export type DeliveryStatus = 'running' | 'woken' | 'saved'
+
 /** A message that changes one transcript's items, the session's or a task's. */
 export type ItemMessage =
   | { type: 'item'; item: Item }
@@ -306,7 +358,13 @@ export type SessionMessage = (
     }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
-  | { type: 'task_items'; id: string; messages: ItemMessage[] }
+  /** `reset`: the task's transcript starts over from `messages`, as when the page starts showing a teammate. */
+  | { type: 'task_items'; id: string; messages: ItemMessage[]; reset?: boolean }
+  /** Only the connections showing the session's team get these four. `team` replaces the whole team. */
+  | { type: 'team'; team: TeamState | null }
+  | { type: 'team_member'; member: TeamMemberEntry }
+  | { type: 'board_item'; item: BoardItemEntry; previous: BoardItemEntry | null }
+  | { type: 'team_message'; message: TeamMessageEntry }
 ) & {
   /**
    * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
@@ -319,6 +377,16 @@ export type SessionMessage = (
 export interface WatchMessage {
   type: 'watch'
   sessions: string[]
+}
+
+/**
+ * Sent over the WebSocket: the sessions whose team the page shows, and the teammates (by task ID) whose transcript it
+ * shows, replacing what it named before. A newly named team comes whole, a newly named transcript from its start.
+ */
+export interface TeamWatchMessage {
+  type: 'team_watch'
+  sessions: string[]
+  members: string[]
 }
 
 /** What `POST /api/sessions/{id}/open` and `POST /api/sessions/new` answer: the live session's conversation ID. */
@@ -353,6 +421,8 @@ export type ServerMessage =
       update: UpdateInfo | null
       /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
       replaces?: string | null
+      /** The team the session leads; `null` while teams are off, so the page shows no Team pane. */
+      team?: TeamState | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }

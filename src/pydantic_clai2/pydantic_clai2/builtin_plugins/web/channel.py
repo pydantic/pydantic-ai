@@ -26,6 +26,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     StatusChanged,
     StatusInfo,
     TaskEntry,
+    TaskItems,
+    TeamDelta,
+    TeamState,
     TextDelta,
     TitleChanged,
     TurnEnded,
@@ -42,10 +45,11 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     user_images,
     user_item,
 )
+from pydantic_clai2.builtin_plugins.web.team import TeamFeed, team_state
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import expand_bare_command, is_command_input
 from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PermissionMode
-from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
+from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TeamCatalog, TurnOutcome
 from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
@@ -82,6 +86,8 @@ class SessionChannel:
         """Whether a run of the held conversation streams now, as browsers see it."""
         self.workers = Workers(publish=self.publish, history=self._task_history)
         """The session's delegated tasks, which the plugin's `on_task_progress` keeps up to date."""
+        self.team = TeamFeed(publish=self.publish_team)
+        """The team the session leads, which the plugin's `on_team_progress` keeps up to date."""
         self._translator = EventTranslator()
         """One for the session's life, so item IDs stay unique across turns in a browser that keeps them all."""
         self._turn = ItemLog()
@@ -101,7 +107,24 @@ class SessionChannel:
         return self.session.conversation.conversation_id
 
     def publish(self, message: SessionMessage) -> None:
-        self.service.hub.publish_session(message, session=self.id)
+        hub = self.service.hub
+        if isinstance(message, TaskItems) and message.id in self.workers.members:
+            hub.publish_member(message, session=self.id)
+        else:
+            hub.publish_session(message, session=self.id)
+
+    def publish_team(self, message: TeamDelta) -> None:
+        self.service.hub.publish_team(message, session=self.id)
+
+    def team_catalog(self) -> TeamCatalog:
+        """The team the session leads; `LookupError` while teams are off."""
+        if (catalog := self.session.team) is None:
+            raise LookupError('This session leads no team. /set team.enabled true turns teams on.')
+        return catalog
+
+    def team_state(self) -> TeamState | None:
+        catalog = self.session.team
+        return None if catalog is None else team_state(catalog.snapshot())
 
     def _task_history(self, task_id: str) -> list[ModelMessage]:
         tasks = self.session.tasks
@@ -133,6 +156,7 @@ class SessionChannel:
             follows_workspace=sessions is not None and sessions.follows_workspace,
             version=service.version,
             update=service.update,
+            team=self.team_state(),
         )
 
     def image(self, image_id: str) -> BinaryContent | None:
@@ -258,6 +282,7 @@ class SessionChannel:
         hub.rename(replaced, self.id)
         self.shown = self.id
         self.workers.reset()
+        self.team.reset()
         self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
         snapshot = replace(self.snapshot(), replaces=replaced)

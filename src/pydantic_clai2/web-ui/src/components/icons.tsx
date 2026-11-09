@@ -160,6 +160,14 @@ export const OrchestratorIcon = icon(
     <path d="m7 7 3.2 3.2M17 7l-3.2 3.2M12 14.5V18" />
   </>,
 )
+export const TeamIcon = icon(
+  <>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+    <circle cx="17" cy="9" r="2.5" />
+    <path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5" />
+  </>,
+)
 export const ArchiveIcon = icon(
   <>
     <rect x="3" y="4" width="18" height="4" rx="1" />

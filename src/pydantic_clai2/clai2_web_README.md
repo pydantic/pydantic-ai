@@ -317,6 +317,46 @@ same session, and says which version it updated to; About says which versions it
 and to. A failed install, or nothing to install, says so and nothing restarts. A terminal session
 with `/web` running comes back with it running.
 
+## Team
+
+While the shown session leads an agent team (`team.enabled` on), the sidebar shows **Team (N)**
+below the orchestrator, with how many teammates are in each state. It opens the Team pane:
+
+- a tile per teammate with its type, model, state, and the board item it works on; a tile in view
+  shows the end of its transcript as it streams. Click one to open its transcript, whose box
+  messages it (it reads the message at its next model request, and an idle one wakes); Stop stops
+  it until your next message;
+- the board, one column per status (Pending, In progress, Blocked, Done, Cancelled), each item
+  with its owner and `⛓ #3, #5` for the items it still waits for. **Assign** hands a pending item
+  to a teammate, **Unclaim** hands one in progress back, **Cancel** cancels one that is not done;
+- the messages between the lead, its teammates, and you.
+
+With teams off, the page shows no Team pane.
+
+The page sends `{"type": "team_watch", "sessions": ["<id>", …], "members": ["<task id>", …]}` on the
+WebSocket to name the sessions whose team it shows and the teammates whose transcript it shows,
+replacing what it named before. A newly named session's team comes as
+`{"type": "team", "session": "<id>", "team": TeamState | null}`, then only its changes:
+`team_member` (`member`), `board_item` (`item`, `previous`), and `team_message` (`message`), each with
+its `session`, and only to the connections that named that session. A teammate's `task_items` go
+only to the connections that named its task ID, and a newly named one's transcript so far comes as
+`task_items` with `"reset": true`. Other tasks' `task_items` are unchanged. A `snapshot` carries the
+session's `team`, `null` with teams off. Shapes are in `web-ui/src/protocol.ts`.
+
+Routes, under `/api` for the default session and `/api/sessions/{id}` for any live one; each
+answers 404 while that session leads no team or for an unknown teammate or item, and 400 for what
+the team refuses:
+
+| Route | Does |
+|---|---|
+| `GET …/team` | its `TeamState` |
+| `GET …/team/members/{name}` | a teammate with its history so far: `{"member": …, "items": […]}` |
+| `POST …/team/members/{name}/message` | send it a message, body `{"text": "…"}`; answers `{"status": "running" \| "woken" \| "saved"}` |
+| `POST …/team/members/{name}/stop` | stop it until your next message |
+| `POST …/team/board/{item_id}/assign` | hand a pending item to a teammate, body `{"owner": "…"}` |
+| `POST …/team/board/{item_id}/unclaim` | hand an item in progress back to `pending` |
+| `POST …/team/board/{item_id}/cancel` | cancel an item that is not done |
+
 ## Workspaces
 
 The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, for
@@ -366,7 +406,8 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
 
 - **Per-session messages** (`item`, `text_delta`, and the other item messages, `turn_started`, `turn_ended`,
   `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_items`, `queue`) carry `"session": "<conversation id>"` and go only to the
-  connections watching that session. A `snapshot` names its session in `session.id`.
+  connections watching that session. A `snapshot` names its session in `session.id`. The team
+  messages, and a teammate's `task_items`, go only to the connections showing them; see [Team](#team).
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
   carry no `session`; every `snapshot` lists the open dialogs.

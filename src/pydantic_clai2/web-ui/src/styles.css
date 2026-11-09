@@ -4514,3 +4514,215 @@ textarea.setting-input {
   color: var(--faint);
   font-size: 12.5px;
 }
+
+/* The Team pane: its sidebar entry, below the orchestrator's, its teammates' tiles, the board, and the messages */
+
+.team-entry-summary {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.team-pane {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px 24px 28px;
+}
+
+.team-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.team-heading span {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.team-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.team-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.team-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.team-tile:hover {
+  border-color: var(--border-strong);
+}
+
+.team-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.team-tile-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.team-tile-tail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.team-tile-tail span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A state this page knows has its colour; any other is a plain badge. */
+.team-state {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.team-state.working {
+  background: var(--active);
+  color: var(--link);
+}
+
+.team-state.idle {
+  color: var(--green);
+}
+
+.team-state.stopped {
+  color: var(--amber);
+}
+
+.team-state.failed {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--red);
+}
+
+.team-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.team-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.team-column h3 {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.team-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12.5px;
+}
+
+.team-card-id {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.team-card-meta,
+.team-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-card-meta:empty {
+  display: none;
+}
+
+.team-blockers {
+  color: var(--amber);
+  font-size: 11.5px;
+}
+
+.team-card-actions select {
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.team-card-actions .ghost {
+  padding: 3px 9px;
+}
+
+.team-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.team-route {
+  color: var(--muted);
+  font-weight: 500;
+}
