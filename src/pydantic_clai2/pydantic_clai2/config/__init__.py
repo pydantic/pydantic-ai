@@ -17,6 +17,7 @@ STORED_MAIN_CHANNEL = 'bleeding'
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 PermissionMode = Literal['full', 'auto', 'read-only']
+PlanReviewer = Literal['lead', 'user']
 """harness `PermissionMode`, spelled out so reading settings imports no harness code."""
 PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
 PERMISSIONS_SETTING = 'run.permissions'
@@ -177,6 +178,18 @@ class Settings(BaseModel):
             '{"general-purpose": "PROVIDER:MODEL"}. A type with none runs on the session model.'
         ),
     )
+    team_max_active: int = Field(
+        default=0,
+        ge=0,
+        description='How many teammates run at once; the rest wait queued and start in order. 0 runs all at once.',
+    )
+    team_plan_reviewer: PlanReviewer = Field(
+        default='lead',
+        description=(
+            "Who approves a teammate's plan: lead lets the agent review it, user leaves it to you, with "
+            '/team approve and /team reject, which also work under lead.'
+        ),
+    )
 
     @field_validator('team_models')
     @classmethod
@@ -254,6 +267,8 @@ SETTING_FIELDS = {
     'worktrees.remove_commands': 'worktree_remove_commands',
     'team.enabled': 'team',
     'team.models': 'team_models',
+    'team.max_active': 'team_max_active',
+    'team.plan_reviewer': 'team_plan_reviewer',
 }
 
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}

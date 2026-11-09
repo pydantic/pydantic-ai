@@ -87,7 +87,8 @@ from pydantic_clai2.runtime.session import (
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, display_name, question_row, resume_prompt
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
+from pydantic_clai2.runtime.team_summary import member_line, team_segment, usage_text
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
@@ -581,7 +582,10 @@ def create_shell(
     commands.register(
         Command(
             name='team',
-            description='List teammates, or start or message one: /team [spawn NAME [@MODEL] PROMPT | msg NAME TEXT]',
+            description=(
+                'List teammates, or start, message, shut down, or review the plan of one: /team [spawn NAME '
+                '[@MODEL] PROMPT | msg NAME TEXT | shutdown NAME [REASON] | approve NAME [NOTES] | reject NAME REASON]'
+            ),
             handler=shell.team_command,
             complete=shell.complete_team,
             raw=True,
@@ -970,26 +974,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return await self.session.run_member(self.process.tasks.team, record)
 
     def _bind_team(self) -> None:
-        """Lead a team on this session's turns when `team.enabled` is on, with the configured teammate models."""
+        """Lead a team on this session's turns when `team.enabled` is on, with the configured teammate settings."""
         settings = self.context.settings
         team = self.process.tasks.team
         team.models = settings.team_models
+        team.plan_reviewer = settings.team_plan_reviewer
+        team.owner.max_active = settings.team_max_active or None
         self.session.team = team if settings.team and self.session.delegations is not None else None
 
     async def team_command(self, args: list[str]) -> str:
-        """`/team`: list the teammates, `spawn NAME [@MODEL] PROMPT`, or `msg NAME TEXT`."""
+        """`/team`: list the teammates, or `spawn`, `msg`, `shutdown`, `approve` or `reject` one."""
         text = args[0].strip() if args else ''
         conversation_id = self.session.summary.id
         team = self.process.tasks.team
+        self._bind_team()
         if not text:
-            members = (await team.snapshot(conversation_id)).members
-            if not members:
-                return 'No teammates in this conversation. /team spawn NAME [@MODEL] PROMPT starts one.'
-            return '\n'.join(
-                f'{member.name} ({display_name(member.agent_name)}) · {member.model or "session model"} · {member.state}'
-                + (f' · #{member.current_task}' if member.current_task else '')
-                for member in members
-            )
+            return await self._team_listing()
         action, _, rest = text.partition(' ')
         name, _, rest = rest.strip().partition(' ')
         if action == 'spawn' and name:
@@ -1003,12 +1003,41 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if action == 'msg' and name and rest.strip():
             sent = await team.send(conversation_id, to=name, text=rest.strip())
             return f'Message {sent.status} for {name}.'
-        raise ValueError('Usage: /team [spawn NAME [@MODEL] PROMPT | msg NAME TEXT]')
+        if name and (done := await self._team_lifecycle(action, name, rest.strip())) is not None:
+            return done
+        raise ValueError(
+            'Usage: /team [spawn NAME [@MODEL] PROMPT | msg NAME TEXT | shutdown NAME [REASON] | '
+            'approve NAME [NOTES] | reject NAME REASON]'
+        )
+
+    async def _team_listing(self) -> str:
+        """`/team`: a row per teammate, then the whole team's usage, lead included."""
+        snapshot = await self.process.tasks.team.snapshot(self.session.summary.id)
+        if not snapshot.members:
+            return 'No teammates in this conversation. /team spawn NAME [@MODEL] PROMPT starts one.'
+        lines = [member_line(member) for member in snapshot.members]
+        return '\n'.join([*lines, f'team total, lead included: {usage_text(snapshot.usage)}'])
+
+    async def _team_lifecycle(self, action: str, name: str, text: str) -> str | None:
+        """`/team shutdown`, `approve` and `reject` of the teammate `name`; `None` for any other action."""
+        conversation_id = self.session.summary.id
+        team = self.process.tasks.team
+        if action == 'shutdown':
+            if await team.shutdown(conversation_id, name, text):
+                return f'Asked {name} to wrap up; it is shut down when its turn ends.'
+            return f'{name} is shut down.'
+        if action == 'approve':
+            await team.approve(conversation_id, name, text)
+            return f"Approved {name}'s plan."
+        if action == 'reject' and text:
+            await team.reject(conversation_id, name, text)
+            return f"Rejected {name}'s plan."
+        return None
 
     def complete_team(self, args: list[str]) -> Iterable[str]:
         """Suggest the subcommands, then saved models as `@model` after a spawn's name."""
         if len(args) <= 1:
-            return ('spawn', 'msg')
+            return ('spawn', 'msg', 'shutdown', 'approve', 'reject')
         if args[0] == 'spawn' and len(args) == 3:
             return tuple(f'@{name}' for name in self.context.store.models())
         return ()
@@ -1326,7 +1355,16 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
-        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment, self._live_segment)
+        self.status.status_segments = (
+            *self.loader.status_segments(),
+            self.updates.segment,
+            self._live_segment,
+            self._team_segment,
+        )
+
+    def _team_segment(self) -> str:
+        """The team's working and queued teammates and its spend, lead included, once the conversation has one."""
+        return team_segment(self.process.tasks.team, self.session.summary.id)
 
     def _live_segment(self) -> str:
         """How many sessions are live in this CLAI, shown in the terminal once the browser opened others."""

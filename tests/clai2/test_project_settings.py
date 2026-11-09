@@ -400,6 +400,8 @@ APPROVED_ONLY: dict[str, JsonValue] = {
     'sessions.naming_model': 'test:namer',
     'team.enabled': True,
     'team.models': {'general-purpose': 'test:teammate'},
+    'team.max_active': 2,
+    'team.plan_reviewer': 'user',
 }
 """A non-default value for each key that waits for approval, by `/set` key."""
 

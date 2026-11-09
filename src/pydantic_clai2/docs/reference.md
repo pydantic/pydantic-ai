@@ -48,7 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
-| `/team [spawn NAME [@MODEL] PROMPT \| msg NAME TEXT]` | List the conversation's teammates, start one on a model, or message one (`team.enabled`) |
+| `/team [spawn NAME [@MODEL] PROMPT \| msg NAME TEXT \| shutdown NAME [REASON] \| approve NAME [NOTES] \| reject NAME REASON]` | List the conversation's teammates and the team's spend, start one on a model, message one, shut one down, or review a teammate's plan (`team.enabled`) |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
@@ -114,6 +114,8 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 | `team.enabled` | `false` | Let the agent lead a team: spawn named teammates that share a task board and message each other. /team lists and spawns them. See [Teams](#teams). |
 | `team.models` | `{}` | JSON object: the model each teammate type runs on unless its spawn names one, such as {"general-purpose": "PROVIDER:MODEL"}. A type with none runs on the session model. |
+| `team.max_active` | `0` | How many teammates run at once; the rest wait queued and start in order. 0 runs all at once. |
+| `team.plan_reviewer` | `lead` | Who approves a teammate's plan: lead lets the agent review it, user leaves it to you, with /team approve and /team reject, which also work under lead. |
 
 ### Environment variables at a glance
 
@@ -2184,11 +2186,26 @@ Each teammate runs on its own model: the one its spawn names, else `team.models`
 `/set team.models '{"general-purpose": "PROVIDER:MODEL"}'`), else the session's model. It keeps that model
 across idle, wake and restart, and `/team` and `/tasks` show it.
 
-- **`/team`** lists the teammates with their type, model, state, and the board item each holds.
+- **`/team`** lists the teammates with their type, model, state, the board item each holds, and its
+  requests, tokens and cost so far, then the whole team's total with the lead's turns included. A
+  teammate waiting for its plan to be approved shows the plan under its row.
 - **`/team spawn NAME [@MODEL] PROMPT`** starts a teammate yourself, on `MODEL` if given.
 - **`/team msg NAME TEXT`** sends a teammate your message; an idle one wakes to read it.
+- **`/team shutdown NAME [REASON]`** asks a teammate to wrap up: finish or hand back the board item it
+  holds, then end its turn. When that turn ends it is shut down: what it still holds goes back to the
+  board, its report reaches the lead, and only your message wakes it again. The lead can do the same
+  with `shutdown_teammate`. A teammate still wrapping up after two minutes is stopped.
+- **`/team approve NAME [NOTES]`** and **`/team reject NAME REASON`** answer a teammate that submitted a
+  plan with `request_plan_approval` and waits for it. With `team.plan_reviewer` `lead`, the default, the
+  lead reviews plans too; with `user`, only you do. A plan still waiting is saved, so you can review it
+  after a restart.
 - **`/tasks resume NAME`** wakes an idle or stopped teammate with your word to continue, and
   **`/tasks stop NAME`** stops one; a teammate's name works wherever `/tasks` takes an ID.
+
+`/set team.max_active N` lets N teammates run at once; the others wait as `queued` and start in the order
+they were started or woken. While a conversation has teammates, the status row shows how many work and
+wait, and the team's spend so far, lead included, such as `team 2 working, 1 queued, 41 req, 182.4k tok`,
+with the cost when the models' prices are known.
 
 The board is saved beside the tasks, in `<database-name>.tasks/boards/`. With teams off, nothing changes.
 
