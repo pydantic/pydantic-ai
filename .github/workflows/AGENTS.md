@@ -222,9 +222,10 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 inline-comment changes with a read-only token, including on forks. Its completion wakes
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
-GitHub blocks that event by default in public repositories (#12961). The publisher binds each wake-up to the unique open PR
-GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
-or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
+GitHub blocks that event by default in public repositories (#12961). The publisher binds each
+wake-up to the unique open PR GitHub reports for its exact head SHA and repository. It ignores
+titles and artifacts, and a stale or ambiguous event cannot write statuses to another head. Fork
+observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
