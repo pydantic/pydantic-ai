@@ -17,8 +17,10 @@ import tempfile
 import threading
 import time
 import warnings
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import timedelta
+from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -161,6 +163,22 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     return real_path
 
 
+_CHUNK_SIZE = 1 << 16
+
+
+async def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    """Yield a stored payload in chunks: streamed from a `LocalFileOverflowStore`, read whole from any other store."""
+    if not isinstance(store, LocalFileOverflowStore):
+        yield await store.read(handle)
+        return
+    file = await anyio.to_thread.run_sync(store._open, handle)  # pyright: ignore[reportPrivateUsage]
+    try:
+        while chunk := await anyio.to_thread.run_sync(file.read, _CHUNK_SIZE):
+            yield chunk
+    finally:
+        file.close()
+
+
 def _default_root() -> Path:
     """Per-user root under the system temp dir, so users on one host never share it."""
     geteuid = getattr(os, 'geteuid', None)
@@ -259,12 +277,16 @@ class LocalFileOverflowStore:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
+        with self._open(handle) as file:
+            return file.read()
+
+    def _open(self, handle: str) -> BufferedReader:
         self._check_root()
         target = self._path(handle).resolve()
         root = self._root.resolve()
         if not target.is_relative_to(root):
             raise PermissionError(f'Handle {handle!r} resolves outside the store root.')
-        return target.read_bytes()
+        return target.open('rb')
 
     # --- opt-in TTL pruning (non-blocking, non-erroring) ---
 

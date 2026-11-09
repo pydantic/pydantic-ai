@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import logging
 import posixpath
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
@@ -52,7 +55,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore, iter_payload
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +310,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
             """
-            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
+            return await _read_slice(self._store_for(ctx), handle, offset, limit, from_end, pattern)
 
         tool = Tool(
             read_tool_result,
@@ -809,7 +812,7 @@ _MAX_READ_CHARS = 50_000
 
 
 async def _read_slice(
-    read: Callable[[str], Awaitable[bytes]],
+    store: OverflowStore,
     handle: str,
     offset: int,
     limit: int,
@@ -820,7 +823,9 @@ async def _read_slice(
 
     `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
     the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
+    capped, so one call can never return an unbounded amount of text. The payload is streamed:
+    a forward read stops after the requested lines, and a read from the end keeps only the
+    last `offset + limit` lines.
     """
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
@@ -829,7 +834,7 @@ async def _read_slice(
     limit = min(limit, _MAX_READ_LINES)
 
     try:
-        data = await read(handle)
+        total, kept = await _last_matching(store, handle, pattern, offset + limit, stop=not from_end)
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -845,21 +850,56 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
-    lines = data.decode('utf-8', errors='replace').splitlines()
-    if pattern is not None:
-        lines = [line for line in lines if pattern in line]
-
-    total = len(lines)
-    if from_end:
-        end = max(0, total - offset)
-        window = lines[max(0, end - limit) : end]
-    else:
-        window = lines[offset : offset + limit]
-
+    window = kept[: max(0, len(kept) - offset)] if from_end else kept[offset:]
+    count = f'{offset + limit:,}+' if total > offset + limit and not from_end else f'{total:,}'
     body = '\n'.join(window)
     capped = ''
     if len(body) > _MAX_READ_CHARS:
         body = body[:_MAX_READ_CHARS]
         capped = ', output capped'
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
+    header = f'[handle {handle!r}: {count} matching line(s); showing {len(window)}{capped}]'
     return f'{header}\n{body}' if body else header
+
+
+async def _last_matching(
+    store: OverflowStore, handle: str, pattern: str | None, keep: int, *, stop: bool
+) -> tuple[int, list[str]]:
+    """Count the lines containing `pattern` and keep the last `keep`; with `stop`, stop once `keep` are kept."""
+    total = 0
+    kept: deque[str] = deque(maxlen=keep)
+    async with aclosing(_payload_lines(store, handle)) as lines:
+        async for line in lines:
+            if pattern is None or pattern in line:
+                total += 1
+                if stop and total > keep:
+                    break
+                kept.append(line)
+    return total, list(kept)
+
+
+async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[str]:
+    """Yield a stored payload's lines as `str.splitlines` splits its UTF-8 text, decoding chunk by chunk."""
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    pieces: list[str] = []
+    cr = ''
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            text = cr + decoder.decode(chunk)
+            # A trailing CR waits for the next chunk, which may start with the LF of a CRLF.
+            cr = '\r' if text.endswith('\r') else ''
+            for line in _complete_lines(text.removesuffix(cr), pieces):
+                yield line
+    for line in _complete_lines(cr + decoder.decode(b'', final=True), pieces):
+        yield line
+    if pieces:
+        yield ''.join(pieces)
+
+
+def _complete_lines(text: str, pieces: list[str]) -> Iterator[str]:
+    """Yield the lines `text` completes, keeping its unterminated end in `pieces`."""
+    for part in text.splitlines(keepends=True):
+        line = part.splitlines()[0]
+        pieces.append(line)
+        if line != part:
+            yield ''.join(pieces)
+            pieces.clear()

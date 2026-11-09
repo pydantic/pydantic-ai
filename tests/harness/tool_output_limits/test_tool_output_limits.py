@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import time
 from datetime import timedelta
@@ -1238,50 +1239,50 @@ class TestReadBack:
     async def test_read_slice_basic(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
         assert 'line 0' in out and 'line 2' in out and 'line 3' not in out
 
     async def test_read_slice_from_end(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
         assert 'line 49' in out and 'line 48' in out
 
     async def test_read_slice_literal_pattern(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'apple\nbanana\navocado\ncherry')
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
         assert 'avocado' in out and 'apple' not in out and 'banana' not in out
 
     async def test_read_slice_pattern_is_literal_not_regex(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'plain line\n^anchored')
         # A regex metacharacter is matched literally, so it cannot trigger backtracking.
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
         assert 'anchored' in out and 'plain line' not in out
 
     async def test_read_slice_offset_negative(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='offset'):
-            await _read_slice(store.read, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
+            await _read_slice(store, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
 
     async def test_read_slice_limit_too_small(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='limit'):
-            await _read_slice(store.read, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
+            await _read_slice(store, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
 
     async def test_read_slice_limit_clamped(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'l{i}' for i in range(2000)).encode('utf-8'))
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
         assert out.count('\n') <= 1_000  # clamped to the line cap
 
     async def test_read_slice_output_capped(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', ('x' * 60_000).encode('utf-8'))
-        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'output capped' in out
         assert len(out) < 60_000
 
@@ -1289,11 +1290,55 @@ class TestReadBack:
         # A missing/wrong handle returns a guiding message (it does NOT raise): a bad
         # handle must not consume a retry and escalate to a fatal UnexpectedModelBehavior.
         store = LocalFileOverflowStore(base_dir=tmp_path)
-        out = await _read_slice(store.read, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'No stored tool result' in out
         assert 're-run the original tool' in out
         # The store's error (which can carry the resolved filesystem path) is not leaked.
         assert str(tmp_path) not in out
+
+    @pytest.mark.parametrize('from_end', [False, True])
+    @pytest.mark.parametrize('pattern', [None, 'é'])
+    async def test_read_slice_streams_like_splitlines(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_end: bool, pattern: str | None
+    ):
+        monkeypatch.setattr('pydantic_ai_harness.tool_output_limits._store._CHUNK_SIZE', 3)
+        text = 'é1\r\nb\rcé\n\nd\u2028é2\x85f\r\n\ré3'
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        await store.write('h/1.0', text.encode('utf-8'))
+        lines = [line for line in text.splitlines() if pattern is None or pattern in line]
+        for offset in range(len(lines) + 1):
+            out = await _read_slice(store, 'h/1.0', offset=offset, limit=2, from_end=from_end, pattern=pattern)
+            end = len(lines) - offset
+            body = '\n'.join(lines[max(0, end - 2) : end] if from_end else lines[offset : offset + 2])
+            assert out.split('\n', 1)[1:] == ([body] if body else [])
+
+    async def test_read_slice_stops_reading_once_the_window_is_full(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        payload = '\n'.join(f'line {i}' for i in range(100_000)).encode('utf-8')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        await store.write('h/1.0', payload)
+        opened: list[io.BufferedReader] = []
+        open_file = LocalFileOverflowStore._open  # pyright: ignore[reportPrivateUsage]
+
+        def spy(self: LocalFileOverflowStore, handle: str) -> io.BufferedReader:
+            opened.append(open_file(self, handle))
+            return opened[-1]
+
+        monkeypatch.setattr(LocalFileOverflowStore, '_open', spy)
+        monkeypatch.setattr(LocalFileOverflowStore, 'read', AsyncMock(side_effect=AssertionError('read whole payload')))
+        out = await _read_slice(store, 'h/1.0', offset=10, limit=3, from_end=False, pattern=None)
+        assert out == "[handle 'h/1.0': 13+ matching line(s); showing 3]\nline 10\nline 11\nline 12"
+        assert [file.closed for file in opened] == [True]
+
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
+        assert out == "[handle 'h/1.0': 100,000 matching line(s); showing 2]\nline 99998\nline 99999"
+
+    async def test_read_slice_reads_other_stores_whole(self):
+        store = AsyncMock()
+        store.read.return_value = b'a\nb\nc'
+        out = await _read_slice(store, 'h', offset=1, limit=5, from_end=False, pattern=None)
+        assert out == "[handle 'h': 3 matching line(s); showing 2]\nb\nc"
 
     async def test_get_toolset_registers_read_tool(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
