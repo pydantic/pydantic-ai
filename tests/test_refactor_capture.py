@@ -5,6 +5,8 @@ They test the capture tooling rather than model behavior, so no recording applie
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import importlib.util
 import json
 from collections.abc import Callable
@@ -223,11 +225,39 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
     def run(capture_dir: Path, *args: str, text: str = 'hello') -> pytest.RunResult:
         pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
-        return pytester.runpytest_inprocess(
+        loops_before = _open_event_loops()
+        result = pytester.runpytest_inprocess(
             '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args
         )
+        _close_loops_the_session_left(loops_before)
+        return result
 
     return run
+
+
+def _open_event_loops() -> dict[int, asyncio.AbstractEventLoop]:
+    """The event loops still open, by id: what a session that ended without closing its own left behind."""
+    return {
+        id(loop): loop
+        for loop in gc.get_objects()
+        if isinstance(loop, asyncio.AbstractEventLoop) and not loop.is_closed()
+    }
+
+
+def _close_loops_the_session_left(loops_before: dict[int, asyncio.AbstractEventLoop]) -> None:
+    """Close the event loops the inner session left open, keeping the ones that were open before it.
+
+    `run_sync` installs a loop on the calling thread and leaves it open on purpose, so the next sync run there
+    reuses it. An in-process session ends without doing that, so the loops its tests installed stay open on this
+    thread and are finalized still open once they are collected: `BaseEventLoop.__del__` then closes a self-pipe
+    that is already gone, and the `ValueError: Invalid file descriptor: -1` it raises surfaces in whichever test
+    happens to be running by then. Closing them here keeps the failure off an unrelated test's teardown.
+    """
+    for key, loop in _open_event_loops().items():
+        if key not in loops_before:
+            loop.close()
+    # Regression guard: the session leaves no loop open for the GC to finalize later.
+    assert _open_event_loops().keys() <= loops_before.keys()
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
