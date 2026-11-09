@@ -85,7 +85,9 @@ async def login(*, provider: str, profile: str | None, console: Console, dialogs
     if not saved:
         return 'Sign-in cancelled.'
     path = credentials_path(account=name)
-    storage = f'saved in plaintext at {path}' if path.exists() else 'saved in the OS credential store'
+    storage = (
+        f'saved in plaintext at {path}' if await to_thread.run_sync(path.exists) else 'saved in the OS credential store'
+    )
     return f'{name} connected, {storage}. Use {name}:MODEL.'
 
 
