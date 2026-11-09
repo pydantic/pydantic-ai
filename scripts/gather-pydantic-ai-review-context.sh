@@ -849,8 +849,8 @@ second-guess.
 Trigger: the diff adds or changes a test, a test double, or a fix for a flaky
 test. The rules are the six numbered ones in "Tests that don't depend on
 timing" in `tests/AGENTS.md`. Read each wait and assertion as if the runner
-stalls for a minute right before it: CI runners do, and a flake fails `main`
-for whoever pushes next.
+stalls, for any length of time, right before it: CI runners do, and a flake
+fails `main` for whoever pushes next.
 
 **Flag this (HIGH):**
 ```python
@@ -859,11 +859,15 @@ async with anyio.create_task_group() as group:
     await _wait_for(started)  # the command touched this file
     server.break_streams(backend.ref.id)
 ```
-*Why:* The command touches `started` as soon as its process runs, but the
-fake registered the command's stream only after the process started. If the
-loop stalls in between, `break_streams` reaches no stream, the marker is lost,
-and the test hangs until the job's timeout. Ask the fake to register the stream
-before starting the process, or the test to wait for the stream itself.
+*Why:* The command touches `started` as soon as its process runs, but a fake
+that registers the command's stream only after the process starts can see the
+break before the stream exists. If the loop stalls in between, `break_streams`
+reaches no stream, the break is dropped, and the test hangs until the job's
+timeout. Don't flag it when the fake keeps an early break, as `_command` in
+`tests/harness/opensandbox_sandbox/fake_opensandbox.py` does by re-checking its
+`stream_breaks` count once the stream is registered. Otherwise ask for that
+re-check, for the stream to be registered before the process starts, or for
+the test to wait for the stream itself.
 
 **Don't flag this:**
 ```python

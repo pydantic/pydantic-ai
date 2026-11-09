@@ -749,8 +749,8 @@ async def test_comprehensive_toolset_composition():
     )
 
 
-# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall
-# (calls up to 187 s were seen on CI) and never decides a test's outcome.
+# Guards the waits on the in-process MCP server against a hang, so it is far longer than any runner stall and never
+# decides a test's outcome.
 READINESS_WAIT_TIMEOUT = 300
 
 

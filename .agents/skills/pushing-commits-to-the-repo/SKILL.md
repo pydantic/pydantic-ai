@@ -111,14 +111,14 @@ All of these must hold:
 - The PR body links a CI run where the test failed.
 - Unless this PR's own diff introduced the flake, the PR body closes the flake's issue, and you claimed that issue before you wrote the fix, as [Flake claims](#flake-claims) says.
 - The PR body names the root cause and a reproduction that fails without the fix and passes with it.
-  Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
-  Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
+  Force the failure, as rule 6 of "Tests that don't depend on timing" in `tests/AGENTS.md` says, for example with a
+  forced ordering, a `pytest-randomly` seed or a frozen clock. Rerunning the test is not a reproduction.
 - Every changed file is the failing test's module, or a cassette or snapshot of it.
 - The PR is labeled `size: S` or `size: M`.
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as rule 3 of "Tests that don't depend on timing" in `tests/AGENTS.md` requires, is not a longer timeout.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.
