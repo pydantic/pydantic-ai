@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
@@ -78,7 +78,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Remove a container and its anonymous volumes, whether it is running or not."""
         check_provider(ref, PROVIDER)
-        with lifecycle_span('destroy', ref):
+        with destroy_span(ref):
             await remove_container(ref.id, executable=self._executable_path)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

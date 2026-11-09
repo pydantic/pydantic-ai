@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -335,7 +335,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self, machine_id: str, *, create: bool) -> smol.Machine:
         try:
-            with lifecycle_span('create' if create else 'attach', self):
+            with acquire_span('create' if create else 'attach', self):
                 try:
                     if create:
                         config = smol.MachineConfig(

@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -332,7 +332,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
                 require_asyncio(_ASYNCIO_ONLY)
                 ref = self._ref
-                with lifecycle_span('create' if ref is None else 'attach', self):
+                with acquire_span('create' if ref is None else 'attach', self):
                     sandbox = await self._attach(ref.id) if ref is not None else await self._create()
                     if ref is None:
                         # Recorded at creation, so the id can be found whatever ends the run before it is stored.

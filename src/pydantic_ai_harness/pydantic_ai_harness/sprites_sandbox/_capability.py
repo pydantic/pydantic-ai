@@ -11,7 +11,7 @@ from sprites import AsyncSpritesClient
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, destroy_sprite
@@ -106,7 +106,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         A Sprite that no longer exists is already gone, so destroying it returns quietly.
         """
         check_provider(ref, 'sprites')
-        with lifecycle_span('destroy', ref):
+        with destroy_span(ref):
             await destroy_sprite(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

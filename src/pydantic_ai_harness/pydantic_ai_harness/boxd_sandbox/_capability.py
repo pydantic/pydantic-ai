@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -144,7 +144,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         that is not isolated raises `ValueError` and is left alone: `BoxdSandbox` never created it.
         """
         check_provider(ref, 'boxd')
-        with lifecycle_span('destroy', ref):
+        with destroy_span(ref):
             await destroy_machine(self.client, ref.id)
 
     async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:

@@ -38,7 +38,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -174,7 +174,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         async with self._lock:
             if self._resolved_working_dir is not None:
                 return self._resolved_working_dir
-            with lifecycle_span('create' if self._ref is None else 'attach', self):
+            with acquire_span('create' if self._ref is None else 'attach', self):
                 if self._ref is None:
                     # Record the paid sandbox's ref even if this caller is cancelled meanwhile.
                     await run_to_completion(lambda: self._create(client))

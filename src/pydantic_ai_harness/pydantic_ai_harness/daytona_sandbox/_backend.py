@@ -32,7 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -500,13 +500,13 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._client = await _new_client()
         client = self._client
         if self._ref is not None:
-            with lifecycle_span('attach', self):
+            with acquire_span('attach', self):
                 sandbox = await self._attach(client, self._ref.id)
                 self._record(sandbox)
             return sandbox
 
         async def create() -> AsyncSandbox:
-            with lifecycle_span('create', self):
+            with acquire_span('create', self):
                 created = await self._create(client)
                 self._record(created)
             self._working_dir_pending = self._working_dir is not None

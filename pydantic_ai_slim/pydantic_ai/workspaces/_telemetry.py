@@ -2,29 +2,37 @@
 
 A workspace has no `RunContext` and can outlive a run, so the run publishes its tracer in a context
 variable instead. Outside an instrumented run there is none, and nothing is traced.
+
+Every span opens through `_span`. Each public helper only picks its name and what it records:
+
+- `operation_span`: `workspace {operation}`, one per `Workspace` call, skipped inside another workspace span.
+- `acquire_span`: `workspace create` or `workspace attach`, around a backend getting its environment.
+- `destroy_span`: `workspace destroy`, around a capability deleting an environment.
+- `command_span`: `workspace run`, one per shell command that emulates a file operation.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, TypeAlias
 
 from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
-from opentelemetry.util.types import AttributeValue
+from opentelemetry.util.types import Attributes, AttributeValue
 
 from .._instrumentation import record_uncaught_errors
 from ..messages import WorkspaceRef
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
 __all__ = (
-    'Lifecycle',
+    'Acquire',
     'Operation',
     'Step',
+    'acquire_span',
     'command_span',
-    'lifecycle_span',
+    'destroy_span',
     'operation_span',
     'publish_workspace_telemetry',
     'set_command',
@@ -45,8 +53,9 @@ Operation: TypeAlias = Literal[
     'exists',
     'realpath',
 ]
-Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
-"""What a backend does to its environment, apart from the facade's operations."""
+"""A call on the `Workspace` facade."""
+Acquire: TypeAlias = Literal['create', 'attach']
+"""How a backend gets its environment: a new one, or one named by a `WorkspaceRef`."""
 Step: TypeAlias = Literal[
     'probe',
     'read_chunk',
@@ -67,31 +76,31 @@ Step: TypeAlias = Literal[
 class _Telemetry:
     tracer: Tracer
     include_content: bool
+    inside_span: bool = False
+    """True inside a workspace span, so a nested `Workspace` call (such as `Workspace(self)` in a backend) adds none."""
 
 
 _telemetry: ContextVar[_Telemetry | None] = ContextVar('workspace_telemetry', default=None)
 
-_in_operation: ContextVar[bool] = ContextVar('workspace_operation', default=False)
-"""True inside an operation's span, so nested facade calls (such as `Workspace(self)` in a backend) add no span."""
-
 
 def publish_workspace_telemetry(tracer: Tracer, *, include_content: bool) -> None:
     """Trace workspace calls in the current context with `tracer`; a `NoOpTracer` turns tracing off."""
-    _telemetry.set(None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content))
-    # A run started from inside an operation traces its own calls.
-    _in_operation.set(False)
+    _telemetry.set(_new_telemetry(tracer, include_content))
 
 
 @contextmanager
 def workspace_telemetry_scope(tracer: Tracer, *, include_content: bool) -> Generator[None]:
     """`publish_workspace_telemetry` for the duration of the block."""
-    telemetry, in_operation = _telemetry.get(), _in_operation.get()
-    publish_workspace_telemetry(tracer, include_content=include_content)
+    token = _telemetry.set(_new_telemetry(tracer, include_content))
     try:
         yield
     finally:
-        _telemetry.set(telemetry)
-        _in_operation.set(in_operation)
+        _telemetry.reset(token)
+
+
+def _new_telemetry(tracer: Tracer, include_content: bool) -> _Telemetry | None:
+    # Starts outside any span: a run started from inside a workspace span traces its own calls.
+    return None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content)
 
 
 def set_content(span: Span, key: str, value: AttributeValue) -> None:
@@ -108,70 +117,59 @@ def set_command(span: Span, command: WorkspaceCommand) -> None:
         set_content(span, 'process.command_args', list(command))
 
 
-@contextmanager
-def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Generator[Span]:
-    """Open a `workspace {operation}` span, unless tracing is off or an operation's span is already open."""
-    if _in_operation.get():
-        yield INVALID_SPAN
-        return
-    with _span(operation) as span:
-        try:
-            yield span
-        finally:
-            # Read at the end: a lazy backend creates its sandbox during its first operation.
-            _record_ref(span, workspace)
+def operation_span(operation: Operation, workspace: WorkspaceBackend) -> AbstractContextManager[Span]:
+    """Open a `workspace {operation}` span, unless a workspace span is already open."""
+    if (telemetry := _telemetry.get()) is not None and telemetry.inside_span:
+        return nullcontext(INVALID_SPAN)
+    return _span(operation, backend=workspace)
 
 
-@contextmanager
-def lifecycle_span(action: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef) -> Generator[Span]:
-    """Open a `workspace create`, `attach` or `destroy` span around a backend's call to its provider.
+def acquire_span(action: Acquire, backend: WorkspaceBackend) -> AbstractContextManager[Span]:
+    """Open a `workspace create` or `workspace attach` span around `backend`'s call to its provider.
 
     It opens even inside an operation's span: a lazy backend creates or attaches during its first
     operation, and this span is what separates that time from the operation's own.
     """
-    with _span(action) as span:
-        # A failed create may drop the ref it had allocated; the span still names that sandbox.
-        entry_ref = _ref_of(workspace) if span.is_recording() else None
-        try:
-            yield span
-        finally:
-            _record_ref(span, workspace, entry_ref)
+    return _span(action, backend=backend)
 
 
-@contextmanager
-def command_span(step: Step) -> Generator[Span]:
+def destroy_span(ref: WorkspaceRef) -> AbstractContextManager[Span]:
+    """Open a `workspace destroy` span around the provider call that deletes `ref`'s environment."""
+    return _span('destroy', attributes=_ref_attributes(ref))
+
+
+def command_span(step: Step) -> AbstractContextManager[Span]:
     """Open a `workspace run` span for a shell-filesystem command, recording its `step` but never its text, which can carry file contents."""
     # The message names the step, so it can't pass for a command the agent ran. It never holds the
     # command: Logfire does not scrub `logfire.msg`.
-    with _span('run', f'workspace run ({step})') as span:
-        span.set_attribute('pydantic_ai.workspace.command.step', step)
-        yield span
-
-
-def _ref_of(workspace: WorkspaceBackend | WorkspaceRef) -> WorkspaceRef | None:
-    return workspace if isinstance(workspace, WorkspaceRef) else workspace.ref
-
-
-def _record_ref(span: Span, workspace: WorkspaceBackend | WorkspaceRef, fallback: WorkspaceRef | None = None) -> None:
-    # The ref is read only when tracing: an untraced call never touches it.
-    if span.is_recording() and (ref := _ref_of(workspace) or fallback) is not None:
-        span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
-        span.set_attribute('pydantic_ai.workspace.id', ref.id)
+    return _span(
+        'run', attributes={'logfire.msg': f'workspace run ({step})', 'pydantic_ai.workspace.command.step': step}
+    )
 
 
 @contextmanager
-def _span(operation: Operation | Lifecycle, message: str | None = None) -> Generator[Span]:
+def _span(
+    operation: Operation | Acquire | Literal['destroy'],
+    *,
+    attributes: Attributes = None,
+    backend: WorkspaceBackend | None = None,
+) -> Generator[Span]:
+    """Open `workspace {operation}`, recording errors and, given `backend`, the environment it ran in.
+
+    `attributes` are set at the start, so Logfire's console and pending spans show them too.
+    """
     if (telemetry := _telemetry.get()) is None:
         yield INVALID_SPAN
         return
-    # Set at the start, so Logfire's console and pending spans show it too.
     with telemetry.tracer.start_as_current_span(
-        f'workspace {operation}',
-        attributes=None if message is None else {'logfire.msg': message},
-        record_exception=False,
-        set_status_on_exception=False,
+        f'workspace {operation}', attributes=attributes, record_exception=False, set_status_on_exception=False
     ) as span:
-        token = _in_operation.set(True)
+        # The ref is read only when recording, so an untraced call never touches it.
+        traced_backend = backend if span.is_recording() else None
+        if traced_backend is not None:
+            # Read at the start: a failed attach may drop the ref it was given.
+            span.set_attributes(_ref_attributes(traced_backend.ref))
+        token = _telemetry.set(replace(telemetry, inside_span=True))
         try:
             # A missing file is often an expected answer, not a failure.
             with record_uncaught_errors(
@@ -179,4 +177,13 @@ def _span(operation: Operation | Lifecycle, message: str | None = None) -> Gener
             ):
                 yield span
         finally:
-            _in_operation.reset(token)
+            _telemetry.reset(token)
+            if traced_backend is not None:
+                # Read at the end too: a lazy backend creates its environment during its first operation.
+                span.set_attributes(_ref_attributes(traced_backend.ref))
+
+
+def _ref_attributes(ref: WorkspaceRef | None) -> dict[str, AttributeValue]:
+    if ref is None:
+        return {}
+    return {'pydantic_ai.workspace.provider': ref.provider, 'pydantic_ai.workspace.id': ref.id}

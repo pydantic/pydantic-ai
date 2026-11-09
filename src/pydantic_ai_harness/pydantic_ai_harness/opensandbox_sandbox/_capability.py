@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -161,7 +161,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a sandbox by ID, files included; one that no longer exists returns quietly."""
         check_provider(ref, PROVIDER)
-        with lifecycle_span('destroy', ref):
+        with destroy_span(ref):
             await destroy_sandbox(ref.id, self.connection)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

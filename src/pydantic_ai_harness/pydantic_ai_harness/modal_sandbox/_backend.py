@@ -45,7 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -330,7 +330,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 return sandbox  # pragma: no cover
             await _import_modal()
             ref = self._ref
-            with lifecycle_span('create' if ref is None else 'attach', self):
+            with acquire_span('create' if ref is None else 'attach', self):
                 if ref is not None:
                     sandbox = await self._attach(ref.id)
                 else:

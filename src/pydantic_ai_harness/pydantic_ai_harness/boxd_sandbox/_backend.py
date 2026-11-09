@@ -62,7 +62,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -512,7 +512,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             client = self._client
             ref = self._ref
             if ref is None or not self._ready:
-                with lifecycle_span('create' if ref is None else 'attach', self):
+                with acquire_span('create' if ref is None else 'attach', self):
                     if ref is None:
                         # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
                         ref = await run_to_completion(lambda: self._create(client))

@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
     check_working_dir,
@@ -84,7 +84,7 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
         """
         _backend.check_ref(ref)
         require_asyncio(_backend.ASYNCIO_ONLY)
-        with lifecycle_span('destroy', ref):
+        with destroy_span(ref):
             await _backend.delete(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:

@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_provider,
@@ -320,7 +320,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         async with self._lock:
             sandbox = self._sandbox
             if sandbox is None:
-                with lifecycle_span('create' if self._ref is None else 'attach', self):
+                with acquire_span('create' if self._ref is None else 'attach', self):
                     sandbox = await self._create() if self._ref is None else await self._attach(self._ref.id)
                     self._sandbox = sandbox
             elif self._sandbox_timeout is not None:

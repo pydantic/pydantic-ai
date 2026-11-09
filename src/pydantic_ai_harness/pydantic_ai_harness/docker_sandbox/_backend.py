@@ -46,7 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -307,7 +307,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Create or start the container once, however many first operations race, and return the working directory."""
         async with self._lock:
             if self._resolved_working_dir is None:
-                with lifecycle_span('create' if self._ref is None else 'attach', self):
+                with acquire_span('create' if self._ref is None else 'attach', self):
                     if self._ref is None:
                         await self._create()
                     else:
