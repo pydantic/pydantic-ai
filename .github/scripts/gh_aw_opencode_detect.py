@@ -58,11 +58,21 @@ def main() -> None:
     for path in (result_path, full_path):
         path.unlink(missing_ok=True)
     stream = Path(os.environ['RUNNER_TEMP']) / 'gh-aw-opencode-detector.ndjson'
+    retries = int(os.environ['GH_AW_HARNESS_MAX_RETRIES'])
     try:
         check_symlinks(DETECTION_DIR)
         prompt = Path(os.environ['GH_AW_PROMPT']).read_text(encoding='utf-8') + TOOL_GUIDANCE
-        run_read_only(prompt, cwd=DETECTION_DIR, agent='detector', output=stream)
-        text = final_text(stream)
+        attempt = 1
+        while True:
+            try:
+                run_read_only(prompt, cwd=DETECTION_DIR, agent='detector', output=stream)
+                text = final_text(stream)
+                break
+            except (ValueError, subprocess.CalledProcessError) as exc:
+                if attempt > retries:
+                    raise
+                print(f'OpenCode threat detection attempt {attempt} failed: {type(exc).__name__}; retrying')
+                attempt += 1
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         report_status('engine_error', 2)
         sys.exit(f'OpenCode threat detection failed: {type(exc).__name__}')

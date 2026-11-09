@@ -287,7 +287,8 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
 - OpenCode runs with douwebot's read-only lockdown in `/tmp/gh-aw/threat-detection`. It cannot read the repository workspace.
 - A valid verdict writes `detection_result.json` without reasons and `detection_result_full.json` with them.
 - An invalid verdict writes `THREAT_DETECTION_STATUS: reason=invalid_report_exhausted` to `detection.log`, which concludes as `parse_error`.
-  An OpenCode failure writes `reason=engine_error`, which concludes as `agent_failure`.
+  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. It then writes `reason=engine_error`, which concludes as `agent_failure`.
+  An invalid verdict is not retried.
   Warn mode turns both into a `warning` and a comment on the `[aw] Detection Runs` tracker.
 - Keep gh-aw's `threat-detect` install: its conclusion step runs `threat-detect conclude`.
   gh-aw v1.2.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.

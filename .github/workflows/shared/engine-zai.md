@@ -160,6 +160,8 @@ safe-outputs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+          # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
+          GH_AW_HARNESS_MAX_RETRIES: "3"
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
           python3 .gh-aw-detector/.github/scripts/gh_aw_opencode_detect.py

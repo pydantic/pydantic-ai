@@ -35,16 +35,22 @@ def detection_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GH_AW_PROMPT', str(prompt))
     monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
     monkeypatch.setenv('OPENCODE_API_KEY', 'fake-key')
+    monkeypatch.setenv('GH_AW_HARNESS_MAX_RETRIES', '3')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return directory
 
 
-def answer(monkeypatch: pytest.MonkeyPatch, text: str) -> list[dict[str, object]]:
-    """Make OpenCode stop normally with `text` as its final message, recording each launch."""
+def answer(monkeypatch: pytest.MonkeyPatch, text: str, *, incomplete_runs: int = 0) -> list[dict[str, object]]:
+    """Make OpenCode stop normally with `text` as its final message, recording each launch.
+
+    The first `incomplete_runs` launches exit without writing a stream, as an interrupted run does.
+    """
     invoked: list[dict[str, object]] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         invoked.append({'args': args, **kwargs})
+        if len(invoked) <= incomplete_runs:
+            return subprocess.CompletedProcess(args, 0)
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
         events = [
@@ -114,10 +120,12 @@ def test_invalid_report_concludes_as_parse_error(
     detection_dir: Path, monkeypatch: pytest.MonkeyPatch, text: str
 ) -> None:
     """No verdict is written, and the status line maps the missing result to `parse_error`."""
-    answer(monkeypatch, text.replace('"reasons": []', '"reasons": ["::error::injected"]', 1))
+    invoked = answer(monkeypatch, text.replace('"reasons": []', '"reasons": ["::error::injected"]', 1))
 
     with pytest.raises(SystemExit) as exc_info:
         gh_aw_opencode_detect.main()
+
+    assert len(invoked) == 1
 
     assert not (detection_dir / 'detection_result.json').exists()
     assert not (detection_dir / 'detection_result_full.json').exists()
@@ -126,9 +134,11 @@ def test_invalid_report_concludes_as_parse_error(
 
 
 def test_engine_failure_concludes_as_agent_failure(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An OpenCode failure leaves no verdict and reports an engine error."""
+    """An OpenCode failure that outlasts the retries leaves no verdict and reports an engine error."""
+    attempts: list[list[str]] = []
 
     def failed_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        attempts.append(args)
         raise subprocess.CalledProcessError(1, args)
 
     monkeypatch.setattr(subprocess, 'run', failed_run)
@@ -136,8 +146,19 @@ def test_engine_failure_concludes_as_agent_failure(detection_dir: Path, monkeypa
     with pytest.raises(SystemExit):
         gh_aw_opencode_detect.main()
 
+    assert len(attempts) == 4
     assert not (detection_dir / 'detection_result.json').exists()
     assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=engine_error exit=2'
+
+
+def test_retry_recovers_from_an_incomplete_stream(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that stops without a final message is retried; an invalid verdict is not."""
+    invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), incomplete_runs=1)
+
+    gh_aw_opencode_detect.main()
+
+    assert len(invoked) == 2
+    assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
 
 
 def test_escaping_symlink_stops_before_opencode_runs(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
