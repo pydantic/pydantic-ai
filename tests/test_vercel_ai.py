@@ -14248,6 +14248,101 @@ async def test_conversation_store_resubmission_stores_the_turn_a_capability_rewr
     assert conversation_view(after.messages[2:]) == [f'user-prompt: {prompt}', 'text: answer 3']
 
 
+def _keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-1:]
+
+
+async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    yield 'ok'
+
+
+@pytest.mark.parametrize(
+    ('prompt', 'trim', 'efforts', 'added'),
+    [
+        pytest.param({'system_prompt': 'Be brief.'}, True, [None, None, None], SystemPromptPart, id='trimmed'),
+        pytest.param(
+            {'instructions': 'Be brief.'}, True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'
+        ),
+        pytest.param(
+            {'system_prompt': 'Be brief.'}, False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'
+        ),
+        pytest.param({'system_prompt': 'Be brief.'}, False, ['low', 'low', 'low'], None, id='same-effort'),
+    ],
+)
+async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
+    prompt: dict[str, str], trim: bool, efforts: list[Literal['low', 'high'] | None], added: type | None
+):
+    """Parts the run adds to the client's new turn, like a reinjected system prompt or a settings change, don't make the save rewrite the stored history.
+
+    Nor does a capability that trims the history the model is sent.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=_answer_ok),
+        capabilities=[ProcessHistory(_keep_last)] if trim else [],
+        **prompt,
+    )
+    store = InMemoryConversationStore()
+    stored_ids: list[str] = []
+    for turn, effort in enumerate(efforts):
+        new_message = UIMessage(id=f'u{turn}', role='user', parts=[TextUIPart(text=f'question {turn}')])
+        adapter = VercelAIAdapter(
+            agent, SubmitMessage(id='chat', messages=[new_message]), sdk_version=6, conversation_store=store
+        )
+        chunks = [chunk async for chunk in adapter.run_stream(model_settings={'thinking': effort} if effort else None)]
+
+        entries = await store.load_entries('chat')
+        record = await store.read_record('chat')
+        assert entries is not None and record is not None
+        assert len(entries) == 2 * (turn + 1)
+        assert [entry.id for entry in entries[: len(stored_ids)]] == stored_ids
+        assert _saved_entry_ids(chunks) == [entry.id for entry in entries[len(stored_ids) :]]
+        assert record.branches == []
+        stored_ids = [entry.id for entry in entries]
+
+    conversation = await store.load('chat')
+    assert conversation is not None
+    last_turn = conversation.messages[-2]
+    assert isinstance(last_turn, ModelRequest)
+    assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+
+
+@pytest.mark.parametrize(
+    'resubmission',
+    [
+        pytest.param(
+            RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI], message_id='x'), id='regenerate'
+        ),
+        pytest.param(
+            SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])]),
+            id='edit',
+        ),
+    ],
+)
+async def test_conversation_store_resubmitted_first_message_is_stored_as_the_run_sent_it(
+    resubmission: SubmitMessage | RegenerateMessage,
+):
+    """A resubmitted first message is stored with the system prompt the run reinjected into it and the run's stamps."""
+    agent = Agent(FunctionModel(stream_function=_answer_ok), system_prompt='Be brief.', instructions='Be terse.')
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    results: list[AgentRunResult[Any]] = []
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream(on_complete=results.append)]
+
+    conversation = await store.load('chat')
+    record = await store.read_record('chat')
+    assert conversation is not None and record is not None
+    assert len(record.branches) == 1
+    [result] = results
+    assert conversation.messages == result.all_messages()
+    first = conversation.messages[0]
+    assert isinstance(first, ModelRequest)
+    assert conversation_view([first]) == snapshot(['system-prompt: Be brief.', 'user-prompt: hi'])
+    assert first.run_id == result.run_id
+    assert first.instructions == 'Be terse.'
+
+
 async def test_conversation_store_tool_approval():
     """An approval answers the call the stored conversation is waiting on; a result for that call isn't accepted."""
     agent, _, deleted = server_history_agent()

@@ -120,9 +120,26 @@ _STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
 
 
 def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
+    """Whether `message` differs from `original` other than by what a run adds to a request it sends.
+
+    A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
+    when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
+    Changing or dropping one of the request's own parts rewrites it.
+    """
     filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
+    if (
+        isinstance(message, _messages.ModelRequest)
+        and isinstance(original, _messages.ModelRequest)
+        and _keeps_in_order(message.parts, original.parts)
+    ):
+        filled['parts'] = message.parts
     return message != dataclasses.replace(original, **filled)
+
+
+def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
+    """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
+    remaining = iter(parts)
+    return all(part in remaining for part in kept)
 
 
 _STATE_KEYS = (
