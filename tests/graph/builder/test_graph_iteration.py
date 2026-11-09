@@ -172,6 +172,22 @@ async def test_iter_next_task_property():
         assert next_task is not None
 
 
+async def test_iter_next_task_preserves_empty_pending_sequence():
+    """An empty mapped result is a real pending state, not an unstarted graph."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def my_step(ctx: StepContext[IterState, None, None]) -> int:
+        return 42
+
+    g.add(g.edge_from(g.start_node).to(my_step), g.edge_from(my_step).to(g.end_node))
+    graph = g.build()
+
+    async with graph.iter(state=IterState()) as run:
+        run.override_next([])
+        assert run.next_task == []
+
+
 async def test_iter_with_map():
     """Test iteration with map operations."""
     g = GraphBuilder(state_type=IterState, output_type=list[int])
