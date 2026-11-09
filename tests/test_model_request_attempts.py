@@ -396,11 +396,13 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
 
     agent = Agent(FunctionModel(stream_function=fn), deps_type=type(None), capabilities=[hooks])
     async with agent.iter('x') as run:
-        async for node in run:  # pragma: no branch
+        async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx):
                     pass
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
     assert closed == [True]
 
 

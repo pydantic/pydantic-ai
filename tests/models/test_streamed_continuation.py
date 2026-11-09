@@ -1385,9 +1385,11 @@ async def test_interrupted_later_segment_cost_is_checked_before_resume(monkeypat
 
     with capture_run_messages() as messages:
         async with Agent(model).run_stream('go') as result:
-            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            async for _ in result.stream_text(delta=True, debounce_by=None):
                 if model.request_stream_calls == 2:
                     break
+            else:
+                pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)

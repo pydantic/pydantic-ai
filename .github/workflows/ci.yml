@@ -1243,11 +1243,11 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
-        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
-        # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
-        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
-        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
+        # A pull request runs the `locked` leg of every Python, plus the 3.12 `lowest` leg. Of those, the
+        # 3.12 and 3.14 legs collect coverage (see `COLLECT_COVERAGE`), the 3.13 `locked` leg runs the
+        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below, the
+        # newest Python, runs the manifest freshness test of a `pydantic-ai-harness`-only change (see
+        # `DURABLE_EXEC_MANIFEST_FRESHNESS`).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"

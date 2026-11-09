@@ -17581,7 +17581,7 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
 
     async with agent.iter('test prompt') as agent_run:
         node = agent_run.next_node
-        while not isinstance(node, End):  # pragma: no branch
+        while not isinstance(node, End):
             if isinstance(node, ModelRequestNode):
                 with pytest.raises(RuntimeError, match='stream exploded'):
                     async with node.stream(agent_run.ctx) as stream:
@@ -17589,6 +17589,8 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
                             pass
                 break
             node = await agent_run.next(node)
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
 
 async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):

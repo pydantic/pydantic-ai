@@ -999,10 +999,12 @@ async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
         async with _durability.stream_agent_events(
             client, client.get_workflow_handle(workflow_id), output_type=str, poll_cooldown=timedelta(milliseconds=50)
         ) as interrupted:
-            async for chunk in _chat_adapter(body).transform_stream(interrupted):  # pragma: no branch
+            async for chunk in _chat_adapter(body).transform_stream(interrupted):
                 dropped.append(chunk)
                 if len(dropped) == 2:
                     break
+            else:
+                pytest.fail('expected to leave this loop early')  # pragma: no cover
 
         # The reattaching endpoint holds only the workflow ID and the stored body.
         reattached_handle = client.get_workflow_handle(workflow_id)

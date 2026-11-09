@@ -17985,13 +17985,15 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
 
     events: list[Any] = []
     async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
-        async for node in agent_run:  # pragma: no branch
+        async for node in agent_run:
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         events.append(event)
                 # The run would go on to retry this text-less response; only the stream matters here.
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     # Same contract as the delta path: the phase arrives on the `PartStartEvent` that opens the
     # part, and the completed part carries it too.

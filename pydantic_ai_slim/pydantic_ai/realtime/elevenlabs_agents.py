@@ -1620,6 +1620,8 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 speech_timestamps=settings.get('output_speech_timestamps', False),
             )
         finally:
+            # `ws` is `None` when connecting fails. Python 3.14's coverage records that exit as a jump to this line itself,
+            # which it then reports as a missed branch.
             if ws is not None:  # pragma: no branch
                 await opening.__aexit__(None, None, None)
 

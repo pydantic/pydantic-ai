@@ -4913,10 +4913,12 @@ async def test_early_break_with_running_tool_cancels_task() -> None:
         return 'never'  # pragma: no cover
 
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             if isinstance(event, FunctionToolCallEvent):
                 await started.wait()
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
     assert conn.iteration_task is not None and conn.iteration_task.done()
@@ -5188,13 +5190,15 @@ async def test_interrupt_does_not_cancel_in_flight_tool() -> None:
 
     conn = _IdleAfterCall([])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             if isinstance(event, FunctionToolCallEvent):
                 await started.wait()
                 await session.interrupt()
                 release.set()
             elif isinstance(event, FunctionToolResultEvent):
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     # The barge-in reached the model, and the tool still completed and reported its result afterwards.
     assert CancelResponse() in conn.sent
@@ -6469,10 +6473,12 @@ async def test_early_break_cancels_pump() -> None:
     conn = _BlockAfterFirst()
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             assert isinstance(event, PartStartEvent)
             await parked.wait()  # the pump has consumed the first event and is parked on the next
             break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     # The owner's exit drains cancellation synchronously; no async-generator close or GC pumping is
     # needed before the connection observes cancellation and the receive task is done.
@@ -9340,9 +9346,11 @@ async def test_close_settles_in_flight_state_into_history() -> None:
         runner=runner,
     )
     async with session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             if isinstance(event, FunctionToolCallEvent):
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     messages = session.all_messages()
     response = messages[0]
@@ -9361,9 +9369,11 @@ async def test_close_settles_partial_reply_as_interrupted() -> None:
     # instead of the buffered transcript silently vanishing from `all_messages()`.
     session = RealtimeSession(FakeRealtimeConnection([OutputTranscript(text='one moment', is_final=False)]))
     async with session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             if isinstance(event, PartDeltaEvent):
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     messages = session.all_messages()
     assert len(messages) == 1

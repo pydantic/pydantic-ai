@@ -1819,10 +1819,12 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
     )
     events: list[Any] = []
     async with session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             events.append(event)
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     assert RealtimeResponseInterruptedEvent() in events
     assert not any(event.event_kind == 'input_speech_start' for event in events)
@@ -4473,9 +4475,11 @@ async def test_turn_complete_reason_reaches_the_model_response() -> None:
         tool_manager=make_tool_manager(),
     )
     async with session:
-        async for event in session:  # pragma: no branch
+        async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        else:
+            pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.finish_reason == 'error'

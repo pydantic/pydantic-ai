@@ -1948,8 +1948,10 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
         async with agent.realtime(_Model(conn)).session() as session:
-            async for _ in session:  # pragma: no branch
+            async for _ in session:
                 break
+            else:
+                pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     # These are all spans this path starts. They must be exported before the owner block returns,
     # without GC or extra event-loop turns, and the session remains the explicit parent of `chat`.
@@ -1998,9 +2000,11 @@ async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureF
 
     with caplog.at_level(logging.ERROR, logger='opentelemetry'):
         async with agent.realtime(_Model(_IdleAfterTool())).session() as session:
-            async for _ in session:  # pragma: no branch
+            async for _ in session:
                 await started.wait()
                 break
+            else:
+                pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
     assert cancelled.is_set()

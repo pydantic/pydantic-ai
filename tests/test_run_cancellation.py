@@ -2263,9 +2263,11 @@ async def test_iter_break_in_cancelled_scope_cancels_wrap_run_cleanup_like_the_s
             tg.start_soon(_permit_cleanup, cleanup)
             with anyio.CancelScope() as scope:
                 async with agent.iter('go') as agent_run:
-                    async for _node in agent_run:  # pragma: no branch
+                    async for _node in agent_run:
                         scope.cancel()
                         break
+                    else:
+                        pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     assert cleanup.finished.is_set() is shielded
 
@@ -2551,8 +2553,10 @@ async def test_iter_break_teardown_propagates_external_cancellation():
 
     async def drive() -> None:
         async with agent.iter('go') as agent_run:
-            async for _node in agent_run:  # pragma: no branch
+            async for _node in agent_run:
                 break
+            else:
+                pytest.fail('expected to leave this loop early')  # pragma: no cover
 
     task = asyncio.create_task(drive())
     await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
