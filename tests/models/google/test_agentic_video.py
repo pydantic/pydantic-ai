@@ -352,7 +352,7 @@ async def test_signed_unsupported_parts_keep_the_unsupported_error(stream: bool)
     }
 
     if stream:
-        with pytest.raises(AssertionError, match='Unexpected part'):
+        with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):
             await _stream_response_parts([[part]])
     else:
         with pytest.raises(UnexpectedModelBehavior, match='Unsupported response from Gemini'):

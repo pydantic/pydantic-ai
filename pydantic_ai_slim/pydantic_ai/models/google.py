@@ -1821,6 +1821,8 @@ class GeminiStreamedResponse(StreamedResponse):
         if part.text is not None:
             yield from self._map_text(part.text, part.thought, provider_details)
         elif part.function_call:
+            if part.function_call.name is None:
+                raise UnexpectedModelBehavior(f'Gemini function call is missing a name: {part!r}')
             yield from self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=uuid4(),
                 tool_name=part.function_call.name,
@@ -1847,7 +1849,7 @@ class GeminiStreamedResponse(StreamedResponse):
             # See the signature-only media-processing comment in `_map_response_part`.
             pass
         else:
-            assert part.function_response is not None, f'Unexpected part: {part}'
+            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     def _track_text_run(self, part: Part) -> None:
         # A new request's first text starts a new part, like any text after a non-text part.
@@ -2284,7 +2286,8 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
             return ThinkingPart(content=part.text)
         return TextPart(content=part.text)
     if part.function_call:
-        assert part.function_call.name is not None
+        if part.function_call.name is None:
+            raise UnexpectedModelBehavior(f'Gemini function call is missing a name: {part!r}')
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id

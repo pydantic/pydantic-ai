@@ -4254,13 +4254,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
-                pass
+                warnings.warn(
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                    UserWarning,
+                )
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
-                pass
+                warnings.warn(
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                    UserWarning,
+                )
             elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
-                pass
+                warnings.warn(
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                    UserWarning,
+                )
             elif isinstance(item, responses.ResponseFileSearchToolCall):
                 call_part, return_part = _map_file_search_tool_call(item, self.system)
                 items.append(call_part)
@@ -4275,7 +4284,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 items.append(return_part)
             elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
                 # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
-                pass
+                warnings.warn(
+                    f'Handling of this item type is not yet implemented. Please report on our GitHub: {item}',
+                    UserWarning,
+                )
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = dict(self._process_provider_details(response) or {})

@@ -2293,6 +2293,27 @@ async def test_uploaded_file_responses_model(allow_model_requests: None) -> None
     )
 
 
+def test_responses_model_warns_for_unsupported_output_items() -> None:
+    """Non-streamed Responses output warns just like the streamed path for unsupported items."""
+    from openai.types.responses import ResponseComputerToolCall
+
+    output_item = ResponseComputerToolCall(
+        id='computer_1',
+        call_id='call_1',
+        pending_safety_checks=[],
+        status='completed',
+        type='computer_call',
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    with pytest.warns(UserWarning, match='Handling of this item type is not yet implemented'):
+        response = model._process_response(  # pyright: ignore[reportPrivateUsage]
+            response_message([output_item]), {}, ModelRequestParameters()
+        )
+
+    assert response.parts == []
+
+
 async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> None:
     """Test that UploadedFile with wrong provider raises an error in OpenAIChatModel."""
     c = completion_message(
