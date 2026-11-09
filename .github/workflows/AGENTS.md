@@ -257,7 +257,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
   with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
-  private triage Slack webhook. Result artifacts are public, so they carry no private report. A
+  private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
+  artifacts are public, so they carry no private report. A
   review job also leaves out a finding on a file outside its check or on a line the pull request did
   not add or remove, and its result keeps only how many it dropped of each severity.
 - `publish` validates every finding against its check's files, and drops a finding on a line outside

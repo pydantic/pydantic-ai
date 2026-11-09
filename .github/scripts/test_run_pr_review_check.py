@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import re
@@ -9,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import traceback
+import urllib.request
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,6 +24,7 @@ from run_pr_review_check import (
     Usage,
     build_prompt,
     check_result,
+    report_privately,
     run_opencode,
     step_tokens,
     strip_instructions,
@@ -289,3 +292,22 @@ def test_misplaced_finding_never_reaches_the_result(tmp_path: Path, severity: st
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, json.dumps(answer)), Usage(steps=1), changed=changed)
     assert ([(f.line, f.severity) for f in result.findings], result.dropped) == ([(3, 'high')], {severity: 1})
     assert 'pre-existing issue' not in result.model_dump_json()
+
+
+def test_private_report_reaches_slack_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A steered report can neither mask a link, ping a channel, nor leave its code block."""
+    sent: list[urllib.request.Request] = []
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        sent.append(request)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(run_pr_review_check.urllib.request, 'urlopen', urlopen)
+    report = 'See <https://x|y> <!channel> & ```done``` ' + 'a' * 4000
+    report_privately('https://hooks.example', 'general', 7, 'o/r', report)
+    [request] = sent
+    assert isinstance(request.data, bytes)
+    text = json.loads(request.data)['text']
+    assert "&lt;https://x|y&gt; &lt;!channel&gt; &amp; '''done'''" in text
+    assert '<' not in text and text.count('```') == 2
+    assert len(text) < 3200

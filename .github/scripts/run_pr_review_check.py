@@ -32,6 +32,9 @@ MAX_FINDINGS = 20
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
+# Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
+_SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
+PRIVATE_REPORT_LIMIT = 3000
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
@@ -262,8 +265,12 @@ def check_result(
 
 
 def report_privately(webhook: str, check: str, pr_number: int, repository: str, report: str) -> None:
-    """Send a vulnerability that already exists on the default branch to the private triage channel."""
-    text = f'PR Review Check ({check}) on {repository}#{pr_number} found a pre-existing issue:\n\n{report}'
+    """Send a vulnerability that already exists on the default branch to the private triage channel.
+
+    The report is model output that the pull request's author can steer, so it arrives escaped, capped and quoted.
+    """
+    quoted = report[:PRIVATE_REPORT_LIMIT].replace('```', "'''").translate(_SLACK_ESCAPES)
+    text = f'PR Review Check ({check}) on {repository}#{pr_number} found a pre-existing issue:\n```\n{quoted}\n```'
     request = urllib.request.Request(
         webhook, data=json.dumps({'text': text}).encode(), headers={'Content-Type': 'application/json'}
     )
