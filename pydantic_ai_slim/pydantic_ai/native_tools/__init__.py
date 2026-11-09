@@ -37,6 +37,7 @@ __all__ = (
     'ImageGenerationTool',
     'ImageAspectRatio',
     'ImageSize',
+    'ImageQuality',
     'MemoryTool',
     'MCPServerTool',
     'XaiFileSearchToolSettings',
@@ -114,7 +115,19 @@ The direct image API takes the wider
 ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
 """Supported sizes for image generation tools."""
 
-ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'] | str
+ImageQuality = Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto']
+"""Supported quality settings for OpenAI image generation."""
+
+ImageGenerationModelName = (
+    Literal[
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-sunburst',
+        'gpt-image-2',
+        'gpt-image-1.5',
+        'gpt-image-1-mini',
+    ]
+    | str
+)
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
 
 AdvisorModelName = (
@@ -679,8 +692,8 @@ class OpenAIImageGenerationToolSettings(TypedDict, total=False):
     partial_images: int
     """The number of partial images to stream, from 0 to 3. Defaults to 0."""
 
-    quality: Literal['low', 'medium', 'high', 'auto']
-    """The OpenAI image quality level. Defaults to `'auto'`."""
+    quality: ImageQuality
+    """The OpenAI image quality level. Defaults to `'auto'`. `gpt-image-2` and earlier models reject `xhigh` and `max`."""
 
 
 @pydantic.with_config(pydantic.ConfigDict(extra='allow'))
@@ -759,8 +772,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Defaults to the provider's image generation model selection.
-      Known image generation models include `gpt-image-2`, `gpt-image-1.5`,
-      `gpt-image-1`, and `gpt-image-1-mini`.
+      Known image generation models include `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`,
+      `gpt-image-2`, `gpt-image-1.5`, and `gpt-image-1-mini`.
 
     This selects the underlying image generation model used by the tool; it does
     not change the agent's conversational model.
@@ -797,9 +810,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Supports 0 to 3.
     """
 
-    quality: Annotated[Literal['low', 'medium', 'high', 'auto'], _moved_to_provider_settings('openai', 'quality')] = (
-        'auto'
-    )
+    quality: Annotated[ImageQuality, _moved_to_provider_settings('openai', 'quality')] = 'auto'
     """The quality of the generated image.
 
     Deprecated: set `provider_settings.openai.quality` instead, and read it from there too.
@@ -807,7 +818,7 @@ class ImageGenerationTool(AbstractNativeTool):
 
     Supported by:
 
-    * OpenAI Responses
+    * OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
     """
 
     size: ImageSize | None = None

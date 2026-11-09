@@ -454,6 +454,8 @@ def test_known_openai_image_generation_model_names():
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
+        'openai:gpt-image-2.6-flare',
+        'openai:gpt-image-2.6-sunburst',
     }
 
 
@@ -672,6 +674,7 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         google_geometry.resolve_google_dimensions('gemini-3.1-flash-lite-image', tiers['512'])
 
 
+@pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
 @pytest.mark.parametrize(
     ('dimensions', 'error_message'),
     [
@@ -680,9 +683,16 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         ((800, 800), 'total pixel count'),
     ],
 )
-def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(dimensions: tuple[int, int], error_message: str):
+def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(
+    model_name: str, dimensions: tuple[int, int], error_message: str
+):
+    """GPT Image 2.6 takes the GPT Image 2 size limits.
+
+    The live Images API rejects `1000x1000`, `800x800`, `3856x1296`, `3840x1024` and `3840x2224` for
+    both 2.6 models with the same messages as for `gpt-image-2`.
+    """
     with pytest.raises(UserError, match=error_message):
-        openai_geometry.resolve_openai_dimensions('gpt-image-2', dimensions)
+        openai_geometry.resolve_openai_dimensions(model_name, dimensions)
 
 
 def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
@@ -3606,10 +3616,22 @@ def _openai_png_response() -> ImagesResponse:
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(openai_mock_client: AsyncMock):
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-image-2',
+        'gpt-image-2-2026-04-21',
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-flare-2026-12-01',
+        'gpt-image-2.6-sunburst',
+        'gpt-image-2.6-sunburst-2026-12-01',
+    ],
+)
+async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(model_name: str, openai_mock_client: AsyncMock):
+    """OpenAI lists no dated GPT Image 2.6 snapshot yet; the hypothetical dated ids pin the dash-suffix match."""
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
-        'gpt-image-2',
+        model_name,
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
@@ -3901,6 +3923,56 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str, reque
         {'created': 1784770548, 'size': '1024x1024', 'quality': 'low', 'background': 'opaque'}
     )
     assert result.model_name == 'gpt-image-2'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('model_name', 'quality'), [('gpt-image-2.6-flare', 'xhigh'), ('gpt-image-2.6-sunburst', 'max')]
+)
+async def test_openai_gpt_image_2_6_generation_vcr(
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    model_name: str,
+    quality: Literal['xhigh', 'max'],
+):
+    """GPT Image 2.6 maps `aspect_ratio` to a GPT Image 2 size and accepts the `xhigh` and `max` qualities.
+
+    OpenAI rejects both qualities for `gpt-image-2` and `gpt-image-1.5` (`The model 'gpt-image-2' does not
+    support quality 'xhigh'.`), so a 2.6 model is what proves they reach the wire and come back echoed.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = OpenAIImageGenerationModel(model_name, provider=provider)
+
+    result = await model.generate(
+        'A small red circle centered on a plain white background.',
+        settings=OpenAIImageGenerationSettings(
+            aspect_ratio='16:9',
+            openai_output_format='jpeg',
+            openai_output_compression=10,
+            openai_quality=quality,
+        ),
+    )
+
+    assert request_capture.bodies() == [
+        {
+            'model': model_name,
+            'output_compression': 10,
+            'output_format': 'jpeg',
+            'prompt': 'A small red circle centered on a plain white background.',
+            'quality': quality,
+            'size': '1280x720',
+        }
+    ]
+    assert result.provider_details == {
+        'created': IsInt(),
+        'size': '1280x720',
+        'quality': quality,
+        'background': 'opaque',
+    }
+    assert result.images[0].content.media_type == 'image/jpeg'
+    assert result.model_name == model_name
+    assert result.usage.output_tokens > 0
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
