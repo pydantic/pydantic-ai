@@ -80,9 +80,9 @@ SPELLINGS = [pytest.param('anthropic-beta', id='lowercase'), pytest.param('Anthr
 @pytest.mark.parametrize(
     'settings,header_line',
     [
-        pytest.param(AnthropicModelSettings(max_tokens=16), 'b-client', id='no betas of ours'),
+        pytest.param({'max_tokens': 16}, 'b-client', id='no betas of ours'),
         pytest.param(
-            AnthropicModelSettings(max_tokens=16, anthropic_betas=['b-setting']),
+            {'max_tokens': 16, 'anthropic_betas': ['b-setting']},
             'b-client,b-setting',
             id='betas of ours',
         ),
@@ -121,10 +121,8 @@ async def test_client_default_beta_is_counted_with_ours(allow_model_requests: No
 @pytest.mark.parametrize(
     'settings,body_field',
     [
-        pytest.param(AnthropicModelSettings(max_tokens=16), None, id='no betas of ours'),
-        pytest.param(
-            AnthropicModelSettings(max_tokens=16, anthropic_betas=['b-setting']), ['b-setting'], id='betas of ours'
-        ),
+        pytest.param({'max_tokens': 16}, None, id='no betas of ours'),
+        pytest.param({'max_tokens': 16, 'anthropic_betas': ['b-setting']}, ['b-setting'], id='betas of ours'),
     ],
 )
 async def test_bedrock_client_default_beta_stays_out_of_the_body(
@@ -136,7 +134,7 @@ async def test_bedrock_client_default_beta_stays_out_of_the_body(
     betas in the body would apply betas that never applied on this client.
     """
     sent = SentBetas()
-    client = AsyncAnthropicBedrock(aws_access_key='a', aws_secret_key='b', aws_region='us-east-1')
+    client = AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1')
 
     await Agent(sent.model(client, {'anthropic-beta': 'b-client'})).run('hello', model_settings=settings)
 
