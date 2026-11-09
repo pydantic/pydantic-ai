@@ -149,7 +149,8 @@ _ARGUMENT_PREFIX = 'PYDANTIC_AI_HARNESS_ARG_'
 """Names the environment variables that carry a command's arguments into its script; unset before it runs."""
 
 # Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing
-# it. sandboxd has no limit of its own yet (https://github.com/kubernetes-sigs/agent-sandbox/issues/1918).
+# it. sandboxd's own output limits cover only its unary `Execute` RPCs, not the streaming `Start`
+# that `commands.start()` uses (https://github.com/kubernetes-sigs/agent-sandbox/pull/2117).
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 

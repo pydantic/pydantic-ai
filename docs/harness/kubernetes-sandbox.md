@@ -24,7 +24,7 @@ The `coder` extra is there because the examples use `Coder`; the sandbox itself 
 Install agent-sandbox (v1.0.7 or later) with its extensions:
 
 ```bash
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.7/sandbox-with-extensions.yaml
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.10/sandbox-with-extensions.yaml
 ```
 
 Each sandbox pod must run [sandboxd](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/packages/sandboxd), agent-sandbox's in-pod server. Commands run in the container that runs sandboxd, so that container's image decides which tools the agent has. This template copies sandboxd into `python:3.12` and keeps three sandboxes warm:
@@ -41,7 +41,7 @@ spec:
       securityContext: {runAsNonRoot: true, fsGroup: 1000}
       initContainers:
         - name: install-sandboxd
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandboxd:v20261015-v1.0.7
+          image: registry.k8s.io/agent-sandbox/sandboxd:v1.0.10
           command: [/bin/sh, -c, cp /usr/local/bin/sandboxd /sandboxd-bin/sandboxd]
           securityContext: {runAsUser: 1000}
           volumeMounts: [{name: sandboxd-bin, mountPath: /sandboxd-bin}]
@@ -67,8 +67,6 @@ spec:
   replicas: 3
   sandboxTemplateRef: {name: python}
 ```
-
-agent-sandbox doesn't publish sandboxd to `registry.k8s.io` yet, so this template pulls the v1.0.7 build from its staging registry, which may not stay available. For production, build sandboxd from the release tag's `packages/sandboxd/Dockerfile` and push it to your own registry.
 
 For stronger isolation, set `runtimeClassName` (gVisor or Kata) on the pod template and [connect from inside the cluster](#connect-to-the-sandbox).
 

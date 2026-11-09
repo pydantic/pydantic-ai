@@ -36,7 +36,6 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
-    from pydantic_ai_harness.kubernetes_sandbox import _backend
 
     from .fake_sandboxd import FakeCluster, FakeSandboxd
 
@@ -441,8 +440,8 @@ async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
 @asyncio_only
 async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
     # A small cap proves the same behavior without streaming 10 MiB through the fake.
-    monkeypatch.setattr(_backend, '_MAX_OUTPUT_BYTES', 4096)
-    monkeypatch.setattr(_backend, '_OUTPUT_PREVIEW_BYTES', 1024)
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._MAX_OUTPUT_BYTES', 4096)
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._OUTPUT_PREVIEW_BYTES', 1024)
     backend = KubernetesSandboxBackend(warm_pool='pool')
     with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as caught:
         await backend.run('head -c 5000 /dev/zero | tr "\\0" x; sleep 30', shell=True)
