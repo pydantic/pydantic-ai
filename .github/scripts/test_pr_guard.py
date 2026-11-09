@@ -134,6 +134,8 @@ class Case:
     assignees: list[str] = field(default_factory=list[str])
     # The job fails and leaves the PR untouched when the API can't answer (see `cannot_verify`).
     fails: bool = False
+    # A closing reference to a pull request links no issue.
+    issue_is_pull_request: bool = False
 
 
 PYDANTY_TRIAGE = [
@@ -225,6 +227,7 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             'state': 'open',
             'user': {'login': case.issue_author},
             'assignees': [{'login': login} for login in case.assignees],
+            **({'pull_request': {}} if case.issue_is_pull_request else {}),
         },
         'issue_timeline': case.issue_timeline,
         'roles': ROLES,
@@ -276,3 +279,13 @@ def test_a_self_filed_issue_gets_the_assignment_explanation(tmp_path: Path):
 
     issue_link = f'[issue #{ISSUE_NUMBER}](https://github.com/{REPO}/issues/{ISSUE_NUMBER})'
     assert f'{issue_link} is not assigned to you' in actions[0]['body']
+
+
+@requires_tools
+def test_the_missing_issue_comment_does_not_offer_a_new_issue_as_the_way_back(tmp_path: Path):
+    _, actions = _run_guard(Case(id='links-a-pull-request', closed=True, issue_is_pull_request=True), tmp_path)
+
+    assert (
+        "Opening an issue isn't enough on its own: a PR that links it is closed the same way until a maintainer"
+        ' has commented on the issue, labeled it or assigned it to you.'
+    ) in actions[0]['body']
