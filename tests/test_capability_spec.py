@@ -1376,7 +1376,7 @@ def test_model_json_schema_with_capabilities():
                         'model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini'],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
