@@ -58,11 +58,9 @@ has_mcp = find_spec('mcp') is not None
 if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
     # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
     # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
-    from fastmcp import Client
+    from fastmcp import Client, FastMCP
 
     from pydantic_ai.mcp import MCPToolset
-
-    from .mcp_server import mcp as mcp_test_server
 
 T = TypeVar('T')
 
@@ -757,14 +755,14 @@ READINESS_WAIT_TIMEOUT = 300
 
 
 def in_process_mcp_toolset() -> MCPToolset:
-    """An `MCPToolset` connected in-process to `tests.mcp_server`, with no handshake deadline of its own.
+    """An `MCPToolset` connected in-process to an empty server, with no handshake deadline of its own.
 
     A pre-built `Client` keeps fastmcp's default of no `initialize` deadline; letting `MCPToolset` build the
     client would apply its 5-second `init_timeout`, which a stalled CI worker can exceed. These tests are about
     how `CombinedToolset` enters and exits its members, not about the transport or the handshake timing, so
     each bounds its waits with `READINESS_WAIT_TIMEOUT` instead.
     """
-    return MCPToolset(Client(mcp_test_server))
+    return MCPToolset(Client(FastMCP('toolsets')))
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
