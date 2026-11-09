@@ -44,9 +44,10 @@ def spawn_grace_beyond_any_stall(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep `LocalWorkspaceBackend`'s 5s startup grace from failing a rule when a runner stalls a process start.
 
     No rule here is about how long a process takes to start, and a start that stalls past the grace fails with
-    `TimeoutError: local workspace subprocess operation exceeded its grace period` instead.
+    `TimeoutError: local workspace subprocess operation exceeded its grace period` instead. The grace runs in a
+    shielded scope that no test timeout can cut short, so it is the 300 seconds of a hang guard, not longer.
     """
-    monkeypatch.setattr(local_module, '_SPAWN_GRACE', 3600.0)
+    monkeypatch.setattr(local_module, '_SPAWN_GRACE', 300.0)
 
 
 def _local_destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:

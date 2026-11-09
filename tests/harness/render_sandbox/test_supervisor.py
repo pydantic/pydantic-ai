@@ -34,6 +34,9 @@ pytestmark = [
     pytest.mark.subprocess(reason='Verify real supervisor signal ownership and process-group cleanup'),
 ]
 
+# Guards waits against a hang, so it is far longer than any runner stall and never decides a test's outcome.
+READINESS_WAIT_TIMEOUT = 300
+
 
 @pytest.fixture(autouse=True)
 def supervised(workspace_harness: WorkspaceHarness) -> None:
@@ -212,9 +215,11 @@ async def test_output_limit_after_direct_exit_stops_the_background_writer(
     backend = workspace_harness.backend()
     try:
         with pytest.raises(WorkspaceOutputLimitError):
-            await asyncio.wait_for(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]), timeout=10)
+            await asyncio.wait_for(
+                backend.run(['sh', '-c', script, 'sh', str(writer_pid)]), timeout=READINESS_WAIT_TIMEOUT
+            )
         pid = int(writer_pid.read_text())
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while True:
                 try:
                     os.kill(pid, 0)
@@ -235,7 +240,7 @@ async def test_background_output_within_the_drain_grace_is_captured(
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 3600.0)
     backend = workspace_harness.backend()
     script = 'echo a; (while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo b) &'
-    result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=10)
+    result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=READINESS_WAIT_TIMEOUT)
     assert result.stdout == 'a\nb\n'
 
 
@@ -278,13 +283,13 @@ async def test_cancellation_during_drain_stops_the_background_writer(
     script += 'echo $! > "$1"; exit 0'
     pending = asyncio.create_task(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]))
     try:
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
             assert await workspace_harness.output.get() == b'started\n'
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
         pid = int(writer_pid.read_text())
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while True:
                 try:
                     os.kill(pid, 0)
