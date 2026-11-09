@@ -664,8 +664,8 @@ def test_model_profile_fable_5_2():
     assert profile == {**(anthropic_model_profile('claude-fable-5-1') or {}), 'anthropic_supports_fast_speed': True}
 
     # Anthropic documents Mythos 5.2 as having "the same capabilities" as Fable 5.2, including fast mode and the
-    # prefix check on every account. It is available only to verified organizations and not reachable with our
-    # credentials.
+    # prefix check on every account. It is available only to verified organizations: our key gets a 404
+    # `not_found_error` for `claude-mythos-5-2`.
     assert anthropic_model_profile('claude-mythos-5-2') == profile
 
 
