@@ -233,7 +233,7 @@ failure through GitHub's latest-per-context commit statuses. Rerun an existing c
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# Code owners approve dependency, CI config and durable runtime changes
+# Code owners review dependency, CI config and durable runtime changes
 
 `.github/CODEOWNERS` owns three scopes:
 
@@ -249,17 +249,12 @@ branch-selectable dispatch to this privileged workflow. Workflows and scripts re
   use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
   lists the exact paths.
 
-GitHub requests a review from the owners of each path a PR changes. A missing owner approval blocks
-the merge only while the `main` ruleset has a `pull_request` rule with **Require review from Code
-Owners** on; check `gh api repos/pydantic/pydantic-ai/rules/branches/main` before relying on it.
-With **Dismiss stale pull request approvals when new commits are pushed** also on in that rule,
-GitHub keeps the approval current, so no workflow has to.
+GitHub requests a review from the owners of each path a PR changes. That request is not a merge
+gate. The `main` ruleset has no `pull_request` rule, so it does not require code-owner review, and
+the ruleset is meant to stay that way. Do not describe an owner's approval as required for a merge.
 
-- A PR's author cannot approve it, so an owner's own PR needs another owner. `.github/` has one
-  owner, so no code owner can approve that owner's own `.github/` PR. An owner who pushes to
-  someone else's PR can still approve that push.
-- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
-  current owners.
+GitHub reads `CODEOWNERS` from the PR's base branch, so a PR that edits it requests review from the
+current owners.
 
 # Agentic workflows (`gh-aw`)
 
