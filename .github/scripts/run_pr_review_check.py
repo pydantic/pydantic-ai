@@ -23,14 +23,13 @@ from douwebot_opencode_result import final_text
 from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
 from publish_pr_review_checks import CheckResult, ReviewFinding
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from pr_review_checks import ReviewCheck, changed_files, check_named, select
+from pr_review_checks import INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 
 PROMPTS = Path('.github/pr-review-checks/prompts')
 REVIEW_CONTEXT = Path('.github/.review-context')
 MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
-INSTRUCTION_DIRECTORIES = frozenset({'.claude', '.agents', 'agent_docs', '.opencode'})
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 _HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 

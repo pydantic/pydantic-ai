@@ -145,9 +145,17 @@ _CONTENT = (
 )
 
 
+INSTRUCTION_DIRECTORIES = frozenset({'.claude', '.agents', 'agent_docs', '.opencode'})
+
+
 def is_instructions(path: str) -> bool:
     """The threat model and agent instructions, which steer reviews and agents."""
-    return path == 'THREAT_MODEL.md' or path.rsplit('/', 1)[-1] in ('AGENTS.md', 'CLAUDE.md')
+    *directories, name = path.split('/')
+    return (
+        path == 'THREAT_MODEL.md'
+        or name in ('AGENTS.md', 'CLAUDE.md')
+        or not INSTRUCTION_DIRECTORIES.isdisjoint(directories)
+    )
 
 
 def is_content(path: str) -> bool:

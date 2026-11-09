@@ -241,10 +241,12 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   workflow and configuration file that no selected check owns by path. The `tests-and-dependencies`
   check owns tests, cassettes, dependency manifests and lockfiles, and holds them to the
   repository's testing and dependency rules rather than the security rubric. The `general` check
-  also reviews `THREAT_MODEL.md`, every `AGENTS.md` and `CLAUDE.md`, and a file renamed from one,
-  even when another check owns them. A change only to the documentation `is_content` lists selects
-  nothing and passes. Files under `.github/` always get a review, a generated `*.lock.yml` included:
-  Actions runs the lock, and nothing checks that it matches its `.md` source.
+  also reviews `THREAT_MODEL.md`, every `AGENTS.md` and `CLAUDE.md`, every file under an
+  `agent_docs/`, `.agents/`, `.claude/` or `.opencode/` directory, and a file renamed from one, even
+  when another check owns them. These are the instruction layer the review job strips from the
+  head. A change only to the documentation `is_content` lists selects nothing and passes. Files
+  under `.github/` always get a review, a generated `*.lock.yml` included: Actions runs the lock,
+  and nothing checks that it matches its `.md` source.
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
