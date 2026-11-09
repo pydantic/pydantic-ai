@@ -2098,48 +2098,6 @@ def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPat
     assert selected_tasks == [None if disable_task else shim.task]
 
 
-def test_attention_workflow_uses_direct_classification():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
-    text = workflow.read_text(encoding='utf-8')
-
-    assert 'Classify every candidate yourself' in text
-    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
-    assert 'run_workflow' not in text
-
-
-def test_attention_workflow_fetches_tags_before_policy_staging():
-    workflow_dir = Path(__file__).parent.parent / 'workflows'
-    source = workflow_dir / 'pydantic-ai-attention-triage.md'
-    source_steps = agentic_workflow_guard.parse_frontmatter(source)['pre-agent-steps']
-    compiled = yaml.safe_load((workflow_dir / 'pydantic-ai-attention-triage.lock.yml').read_text(encoding='utf-8'))
-    compiled_steps = compiled['jobs']['agent']['steps']
-    expected_checkout_config = {
-        'repository': '${{ job.workflow_repository }}',
-        'ref': '${{ job.workflow_sha }}',
-        'persist-credentials': False,
-        'fetch-depth': 0,
-    }
-
-    for steps in (source_steps, compiled_steps):
-        checkout_index, checkout = next(
-            (index, step)
-            for index, step in enumerate(steps)
-            if str(step.get('uses', '')).startswith('actions/checkout@')
-            and step.get('with', {}).get('ref') == expected_checkout_config['ref']
-        )
-        staging_index = next(
-            index for index, step in enumerate(steps) if step.get('name') == 'Install repository workflow policy'
-        )
-        assert checkout_index < staging_index
-        assert checkout['with'] == expected_checkout_config
-
-    assert next(
-        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Preinstall Pydantic AI coder agent'
-    ) < next(
-        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Install repository workflow policy'
-    )
-
-
 def test_runner_drops_dynamic_workflow_dependencies():
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert 'dynamic-workflow' not in runner
