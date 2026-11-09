@@ -187,7 +187,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             )
             if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
                 marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
-            if _is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md':
+            if (_is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md') or title == 'await_approval_lambda.py':
                 marks.append(
                     pytest.mark.skipif(
                         find_spec('aws_durable_execution_sdk_python') is None,

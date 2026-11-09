@@ -266,8 +266,9 @@ resolved with. [`AwaitApproval`](../capabilities/await-approval.md) uses it to w
 decision on deferred tool calls without ending the run. Outside a durable run it waits in process,
 and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] ends the wait. In
 a durable run, an in-process wait would not be recorded, so a replay would announce again and a
-restart would lose it: there, the wait goes through your engine, and on an engine that doesn't
-implement it, it raises a `UserError`.
+restart would lose it: there, the wait goes through your engine. On an engine that doesn't
+implement it, `AwaitApproval`'s wait raises a `UserError` (detected through the run's
+`RunContext.in_durable_context`).
 
 To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter] and
 install an instance for each durable agent run with
@@ -309,7 +310,7 @@ class ApprovingWaiter(ExternalEventWaiter):
 
 async def main():
     with external_event_scope(ApprovingWaiter()):  # (4)!
-        payload = await wait_for_external_event('review', announce=print)
+        payload = await wait_for_external_event('review', announce=lambda token: None)
     print(payload)
     #> {'approved': True}
 ```

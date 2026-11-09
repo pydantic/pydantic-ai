@@ -11,7 +11,11 @@ from pydantic import TypeAdapter
 
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.external_events import ExternalEventError, check_timeout, wait_for_external_event
+from pydantic_ai.external_events import (
+    ExternalEventError,
+    _check_timeout,  # pyright: ignore[reportPrivateUsage]
+    wait_for_external_event,
+)
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
 
 from .abstract import AbstractCapability, CapabilityOrdering
@@ -58,7 +62,7 @@ class AwaitApproval(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        check_timeout(self.timeout)
+        _check_timeout(self.timeout)
 
     def get_ordering(self) -> CapabilityOrdering:
         """Ask last: every handler that can resolve a call without waiting for a person goes first."""

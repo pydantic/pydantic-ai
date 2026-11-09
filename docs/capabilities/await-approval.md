@@ -218,7 +218,7 @@ Calls the decision leaves out stay pending, and the run ends with them as its `D
 
 ## Waiting for other external events
 
-`AwaitApproval` is built on [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which you can call from other code that runs in the agent run, such as a capability hook, or outside a run, to wait for any JSON payload:
+`AwaitApproval` is built on [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which you can call yourself to wait for any JSON payload, in or outside an agent run:
 
 ```python {title="wait_for_review.py"}
 from datetime import timedelta
@@ -242,4 +242,4 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there.
+It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there. `AwaitApproval` also refuses to wait in process on a durable engine that doesn't support it, but a direct call can only tell it is on such an engine while the run's context is current, so call it directly only outside durable runs or on an engine that supports it.

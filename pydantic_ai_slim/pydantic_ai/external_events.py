@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
@@ -121,6 +122,7 @@ class _PendingEvent:
     payload: JsonValue = None
     error: ExternalEventError | None = None
     resolved: bool = False
+    """Set, with `payload` or `error`, by the one resolver that takes the wait out of the registry."""
 
     @classmethod
     def for_current_task(cls) -> _PendingEvent:
@@ -135,13 +137,12 @@ class _PendingEvent:
             return cls(done=done, wake=lambda: trio_token.run_sync_soon(done.set))
         return cls(done=done, wake=lambda: loop.call_soon_threadsafe(done.set))
 
-    def finish(self) -> None:
-        self.resolved = True
-        self.wake()
-
 
 _pending_events: dict[str, _PendingEvent] = {}
 """The in-process waits that are still pending, by token. Each wait removes its own entry when it ends."""
+
+_pending_events_lock = threading.Lock()
+"""Taking a wait out of the registry and settling its outcome is one step, for resolvers on any thread."""
 
 
 class _InProcessWaiter(ExternalEventWaiter):
@@ -162,8 +163,10 @@ class _InProcessWaiter(ExternalEventWaiter):
             with anyio.move_on_after(None if timeout is None else timeout.total_seconds()):
                 await pending.done.wait()
         finally:
-            _pending_events.pop(token, None)
-        # A resolution that landed while the timeout fired still counts: its resolver was told it succeeded.
+            with _pending_events_lock:
+                _pending_events.pop(token, None)
+        # Read after the entry is gone: a resolver either settled the outcome before that, and was told it
+        # succeeded, or found no wait and raised. A resolution that landed as the timeout fired still counts.
         if not pending.resolved:
             raise ExternalEventError(f'No resolution arrived within {timeout}.')
         if pending.error is not None:
@@ -194,7 +197,11 @@ async def wait_for_external_event(
     Inside a durable run on an engine that supports it, currently AWS Lambda durable functions through
     Pydantic AI Harness's `AWSLambdaDurability`, the engine records the token, the announcement and the
     payload, and suspends the run while it waits, so the wait survives restarts and a replay doesn't
-    announce again. The token is then resolved through the engine's API.
+    announce again. The token is then resolved through the engine's API. On a durable engine that
+    doesn't support it, a wait in process would not be recorded, so it is refused; that is only
+    detected while the run's context is current, as it is in
+    [`AwaitApproval`][pydantic_ai.capabilities.AwaitApproval], so call this directly only outside
+    durable runs or on an engine that supports it.
 
     Args:
         name: A name for the wait in a durable engine's history. Keep it stable across deployments.
@@ -209,10 +216,11 @@ async def wait_for_external_event(
 
     Raises:
         ExternalEventError: The timeout elapsed, or the token was resolved with a failure.
-        UserError: The wait was requested from inside a durable unit, such as a tool call, or inside a
-            durable run on an engine that does not support waiting for external events.
+        UserError: The wait was requested from inside a durable unit, such as a tool call, or, with the
+            run's context current, inside a durable run on an engine that does not support waiting for
+            external events.
     """
-    check_timeout(timeout)
+    _check_timeout(timeout)
     if in_durable_unit():
         raise UserError(
             '`wait_for_external_event()` was called from inside a durable unit, such as a tool call or an '
@@ -264,9 +272,7 @@ def resolve_external_event(token: str, payload: object) -> None:
         json_payload: JsonValue = to_jsonable_python(payload)
     except PydanticSerializationError as error:
         raise UserError(f'The payload for an external event must be JSON-serializable: {error}') from error
-    pending = _take_pending(token)
-    pending.payload = json_payload
-    pending.finish()
+    _settle(token, payload=json_payload)
 
 
 def fail_external_event(token: str, reason: str) -> None:
@@ -280,23 +286,25 @@ def fail_external_event(token: str, reason: str) -> None:
         UserError: No in-process wait has this token: it is wrong, from another process, or its wait
             already ended because it was resolved, timed out or was cancelled.
     """
-    pending = _take_pending(token)
-    pending.error = ExternalEventError(reason)
-    pending.finish()
+    _settle(token, error=ExternalEventError(reason))
 
 
-def _take_pending(token: str) -> _PendingEvent:
-    """Remove the wait for `token` from the registry, so that only one resolver ever gets it."""
-    pending = _pending_events.pop(token, None)
-    if pending is None:
-        raise UserError(
-            'No wait in this process has this token: it is wrong, from another process, or its wait already '
-            'ended because it was resolved, timed out or was cancelled.'
-        )
-    return pending
+def _settle(token: str, *, payload: JsonValue = None, error: ExternalEventError | None = None) -> None:
+    """Take the wait for `token` out of the registry and settle its outcome, so that only one resolver ever does."""
+    with _pending_events_lock:
+        pending = _pending_events.pop(token, None)
+        if pending is None:
+            raise UserError(
+                'No wait in this process has this token: it is wrong, from another process, or its wait already '
+                'ended because it was resolved, timed out or was cancelled.'
+            )
+        pending.payload = payload
+        pending.error = error
+        pending.resolved = True
+    pending.wake()
 
 
-def check_timeout(timeout: timedelta | None) -> None:
+def _check_timeout(timeout: timedelta | None) -> None:
     """Reject a `timeout` that is not positive."""
     if timeout is not None and timeout <= timedelta(0):
         raise UserError(f'`timeout` must be positive, got {timeout!r}.')
