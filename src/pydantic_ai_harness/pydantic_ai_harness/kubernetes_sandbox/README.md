@@ -226,14 +226,9 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 
 ## Security model
 
-The sandbox's isolation is the pod's runtime: by default a pod shares its node's kernel with the other pods on that node. Set `runtimeClassName` to a sandboxed runtime such as gVisor or Kata Containers to give it a kernel boundary of its own, and [connect from inside the cluster](#connect-to-the-sandbox) there. Commands run as the container's user, `1000` in the template above.
+`KubernetesSandbox` makes one check of its own: it reattaches to and deletes only claims in its `namespace` named `pydantic-ai-` and 32 hex digits, the names it gives its claims. A ref from message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` that names any other claim raises `ValueError` before anything reaches the cluster. The name is not proof of origin, and a `KubernetesSandboxBackend(ref=...)` you build yourself attaches to any claim it names, so keep refs server-side.
 
-- The agent process acts with the authority of its kubeconfig or service account, which reaches every claim that identity can see, in any namespace. Give it a role limited to the sandbox namespace.
-- `KubernetesSandbox` reattaches to and deletes only claims it could have made: in its `namespace`, named `pydantic-ai-` and 32 hex digits. A ref from message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` that names any other claim raises `ValueError` before anything reaches the cluster. The name is a convention, not proof of origin: anything with the same credentials can create a claim with such a name, so keep refs server-side. A `KubernetesSandboxBackend(ref=...)` you build yourself attaches to whatever claim it names.
-- sandboxd runs any command sent to its ports, 8080 and 9090, unless it was started with `--auth-token-sha256` or `--auth-token-file`; then pass the token as the connection config's `auth_token`. Without a token, anything that can reach a pod's ports can run commands in it, so keep a NetworkPolicy that admits only your agent's pods.
-- The SDK talks to sandboxd over plaintext gRPC. With `connection='port-forward'`, that is a loopback hop into `kubectl`, which tunnels through its TLS connection to the API server. An in-cluster connection sends commands, file contents, `env` values and the token over the pod network unencrypted.
-- The template sets `automountServiceAccountToken: false`. Without it, Kubernetes mounts a service-account token into the pod, and any command the agent runs could call the API server with that account's permissions.
-- The template pulls sandboxd and the base image by tag; pin a digest to get the same image every time.
+Everything else is set by your cluster, not by this capability: the pod's isolation (it shares its node's kernel unless `runtimeClassName` selects a runtime such as gVisor or Kata), which claims the agent's kubeconfig or service account can reach, which pods can reach sandboxd's ports, and whether sandboxd requires an auth token. The SDK talks to sandboxd over plaintext gRPC: `connection='port-forward'` tunnels it through the API server, and an in-cluster connection does not.
 
 ## Configuration
 
