@@ -471,6 +471,9 @@ def test_audio_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from audio URL: foobar.potato')):
         AudioUrl('foobar.potato').media_type
 
+    with pytest.raises(ValueError, match='Unknown media type: audio/mp4a-latm'):
+        AudioUrl('foobar', media_type='audio/mp4a-latm').format
+
 
 @pytest.mark.parametrize(
     'image_url,media_type,format',

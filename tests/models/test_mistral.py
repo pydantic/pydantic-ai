@@ -2824,6 +2824,14 @@ def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: 
     assert result == expected, f'{desc} — expected {expected}, got {result}'
 
 
+def test_validate_required_json_schema_accepts_union_types() -> None:
+    schema = {'required': ['value'], 'properties': {'value': {'type': ['string', 'null']}}}
+
+    assert MistralStreamedResponse._validate_required_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {'value': None}, schema
+    )
+
+
 @pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, mistral_api_key: str, image_content: BinaryContent

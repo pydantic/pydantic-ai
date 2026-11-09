@@ -7588,6 +7588,15 @@ def test_openai_chat_audio_uri_encoding(allow_model_requests: None):
     assert audio_part['input_audio']['format'] == 'wav'
 
 
+async def test_openai_chat_rejects_unsupported_binary_audio() -> None:
+    model = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key='test-key'))
+
+    with pytest.raises(UserError, match='only support WAV and MP3 audio input'):
+        await model._map_binary_content_item(  # pyright: ignore[reportPrivateUsage]
+            BinaryContent(b'fake_audio_data', media_type='audio/flac')
+        )
+
+
 async def test_openai_chat_audio_url_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
