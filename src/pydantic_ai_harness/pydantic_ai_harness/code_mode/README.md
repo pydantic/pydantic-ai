@@ -622,8 +622,12 @@ def sandbox_pool() -> AsyncMontyRemote:
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
 ```
 
-That pool's `request_timeout`, 10 seconds by default, limits how long code runs between tool calls,
-in place of `max_duration_secs`.
+That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
+The configured `max_duration_secs` still applies outside Temporal. Inside a Temporal workflow,
+Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
+
+Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
+instructions or tool arguments.
 
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
@@ -633,6 +637,36 @@ output stay in your process, and REPL state persists across `run_code` calls as 
 
 Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
 client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+
+### Error handling
+
+Pool creation, connection, and session checkout errors propagate to the code calling the agent. These
+include missing or invalid credentials, an invalid server URL, and exceptions raised by a pool factory.
+They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
+refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
+if it still fails, the error propagates to the caller.
+Inside a Temporal workflow, the exception reaches workflow code and follows the
+[workflow failure policy](#temporal-durability), not the model retry policy.
+
+Errors the model can act on are returned as model retries:
+
+- Syntax, type, and ordinary runtime errors include the sandbox's diagnostic.
+- Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
+  session and ask the model to do less work per call.
+- Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
+- A sandbox memory-limit error or a `MemoryError` without a traceback resets the session and asks
+  the model to use less memory, for example by processing smaller batches. Other `MemoryError`s
+  raised by the snippet or a nested tool keep the session. Errors that cannot be distinguished
+  from a sandbox memory-limit failure also reset it: Monty does not guarantee heap integrity after
+  a memory limit fires, even if the worker stays alive.
+  Exceeding the 10 MiB printed-output cap also resets the session: Monty exposes the same diagnostic
+  for this host-side limit and a sandbox heap limit.
+- A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
+  Remote host-side error details are omitted from model retries because they can contain pool URLs
+  or credentials. The original exception remains the retry's cause for application-side diagnostics.
+
+After a reset, the model must re-run imports and recreate state. The retry lists nested calls that
+already started so the model can avoid repeating their side effects; Code Mode does not replay them.
 
 ## Temporal durability
 
@@ -677,6 +711,14 @@ Model requests and, by default, nested tool calls cross Temporal activity bounda
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets
 again against recorded activity results.
+
+Setup errors keep their original types in workflow code. `PydanticAIPlugin` treats `UserError` as a
+workflow failure. Other setup errors, such as `RuntimeError` and `MontyRefusedError`, follow Temporal's
+default: an uncaught error fails the workflow task, not the workflow. Temporal retries the task while
+the workflow remains running, so a client awaiting its result keeps waiting if setup keeps failing. The original
+error is available in the failed task's history and worker logs, not in a model retry.
+To end the workflow instead, catch the expected setup exceptions in your workflow and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 Keep workflow-side code deterministic. `mount` reads and writes, `os_access` callbacks, and
 host-clock calls happen again during replay; changing their results can change which activities the

@@ -64,7 +64,7 @@ def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list
     nested.mkdir()
     plugins = nested / 'plugins'
     plugins.mkdir()
-    (plugins / 'workspace.py').write_text(
+    (plugins / 'cwd_probe.py').write_text(
         'from pathlib import Path\n'
         'from pydantic_clai2.plugins import Plugin\n'
         'class Workspace(Plugin):\n'
