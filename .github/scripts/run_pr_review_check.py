@@ -32,6 +32,7 @@ MAX_FINDINGS = 20
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 _HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+_TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
@@ -81,12 +82,13 @@ def write_context(check: str, files: list[str], workspace: Path, *, base: str, h
     shutil.copy(workspace / REVIEW_CONTEXT / 'pr-details.json', context / 'pr-details.json')
     unseen = set(files)
     rows: list[str] = []
-    listed = [
-        row.split('\t') for row in (workspace / REVIEW_CONTEXT / 'changed-files.txt').read_text('utf-8').splitlines()
-    ]
-    # The shared context flattens `/` to `__` in diff names, so a crafted path can overwrite another file's diff.
+    # Rows end only at LF, and jq's `@tsv` escapes a backslash, tab, newline or CR inside a path.
+    shared = (workspace / REVIEW_CONTEXT / 'changed-files.txt').read_bytes().decode()
+    listed = [row.split('\t') for row in shared.split('\n') if row]
+    # Two rows naming one diff file would let one file's diff stand in for the other's.
     shared_names = Counter(fields[2] for fields in listed if len(fields) > 2)
-    for path, counts, *diff in listed:
+    for listed_path, counts, *diff in listed:
+        path = re.sub(r'\\([\\tnr])', lambda escape: _TSV_ESCAPES[escape[1]], listed_path)
         if path not in unseen:
             continue
         unseen.remove(path)
@@ -97,7 +99,7 @@ def write_context(check: str, files: list[str], workspace: Path, *, base: str, h
             # directory of their own and a reversible name keep two paths from writing one diff file.
             diff = ['diff/git/' + quote(path, safe='') + '.diff']
             (context / diff[0]).write_text(_annotated_diff(workspace / 'pr-head', base, head, path), encoding='utf-8')
-        rows.append('\t'.join([path, counts, diff[0]]))
+        rows.append('\t'.join([listed_path, counts, diff[0]]))
     # The context lists files from the PR files API, which stops at 3,000; an unlisted file would go unreviewed.
     if unseen:
         raise ValueError(f'The review context has no diff for {sorted(unseen)}')

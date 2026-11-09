@@ -74,6 +74,19 @@ def test_context_holds_only_this_checks_files(tmp_path: Path) -> None:
     assert [path.name for path in (written / 'diff').rglob('*.diff')] == ['a.py.diff']
 
 
+def test_context_decodes_an_escaped_path(tmp_path: Path) -> None:
+    """The shared list is jq `@tsv`, so a backslash, tab, newline or CR in a path arrives escaped."""
+    path = 'a\\b\tc\nd\re\u2028f.py'
+    listed = 'a\\\\b\\tc\\nd\\re\u2028f.py'
+    context = tmp_path / '.github' / '.review-context'
+    (context / 'diff').mkdir(parents=True)
+    (context / 'pr-details.json').write_text('{}')
+    (context / 'diff' / 'escaped.py.diff').write_text('NL:1 +x = 1')
+    (context / 'changed-files.txt').write_bytes(f'{listed}\t+1 -0\tdiff/escaped.py.diff\n'.encode())
+    written = write_context('general', [path], tmp_path, base='base', head='head')
+    assert (written / 'changed-files.txt').read_bytes().decode() == f'{listed}\t+1 -0\tdiff/escaped.py.diff\n'
+
+
 def test_context_fails_closed_on_a_file_without_its_diff(tmp_path: Path) -> None:
     """A file the context lists no diff for would go unreviewed while the check reports complete."""
     context = tmp_path / '.github' / '.review-context'
