@@ -436,9 +436,22 @@ def _restarts_before(ctx: RunContext[Any]) -> int | None:
         return None
     count = display.restart_count
     try:
-        return _SEEN_RESTARTS.get(display, {}).get(ctx.run_id, count)
+        before = _SEEN_RESTARTS.get(display, {}).get(ctx.run_id)
+        if before is None:
+            # Kept now, not only once the screenshot arrives, so a restart in a call that fails is told next call.
+            _remember(display, ctx.run_id, count)
+            before = count
     except TypeError:
         return count
+    return before
+
+
+def _remember(display: SupportsRestartCount, run_id: str | None, count: int) -> None:
+    """Keep `count` as `run_id`'s latest on `display`, dropping the oldest run beyond `_RUNS_PER_DISPLAY`."""
+    runs = _SEEN_RESTARTS.get(display, {})
+    runs.pop(run_id, None)
+    runs[run_id] = count
+    _SEEN_RESTARTS[display] = dict(list(runs.items())[-_RUNS_PER_DISPLAY:])
 
 
 def _restarted(ctx: RunContext[Any], before: int | None) -> bool:
@@ -448,10 +461,7 @@ def _restarted(ctx: RunContext[Any], before: int | None) -> bool:
         return False
     count = display.restart_count
     with suppress(TypeError):
-        runs = _SEEN_RESTARTS.get(display, {})
-        runs.pop(ctx.run_id, None)
-        runs[ctx.run_id] = count
-        _SEEN_RESTARTS[display] = dict(list(runs.items())[-_RUNS_PER_DISPLAY:])
+        _remember(display, ctx.run_id, count)
     return count != before
 
 
