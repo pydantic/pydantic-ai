@@ -45,7 +45,12 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.providers import Provider
 
 from .._inline_snapshot import snapshot
@@ -907,6 +912,84 @@ def test_gateway_zai_glm_5_3_inline_defs():
     )
 
 
+@pytest.mark.skipif(not openai_imports() or not huggingface_imports(), reason='openai or huggingface not installed')
+def test_gateway_gpt_oss_inline_defs():
+    """Every gateway gives gpt-oss the inline-defs schema transformer: Together through the shared family map, the rest on their own."""
+    assert _normalize(TogetherProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/gpt-oss-120b')) == snapshot(
+        {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+    assert _normalize(SambaNovaProvider.model_profile('gpt-oss-120b')) == snapshot(
+        {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(HuggingFaceProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
+        {
+            'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+    # Other OpenAI ids keep the OpenAI family profile on Together and each other gateway's defaults.
+    assert _normalize(TogetherProvider.model_profile('openai/whisper-large-v3')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert HuggingFaceProvider.model_profile('openai/whisper-large-v3') == snapshot(
+        {'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports() or not huggingface_imports(), reason='bedrock or huggingface not installed')
+def test_gpt_oss_inline_defs_without_openai_rewrite():
+    """Bedrock Converse and Hugging Face only inline gpt-oss `$defs`, and keep a schema whose `$ref` they can't reach.
+
+    The inliner doesn't walk under a `type` list, so inlining such a schema would leave its `$ref` pointing at a
+    dropped definition.
+    """
+    nested: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'home': {'$ref': '#/$defs/Address'}},
+        '$defs': {'Address': {'type': 'object', 'properties': {'city': {'type': 'string'}}}},
+    }
+    unreachable: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
+        '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    for profile in (
+        BedrockProvider.model_profile('openai.gpt-oss-120b-1:0'),
+        HuggingFaceProvider.model_profile('openai/gpt-oss-120b'),
+    ):
+        assert profile is not None
+        transformer = profile.get('json_schema_transformer')
+        assert transformer is not None
+        assert transformer(nested).walk() == snapshot(
+            {'type': 'object', 'properties': {'home': {'type': 'object', 'properties': {'city': {'type': 'string'}}}}}
+        )
+        assert transformer(unreachable).walk() == unreachable
+
+
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_gateway_zai_glm_other_versions_unchanged():
     """GLM ids other than GLM-5.3 keep each gateway's default profile."""
@@ -946,7 +1029,10 @@ def test_cerebras_zai_glm_5_3_inline_defs():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'openai_unsupported_model_settings': ('logit_bias',),
             'supports_thinking': True,
+            'thinking_always_enabled': True,
             'openai_chat_send_back_thinking_parts': 'tags',
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max'}),
+            'openai_chat_supports_max_reasoning_effort': True,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -1346,6 +1432,7 @@ def test_bedrock_openai():
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
         {
+            'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
             'supports_thinking': True,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,
@@ -1635,6 +1722,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
+            'openrouter_lowest_reasoning_effort': 'minimal',
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
             'openrouter_supports_cache_control': True,
@@ -1690,6 +1778,7 @@ def test_openrouter_zai_glm_5_3():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'thinking_always_enabled': True,
+            'openrouter_lowest_reasoning_effort': 'minimal',
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2230,7 +2319,7 @@ def test_groq_gpt_oss():
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2286,7 +2375,7 @@ def test_ollama_gpt_oss():
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(
@@ -2325,7 +2414,7 @@ def test_vllm_gpt_oss_hf_namespace():
     profile = VLLMProvider.model_profile('openai/gpt-oss-20b')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
@@ -2408,6 +2497,38 @@ def test_cerebras_qwen_reasoning():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'openai_unsupported_model_settings': ('logit_bias',),
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_qwen_3_8_hybrid_reasoning():
+    """Qwen 3.8 reasons by default on Cerebras and accepts `reasoning_effort='none'` to stop."""
+    profile = CerebrasProvider.model_profile('qwen-3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_kimi_k3_always_on_reasoning():
+    """Kimi K3 always reasons on Cerebras and accepts only `low`, `high` and `max`."""
+    profile = CerebrasProvider.model_profile('kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max'}),
+            'openai_chat_supports_max_reasoning_effort': True,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -2595,7 +2716,7 @@ def test_together_qwen():
             'openai/gpt-oss-120b',
             snapshot(
                 {
-                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
@@ -2612,7 +2733,7 @@ def test_together_qwen():
             'OpenAI/gpt-oss-20b',
             snapshot(
                 {
-                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
@@ -2734,7 +2855,7 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
             'openai/gpt-oss-120b',
             snapshot(
                 {
-                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
@@ -3297,7 +3418,7 @@ def test_crusoe_harmony():
     profile = CrusoeProvider.model_profile('openai/gpt-oss-120b')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,

@@ -58,7 +58,7 @@ async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | 
     path = credentials_path(account=account)
     storage = (
         f'No OS keyring is available; credentials are saved in plaintext at {path}.'
-        if path.exists()
+        if await to_thread.run_sync(path.exists)
         else 'Credentials saved in the OS credential store.'
     )
     if account != ACCOUNT:

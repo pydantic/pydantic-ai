@@ -17,7 +17,7 @@ from aws_durable_execution_sdk_python import (
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.exceptions import ExecutionError
+from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 
@@ -392,7 +392,10 @@ class TestToolResultSerialization:
     def test_fake_records_result_serialization_failure(self) -> None:
         ctx = FakeDurableContext()
 
-        with pytest.raises(ExecutionError, match='Serialization failed for id: operation'):
+        # SDK 1.x wraps the failure in `ExecutionError`; SDK 2.0+ raises `SerDesError`.
+        with pytest.raises(
+            (ExecutionError, SerDesError), match=r'Serialization failed for id: operation|Unsupported type'
+        ):
             ctx.step(lambda _: object(), name='non-serializable')
 
         assert len(ctx.failed) == 1
