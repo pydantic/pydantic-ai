@@ -2030,10 +2030,6 @@ jobs:
         !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
         && needs.classify.outputs.content_only != 'true'
       }}
-    env:
-      # 3.14 collects nearly all the data, and coverage only knows a bare annotation like `x: int` isn't executed there
-      # (PEP 649) when the report itself runs on 3.14. An older Python counts those lines as missing.
-      UV_PYTHON: "3.14"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
