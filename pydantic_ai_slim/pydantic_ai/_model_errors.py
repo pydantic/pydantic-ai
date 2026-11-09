@@ -123,7 +123,7 @@ def openai_compatible_category(
     if says_overloaded(code, error_type):
         return ModelOverloadedError
     if code == 'model_not_found':
-        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        # An error inside a stream carries no status, so only the code says what it is.
         return ModelNotFoundError
     if code == 'invalid_api_key':
         return ModelAuthenticationError

@@ -311,11 +311,14 @@ Gotchas:
 - Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
   replay matches checkpoints by position, so concurrent runs can be served each other's results.
 - Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
-  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
-  published version.
+  `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
+  a tool, or the id a non-default model runs under (a `models=` key or the `model=` passed to
+  `agent.run`), which is part of that model's step names. SDK 2.0+ fails those executions with
+  `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
+  version.
 - Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
-- Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
+- Budget: 30,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
 ## AbsurdDurability
 
@@ -593,6 +596,12 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
 locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
 caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to

@@ -177,7 +177,9 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
         native_tools=[
             tool,
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
@@ -195,7 +197,7 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
     assert native_tool['allowed_tools'] == ['search']
     assert exported['function_tools'][0]['metadata'] == {'source': 'user'}
     assert exported['native_tools'][1]['files'][0]['file_id'] == 'file-123'
-    assert exported['native_tools'][2]['instructions'] == 'search only these files'
+    assert exported['native_tools'][2]['provider_settings']['xai']['instructions'] == 'search only these files'
     assert tool.authorization_token == 'SENTINEL-token'
     response = ModelResponse(parts=[NativeToolCallPart(tool_name='mcp_server:docs', tool_call_id='call-1')])
     settings, exporter = redacted_setup(include_content)
@@ -213,7 +215,9 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
         ],
         native_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     expected = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
@@ -222,7 +226,7 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert json.loads(serialized) == expected
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
-    assert expected['native_tools'][1]['instructions'] == 'search only these files'
+    assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:

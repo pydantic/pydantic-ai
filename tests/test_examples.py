@@ -2113,7 +2113,7 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
+def mock_infer_model(model: Model | KnownModelName | str) -> Model:
     if model == 'test':
         return TestModel()
 

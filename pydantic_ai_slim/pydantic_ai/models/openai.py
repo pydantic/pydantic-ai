@@ -172,6 +172,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -219,7 +220,7 @@ try:
         OpenAIError,
         omit,
     )
-    from openai.types import AllModels, chat, responses
+    from openai.types import chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -461,22 +462,25 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
-"""
-Possible OpenAI model names.
+OpenAIModelName = (
+    str
+    | Literal[
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+    ]
+)
+"""Possible OpenAI model names.
 
-Since OpenAI supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The `Literal` lists the models to pick from, for autocomplete: per line, the newest model of the newest
+generation and of the previous one. Any other model id the API accepts works too, as a `str`.
 See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
-Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
-`openai` extra declares; it arrived in `openai` 3.21.0
-(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
-`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
-Drop its bridge once the SDK floor includes the release that adds it.
+This is used for the OpenAI-compatible models of other providers too (ie, Ollama, Deepseek).
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -714,23 +718,24 @@ def _resolve_openai_image_generation_size(
 
 
 def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.tool_param.ImageGeneration:
+    provider_settings = (tool.provider_settings or {}).get('openai', {})
     size = _resolve_openai_image_generation_size(tool)
     output_compression = tool.output_compression if tool.output_compression is not None else 100
     image_generation_tool = responses.tool_param.ImageGeneration(
         type='image_generation',
-        action=tool.action,
-        background=tool.background,
-        moderation=tool.moderation,
+        action=provider_settings.get('action', tool.action),
+        background=provider_settings.get('background', tool.background),
+        moderation=provider_settings.get('moderation', tool.moderation),
         output_compression=output_compression,
         output_format=tool.output_format or 'png',
-        partial_images=tool.partial_images,
-        quality=tool.quality,
+        partial_images=provider_settings.get('partial_images', tool.partial_images),
+        quality=provider_settings.get('quality', tool.quality),
         size=size,
     )
-    if tool.model is not None:
-        image_generation_tool['model'] = tool.model
-    if tool.input_fidelity is not None:
-        image_generation_tool['input_fidelity'] = tool.input_fidelity
+    if (model := provider_settings.get('model', tool.model)) is not None:
+        image_generation_tool['model'] = model
+    if (input_fidelity := provider_settings.get('input_fidelity', tool.input_fidelity)) is not None:
+        image_generation_tool['input_fidelity'] = input_fidelity
     return image_generation_tool
 
 
@@ -1392,8 +1397,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead. The same goes
     for a response without a digest, as there's no telling whether it has changed.
-    A history missing its earlier messages counts as changed too, so pass `all_messages()` rather than
-    `new_messages()`, or the model won't see what was left out.
+    A history missing its earlier messages counts as changed too, so pass
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] rather than
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages], or the model won't see what
+    was left out.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -1943,8 +1950,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                extra_headers = dict(model_settings.get('extra_headers', {}))
-                extra_headers.setdefault('User-Agent', get_user_agent())
+                extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
@@ -4664,8 +4670,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[dict[str, str], _ResponsesTimeout]:
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
@@ -5138,11 +5143,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(tool, WebSearchTool):
                 tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
-                file_search_tool = cast(
-                    responses.FileSearchToolParam,
-                    {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-                )
-                tools.append(file_search_tool)
+                tools.append(_map_file_search_tool_param(tool))
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
@@ -8142,6 +8143,13 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_file_search_tool_param(tool: FileSearchTool) -> responses.FileSearchToolParam:
+    file_search_tool = responses.FileSearchToolParam(type='file_search', vector_store_ids=list(tool.file_store_ids))
+    if tool.max_num_results is not None:
+        file_search_tool['max_num_results'] = tool.max_num_results
+    return file_search_tool
 
 
 def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
