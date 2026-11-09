@@ -864,13 +864,11 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     assert workflow['env']['OTEL_EXPORTER_OTLP_ENDPOINT']
     assert workflow['env']['OTEL_EXPORTER_OTLP_HEADERS']
     detector = next(
-        step['env']
-        for step in workflow['jobs']['detection']['steps']
-        if 'CLAUDE_CODE_ENABLE_TELEMETRY' in step.get('env', {})
+        step for step in workflow['jobs']['detection']['steps'] if step.get('id') == 'detection_agentic_execution'
     )
-    assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
-    assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
-    assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
+    assert 'gh_aw_opencode_detect.py' in detector['run']
+    assert detector['env']['OPENCODE_API_KEY'] == '${{ secrets.OPENCODE_API_KEY }}'
+    assert detector['continue-on-error'] is True
     reporter = next(
         step
         for step in workflow['jobs']['detection']['steps']
@@ -882,9 +880,8 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     assert reporter['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert reporter['continue-on-error'] is True
     assert 'gh-aw.detector.result' in reporter['with']['script']
-    assert 'gh-aw.detector.request' in reporter['with']['script']
     configs = compiled_awf_configs(lock)
-    assert len(configs) == 2
+    assert len(configs) == 1
     for config in configs:
         proxy = config['apiProxy']
         assert isinstance(proxy, dict)
@@ -1671,6 +1668,28 @@ Prompt
     assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
 
     _write(local, matching_config.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+
+def test_provider_engine_config_accepts_a_disabled_shared_detection_engine(tmp_path: Path):
+    """The shared OpenCode detector replaces gh-aw's detection engine, so it has no provider endpoint."""
+    workflows = tmp_path / '.github' / 'workflows'
+    engine = _write(
+        workflows / 'shared' / 'engine-zai.md',
+        """---
+engine:
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+safe-outputs:
+  threat-detection:
+    engine: false
+---
+""",
+    )
+    assert check_provider_engine_config(workflows) == []
+
+    _write(engine, engine.read_text(encoding='utf-8').replace('engine: false', 'engine:\n      id: claude'))
     assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
 
 

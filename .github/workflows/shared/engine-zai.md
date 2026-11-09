@@ -130,9 +130,44 @@ post-steps:
         }
 safe-outputs:
   threat-detection:
-    # Detection has an independent budget and uses the same verified model pricing.
-    max-ai-credits: -1
+    # gh-aw runs detection only on its Copilot, Claude, and Codex engines. These post-steps run an
+    # OpenCode detector in the engine's place, under the step id gh-aw's conclusion step reads.
+    engine: false
     post-steps:
+      - name: Check out the OpenCode threat detector
+        id: detector_checkout
+        if: always() && steps.detection_guard.outputs.run_detection == 'true'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .gh-aw-detector
+          sparse-checkout: |
+            .github/actions/setup-douwebot-tools
+            .github/scripts
+          persist-credentials: false
+      - name: Set up OpenCode
+        id: detector_tools
+        if: always() && steps.detector_checkout.outcome == 'success'
+        continue-on-error: true
+        uses: ./.gh-aw-detector/.github/actions/setup-douwebot-tools
+        env:
+          # The install has no lockfile. Skip dependency releases younger than 3 days, as gh-aw's Claude CLI install did.
+          NPM_CONFIG_MIN_RELEASE_AGE: '3'
+      # A missing verdict concludes as a warning. Stop before the 20-minute job limit so it can.
+      - name: Run OpenCode threat detection
+        id: detection_agentic_execution
+        if: always() && steps.detection_setup.outputs.ready == 'true' && steps.threat_detect_install.outcome == 'success' && steps.detector_tools.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+          # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
+          GH_AW_HARNESS_MAX_RETRIES: "3"
+        run: |
+          export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
+          python3 .gh-aw-detector/.github/scripts/gh_aw_opencode_detect.py
       - name: Report detector usage and outcome
         if: always() && steps.detection_guard.outputs.run_detection == 'true'
         continue-on-error: true
@@ -149,74 +184,38 @@ safe-outputs:
             const directory = '/tmp/gh-aw/threat-detection';
             const read = name => fs.existsSync(name) ? fs.readFileSync(name, 'utf8') : '';
             const log = read(path.join(directory, 'detection.log'));
-            const usage = read('/tmp/gh-aw/sandbox/firewall/logs/api-proxy-logs/token-usage.jsonl');
-            const requests = usage.split('\n').filter(Boolean).map(line => JSON.parse(line));
-            // Keep complete proxy counters separate from native CLI telemetry.
-            for (const request of requests) {
-              const endMs = Date.parse(request.timestamp);
-              await logSpan('gh-aw.detector.request', {
-                'gh-aw.telemetry.source': 'awf-proxy',
-                'gen_ai.request.model': request.model,
-                'gh-aw.detector.usage.input_tokens': request.input_tokens,
-                'gh-aw.detector.usage.output_tokens': request.output_tokens,
-                'gh-aw.detector.usage.cache_read_tokens': request.cache_read_tokens,
-                'gh-aw.detector.usage.cache_write_tokens': request.cache_write_tokens,
-                'http.response.status_code': request.status,
-                'gh-aw.request.id': request.request_id,
-                'gh-aw.request.duration_ms': request.duration_ms,
-                'gh-aw.ai_credits': request.ai_credits_this_response,
-              }, { startMs: endMs - request.duration_ms, endMs, isError: request.status >= 400 });
-            }
-            let retries = 0;
-            let retryDelayMs = 0;
-            const statuses = {};
-            for (const line of log.split('\n')) {
-              if (!/^\[engine\] \{\s*"type":\s*"system",\s*"subtype":\s*"api_retry"/.test(line)) continue;
-              const event = JSON.parse(line.slice('[engine] '.length));
-              if (event.type !== 'system' || event.subtype !== 'api_retry') continue;
-              retries++;
-              if (Number.isFinite(event.retry_delay_ms)) retryDelayMs += event.retry_delay_ms;
-              if (Number.isInteger(event.error_status)) {
-                statuses[event.error_status] = (statuses[event.error_status] || 0) + 1;
-              }
-            }
+            // One stream per OpenCode attempt. Read only step counters: the streams' text is model-authored.
+            const streams = fs.readdirSync(process.env.RUNNER_TEMP).filter(name => /^gh-aw-opencode-detector-\d+\.ndjson$/.test(name));
+            // A killed run can leave an unterminated last line; every complete event ends in a newline.
+            const steps = streams.flatMap(name => read(path.join(process.env.RUNNER_TEMP, name)).split('\n').slice(0, -1))
+              .filter(line => line.includes('"step_finish"')).map(line => JSON.parse(line))
+              .filter(event => event.type === 'step_finish').map(event => event.part);
             const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
             const verdictText = read(path.join(directory, 'detection_result.json'));
             const verdict = verdictText ? JSON.parse(verdictText) : null;
             const outcome = process.env.DETECTOR_JOB_STATUS === 'cancelled' ? 'cancelled' : process.env.DETECTOR_OUTCOME || 'unknown';
             const valid = verdict && ['prompt_injection', 'secret_leak', 'malicious_patch'].every(key => typeof verdict[key] === 'boolean');
             const failed = outcome !== 'success' || !valid;
+            const sum = value => steps.reduce((total, step) => total + value(step), 0);
             const attributes = {
               'gh-aw.telemetry.source': 'detector-evidence',
               'gh-aw.detector.outcome': outcome,
               'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
               'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
-              'gh-aw.detector.requests': requests.length,
-              'gh-aw.detector.usage_available': Boolean(usage),
-              'gh-aw.detector.retries': retries,
-              'gh-aw.detector.retry_delay_ms': retryDelayMs,
+              'gh-aw.detector.attempts': streams.length,
+              'gh-aw.detector.requests': steps.length,
+              'gh-aw.detector.usage_available': steps.length > 0,
+              'gh-aw.detector.usage.input_tokens': sum(step => step.tokens?.input ?? 0),
+              'gh-aw.detector.usage.output_tokens': sum(step => step.tokens?.output ?? 0),
+              'gh-aw.detector.usage.reasoning_tokens': sum(step => step.tokens?.reasoning ?? 0),
+              'gh-aw.detector.usage.cache_read_tokens': sum(step => step.tokens?.cache?.read ?? 0),
+              'gh-aw.detector.usage.cache_write_tokens': sum(step => step.tokens?.cache?.write ?? 0),
+              'gh-aw.detector.cost': sum(step => step.cost ?? 0),
               'gh-aw.detector.log_available': Boolean(log),
             };
-            for (const [status, count] of Object.entries(statuses)) {
-              attributes['gh-aw.detector.retries.http_' + status] = count;
-            }
             await logSpan('gh-aw.detector.result', attributes, {
               startMs: Number(process.env.GITHUB_AW_OTEL_JOB_START_MS) || Date.now(),
               isError: failed,
               errorMessage: failed ? attributes['gh-aw.detector.reason'] : undefined,
             });
-    # Detection uses the stateful Claude CLI, so it retains normal recovery.
-    engine:
-      id: claude
-      version: '2.1.227'
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: "3"
-        CLAUDE_CODE_ENABLE_TELEMETRY: "1"
-        OTEL_LOGS_EXPORTER: otlp
-        OTEL_METRICS_EXPORTER: none
-        OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-        OTEL_SERVICE_NAME: gh-aw.threat-detection
 ---

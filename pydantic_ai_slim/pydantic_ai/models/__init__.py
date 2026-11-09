@@ -3205,6 +3205,17 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
+def _with_default_user_agent(headers: Mapping[str, str]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    """A copy of `headers` with our `User-Agent` added, unless they hold a user-agent in any spelling.
+
+    Fits an SDK that merges per-request headers into its own case-insensitively, as OpenAI's and Anthropic's do.
+    """
+    extra_headers = dict(headers)
+    if all(name.lower() != 'user-agent' for name in extra_headers):
+        extra_headers['User-Agent'] = get_user_agent()
+    return extra_headers
+
+
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
