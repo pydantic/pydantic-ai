@@ -671,7 +671,7 @@ class TestProviderSettings:
             _xai_request_search,
             'limit',
             id='xai',
-            marks=pytest.mark.skipif(not xai_available(), reason='xai not installed'),
+            marks=_needs_xai,
         ),
     ],
 )
