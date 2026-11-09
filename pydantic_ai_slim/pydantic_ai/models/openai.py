@@ -3606,10 +3606,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        # Providers say which models take the native computer tool, which only the Responses API sends.
-        if profile.get('openai_supports_computer_tool', False):
-            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported | {ComputerTool}))
+        # Providers say which models take the native computer tool, which only the Responses API sends; a profile
+        # without its own native tools lists every type, so the flag also takes it away.
+        supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        supported = (
+            supported | {ComputerTool}
+            if profile.get('openai_supports_computer_tool', False)
+            else supported - {ComputerTool}
+        )
+        profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -5462,7 +5467,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if call_id in computer_call_ids or (
                             # A call not replayed here is in the stored response (`previous_response_id` or a
                             # conversation), where this model made it as a `computer_call`.
-                            computer_is_native and computer_call is not None and call_id not in replayed_call_ids
+                            computer_is_native
+                            and computer_call is not None
+                            and computer_call.provider_name == self.system
+                            and 'computer_call' in (computer_call.provider_details or {})
+                            and call_id not in replayed_call_ids
                         ):
                             openai_messages.extend(_map_computer_call_output(part, call_id, computer_call))
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
@@ -8465,9 +8474,13 @@ def _map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    details = (call.provider_details if call else None) or {}
-    if computer_return and (safety_checks := details.get(_SAFETY_CHECKS)):
-        output['acknowledged_safety_checks'] = safety_checks
+    if computer_return and call and (checks := call.safety_checks):
+        output['acknowledged_safety_checks'] = [
+            responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
+                id=check.id or '', code=check.code, message=check.message
+            )
+            for check in checks
+        ]
     items: list[responses.ResponseInputItemParam] = [output]
     if image is None or computer_return is None or _needs_summary(computer_return.result):
         # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's

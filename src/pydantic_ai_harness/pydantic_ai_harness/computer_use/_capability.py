@@ -7,12 +7,13 @@ import weakref
 from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from itertools import accumulate
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
 
 import anyio
 import anyio.lowlevel
 from pydantic import Field, TypeAdapter
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -35,7 +36,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
     ToolReturn,
-    ToolReturnPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -110,6 +110,9 @@ _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakVa
 at it a whole call at a time, so one's clicks and typing never land between another's. A lock can't wake a waiter on
 another loop, so calls on separate event loops, such as durable units on separate loops, don't take turns. A lock goes
 once no call holds or waits for it."""
+
+_SEEN_RESTARTS: weakref.WeakKeyDictionary[object, int] = weakref.WeakKeyDictionary()
+"""Each display's restart count when its last `computer` call ended, in this process."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
@@ -397,10 +400,9 @@ def _recorded_space(response: ModelResponse) -> tuple[int | None, tuple[int, int
 
     A screenshot size of `None` means the model had seen no screenshot, so it pointed in display pixels.
     """
-    record: Any = (response.metadata or {}).get(_CALL_SPACE)
-    if not isinstance(record, dict):
+    record = (response.metadata or {}).get(_CALL_SPACE)
+    if not is_str_dict(record):
         return None
-    record = cast(dict[str, Any], record)
     size = record.get('screenshot_size')
     return record.get('coordinate_grid'), (size[0], size[1]) if size else None
 
@@ -416,10 +418,26 @@ def _display(ctx: RunContext[Any]) -> object | None:
     return backend.display if isinstance(backend, SupportsDisplay) else None
 
 
-def _restart_count(ctx: RunContext[Any]) -> int | None:
-    """How many times the display has restarted, if it reports that."""
+def _restarted(ctx: RunContext[Any]) -> bool:
+    """Whether the display restarted since its last `computer` call ended, or during this one, if it reports that.
+
+    Counting from the end of the last call catches a restart between calls too, such as one started by reading the
+    display size before a model request.
+    """
     display = _display(ctx)
-    return display.restart_count if isinstance(display, SupportsRestartCount) else None
+    if not isinstance(display, SupportsRestartCount):
+        return False
+    count = display.restart_count
+    seen = _SEEN_RESTARTS.get(display, count)
+    _SEEN_RESTARTS[display] = count
+    return count != seen
+
+
+def _start_counting_restarts(ctx: RunContext[Any]) -> None:
+    """Count restarts from now for a display no call has used, so one before its first call isn't reported."""
+    display = _display(ctx)
+    if isinstance(display, SupportsRestartCount):
+        _SEEN_RESTARTS.setdefault(display, display.restart_count)
 
 
 async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
@@ -616,7 +634,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
-        restarts = _restart_count(ctx)
+        _start_counting_restarts(ctx)
         call = _Call(plan.grid, changed=plan.changed)
         if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
             # Also starts a display that stopped, so a restart is known before anything acts.
@@ -634,7 +652,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             actions = pixels
 
         async with _display_lock(ctx):
-            return await self._act_and_look(ctx, actions, call, plan, restarts)
+            return await self._act_and_look(ctx, actions, call, plan)
 
     async def _act_and_look(
         self,
@@ -642,7 +660,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         actions: list[ComputerToolAction],
         call: _Call,
         plan: _Plan,
-        restarts: int | None,
     ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
 
@@ -671,7 +688,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        if _restart_count(ctx) != restarts:
+        if _restarted(ctx):
             result['display_restarted'] = True
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
@@ -684,7 +701,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         Approval is required if any of them requires it, and the fewest kept screenshots apply.
         """
-        combined = cast(list[ComputerUse[AgentDepsT]], list(capabilities))
+        combined = [c for c in capabilities if isinstance(c, ComputerUse)]
+        # Core only groups instances of the same capability class under one id.
+        assert len(combined) == len(capabilities)
         kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
         return replace(
             combined[-1],
@@ -800,8 +819,10 @@ def _drop_old_screenshots(messages: list[ModelMessage], keep: int | None) -> lis
         return messages
     rebuilt = list(messages)
     for message_index, part_index, item_index, _ in found[:drop]:
-        message = cast(ModelRequest, rebuilt[message_index])
-        part = cast(ToolReturnPart, message.parts[part_index])
+        message = rebuilt[message_index]
+        part = message.parts[part_index]
+        # `_screenshots` found only `computer` results, in requests.
+        assert isinstance(message, ModelRequest) and isinstance(part, ComputerReturnPart)
         items = list(part.content_items())  # a copy: the history keeps its images
         items[item_index] = _SCREENSHOT_REMOVED
         parts = list(message.parts)
