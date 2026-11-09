@@ -64,6 +64,10 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the Sprite a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             # Core picks the run's workspace from the always-on capabilities only.
@@ -77,7 +81,12 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> SpritesSandboxBackend:
         """Construct a lazy backend for an existing Sprite."""
         return SpritesSandboxBackend(
-            client=self.client, ref=ref, runtime=self.runtime, working_dir=self.working_dir, env=self.env
+            client=self.client,
+            ref=ref,
+            runtime=self.runtime,
+            working_dir=self.working_dir,
+            env=self.env,
+            desktop=self.desktop,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -100,6 +109,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             runtime=self.runtime,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

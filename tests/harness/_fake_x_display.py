@@ -15,6 +15,11 @@ class FakeDisplay:
         self.xdotool: list[str] = []
         self.viewers: list[str] = []
 
+    @staticmethod
+    def answers(command: str) -> bool:
+        """Whether `command` is the display's, for a fake that answers other commands itself."""
+        return command.startswith('xdotool ') or any(part in command for part in ('Xvfb', 'xwininfo -root'))
+
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
             self.starts.append(command)
