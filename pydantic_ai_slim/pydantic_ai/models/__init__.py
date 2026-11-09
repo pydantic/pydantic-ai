@@ -221,10 +221,11 @@ ModelContextDepsT = TypeVar('ModelContextDepsT')
 
 @cache
 def known_model_names() -> tuple[str, ...]:
-    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+    """Return the model names [`KnownModelName`][pydantic_ai.models.KnownModelName] lists.
 
-    The list is intended for autocomplete and error suggestions; it is not exhaustive of the model
-    ids accepted by providers and should not be used to validate user input.
+    The list is curated for autocomplete and error suggestions: per provider and model line, the newest
+    model of the newest generation and of the previous one. It is not exhaustive of the model ids accepted
+    by providers and should not be used to validate user input.
 
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
@@ -3801,6 +3802,17 @@ def get_user_agent() -> str:
     from .. import __version__
 
     return f'pydantic-ai/{__version__}'
+
+
+def _with_default_user_agent(headers: Mapping[str, str]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    """A copy of `headers` with our `User-Agent` added, unless they hold a user-agent in any spelling.
+
+    Fits an SDK that merges per-request headers into its own case-insensitively, as OpenAI's and Anthropic's do.
+    """
+    extra_headers = dict(headers)
+    if all(name.lower() != 'user-agent' for name in extra_headers):
+        extra_headers['User-Agent'] = get_user_agent()
+    return extra_headers
 
 
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:

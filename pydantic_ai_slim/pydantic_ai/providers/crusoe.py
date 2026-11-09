@@ -55,6 +55,8 @@ class CrusoeProvider(_OpenAISDKProvider):
             'openai': harmony_model_profile,  # used for gpt-oss models on Crusoe
             'moonshotai': moonshotai_model_profile,
             'zai': zai_model_profile,
+            # Crusoe serves GLM-5.3 as `zai-org/GLM-5.3`; earlier GLM releases were `zai/GLM-5.x`.
+            'zai-org': zai_model_profile,
         }
 
         profile = None

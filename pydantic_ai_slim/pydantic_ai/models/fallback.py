@@ -277,9 +277,7 @@ class FallbackModel(Model):
                 abandoned_response: ModelResponse | None = suspended_response
             else:
                 if not await chain.falls_back(response):
-                    if response.state == 'suspended':
-                        _stamp_continuation(response, pinned)
-                        carry_deadline(response, deadline)
+                    _stamp_if_suspended(response, pinned, deadline)
                     self._set_span_attributes(pinned, prepared_parameters)
                     return response
                 failure = response
@@ -346,9 +344,7 @@ class FallbackModel(Model):
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
             if rewound:
                 _stamp_replace_previous(response)
-            if response.state == 'suspended':
-                _stamp_continuation(response, model)
-                carry_deadline(response, deadline)
+            _stamp_if_suspended(response, model, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -418,9 +414,7 @@ class FallbackModel(Model):
                     # Unlike `request()`, which stamps before returning, the streaming path stamps
                     # after `yield`: the final `state` is only known once the caller has consumed the
                     # stream. Callers must therefore call `get()` after the `async with` exits.
-                    if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, pinned)
-                        carry_deadline(streamed_response, deadline)
+                    _stamp_if_suspended(streamed_response, pinned, deadline)
                     return
 
         try:
@@ -466,20 +460,12 @@ class FallbackModel(Model):
                     yield streamed_response
                     # Stamp after `yield` (see the pinned path above): `state` is only final once the
                     # caller has consumed the stream, so callers must call `get()` after the context exits.
-                    if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, model)
-                        carry_deadline(streamed_response, deadline)
+                    _stamp_if_suspended(streamed_response, model, deadline)
                     return
 
             chain.exhausted()
         except BaseException as error:
-            if rewound:
-                # The job of the response this request continued was cancelled when it was rewound, so the
-                # continuation loop the error reaches mustn't cancel it again.
-                mark_suspended_job_cancelled(error)
-            if not handed_over:
-                # Once the stream is handed over, the attempts it carries are counted with it.
-                carry_attempts(error, chain.log.attempts)
+            _annotate_stream_error(error, chain, rewound=rewound, handed_over=handed_over)
             raise
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
@@ -650,6 +636,26 @@ def _pinned_request_deadline(
     to it. A nested `FallbackModel` gets none, as it carries over the deadlines of the model it picked itself.
     """
     return resume_deadline(start_request_deadline(model, model_settings, stream=stream), suspended_response)
+
+
+def _annotate_stream_error(error: BaseException, chain: FallbackChain, *, rewound: bool, handed_over: bool) -> None:
+    """Annotate an error leaving `FallbackModel.request_stream` for the code it reaches."""
+    if rewound:
+        # The job of the response this request continued was cancelled when it was rewound, so the
+        # continuation loop the error reaches mustn't cancel it again.
+        mark_suspended_job_cancelled(error)
+    if not handed_over:
+        # Once the stream is handed over, the attempts it carries are counted with it.
+        carry_attempts(error, chain.log.attempts)
+
+
+def _stamp_if_suspended(
+    response: ModelResponse | StreamedResponse, model: Model, deadline: RequestDeadline | None
+) -> None:
+    """Pin a suspended response to the model that produced it, and carry its request deadline to the continuation."""
+    if response.state == 'suspended':
+        _stamp_continuation(response, model)
+        carry_deadline(response, deadline)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

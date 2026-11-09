@@ -709,19 +709,6 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
     assert empty == RequestUsage()
 
 
-def test_single_ws_user_agent_noop_without_duplicate() -> None:
-    # A client whose headers hold fewer than two `user-agent` entries needs no reconciliation: the
-    # context manager yields without touching them. A real `GoogleProvider` always adds a capitalized
-    # duplicate, so this defensive branch can't be reached through `connect` — hence a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
-    with rt_google._single_ws_user_agent(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
 def test_ws_trace_context_injects_and_restores_headers() -> None:
     # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so trace context
     # is injected into them for the connect only, then removed so the shared client's later HTTP
@@ -838,6 +825,37 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
     assert headers == original_headers
 
 
+async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
+    client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _CapturingConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _CapturingConnect:
+        return _CapturingConnect()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    async with _connect(model, ''):
+        pass
+
+    [captured] = handshake_headers
+    assert [key for key in captured if key.lower() == 'user-agent'] == ['user-agent']
+    assert headers == original_headers
+
+
 class _StopDial(Exception):
     """Raised from the fake handshake to short-circuit `connect` once headers are captured."""
 
@@ -885,7 +903,7 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
-    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    # The handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     # The bearer lives permanently on the client's static http options (that's what carries it onto the
     # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook

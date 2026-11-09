@@ -142,6 +142,10 @@ class _CapturingAnthropicClient:
 
         return DEFAULT_TIMEOUT
 
+    @property
+    def default_headers(self) -> dict[str, str]:
+        return {}
+
     # `AnthropicModel` sends a request that sets `max_retries` through `with_options(http_client=self._client, ...)`.
     # The retry count isn't part of the body, so the copy can be this same client.
     _client = None
