@@ -206,6 +206,31 @@ async def test_iter_with_map():
     assert task_count >= 3
 
 
+async def test_iter_next_task_preserves_empty_map_result():
+    """An empty map result must not be mistaken for an unstarted graph."""
+    g = GraphBuilder(state_type=IterState, output_type=None)
+
+    @g.step
+    async def generate_empty(ctx: StepContext[IterState, None, None]) -> list[int]:
+        return []
+
+    @g.step
+    async def process(ctx: StepContext[IterState, None, int]) -> None:  # pragma: no cover
+        return None
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_empty),
+        g.edge_from(generate_empty).map().to(process),
+        g.edge_from(process).to(g.end_node),
+    )
+
+    graph = g.build()
+    async with graph.iter(state=IterState()) as run:
+        await run.next()
+        await run.next()
+        assert run.next_task == []
+
+
 async def test_iter_early_termination():
     """Test that iteration can be terminated early."""
     g = GraphBuilder(state_type=IterState, output_type=int)
