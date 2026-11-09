@@ -122,6 +122,16 @@ async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path)
     assert result.stdout == ':1\n'
 
 
+async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(
+        image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
+    )
+    await Workspace(backend).act(Click(x=3, y=4))
+
+    # Starting the display checks the same X server the actions go to.
+    assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
+
+
 async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
@@ -196,14 +206,6 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     assert docker.x_lock_exists(backend.ref.id)
 
 
-async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
-    (docker.bin_dir / 'scrot').unlink()
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
-
-    with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
-        await workspace.screenshot()
-
-
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
@@ -235,6 +237,16 @@ async def test_missing_display_programs_are_installed_on_first_use(
 
     assert await Workspace(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
     assert docker.apt_get_calls == ['update -qq', _INSTALL]
+
+
+@_host_without_display_programs
+async def test_a_program_missing_beside_a_running_display_is_installed(docker: FakeDocker, container_dir: Path) -> None:
+    docker.uninstall('scrot')
+    docker.run_as(0)
+
+    assert await Workspace(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.xvfb_starts == 0
 
 
 @_host_without_display_programs
