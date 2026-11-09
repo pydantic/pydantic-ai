@@ -237,6 +237,40 @@ jobs:
             gh pr close "$PR_NUMBER" --repo "$REPO"
           }
 
+          # Succeeds when a maintainer has engaged on issue $1: commented on it, labeled it
+          # or assigned it. The issue's author may open a PR for it without being assigned
+          # only then; otherwise filing an issue is a way past the assignment rule that needs
+          # nobody's sign-off (#12483 linked #12482, which its author filed one second
+          # earlier, right after this guard closed their previous PR). Engagement needs
+          # write-or-higher access on this repo, and bots never count: pydanty triages
+          # every new issue, commenting, labeling and assigning a maintainer, before any
+          # maintainer has read it. Bots are skipped before the role lookup, which 404s for
+          # them. An unreadable timeline or role stops the run without acting (see
+          # `cannot_verify`).
+          maintainer_engaged() {
+            local timeline actor role
+            if ! timeline=$(gh api "repos/${REPO}/issues/$1/timeline" --paginate --jq '.[] | select(.event == "commented" or .event == "labeled" or .event == "assigned") | .actor.login' 2>/dev/null); then
+              cannot_verify "Could not read the timeline of issue #$1"
+            fi
+            for actor in $(sort -u <<< "$timeline"); do
+              case "$actor" in
+                *"[bot]" | "$PYDANTY_LOGIN" | github-actions)
+                  continue
+                  ;;
+              esac
+              if ! role=$(repo_role "$actor"); then
+                cannot_verify "Could not read ${actor}'s role on this repo"
+              fi
+              case "$role" in
+                write | maintain | admin)
+                  echo "${actor} (role: ${role}) has engaged on issue #$1."
+                  return 0
+                  ;;
+              esac
+            done
+            return 1
+          }
+
           # Ask GitHub which issues this PR would close, rather than parsing the
           # body ourselves: GitHub's own parser is the authority on closing-keyword
           # syntax ("Fixes #123", "Fixes: #123", "Fixes owner/repo#123", full issue
@@ -314,8 +348,9 @@ jobs:
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
             # Contributors should discuss and be assigned an issue before opening
-            # a PR. Issue and bot authors are exempt from this requirement.
-            if [ "$PR_AUTHOR" != "$ISSUE_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
+            # a PR. Bot authors are exempt, and so is the issue's author once a
+            # maintainer has engaged on it.
+            if [[ "$PR_AUTHOR" != *"[bot]" ]]; then
               classify_changed_files
               case "$DOCS_ONLY_STATUS" in
                 unknown)
@@ -326,7 +361,11 @@ jobs:
                   ;;
                 not_docs)
                   ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-                  if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                  if echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                    echo "Issue #${ISSUE_NUM} is assigned to ${PR_AUTHOR}."
+                  elif [ "$PR_AUTHOR" = "$ISSUE_AUTHOR" ] && maintainer_engaged "$ISSUE_NUM"; then
+                    echo "${PR_AUTHOR} opened issue #${ISSUE_NUM} and a maintainer has engaged on it; not requiring assignment."
+                  else
                     echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
                     COMMENT=$(printf '%s\n\n%s' \
                       "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
