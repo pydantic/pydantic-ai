@@ -1205,6 +1205,7 @@ jobs:
           tests/test_custom_events.py
           tests/test_utils.py::test_sync_entry_point_does_not_warn_about_a_missing_event_loop
           tests/evals/test_utils.py::test_get_event_loop_does_not_warn_without_a_current_loop
+          tests/clai2/test_worktree_cleanup.py::test_suppression_failure_keeps_checkout
           && uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
         env:
           COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
