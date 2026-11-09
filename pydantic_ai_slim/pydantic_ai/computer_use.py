@@ -128,8 +128,9 @@ class ComputerResult(TypedDict):
     summary rather than reporting the model's own actions as run."""
 
     display_restarted: NotRequired[bool]
-    """Set when the display restarted during the call, such as after its process stopped, so what was on the screen
-    before may be gone. The model isn't told; the screenshot shows the screen as it is now."""
+    """Set when the display restarted since the previous call took its screenshot, or during this call, such as after
+    its process stopped, so what was on the screen before may be gone. The model isn't told; the screenshot shows the
+    screen as it is now."""
 
 
 @dataclass(frozen=True, kw_only=True)
