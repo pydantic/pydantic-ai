@@ -82,6 +82,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._telemetry import publish_run_telemetry
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -155,7 +156,6 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces._telemetry import publish_workspace_telemetry
 from ..workspaces.unavailable import NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
@@ -345,9 +345,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    # Workspace spans read the run's tracer from the context, which `wrap_run`'s task inherits.
+    # Code without a `RunContext`, such as a workspace, reads the run's telemetry from the context `wrap_run`'s task
+    # and the run body inherit.
     wrap_context = outer_context.copy()
-    wrap_context.run(publish_workspace_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
+    wrap_context.run(publish_run_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
     # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.

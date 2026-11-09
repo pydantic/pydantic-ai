@@ -6,12 +6,12 @@ from opentelemetry.trace import get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
+from pydantic_ai._telemetry import publish_run_telemetry
 from pydantic_ai.durable_exec._base import agent_instrumentation_settings
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
-from pydantic_ai.workspaces._telemetry import publish_workspace_telemetry
 
 from ._spec import TEMPORAL_ENGINE_SPEC
 
@@ -82,17 +82,15 @@ def deserialize_run_context(
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
     if agent is not None:
-        _publish_workspace_telemetry(ctx, agent)
+        _publish_run_telemetry(ctx, agent)
     return ctx
 
 
-def _publish_workspace_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
-    """Trace the activity's workspace calls with the worker agent's tracer, as the run's tracer can't cross into it.
+def _publish_run_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
+    """Publish the worker agent's tracer as the run's telemetry, as the run's tracer can't cross into the activity.
 
     Content is captured only if the run captures it too.
     """
     settings = agent_instrumentation_settings(agent)
     if settings is not None and get_current_span().is_recording():
-        publish_workspace_telemetry(
-            settings.tracer, include_content=settings.include_content and ctx.trace_include_content
-        )
+        publish_run_telemetry(settings.tracer, include_content=settings.include_content and ctx.trace_include_content)

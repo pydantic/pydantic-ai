@@ -17,8 +17,9 @@ from typing_extensions import get_protocol_members
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 
+from .._telemetry import set_content
 from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
-from ._telemetry import Operation, Step, command_span, operation_span, set_command, set_content
+from ._telemetry import Operation, Step, command_span, operation_span, set_command
 from .protocol import (
     CommandResult,
     FileEntry,
