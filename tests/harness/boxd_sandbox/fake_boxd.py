@@ -21,11 +21,12 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import shlex
 import shutil
 import signal
 import stat
 import subprocess
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,6 +118,11 @@ class FakeMachine:
         )
 
 
+def _argv(line: str) -> list[str]:
+    """The argv a backend command line runs: what follows its `exec`."""
+    return shlex.split(line.partition('exec ')[2].removesuffix(' </dev/null'))
+
+
 class _FakeExecCall:
     """boxd's `Exec` gRPC call over a host process, under the SDK's own `AsyncExecStream`.
 
@@ -138,10 +144,14 @@ class _FakeExecCall:
         machine = owner.find(init.vm_id)
         owner.check_runnable(machine)
         owner.lines.append(init.command)
+        command = init.command
+        if owner.answer is not None and (reply := owner.answer(_argv(command))) is not None:
+            # Answered without running it.
+            command = 'printf %s {}; printf %s {} >&2; exit {}'.format(*map(shlex.quote, map(str, reply)))
         process = self._process = await asyncio.create_subprocess_exec(
             '/bin/sh',
             '-c',
-            init.command,
+            command,
             cwd=owner.host_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -512,6 +522,9 @@ class FakeBoxd:
         self.create_names: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
+        # Answers a command (the argv after the backend's `exec`) instead of running it,
+        # unless it returns `None`.
+        self.answer: Callable[[list[str]], tuple[str, str, int] | None] | None = None
         # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
         self.fs_calls: list[str] = []
         self.agent_outdated = False

@@ -47,6 +47,7 @@ in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 | [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop) | An E2B cloud sandbox |
 | [`ModalSandbox(desktop=True)`](modal-sandbox.md#give-the-agent-a-desktop) | A Modal cloud sandbox |
 | [`SpritesSandbox(desktop=True)`](sprites-sandbox.md#give-the-agent-a-desktop) | A Fly.io Sprite |
+| [`BoxdSandbox(desktop=True)`](boxd-sandbox.md#give-the-agent-a-desktop) | A boxd microVM |
 | [`BoxLiteSandbox(desktop=True)`](boxlite-sandbox.md#give-the-agent-a-desktop) | A BoxLite micro-VM on your machine |
 | [`SmolSandbox(desktop=True)`](smol-sandbox.md#give-the-agent-a-desktop) | A smolvm microVM on your machine |
 

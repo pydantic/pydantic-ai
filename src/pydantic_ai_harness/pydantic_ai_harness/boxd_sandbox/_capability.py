@@ -83,6 +83,10 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached machine; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the machine a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+    `True` for 1280x800, or its `(width, height)`."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             # Core picks the run's workspace from the always-on capabilities only.
@@ -101,7 +105,9 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
-        return BoxdSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return BoxdSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a machine by id, whatever state it is in.
@@ -141,6 +147,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

@@ -50,6 +50,7 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 | [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop) | An E2B cloud sandbox |
 | [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) | A Modal cloud sandbox |
 | [`SpritesSandbox(desktop=True)`](../sprites_sandbox/#give-the-agent-a-desktop) | A Fly.io Sprite |
+| [`BoxdSandbox(desktop=True)`](../boxd_sandbox/#give-the-agent-a-desktop) | A boxd microVM |
 | [`BoxLiteSandbox(desktop=True)`](../boxlite_sandbox/#give-the-agent-a-desktop) | A BoxLite micro-VM on your machine |
 | [`SmolSandbox(desktop=True)`](../smol_sandbox/#give-the-agent-a-desktop) | A smolvm microVM on your machine |
 

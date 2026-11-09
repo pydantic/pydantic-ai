@@ -54,6 +54,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
+    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
     WorkspaceBackend,
@@ -64,6 +65,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness._display import ManagedDisplay, desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -73,6 +75,7 @@ from pydantic_ai_harness._workspace_provider import (
     run_to_completion,
     running_on_asyncio,
 )
+from pydantic_ai_harness._x11 import DISPLAY, desktop_display
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine
@@ -363,7 +366,7 @@ class _Output:
         return self.stdout.decode(errors='replace'), self.stderr.decode(errors='replace')
 
 
-class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
+class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath, SupportsDisplay):
     """A [boxd](https://boxd.sh) machine as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside an isolated boxd microVM, and file operations use boxd's file API as the same
@@ -399,6 +402,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
+        desktop: Give the machine a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`. It starts on first use, driven with `xdotool` and `scrot`, which the first
+            start installs with `apt-get`, as root or with passwordless `sudo`, when they're missing.
     """
 
     def __init__(
@@ -412,6 +419,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             _check_ref(ref)
@@ -426,6 +434,16 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
+        self._desktop_size = desktop_size(desktop)
+        if self._desktop_size:
+            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._display = desktop_display(
+            self,
+            self._desktop_size,
+            lambda: f'boxd machine {self._ref.id if self._ref else "(not created)"}',
+            screen_key=lambda: self._ref,
+        )
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
@@ -450,6 +468,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         For a machine this backend created, the `id` is boxd's machine id.
         """
         return self._ref
+
+    @property
+    def display(self) -> ManagedDisplay | None:
+        """The machine's desktop, when created with `desktop=True`."""
+        return self._display
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.

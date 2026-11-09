@@ -173,6 +173,32 @@ async def run_in_prepared_machine() -> str:
 
 The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a machine with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[BoxdSandbox(desktop=True), Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
+
+The first start installs whichever of Xvfb, `xdotool`, `scrot` and `setsid` the machine lacks with `apt-get`, as root or with passwordless `sudo`, which can take a minute; a machine or snapshot that already has them skips it.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
+
 ## Clean up
 
 Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
@@ -231,6 +257,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
+| `desktop` | Give the machine a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
