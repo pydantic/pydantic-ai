@@ -3199,7 +3199,9 @@ async def _download_within_request_budget(url: str, *, allow_local: bool) -> htt
         return await safe_download(url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
 
     # Reserved before the download and the unused part refunded after, so downloads running at the same time can't
-    # each claim what is left.
+    # each claim what is left. Each reservation takes up to the per-file limit, so more downloads in flight at once
+    # than the total holds per-file limits are refused however small they are: no model downloads concurrently, and
+    # one that starts to needs a different scheme.
     max_bytes = min(_MAX_FILE_URL_DOWNLOAD_BYTES, budget.remaining)
     budget.remaining -= max_bytes
     downloaded = 0
