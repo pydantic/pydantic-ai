@@ -644,6 +644,7 @@ class ComputerTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses, on models whose profile sets `openai_supports_computer_tool`
+    * Anthropic, on models whose profile sets `anthropic_computer_tool_version`
     """
 
     display_size: tuple[int, int]
