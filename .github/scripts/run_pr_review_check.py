@@ -326,7 +326,9 @@ def main() -> None:
         temp_root = Path(temp)
         config_dir = temp_root / 'config' / 'opencode'
         config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(json.dumps(read_only_config(steps=check.max_steps)), encoding='utf-8')
+        (config_dir / 'opencode.json').write_text(
+            json.dumps(read_only_config(agent='reviewer', steps=check.max_steps)), encoding='utf-8'
+        )
         opencode_env = {
             'HOME': str(temp_root),
             'PATH': env['PATH'],

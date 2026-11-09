@@ -313,6 +313,7 @@ jobs:
           .github/scripts/test_pr_review_checks.py
           .github/scripts/test_run_pr_review_check.py
           .github/scripts/test_publish_pr_review_checks.py
+          .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
