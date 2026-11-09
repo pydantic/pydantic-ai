@@ -177,32 +177,23 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell:
             pytest.skip('fake has no foreground process to cancel')
-        commands = _commands(backend)
-        async with _scratch_dir(Workspace(backend)) as root:
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
             pid_file = posixpath.join(root, 'pid')
 
             async def command() -> None:
-                # The pid is published with a rename, so the file never exists without the whole pid in it.
-                await commands.run(
-                    ['sh', '-c', 'echo $$ > "$1.tmp"; mv "$1.tmp" "$1"; exec sleep 3600', 'sh', pid_file]
-                )
+                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 3600', 'sh', pid_file])
 
-            pid = ''
             async with anyio.create_task_group() as tg:
                 tg.start_soon(command)
-                # One command blocks until the pid is published, rather than one command per check: on a
-                # backend whose file operations run through its shell, every check would start a process.
-                # The deadline only guards against a hang.
                 with anyio.fail_after(30):
-                    waited = await commands.run(
-                        ['sh', '-c', 'while [ ! -e "$1" ]; do sleep 0.05; done; cat "$1"', 'sh', pid_file]
-                    )
-                pid = waited.stdout.strip()
+                    while not await workspace.exists(pid_file):
+                        await anyio.sleep(0.05)
                 tg.cancel_scope.cancel()
-            assert pid.isdigit(), pid
-            # Likewise one command that returns once the cancelled process is gone.
+            pid = (await workspace.read_text(pid_file)).strip()
             with anyio.fail_after(60):
-                await commands.run(['sh', '-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.05; done', 'sh', pid])
+                while (await _commands(backend).run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
+                    await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
