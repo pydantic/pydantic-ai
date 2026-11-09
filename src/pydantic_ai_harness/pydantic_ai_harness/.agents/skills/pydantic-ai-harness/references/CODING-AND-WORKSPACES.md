@@ -17,7 +17,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
-| A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display |
+| A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display; `DaytonaSandbox(desktop=True)` in the cloud, watchable through `live_view_url()` |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -380,6 +380,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or
+  `desktop=(w, h)` of at least 1024x768, fixed at creation. It can't press F13 to F24, print screen, pause, scroll
+  lock, the menu key, media keys, side mouse buttons or emoji. `await backend.live_view_url()` returns a link anyone
+  can use to see and control the desktop until it expires (`expires_in`, one hour by default).
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
