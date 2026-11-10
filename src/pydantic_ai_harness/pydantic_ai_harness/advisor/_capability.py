@@ -367,7 +367,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             model=model_name,
             max_uses=self.max_uses,
             max_tokens=self.max_tokens,
-            caching=self.caching,
+            provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )
 
     @staticmethod
