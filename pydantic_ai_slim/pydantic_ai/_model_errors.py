@@ -204,8 +204,9 @@ def google_retry_after(error: ModelHTTPError) -> float | None:
     """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
 
     Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
-    response that carries the header keeps that value. The delay is a protobuf `Duration` string like `'14s'` or
-    `'0.5s'`, and one that's absent, negative or unparsable says nothing.
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
     """
     if error.retry_after is not None:
         return error.retry_after

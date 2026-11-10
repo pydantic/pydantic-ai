@@ -10,7 +10,7 @@ from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast, get_args
+from typing import Literal, cast, get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
@@ -2009,7 +2009,7 @@ async def test_google_image_generation_maps_non_http_api_error():
     ],
 )
 async def test_google_image_generation_status_error(
-    status_code: int, headers: dict[str, str] | None, error: dict[str, Any], expected_retry_after: float
+    status_code: int, headers: dict[str, str] | None, error: dict[str, object], expected_retry_after: float
 ):
     """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and the wait the provider reported.
 

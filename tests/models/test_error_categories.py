@@ -908,6 +908,14 @@ CASES = [
         attrs={'retry_after': None},
     ),
     Case(
+        # A `Duration` that ends in `s` but holds no number before it is unparsable too.
+        id='google-retry-info-non-numeric',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('invalids')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
         # A protobuf `Duration` may carry a fraction of a second.
         id='google-retry-info-fractional-seconds',
         model=_google,
