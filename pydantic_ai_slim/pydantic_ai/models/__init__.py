@@ -3164,8 +3164,13 @@ def _supported_native_tools(
     supported_natives: list[AbstractNativeTool] = []
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
-    executor_kinds = Counter(t.tool_kind for t in params.function_tools if not t.defer_loading)
     for native_tool in params.native_tools:
+        # A tool that falls back from this native tool leaves the request when it is sent, so it can't run its calls.
+        executor_kinds = Counter(
+            t.tool_kind
+            for t in params.function_tools
+            if not t.defer_loading and t.unless_native != native_tool.unique_id
+        )
         if not isinstance(native_tool, tuple(supported_types)):
             unsupported_natives.append(native_tool)
         elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):

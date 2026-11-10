@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+
+from .display_fakes import FAKE_SCREENSHOT
+
 STARTED = 'pydantic-ai-display-started'
 """What the harness's start script prints when it started a new X server."""
 
@@ -32,7 +36,9 @@ class FakeDisplay:
             # The backend reads the size only from a display it started.
             assert self.up, 'xwininfo before the display started'
             return '  Width: 1280\n  Height: 800\n', '', 0
-        elif command.startswith('xdotool '):
+        elif 'scrot' in command:
+            return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
+        elif command.startswith('xdotool ') or ' xdotool ' in command:  # input runs `xdotool` through a script
             self.xdotool.append(command)
             if not self.up:
                 return '', "Error: Can't open display: :1", 1
