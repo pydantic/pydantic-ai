@@ -1128,6 +1128,7 @@ ends with &lt;/tool_result
     async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
         """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
         model_calls = 0
+        suspending = asyncio.Event()
 
         class _SuspendingFunctionModel(FunctionModel):
             def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -1140,6 +1141,7 @@ ends with &lt;/tool_result
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='slower', args='{}')]
                 )
+            suspending.set()
             return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
 
         agent = Agent(
@@ -1150,13 +1152,14 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(metadata={'background': True})
         async def slow() -> str:
-            # Finishes once the run has reached its pause.
-            await asyncio.sleep(0.05)
+            # Finishes only once the model has suspended the response, so after the step's last request.
+            await suspending.wait()
             return 'slow value'
 
         @agent.tool_plain(metadata={'background': True})
         async def slower() -> str:
-            await asyncio.sleep(0.1)
+            await suspending.wait()
+            await asyncio.sleep(0.01)
             return 'slower value'
 
         async with agent.iter('go') as run:

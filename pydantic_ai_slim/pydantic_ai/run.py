@@ -758,11 +758,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def pending_messages(self) -> list[PendingMessage]:
         """Live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        After a run pauses, it holds what the pause left undelivered; see
-        [Injecting messages during a run](../message-history.md#injecting-messages-mid-run). Use
-        [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        While the run is live, use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
         and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
-        to change them.
+        to change them. After a run pauses, it holds what the pause left undelivered, which can be read but
+        no longer changed; see [Injecting messages during a run](../message-history.md#injecting-messages-mid-run).
         """
         return self._graph_run.state.pending_messages
 
