@@ -5172,6 +5172,10 @@ class CapabilityPart:
             for name in self.rendering.attributes
         }
 
+    def _with_attribute_values(self, values: dict[str, str]) -> Self:
+        """A copy of this part with the attributes named in `values` set to them, leaving this part as it is."""
+        return replace(self, **values)
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         content = self.model_content()
         return UserPromptPart([content] if isinstance(content, StructuredContent) else content).otel_message_parts(
@@ -5406,6 +5410,9 @@ class UnknownCapabilityPart(CapabilityPart, _register=False):
 
     def _attribute_value(self, name: str) -> object:
         return (self.data or {}).get(name)
+
+    def _with_attribute_values(self, values: dict[str, str]) -> Self:
+        return replace(self, data={**(self.data or {}), **values})
 
 
 _CAPABILITY_PART_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(UnknownCapabilityPart))
