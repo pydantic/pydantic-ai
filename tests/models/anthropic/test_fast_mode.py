@@ -6,7 +6,7 @@ its `speed: fast` price variants apply. Every other response reports `usage.spee
 matches no variant, and its `provider_details` stay as they were.
 
 All four cassettes recorded the same usage (18 input, 17 output tokens), so the fast cases cost twice the
-standard ones: Claude Fable 5.2 costs $16/$80 per MTok in fast mode and $8/$40 otherwise.
+standard ones.
 """
 
 from __future__ import annotations as _annotations
