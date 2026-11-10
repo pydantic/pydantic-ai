@@ -68,7 +68,7 @@ DEADLINE_SECONDS = 1800
 """The most one call may take, all steps together, so a caller that waits for it is never left waiting for ever."""
 
 
-VERSION = re.compile(r'rclone v(\d+)\.(\d+)\.(\d+)')
+RCLONE_VERSION_OUTPUT = re.compile(r'rclone v(\d+)\.(\d+)\.(\d+)')
 KERNEL_ESCAPE = re.compile(rb'\\([0-7]{3})')
 """How the kernel writes a space, tab, newline or backslash in a mount table path: as three octal digits."""
 
@@ -107,7 +107,7 @@ def new_enough(rclone: str) -> bool:
         result = subprocess.run([rclone, 'version'], capture_output=True, text=True, timeout=PROBE_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
         return False
-    found = VERSION.match(result.stdout)
+    found = RCLONE_VERSION_OUTPUT.match(result.stdout)
     return found is not None and tuple(int(part) for part in found.groups()) >= RCLONE_MIN
 
 
