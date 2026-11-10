@@ -2268,11 +2268,12 @@ def _mock_downloads(
 
     Tests using this mark the mocked host with `@pytest.mark.vcr(ignore_hosts=[...])` so the module's
     cassette interception lets the request through to the mock transport instead of a recording.
+    Same approach as `_mock_downloads` in `tests/models/test_download_item.py`, whose module has no cassettes.
     """
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
-        return http_client
+        # A fresh client per download: each download closes the client it was given.
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
@@ -2335,7 +2336,7 @@ async def test_xai_document_url_unknown_media_type_uploads_without_extension(
         return httpx2.Response(
             200,
             content=b'\x00\x01\x02binary',
-            headers={'content-type': 'application/octet-stream'},
+            headers={'content-type': 'application/x-pydantic-unknown'},
             request=request,
         )
 
@@ -2378,13 +2379,13 @@ async def test_xai_document_url_unknown_media_type_uploads_without_extension(
 async def test_xai_document_url_extensionless_url_uploads_with_downloaded_extension(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
-    """Test DocumentUrl handling for an extensionless URL (extension derived from the downloaded media type)."""
+    """Test DocumentUrl handling for an extensionless URL: the extension comes from the downloaded media type, without its parameters."""
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(
             200,
-            content=b'%PDF-1.4 test',
-            headers={'content-type': 'application/pdf'},
+            content=b'Plain text report',
+            headers={'content-type': 'text/plain; charset=utf-8'},
             request=request,
         )
 
@@ -2408,7 +2409,7 @@ async def test_xai_document_url_extensionless_url_uploads_with_downloaded_extens
                     {
                         'content': [
                             {'text': 'Process this document'},
-                            {'file': {'file_id': 'file-report.pdf'}},
+                            {'file': {'file_id': 'file-report.txt'}},
                         ],
                         'role': 'ROLE_USER',
                     }
@@ -6520,49 +6521,6 @@ async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monke
     assert exc_info.value.status_code == 429
     assert exc_info.value.body == 'upload quota'
     assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
-
-
-async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
-    """Test DocumentUrl handling when data_type is missing or empty."""
-    response = create_response(content='Document processed')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    # Mock download_item to return empty data_type (simulating unknown content type)
-    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
-        return {'data': b'%PDF-1.4 test', 'data_type': ''}  # Empty data_type
-
-    monkeypatch.setattr('pydantic_ai.models.xai.download_item', mock_download_item)
-
-    document_url = DocumentUrl(url='https://example.com/unknown-file')
-    result = await agent.run(['Process this document', document_url])
-
-    # Should succeed - filename won't have extension when data_type is empty
-    assert result.output == 'Document processed'
-
-    # Verify kwargs - file should be uploaded without extension (no data_type means no extension added)
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
-        [
-            {
-                'model': XAI_NON_REASONING_MODEL,
-                'messages': [
-                    {
-                        'content': [
-                            {'text': 'Process this document'},
-                            {'file': {'file_id': 'file-69b5dc'}},  # Note: no extension since data_type was empty
-                        ],
-                        'role': 'ROLE_USER',
-                    }
-                ],
-                'tools': None,
-                'tool_choice': None,
-                'response_format': None,
-                'use_encrypted_content': False,
-                'include': [],
-            }
-        ]
-    )
 
 
 async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
