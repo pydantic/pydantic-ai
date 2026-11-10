@@ -4890,7 +4890,8 @@ class ModelRequestAttempt:
     """How the attempt failed.
 
     - `'error'` — the request raised an exception, described by `error`.
-    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it
+    - `'rejected'` — the model returned a response, and a response handler in `ModelFallback`'s `fallback_on` or
+      `RetryOnModelErrors`' `retry_on` rejected it
       (or another capability rejected it by raising
       [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request`).
     """

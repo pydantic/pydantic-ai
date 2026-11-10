@@ -27,7 +27,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
 def overloaded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    raise ModelOverloadedError('primary', 'Overloaded', retry_after=0.1)
+    raise ModelOverloadedError('primary', 'Overloaded', retry_after=0.001)
 
 
 def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -47,9 +47,9 @@ print(result.output)
 #> The capital of France is Paris.
 for attempt in result.response.failed_attempts or []:
     print(attempt.model_name, attempt.kind, attempt.retry_after)
-    #> primary retry 0.1
-    #> primary retry 0.1
-    #> primary fallback 0.1
+    #> primary retry 0.001
+    #> primary retry 0.001
+    #> primary fallback 0.001
 ```
 
 The order you list them in doesn't matter: `RetryOnModelErrors` always judges an attempt's failure before `ModelFallback` does. An error `RetryOnModelErrors` doesn't retry, or stops retrying, goes on to `ModelFallback`'s `fallback_on` as it would without it.
