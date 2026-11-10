@@ -236,8 +236,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
-  # A head that already has douwebot findings can never pass `review_gates.py`
-  # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
+  # A new review cannot clear douwebot findings already on a head: `review_gates.py`
+  # `douwebot_approval` passes it only once each is an approval's optional finding
+  # in a resolved thread, so reviewing it again buys no gate value. A head with a
   # clean approval, an incomplete review or a failed run is reviewed again. An
   # incomplete review is reviewed again to complete its coverage, even when its
   # findings already keep that head from passing the gate.
@@ -750,7 +751,7 @@ jobs:
         if: needs.prior-findings.outputs.review_url != ''
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and any finding, optional ones included, keeps a head from a clean douwebot approval. Push a new commit, then request a new review."
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and a new review cannot clear them. An approval's optional findings stop blocking a clean douwebot approval once their threads are resolved; for any other finding, push a new commit, then request a new review."
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}

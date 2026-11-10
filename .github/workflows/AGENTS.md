@@ -210,15 +210,17 @@ Size S remains a manual policy judgment. Merge groups receive success without re
 members because the review requirements are enforced before admission.
 
 A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
-review-body findings on that head, including optional or resolved findings. A clean retry may
+review-body findings on that head. The one exception is an inline finding that an approval marks optional with the
+`Optional:` prefix: it stops blocking once its review thread is resolved. Blocking findings, unresolved optional ones
+and review-body findings still block, resolved or not. A clean retry may
 supersede an empty incomplete review, but cannot erase earlier findings. PR Bots uses a read-only
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
 
-`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
-inline-comment changes with a read-only token, including on forks. Its completion wakes
+`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews,
+inline-comment changes and review-thread resolution with a read-only token, including on forks. Its completion wakes
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
