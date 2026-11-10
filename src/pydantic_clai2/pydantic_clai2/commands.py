@@ -372,6 +372,9 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
+PLUGINS_USAGE = 'Usage: plugins list|disable ID\nAdd, enable, or remove plugins with /plugins inside a CLAI session.'
+
+
 def added_plugin(args: list[str]) -> PluginSettings:
     """The declaration `/plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
     if len(args) not in (3, 4) or args[0] != 'add':
@@ -401,5 +404,5 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         case ['add' | 'enable' | 'remove', *_]:
             raise _session_only('plugins', args)
         case _:
-            raise ValueError('Usage: plugins list|disable ID')
+            raise ValueError(PLUGINS_USAGE)
     return 'Saved. Applies when you restart CLAI.'
