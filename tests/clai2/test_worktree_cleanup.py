@@ -764,8 +764,14 @@ def test_pushed_checkout_with_later_work_still_asks(
     assert launched.path.exists()
 
 
+@pytest.mark.parametrize('moved', [False, True])
 def test_saved_keep_choice_outlives_a_push(
-    launched: Worktree, repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    launched: Worktree,
+    repo: Path,
+    origin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    moved: bool,
 ) -> None:
     store = SettingsStore(repo.parent / 'config.db')
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(return_value='never'))
@@ -773,7 +779,7 @@ def test_saved_keep_choice_outlives_a_push(
     git(launched.path, 'push', 'origin', 'feature')
     capsys.readouterr()
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
-    offer_worktree_cleanup(worktree=launched, store=store)
+    offer_worktree_cleanup(worktree=launched if moved else current_worktree(), store=store)
     assert launched.path.exists()
     assert capsys.readouterr() == (f'Worktree kept at {launched.path}.\n', '')
 

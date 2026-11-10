@@ -1110,7 +1110,7 @@ which can retain globals removed from source; initialize plugin state explicitly
 `/reload` refreshes CLAI code, not Harness or core. After changing those packages,
 restart with the same launch options and `--resume` to continue the saved session.
 Keep the worktree if asked to remove it. Exit removes a clean worktree with no
-unpushed commits without asking; `--worktree NAME` checks it out again on its kept branch.
+unpushed commits without asking; run `git worktree lock .` in it first to keep it.
 
 Plugins are trusted code running as you. Only install what you trust.
 
