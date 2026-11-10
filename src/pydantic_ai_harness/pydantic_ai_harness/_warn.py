@@ -5,7 +5,7 @@ module keeps a shim package at its old path, and a renamed class keeps a module-
 `__getattr__` alias, both emitting `HarnessDeprecationWarning` through these helpers.
 `warn_default_changed` covers an option whose default moved, where existing callers keep
 working but get different behavior, `warn_argument_ignored` an argument that is still
-accepted but no longer does anything, and `warn_argument_renamed` an argument still accepted
+accepted but no longer does anything, `warn_argument_renamed` an argument still accepted
 under its old name, and `warn_callable_renamed` a method still callable under its old name.
 """
 

@@ -348,16 +348,19 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
+# Without the deprecated key, which `__post_init__` renames.
+_RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}
+
+
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
         return {}
     overrides: CodeModeResourceLimits = {} if limits is None else limits
-    unknown = set(overrides) - set(CodeModeResourceLimits.__annotations__)
+    unknown = set(overrides) - _RESOURCE_LIMIT_KEYS
     if unknown:
         raise UserError(
-            f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
-            f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
+            f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
         )
     # Read as `object` so values from untyped code are checked rather than trusted.
     max_duration_seconds: object = overrides.get('max_duration_seconds', 30)
