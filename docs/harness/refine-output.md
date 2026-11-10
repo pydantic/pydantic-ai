@@ -45,7 +45,7 @@ RefineOutput(rounds=2, instructions='Check every figure against the source docum
 Three kinds of run end without a review:
 
 - A run that pauses for [deferred tools](../deferred-tools.md) and returns [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
-- A run that ends while a background response is still in progress and returns [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits).
+- A run that ends while the provider is still processing a model request, such as a batch or background response, and returns [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits).
 - [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], which ends at the first output it streams. To stream a run that is reviewed, use [`Agent.run()`][pydantic_ai.agent.Agent.run] with an `event_stream_handler`, or [`Agent.iter()`][pydantic_ai.agent.Agent.iter].
 
 ## Durable execution

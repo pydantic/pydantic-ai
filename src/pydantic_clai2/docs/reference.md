@@ -2893,7 +2893,8 @@ The built-in `refinement` plugin adds `/refine`: the model reviews its last answ
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness
 [Refine Output](../../../docs/harness/refine-output.md):
-`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`.
+`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
+the first answer followed by the revised one.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
