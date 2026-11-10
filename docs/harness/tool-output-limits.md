@@ -39,10 +39,12 @@ hang the host with catastrophic backtracking.
 
 Each call spills to its own handle. A `tool_call_id` is only unique within one response, and a
 provider that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the
-run, so the run step that produced the call is part of its handle instead of overwriting the
-earlier spill. The step comes from the run context, not from the message history, so a capability
-that rewrites the history between two responses (a compaction, say) cannot make two calls derive
-the same handle.
+run. The first call to spill keeps the plain handle; a later call that would land on the same one
+is parked one level down, under the run step that produced it, instead of overwriting the earlier
+spill. That step comes from the run context, not from the message history, so a capability that
+rewrites the history between two responses (a compaction, say) cannot make two calls derive the
+same handle. Every other handle keeps the documented shape, so code that builds or globs it, such
+as a cleanup job, still matches.
 
 ## Usage
 
@@ -319,7 +321,7 @@ set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of 
 spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
-[Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<step>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<step>/<call>.0').]
+[Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
 ```
 
 A `read_file` call whose path is under `.pydantic-ai-harness/tool-output/` is exempt from
@@ -420,9 +422,9 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill. A `tool_call_id` is only unique within one response, so the response's
-  run step is keyed too: a later response reusing an id gets its own handle even after a
-  compaction has rewritten the history in between.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so the first call
+  to spill keeps the plain handle and a later response reusing the id moves one level down, under
+  its run step, even after a compaction has rewritten the history in between.
 
 ## Relationship to other capabilities
 

@@ -51,7 +51,6 @@ from pydantic_ai_harness.tool_output_limits import (
 from pydantic_ai_harness.tool_output_limits._capability import (
     READ_TOOL_NAME,
     _build_spill_preview,  # pyright: ignore[reportPrivateUsage]
-    _handle_key,  # pyright: ignore[reportPrivateUsage]
     _head_tail_preview,  # pyright: ignore[reportPrivateUsage]
     _read_slice,  # pyright: ignore[reportPrivateUsage]
     _select_action,  # pyright: ignore[reportPrivateUsage]
@@ -682,7 +681,7 @@ class TestSpill:
         assert isinstance(out, ToolReturn)
         assert isinstance(out.return_value, str) and 'too large' in out.return_value
         handle = out.metadata['overflow_handle']
-        assert handle == 'run-1/0/call-1.0'
+        assert handle == 'run-1/call-1.0'
         assert await store.read(handle) == text.encode('utf-8')
 
     async def test_spill_binary_verbatim(self, tmp_path: Path):
@@ -1132,33 +1131,45 @@ class TestActionsAndSelection:
 
 class TestInternals:
     def test_handle_key_defaults(self):
+        limits: ToolOutputLimits[object] = ToolOutputLimits()
         ctx = _make_ctx(run_id=None, retry=2)
         ctx.tool_call_id = None
-        key = _handle_key(ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id=''))
-        assert key == 'run/0/call.2'
+        key = limits._handle_key(ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id=''))
+        assert key == 'run/call.2'
 
     def test_handle_key_suffix(self):
-        key = _handle_key(_make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
+        limits: ToolOutputLimits[object] = ToolOutputLimits()
+        key = limits._handle_key(_make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
         assert key.endswith('.content')
 
     def test_handle_key_keeps_a_reused_call_id_apart(self):
         """A `tool_call_id` is only unique within a response, so a later call reusing one gets its own key."""
+        limits: ToolOutputLimits[object] = ToolOutputLimits()
         first = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
         second = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
         last = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_1')
-        messages = [ModelResponse(parts=[first]), ModelResponse(parts=[second, last])]
-        assert _handle_key(_make_ctx(messages=messages, run_step=1), first) == 'run-1/1/call_0.0'
-        # The second response is a later step, so the repeated id lands on its own handle.
-        assert _handle_key(_make_ctx(messages=messages, run_step=2), second) == 'run-1/2/call_0.0'
-        assert _handle_key(_make_ctx(messages=messages, run_step=2), last) == 'run-1/2/call_1.0'
+        # The first call keeps the documented handle; only the repeated id is parked a level down.
+        assert limits._handle_key(_make_ctx(run_step=1), first) == 'run-1/call_0.0'
+        assert limits._handle_key(_make_ctx(run_step=2), second) == 'run-1/2/call_0.0'
+        assert limits._handle_key(_make_ctx(run_step=2), last) == 'run-1/call_1.0'
 
     def test_handle_key_does_not_read_the_history(self):
         """A capability may rewrite `ctx.messages` mid-run, so the key must not be derived from it."""
+        limits: ToolOutputLimits[object] = ToolOutputLimits()
         call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        with_history = _make_ctx(messages=[ModelResponse(parts=[call])], run_step=3)
+        first = limits._handle_key(_make_ctx(messages=[ModelResponse(parts=[call])], run_step=1), call)
         # A compaction replaced every earlier message between the two responses.
-        compacted = _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=3)
-        assert _handle_key(with_history, call) == _handle_key(compacted, call) == 'run-1/3/call_0.0'
+        after_compaction = limits._handle_key(
+            _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=2), call
+        )
+        assert (first, after_compaction) == ('run-1/call_0.0', 'run-1/2/call_0.0')
+
+    def test_handle_key_keeps_a_retry_on_the_documented_handle(self):
+        """A retry of the same call keeps `run_id/tool_call_id.retry`, so only reused ids move."""
+        limits: ToolOutputLimits[object] = ToolOutputLimits()
+        call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
+        assert limits._handle_key(_make_ctx(run_step=1), call) == 'run-1/call_0.0'
+        assert limits._handle_key(_make_ctx(run_step=2, retry=1), call) == 'run-1/call_0.1'
 
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)

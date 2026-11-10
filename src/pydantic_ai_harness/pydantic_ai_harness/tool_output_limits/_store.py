@@ -177,9 +177,10 @@ class LocalFileStore:
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
-    `base_dir`, with `<occurrence>/` before the file name when the run calls a reused
-    `tool_call_id` more than once. The root is stable on purpose -- a later agent or run by the
-    same user can read a spill a previous run produced, so the store is not isolated per instance.
+    `base_dir`, with a `run_step/` segment before the file name when a later response in the run
+    reuses a `tool_call_id` the first response already spilled. The root is stable on purpose -- a
+    later agent or run by the same user can read a spill a previous run produced, so the store is
+    not isolated per instance.
 
     Security comes from three mechanisms: the default root is per user
     (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
