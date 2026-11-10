@@ -1108,6 +1108,7 @@ NO_FORCING_ANTHROPIC_MODELS = [
     'claude-fable-5-1',
     'claude-fable-5-2',
     'claude-mythos-5-1',
+    'claude-mythos-5-2',
 ]
 
 
