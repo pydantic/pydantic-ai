@@ -77,12 +77,12 @@ def strip_instructions(head: Path) -> None:
                 (Path(directory) / name).unlink()
 
 
-def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str, author_trusted: bool) -> Path:
+def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str, author_is_trusted: bool) -> Path:
     """Copy only this check's diffs and file list next to the PR details, marked with whether the gate trusted the author."""
     context = workspace / '.github' / '.pr-review-checks' / check
     (context / 'diff' / 'git').mkdir(parents=True)
     details = _JSON_OBJECT.validate_json((workspace / REVIEW_CONTEXT / 'pr-details.json').read_bytes())
-    details['author_trusted'] = author_trusted
+    details['author_is_trusted'] = author_is_trusted
     (context / 'pr-details.json').write_text(json.dumps(details), encoding='utf-8')
     unseen = set(files)
     rows: list[str] = []
@@ -336,7 +336,7 @@ def main() -> None:
         workspace,
         base=env['BASE_SHA'],
         head=env['HEAD_SHA'],
-        author_trusted=env['AUTHOR_TRUSTED'] == 'true',
+        author_is_trusted=env['AUTHOR_IS_TRUSTED'] == 'true',
     )
     prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
     api_key = env['OPENCODE_API_KEY']

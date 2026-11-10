@@ -122,7 +122,7 @@ def test_merge_group_passes_without_a_review() -> None:
 def test_author_with_write_access_is_reviewed() -> None:
     """A maintainer's pull request is reviewed at once and shows pending until published."""
     github = FakeGitHub()
-    assert gate(github, ENV) == GateDecision(review=True, author_trusted=True)
+    assert gate(github, ENV) == GateDecision(review=True, author_is_trusted=True)
     assert _states(github) == [(HEAD, 'pending')]
 
 
@@ -145,7 +145,7 @@ def test_run_label_from_a_write_user_starts_the_review(author: Actor) -> None:
     """An app's branch needs the label too: its content can come from outside text."""
     github = FakeGitHub(author=author, labels=[RUN_LABEL], labeled_by=MAINTAINER)
     decision = gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
-    assert decision == GateDecision(review=True, author_trusted=False)
+    assert decision == GateDecision(review=True, author_is_trusted=False)
     assert _states(github) == [(HEAD, 'pending')]
 
 

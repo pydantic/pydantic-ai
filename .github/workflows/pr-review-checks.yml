@@ -34,7 +34,7 @@ jobs:
       statuses: write
     outputs:
       review: ${{ steps.gate.outputs.review }}
-      author_trusted: ${{ steps.gate.outputs.author_trusted }}
+      author_is_trusted: ${{ steps.gate.outputs.author_is_trusted }}
     steps:
       - name: Checkout trusted default-branch gate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -163,7 +163,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          AUTHOR_TRUSTED: ${{ needs.gate.outputs.author_trusted }}
+          AUTHOR_IS_TRUSTED: ${{ needs.gate.outputs.author_is_trusted }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only this key and the Logfire token
           TRIAGE_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }} # zizmor: ignore[secrets-outside-env] -- only the default-branch runner reads it; OpenCode never does
           LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- a write-only ingest token; OpenCode exports with it, and has no tool that reads its environment

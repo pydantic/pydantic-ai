@@ -135,7 +135,7 @@ class GateDecision:
     """Whether this event reviews its head, and for a review, whether the author is a user with write access."""
 
     review: bool
-    author_trusted: bool = False
+    author_is_trusted: bool = False
 
 
 def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> GateDecision:
@@ -158,18 +158,18 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> GateDecision:
             raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
         github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
         return GateDecision(review=False)
-    author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
-    if action == 'labeled' and label == RUN_LABEL and author_trusted:
+    author_is_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
+    if action == 'labeled' and label == RUN_LABEL and author_is_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
         return GateDecision(review=False)
     # An acceptance covers only the status it replaced, so every new status for the head ends it.
     if ACCEPTED_LABEL in labels:
         github.remove_label(ACCEPTED_LABEL)
-    if not author_trusted and not _run_label_trusted(github, labels):
+    if not author_is_trusted and not _run_label_trusted(github, labels):
         github.status(head, 'failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.', url)
         return GateDecision(review=False)
     github.status(head, 'pending', 'Reviewing this head.', url)
-    return GateDecision(review=True, author_trusted=author_trusted)
+    return GateDecision(review=True, author_is_trusted=author_is_trusted)
 
 
 def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
@@ -393,7 +393,7 @@ def main() -> None:
         decision = gate(github, env)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write(f'review={str(decision.review).lower()}\n')
-            output.write(f'author_trusted={str(decision.author_trusted).lower()}\n')
+            output.write(f'author_is_trusted={str(decision.author_is_trusted).lower()}\n')
     else:
         publish(github, env)
 
