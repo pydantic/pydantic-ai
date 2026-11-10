@@ -9,10 +9,8 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import (
+from pydantic_ai.computer_use import (
     Click,
-    CommandResult,
-    ComputerAction,
     Drag,
     HoldKeys,
     MouseDown,
@@ -23,15 +21,14 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     TypeText,
-    WorkspaceCommand,
-    WorkspaceError,
-    WorkspaceUnsupportedActionError,
 )
+from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
+from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
 from pydantic_ai_harness.docker_sandbox._x11 import (
     X11Computer,
 )
 
-from ...workspace_fakes import FAKE_SCREENSHOT
+from ..display_fakes import FAKE_SCREENSHOT
 
 pytestmark = pytest.mark.anyio
 
@@ -143,7 +140,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
 async def test_x11_computer_refuses_characters_outside_ascii(action: ComputerAction) -> None:
     # `xdotool` types them by remapping a key per keystroke, which Chrome reads too late; nothing is sent.
     commands = ScriptedCommands()
-    with pytest.raises(WorkspaceUnsupportedActionError, match='can only type ASCII characters'):
+    with pytest.raises(UnsupportedActionError, match='can only type ASCII characters'):
         await X11Computer(commands).act(action)
     assert commands.calls == []
 
@@ -162,7 +159,7 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
     unvalidated = PressKeys(keys=('a',))
     object.__setattr__(unvalidated, 'keys', (key,))
     commands = ScriptedCommands()
-    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press the key'):
+    with pytest.raises(UnsupportedActionError, match='cannot press the key'):
         await X11Computer(commands).act(unvalidated)
     assert commands.calls == []
 
@@ -268,10 +265,10 @@ async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) 
 async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> None:
     warning = "(symbol) No such key name 'CAPSLOCK'. Ignoring it."
     commands = ScriptedCommands(CommandResult(exit_code=0, stdout='', stderr=warning))
-    with pytest.raises(WorkspaceUnsupportedActionError, match="No such key name 'CAPSLOCK'"):
+    with pytest.raises(UnsupportedActionError, match="No such key name 'CAPSLOCK'"):
         await X11Computer(commands).act(PressKeys(keys=('CAPSLOCK',)))
 
 
 async def test_x11_computer_refuses_an_unknown_action() -> None:
-    with pytest.raises(WorkspaceUnsupportedActionError):
+    with pytest.raises(UnsupportedActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]

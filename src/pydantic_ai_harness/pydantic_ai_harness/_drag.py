@@ -6,7 +6,7 @@ import itertools
 import math
 from collections.abc import Sequence
 
-from pydantic_ai.workspaces import Point
+from pydantic_ai.computer_use import Point
 
 DRAG_PRESS_PAUSE = 0.1
 """Seconds between pressing the button and the first move, and between the last move and letting go: a web page's

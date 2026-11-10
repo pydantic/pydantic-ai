@@ -631,9 +631,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # and 4784 tiles of 28 px, kept below with room for rounding), and the earlier tools send it scaled down while
     # Claude answers in the smaller image's pixels. Opus 4.7 takes the larger size on `computer_20251124`.
     if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-opus-4-7')):
-        profile['computer_use_screenshot_limit'] = (2576, 3_600_000)
+        profile['computer_use_screenshot_max_side'] = 2576
+        profile['computer_use_screenshot_max_pixels'] = 3_600_000
     elif computer_tool_version is not None:
-        profile['computer_use_screenshot_limit'] = (1568, 1_150_000)
+        profile['computer_use_screenshot_max_side'] = 1568
+        profile['computer_use_screenshot_max_pixels'] = 1_150_000
     return profile
 
 
