@@ -5,12 +5,13 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
+from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, ToolOutput, capture_run_messages
@@ -21,14 +22,17 @@ from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
+from pydantic_ai.conversation import Conversation
+from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AudioUrl,
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityLoadDeltaPart,
     Citation,
     CompactionPart,
     ContentCitationAnchor,
@@ -102,7 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import (
@@ -118,6 +122,10 @@ from .conftest import (
     server_history_agent,
     try_import,
 )
+
+with try_import() as otel_sdk_installed:
+    # `opentelemetry-sdk` arrives with the `logfire` extra.
+    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 
 with try_import() as starlette_import_successful:
     from starlette.exceptions import HTTPException
@@ -161,6 +169,7 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.ui.vercel_ai.response_types import (
         BaseChunk,
         DataChunk,
+        ErrorChunk,
         FileChunk,
         SourceDocumentChunk,
         SourceUrlChunk,
@@ -12263,6 +12272,23 @@ def test_tool_availability_delta_ui_round_trip():
     assert reloaded == messages
 
 
+def test_capability_load_record_ui_round_trip():
+    """A capability loaded from code keeps its record through the UI, with or without tools."""
+    messages = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
+            ]
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
 def test_compaction_ui_round_trip_and_sanitization():
     """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
     compaction = CompactionPart(
@@ -12639,6 +12665,75 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
+    """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
+
+    The load's record streams as a `data-capability-load-delta` chunk after the tool result, and loading the
+    assistant message back restores it where the server-side history has it.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    policy = Capability[None](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), capabilities=[policy])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('policy')
+        return 'Case opened.'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Open a case')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-capability-load-delta')
+    assert delta_chunk['data'] == snapshot({'loaded': ['policy'], 'tool_call_id': 'open'})
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-open_case', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
+
+    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityLoadDeltaPart]]:
+        return [
+            (index, part)
+            for index, message in enumerate(messages)
+            for part in message.parts
+            if isinstance(part, CapabilityLoadDeltaPart)
+        ]
+
+    assert load_records(loaded) == load_records(server_history)
 
 
 async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:
@@ -13691,6 +13786,46 @@ async def _server_history_turn(
 
 
 _HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+
+
+async def test_server_message_history_drops_client_supplied_capability_loads():
+    """With the history on the server, the client's new turn can't load a capability.
+
+    A client-supplied `data-capability-load-delta` part would otherwise load the capability with nothing in the
+    run loading it, so it's dropped, and the model never gets the capability's tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools_seen.append([tool.name for tool in info.function_tools])
+        yield 'ok'
+
+    def refund_status() -> str:
+        return 'refunded'  # pragma: no cover
+
+    refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[refunds],
+    )
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    new_message = UIMessage(
+        id='u2',
+        role='user',
+        parts=[
+            DataUIPart(type='data-capability-load-delta', data={'loaded': ['refunds'], 'tool_call_id': None}),
+            TextUIPart(text='and now?'),
+        ],
+    )
+
+    persisted = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, new_message]), stored)
+
+    assert tools_seen[-1] == ['load_capability']
+    assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
 # `useChat` makes up its own id for an assistant message when the server doesn't send one.
 _OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
 _AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])
@@ -13743,7 +13878,7 @@ async def test_server_message_history_stale_regenerate_is_an_error_event():
     assert b''.join(message.get('body', b'') for message in sent).decode() == snapshot("""\
 data: {"type":"start"}
 
-data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
+data: {"type":"error","errorText":"The message to regenerate ('u2') is not in the stored conversation. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
 
 data: {"type":"finish-step"}
 
@@ -13829,6 +13964,902 @@ async def test_server_message_history_tool_approval(approved: bool):
         if approved
         else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
     )
+
+
+def _responded(*calls: tuple[str, str]) -> UIMessage:
+    """An assistant message approving `delete_file` calls, as `useChat` sends it after the user approved them."""
+    return UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolApprovalRespondedPart(
+                tool_name='delete_file',
+                tool_call_id=tool_call_id,
+                input={'path': path},
+                approval=ToolApprovalResponded(id=f'approval-{tool_call_id}', approved=True),
+            )
+            for tool_call_id, path in calls
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('already_answered', id='approval-for-a-call-already-answered'),
+        pytest.param('not_made', id='call-the-model-did-not-make'),
+        pytest.param('beside_pending', id='call-the-model-did-not-make-beside-a-pending-one'),
+    ],
+)
+async def test_server_message_history_rejects_an_approval_for_a_call_not_pending(case: str):
+    """An approval only answers a tool call the stored history is waiting on; any other fails the request and runs nothing."""
+    agent, requests, deleted = server_history_agent()
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
+    if case == 'already_answered':
+        stored = await _server_history_turn(
+            agent, SubmitMessage(id='chat', messages=[delete, _responded(('del-1', 'a.txt'))]), stored, sdk_version=6
+        )
+        assert deleted == ['a.txt']
+        deleted.clear()
+        responded = _responded(('del-1', 'a.txt'))
+    elif case == 'not_made':
+        responded = _responded(('del-2', 'b.txt'))
+    else:
+        responded = _responded(('del-1', 'a.txt'), ('del-2', 'b.txt'))
+    model_requests = len(requests)
+
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat', messages=[delete, responded]), sdk_version=6, manage_message_history='server'
+    )
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert deleted == []
+    assert len(requests) == model_requests
+    errors = [event.error_text for event in events if isinstance(event, ErrorChunk)]
+    tool_call_id = "'del-1'" if case == 'already_answered' else "'del-2'"
+    assert errors == [
+        f'The request answers 1 tool call(s) that the stored conversation is not waiting on: {tool_call_id}. An '
+        'approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of '
+        'answer at the end of the stored conversation. If the conversation changed since the client loaded it, '
+        'reload it from the server.'
+    ]
+
+
+async def _stored_turn(
+    agent: Agent[None, str | DeferredToolRequests],
+    store: InMemoryConversationStore,
+    run_input: SubmitMessage | RegenerateMessage,
+    *,
+    scope: str | None = None,
+) -> list[BaseChunk]:
+    """One request through an endpoint that loads and saves the conversation with a store, returning its chunks."""
+    adapter = VercelAIAdapter(agent, run_input, sdk_version=6, conversation_store=store, conversation_scope=scope)
+    return [chunk async for chunk in adapter.run_stream()]
+
+
+def _saved_entry_ids(chunks: list[BaseChunk]) -> list[str]:
+    [saved] = [chunk for chunk in chunks if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved']
+    assert isinstance(saved, DataChunk) and saved.transient
+    return saved.data['entry_ids']
+
+
+async def test_conversation_store_loads_and_saves_each_turn():
+    """With a store, the adapter loads the conversation, runs the new turn, saves it and sends the stored entry ids."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+
+    first = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    second = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+    entries = await store.load_entries('chat')
+    assert entries is not None
+    assert [entry.id for entry in entries] == [*_saved_entry_ids(first), *_saved_entry_ids(second)]
+    # The saved entries come after the run's own chunks.
+    assert [chunk.model_dump()['type'] for chunk in second] == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'data-conversation-saved',
+            'message-metadata',
+            'finish-step',
+            'finish',
+            'done',
+        ]
+    )
+
+
+async def test_conversation_store_announces_a_save_once():
+    """An adapter reused for a stream it didn't run doesn't announce its earlier run's save again."""
+    agent, _, _ = server_history_agent()
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=InMemoryConversationStore()
+    )
+    chunks = [chunk async for chunk in adapter.run_stream()]
+    assert _saved_entry_ids(chunks)
+
+    async with agent.run_stream_events('hi') as native:
+        again = [chunk async for chunk in adapter.transform_stream(native)]
+
+    assert [chunk for chunk in again if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved'] == []
+
+
+async def test_conversation_store_announces_a_save_only_for_the_run_it_saved():
+    """A stream that isn't the saved run gets no saved-entries part, even if the saved run never announced its own."""
+    agent, _, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=store)
+    _ = [event async for event in adapter.run_stream_native()]
+    assert await store.read_record('chat') is not None
+
+    async with agent.run_stream_events('hi', conversation_id='other') as native:
+        chunks = [chunk async for chunk in adapter.transform_stream(native)]
+
+    assert [chunk for chunk in chunks if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved'] == []
+    assert await store.read_record('other') is None
+
+
+async def test_conversation_store_regenerate_branches():
+    """A regenerate replaces the stored turn, and the store keeps what it replaced as a branch."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    await _stored_turn(
+        agent,
+        store,
+        RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='x'),
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+    record = await store.read_record('chat')
+    assert record is not None and len(record.branches) == 1
+
+
+def _keep_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-2:]
+
+
+def _redact_earlier_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [
+        replace(message, parts=[UserPromptPart('[redacted]')])
+        if isinstance(message, ModelRequest) and message is not messages[-1]
+        else message
+        for message in messages
+    ]
+
+
+def _redact_earlier_prompts_in_place(messages: list[ModelMessage]) -> list[ModelMessage]:
+    for request in messages[:-1]:
+        if isinstance(request, ModelRequest):
+            request.parts = [UserPromptPart('[redacted]')]
+    return messages
+
+
+def _shout_last_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [*messages[:-1], replace(messages[-1], parts=[UserPromptPart('SHOUTED')])]
+
+
+def _store_agent(process: Callable[[list[ModelMessage]], list[ModelMessage]]) -> tuple[Any, list[list[ModelMessage]]]:
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        requests.append(messages)
+        yield f'answer {len(requests)}'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        instructions='Be terse.',
+        capabilities=[ProcessHistory(process)],
+    )
+    return agent, requests
+
+
+_EDITED = UIMessage(id='u2', role='user', parts=[TextUIPart(text='edited')])
+_RESUBMISSIONS = [
+    pytest.param(
+        RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='x'),
+        'and now?',
+        id='regenerate',
+    ),
+    pytest.param(SubmitMessage(id='chat', messages=[_HI, _OK, _EDITED]), 'edited', id='edit'),
+]
+
+
+@pytest.mark.parametrize('process', [_keep_last_two, _redact_earlier_prompts, _redact_earlier_prompts_in_place])
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_resubmission_keeps_a_history_a_capability_rewrote(
+    process: Callable[[list[ModelMessage]], list[ModelMessage]],
+    resubmission: SubmitMessage | RegenerateMessage,
+    prompt: str,
+):
+    """A capability changes what the model is sent, not the stored history before the turn a resubmission replaces."""
+    agent, requests = _store_agent(process)
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.load('chat')
+    assert before is not None
+
+    results: list[AgentRunResult[Any]] = []
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream(on_complete=results.append)]
+
+    assert requests[-1][:-1] != before.messages[:2]  # The capability changed the history the model was sent.
+    after = await store.load('chat')
+    assert after is not None
+    assert after.messages[:2] == before.messages[:2]
+    assert conversation_view(after.messages[2:]) == [f'user-prompt: {prompt}', 'text: answer 3']
+    record = await store.read_record('chat')
+    assert record is not None and len(record.branches) == 1
+
+    # The turn is stored as the run stamped it, like one of an ordinary save.
+    turn = after.messages[2]
+    assert isinstance(turn, ModelRequest)
+    assert turn.run_id == results[0].run_id
+    assert turn.instructions == 'Be terse.'
+
+    # The result carries the save, and the conversation goes on from it.
+    [result] = results
+    assert result.conversation.revision == record.revision
+    following = UIMessage(id='u3', role='user', parts=[TextUIPart(text='and then?')])
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW, _OK, following]))
+    final = await store.load('chat')
+    assert final is not None
+    assert final.messages[:4] == after.messages
+    assert conversation_view(final.messages[4:]) == ['user-prompt: and then?', 'text: answer 4']
+
+
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_resubmission_stores_the_turn_a_capability_rewrote_as_sent(
+    resubmission: SubmitMessage | RegenerateMessage, prompt: str
+):
+    """A capability that rewrites the resubmitted turn itself doesn't change it in the store either."""
+    agent, requests = _store_agent(_shout_last_prompt)
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.load('chat')
+    assert before is not None
+
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream()]
+
+    assert conversation_view(requests[-1][-1:]) == ['user-prompt: SHOUTED']
+    after = await store.load('chat')
+    assert after is not None
+    assert after.messages[:2] == before.messages[:2]
+    assert conversation_view(after.messages[2:]) == [f'user-prompt: {prompt}', 'text: answer 3']
+
+
+def _keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-1:]
+
+
+async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    yield 'ok'
+
+
+@pytest.mark.parametrize(
+    ('prompt', 'trim', 'efforts', 'added'),
+    [
+        pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
+        pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
+        pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
+        pytest.param('system_prompt', False, ['low', 'low', 'low'], None, id='same-effort'),
+    ],
+)
+async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
+    prompt: Literal['system_prompt', 'instructions'],
+    trim: bool,
+    efforts: list[Literal['low', 'high'] | None],
+    added: type | None,
+):
+    """Parts the run adds to the client's new turn, like a reinjected system prompt or a settings change, don't make the save rewrite the stored history.
+
+    Nor does a capability that trims the history the model is sent.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=_answer_ok),
+        system_prompt='Be brief.' if prompt == 'system_prompt' else (),
+        instructions='Be brief.' if prompt == 'instructions' else None,
+        capabilities=[ProcessHistory(_keep_last)] if trim else [],
+    )
+    store = InMemoryConversationStore()
+    stored_ids: list[str] = []
+    for turn, effort in enumerate(efforts):
+        new_message = UIMessage(id=f'u{turn}', role='user', parts=[TextUIPart(text=f'question {turn}')])
+        adapter = VercelAIAdapter(
+            agent, SubmitMessage(id='chat', messages=[new_message]), sdk_version=6, conversation_store=store
+        )
+        chunks = [chunk async for chunk in adapter.run_stream(model_settings={'thinking': effort} if effort else None)]
+
+        entries = await store.load_entries('chat')
+        record = await store.read_record('chat')
+        assert entries is not None and record is not None
+        assert len(entries) == 2 * (turn + 1)
+        assert [entry.id for entry in entries[: len(stored_ids)]] == stored_ids
+        assert _saved_entry_ids(chunks) == [entry.id for entry in entries[len(stored_ids) :]]
+        assert record.branches == []
+        stored_ids = [entry.id for entry in entries]
+
+    conversation = await store.load('chat')
+    assert conversation is not None
+    last_turn = conversation.messages[-2]
+    assert isinstance(last_turn, ModelRequest)
+    assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+
+
+@pytest.mark.parametrize(
+    'resubmission',
+    [
+        pytest.param(
+            RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI], message_id='x'), id='regenerate'
+        ),
+        pytest.param(
+            SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])]),
+            id='edit',
+        ),
+    ],
+)
+async def test_conversation_store_resubmitted_first_message_is_stored_as_the_run_sent_it(
+    resubmission: SubmitMessage | RegenerateMessage,
+):
+    """A resubmitted first message is stored with the system prompt the run reinjected into it and the run's stamps."""
+    agent = Agent(FunctionModel(stream_function=_answer_ok), system_prompt='Be brief.', instructions='Be terse.')
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    results: list[AgentRunResult[Any]] = []
+    adapter = VercelAIAdapter(agent, resubmission, sdk_version=6, conversation_store=store)
+    _ = [chunk async for chunk in adapter.run_stream(on_complete=results.append)]
+
+    conversation = await store.load('chat')
+    record = await store.read_record('chat')
+    assert conversation is not None and record is not None
+    assert len(record.branches) == 1
+    [result] = results
+    assert conversation.messages == result.all_messages()
+    first = conversation.messages[0]
+    assert isinstance(first, ModelRequest)
+    assert conversation_view([first]) == snapshot(['system-prompt: Be brief.', 'user-prompt: hi'])
+    assert first.run_id == result.run_id
+    assert first.instructions == 'Be terse.'
+
+
+async def test_conversation_store_tool_approval():
+    """An approval answers the call the stored conversation is waiting on; a result for that call isn't accepted."""
+    agent, _, deleted = server_history_agent()
+    store = InMemoryConversationStore()
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[delete]))
+    conversation = await store.load('chat')
+    assert conversation is not None and conversation.deferred_tool_requests is not None
+    assert [call.tool_call_id for call in conversation.deferred_tool_requests.approvals] == ['del-1']
+
+    answered = UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(
+                tool_name='delete_file', tool_call_id='del-1', input={'path': 'a.txt'}, output='Deleted a.txt'
+            )
+        ],
+    )
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[delete, answered]))
+    assert deleted == []
+
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[delete, _responded(('del-1', 'a.txt'))]))
+
+    assert deleted == ['a.txt']
+    conversation = await store.load('chat')
+    assert conversation is not None and conversation.deferred_tool_requests is None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt', 'text: ok']
+    )
+
+
+async def test_conversation_store_conflict_asks_the_client_to_reload():
+    """A save that lost a race with another request isn't stored, and the client is told to reload."""
+    agent, _, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    async def save_in_between(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        conversation = await store.load('chat')
+        assert conversation is not None
+        await store.save(conversation)  # Another request's save, which advances the revision.
+        yield 'ok'
+
+    racing = Agent(FunctionModel(stream_function=save_in_between), output_type=[str, DeferredToolRequests])
+    chunks = await _stored_turn(racing, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        [
+            'The conversation was changed by another request while this one ran, so this turn was not saved. '
+            'Reload the conversation from the server and try again.'
+        ]
+    )
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+
+
+async def test_conversation_store_scope():
+    """A conversation saved with another scope is reported as not found, and nothing runs or is saved."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]), scope='alice')
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]), scope='bob')
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        ["Conversation 'chat' was not found."]
+    )
+    conversation = await store.load('chat', scope='alice')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+
+
+async def test_conversation_store_without_a_scope_reaches_only_unscoped_conversations():
+    """An endpoint that passes no scope can't reach a conversation saved with one, but keeps unscoped ones."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='scoped', messages=[_HI]), scope='alice')
+    await _stored_turn(agent, store, SubmitMessage(id='unscoped', messages=[_HI]))
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='scoped', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        ["Conversation 'scoped' was not found."]
+    )
+    scoped = await store.load('scoped')
+    assert scoped is not None
+    assert conversation_view(scoped.messages) == snapshot(['user-prompt: hi', 'text: ok'])
+
+    await _stored_turn(agent, store, SubmitMessage(id='unscoped', messages=[_HI, _OK, _AND_NOW]))
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    unscoped = await store.load('unscoped')
+    assert unscoped is not None
+    assert conversation_view(unscoped.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+
+
+async def test_conversation_store_rechecks_the_scope_of_what_it_loaded():
+    """A conversation replaced under another scope between the load and the scope check is never run on."""
+    agent, requests, _ = server_history_agent()
+
+    class ReplacingStore(InMemoryConversationStore):
+        replace = False
+
+        async def load(
+            self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+        ) -> Conversation | None:
+            loaded = await super().load(conversation_id, limit=limit, scope=scope)
+            if self.replace and loaded is not None:
+                # Another request deletes the conversation and saves one under another scope with its ID.
+                await self.delete(conversation_id)
+                await self.save(Conversation(conversation_id=conversation_id), scope='bob')
+            return loaded
+
+    store = ReplacingStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    store.replace = True
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        ["Conversation 'chat' was not found."]
+    )
+
+
+async def test_conversation_store_saved_between_load_and_check_asks_to_reload():
+    agent, requests, _ = server_history_agent()
+
+    class AdvancingStore(InMemoryConversationStore):
+        advance = False
+
+        async def load(
+            self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+        ) -> Conversation | None:
+            loaded = await super().load(conversation_id, limit=limit, scope=scope)
+            if self.advance and loaded is not None:
+                again = await super().load(conversation_id)
+                assert again is not None
+                await self.save(again)  # Another request's save, which advances the revision.
+            return loaded
+
+    store = AdvancingStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    store.advance = True
+    model_requests = len(requests)
+
+    chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    assert len(requests) == model_requests
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(
+        [
+            'The conversation was changed by another request while it was being loaded, so this request did not run. '
+            'Reload the conversation from the server and try again.'
+        ]
+    )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize(('scope', 'status'), [('alice', 200), ('bob', 404), (None, 404)])
+async def test_dispatch_request_conversation_store_scope(scope: str | None, status: int):
+    """`dispatch_request` answers `404` for a conversation saved with another scope, before running anything."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]), scope='alice')
+    model_requests = len(requests)
+    body = SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, conversation_store=store, conversation_scope=scope
+    )
+
+    if status == 404:
+        assert response.status_code == 404
+        assert bytes(response.body) == b'{"detail":"Conversation not found."}'
+        assert len(requests) == model_requests
+    else:
+        assert isinstance(response, StreamingResponse)
+
+        async def send(_: MutableMapping[str, Any]) -> None:
+            pass
+
+        await response.stream_response(send)
+        assert len(requests) == model_requests + 1
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_conversation_store_needs_a_conversation_id():
+    agent, _, _ = server_history_agent()
+    body = SubmitMessage(id='chat', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    with pytest.raises(UserError, match='needs the ID of the conversation to load'):
+        await VercelAIAdapter.dispatch_request(
+            request, agent=agent, conversation_store=InMemoryConversationStore(), conversation_id='new'
+        )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_conversation_store_client_names_new():
+    """A client can send `'new'` as its chat `id`: that's a `404`, not the `UserError` for an app passing it."""
+    agent, requests, _ = server_history_agent()
+    body = SubmitMessage(id='new', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, conversation_store=InMemoryConversationStore()
+    )
+
+    assert response.status_code == 404
+    assert requests == []
+
+
+class _FailingStore(InMemoryConversationStore):
+    """A store whose `failing` method raises `error`, as a database driver's failure would."""
+
+    def __init__(self, failing: str, error: Exception) -> None:
+        super().__init__()
+        self.failing = failing
+        self.error = error
+
+    async def load(
+        self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+    ) -> Conversation | None:
+        if self.failing == 'load':
+            raise self.error
+        return await super().load(conversation_id, limit=limit, scope=scope)
+
+    async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+        if self.failing == 'read_record':
+            raise self.error
+        return await super().read_record(conversation_id)
+
+    async def save(
+        self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
+    ) -> list[ConversationEntry]:
+        assert self.failing == 'save'  # A load that failed never gets to the save.
+        raise self.error
+
+
+_LOAD_FAILED = 'The conversation could not be loaded, so this request did not run. Try again later.'
+_SAVE_FAILED = 'The conversation could not be saved, so this turn was not saved. Try again later.'
+_STORE_SECRET = 'postgres://admin:hunter2@10.0.0.5/chats is down'
+
+
+class _UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise ValueError('hunter2')
+
+
+@pytest.mark.parametrize(
+    ('failing', 'message'), [('load', _LOAD_FAILED), ('read_record', _LOAD_FAILED), ('save', _SAVE_FAILED)]
+)
+async def test_conversation_store_failure_warns_on_the_server_not_to_the_client(failing: str, message: str):
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, RuntimeError(_STORE_SECRET))
+
+    with pytest.warns(UserWarning, match=rf"conversation 'chat' .*failed: RuntimeError: {_STORE_SECRET}"):
+        chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
+    assert 'hunter2' not in ''.join(chunk.model_dump_json() for chunk in chunks)
+
+
+@pytest.mark.skipif(not otel_sdk_installed(), reason='`opentelemetry-sdk` is not installed')
+@pytest.mark.parametrize(('failing', 'message'), [('load', _LOAD_FAILED), ('save', _SAVE_FAILED)])
+async def test_conversation_store_failure_keeps_its_cause_and_records_only_its_type(failing: str, message: str):
+    """The fixed message's `__cause__` is the store's exception, and a recording span gets its type but not its text."""
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, RuntimeError(_STORE_SECRET))
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat', messages=[_HI]), sdk_version=6, conversation_store=store)
+
+    with TracerProvider().get_tracer('test').start_as_current_span('request') as span:
+        with pytest.warns(UserWarning, match='hunter2'), pytest.raises(UserError, match=message) as exc_info:
+            _ = [event async for event in adapter.run_stream_native()]
+
+    assert exc_info.value.__cause__ is store.error
+    assert isinstance(span, ReadableSpan)
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == [
+        ('exception', {'exception.type': 'RuntimeError', 'exception.escaped': 'False'})
+    ]
+
+
+@pytest.mark.parametrize(('failing', 'message'), [('load', _LOAD_FAILED), ('save', _SAVE_FAILED)])
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(RuntimeError(_STORE_SECRET), id='warning-raised-under-W-error'),
+        pytest.param(_UnprintableError(), id='exception-whose-str-raises'),
+    ],
+)
+async def test_conversation_store_failure_report_cant_replace_the_fixed_message(
+    failing: str, message: str, error: Exception
+):
+    """Under `-W error` the warning raises with the store's text, which must not become the stream's error."""
+    agent, _, _ = server_history_agent()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        chunks = await _stored_turn(agent, _FailingStore(failing, error), SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == [message]
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize(
+    ('error', 'detail', 'warned'),
+    [
+        pytest.param(RuntimeError(_STORE_SECRET), _LOAD_FAILED, True, id='failure'),
+        pytest.param(UserError('This conversation is archived.'), 'This conversation is archived.', False, id='user'),
+    ],
+)
+async def test_dispatch_request_conversation_store_failure_before_the_run(error: Exception, detail: str, warned: bool):
+    """No span is recording before the run starts, and the failure still warns on the server."""
+    agent, requests, _ = server_history_agent()
+    body = SubmitMessage(id='chat', messages=[_HI]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    assert not get_current_span().is_recording()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        response = await VercelAIAdapter.dispatch_request(
+            request, agent=agent, conversation_store=_FailingStore('read_record', error)
+        )
+
+    assert response.status_code == 500
+    assert json.loads(bytes(response.body)) == {'detail': detail}
+    assert requests == []
+    assert any('hunter2' in str(warning.message) for warning in caught) is warned
+
+
+@pytest.mark.parametrize('failing', ['load', 'save'])
+async def test_conversation_store_user_error_reaches_the_client(failing: str):
+    """A `UserError` from a store was written for whoever made the request, so it's sent as is."""
+    agent, _, _ = server_history_agent()
+    store = _FailingStore(failing, UserError('This conversation is archived.'))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        chunks = await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == ['This conversation is archived.']
+    assert not [warning for warning in caught if 'conversation_store' in str(warning.message)]
+
+
+async def test_conversation_store_failed_regenerate_keeps_the_stored_turn():
+    """A regenerate branches only when its run is saved, so one whose run fails leaves the stored conversation as it was."""
+    store = InMemoryConversationStore()
+    agent, _, _ = server_history_agent()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+
+    async def failing(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        raise RuntimeError('model unavailable')
+        yield  # pragma: no cover
+
+    broken = Agent(FunctionModel(stream_function=failing), output_type=[str, DeferredToolRequests])
+    chunks = await _stored_turn(
+        broken,
+        store,
+        RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='x'),
+    )
+
+    assert [chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)] == snapshot(['model unavailable'])
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        ['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok']
+    )
+    record = await store.read_record('chat')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.skipif(not otel_sdk_installed(), reason='`opentelemetry-sdk` is not installed')
+@pytest.mark.parametrize(('resubmission', 'prompt'), _RESUBMISSIONS)
+async def test_conversation_store_failed_resubmission_save_keeps_the_stored_turn_for_a_retry(
+    resubmission: SubmitMessage | RegenerateMessage, prompt: str
+):
+    """A resubmission whose save fails changes nothing stored, so the client's retry stores its turn once."""
+
+    class FailingOnceStore(InMemoryConversationStore):
+        failures = 0
+
+        async def save(
+            self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
+        ) -> list[ConversationEntry]:
+            if self.failures:
+                self.failures -= 1
+                raise RuntimeError(_STORE_SECRET)
+            return await super().save(conversation, scope=scope)
+
+    agent, requests = _store_agent(_keep_last_two)
+    store = FailingOnceStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]))
+    before = await store.read_record('chat')
+    before_entries = await store.load_entries('chat')
+    assert before is not None and before_entries is not None
+
+    store.failures = 1
+    with TracerProvider().get_tracer('test').start_as_current_span('request') as span:
+        with pytest.warns(UserWarning, match=rf"conversation 'chat' .*failed: RuntimeError: {_STORE_SECRET}"):
+            failed = await _stored_turn(agent, store, resubmission)
+
+    assert len(requests) == 3  # The run happened, with a history the capability trimmed.
+    assert [chunk.error_text for chunk in failed if isinstance(chunk, ErrorChunk)] == [_SAVE_FAILED]
+    assert not [chunk for chunk in failed if isinstance(chunk, DataChunk) and chunk.type == 'data-conversation-saved']
+    assert isinstance(span, ReadableSpan)
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == [
+        ('exception', {'exception.type': 'RuntimeError', 'exception.escaped': 'False'})
+    ]
+    assert await store.read_record('chat') == before
+    assert await store.load_entries('chat') == before_entries
+
+    retried = await _stored_turn(agent, store, resubmission)
+
+    assert [chunk for chunk in retried if isinstance(chunk, ErrorChunk)] == []
+    after = await store.read_record('chat')
+    entries = await store.load_entries('chat')
+    assert after is not None and entries is not None
+    assert entries[:2] == before_entries[:2]
+    assert conversation_view([entry.message for entry in entries[2:]]) == [f'user-prompt: {prompt}', 'text: answer 4']
+    assert [entry.id for entry in entries[2:]] == _saved_entry_ids(retried)
+    assert len(after.branches) == 1
+
+
+@pytest.mark.parametrize('manage_message_history', ['client', 'server'])
+async def test_conversation_store_ignores_manage_message_history(manage_message_history: Literal['client', 'server']):
+    """A store holds the history on the server, so the model sees each turn once whatever this says."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    await _stored_turn(agent, store, SubmitMessage(id='chat', messages=[_HI]))
+
+    adapter = VercelAIAdapter(
+        agent,
+        SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]),
+        sdk_version=6,
+        manage_message_history=manage_message_history,
+        conversation_store=store,
+    )
+    _ = [chunk async for chunk in adapter.run_stream()]
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_conversation_store_misuse():
+    agent, _, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    run_input = SubmitMessage(id='chat', messages=[_HI])
+
+    adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
+    with pytest.raises(UserError, match='Pass either `message_history` or a `conversation_store`, not both'):
+        adapter.run_stream_native(message_history=[])
+    with pytest.raises(UserError, match='Pass either `usage` or a `conversation_store`, not both'):
+        adapter.run_stream_native(usage=RunUsage())
+    with pytest.raises(UserError, match='needs the ID of the conversation to load'):
+        adapter.run_stream_native(conversation_id='new')
+
+
+async def test_conversation_store_usage_limits_cover_the_whole_conversation():
+    """A run counts on from the stored usage, so a limit reached by earlier turns rejects every later one."""
+    agent, requests, _ = server_history_agent()
+    store = InMemoryConversationStore()
+    limits = UsageLimits(request_limit=2)
+    messages = [_HI]
+    errors: list[list[str]] = []
+    for turn in range(3):
+        adapter = VercelAIAdapter(
+            agent, SubmitMessage(id='chat', messages=messages), sdk_version=6, conversation_store=store
+        )
+        chunks = [chunk async for chunk in adapter.run_stream(usage_limits=limits)]
+        errors.append([chunk.error_text for chunk in chunks if isinstance(chunk, ErrorChunk)])
+        messages = [
+            *messages,
+            UIMessage(id=f'a{turn}', role='assistant', parts=[TextUIPart(text='ok')]),
+            UIMessage(id=f'u{turn}', role='user', parts=[TextUIPart(text='and then?')]),
+        ]
+
+    assert [bool(turn_errors) for turn_errors in errors] == [False, False, True]
+    assert 'request_limit of 2' in errors[-1][0]
+    assert len(requests) == 2
+    conversation = await store.load('chat')
+    assert conversation is not None and conversation.usage.requests == 2
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

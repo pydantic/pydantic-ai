@@ -10,9 +10,9 @@ managed background processes.
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
-`grep`. Wiring up subprocess handling -- streaming output, timeouts, truncation,
-killing runaway processes, and tracking background jobs across runs --
-is fiddly boilerplate that every agent reinvents.
+`grep`. Doing that well takes subprocess handling: streaming output, timeouts,
+truncation, killing runaway process groups, and tracking background jobs across
+runs.
 
 ## The solution
 
@@ -77,27 +77,35 @@ exit metadata follow the captured output so they remain in the retained tail.
 `allowed_commands` and `denied_commands` are mutually exclusive -- set one, not
 both. `denied_commands` defaults to a list of destructive commands (`rm`,
 `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`, `halt`, `poweroff`,
-`init`); pass an empty list to disable. The executable name is extracted with
-`shlex`, so arguments don't bypass the check.
+`init`). The executable name is extracted with `shlex`, so arguments don't
+bypass the check.
 
-An empty `allowed_commands` collection does not select allowlist mode. The
-configured `denied_commands` remain active; when omitted, this is the built-in
-denylist. Pass `denied_commands=[]` to disable command-name filtering.
+An empty `allowed_commands` collection does not select allowlist mode: the
+configured `denied_commands` (by default the built-in denylist) remain active.
+Pass `denied_commands=[]` to disable command-name filtering.
 
 A denied or blocked command surfaces to the model as a `ModelRetry` (the model
 can retry with an allowed command) rather than aborting the run. So does every
-other failure the model can act on: a working directory an earlier command
-deleted or replaced with a file, and a command the operating system refuses to
-spawn because it holds a NUL byte or contains a character the operating system
-cannot encode, and a command too long for the operating system to start, which
-the model is asked to write to a file and run instead. Failures
-the model can do nothing about still abort the run: a host that cannot allocate
-a process, an application-supplied `env` too large to start even a short
-command, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
-`[Command timed out after Ns]`. A workspace that is gone ends the run.
+other failure the model can act on:
+
+- a working directory an earlier command deleted or replaced with a file
+- a command the operating system refuses to spawn because it holds a NUL byte or
+  a character the operating system cannot encode
+- a command too long for the operating system to start (the model is asked to
+  write it to a file and run that instead)
+
+Failures the model can do nothing about abort the run:
+
+- a host that cannot allocate a process
+- an application-supplied `env` too large to start even a short command
+- an invalid character in an application-supplied `env`
+- a workspace that is gone
+
+A command that runs past its timeout returns its output so far, ending in
+`[Command timed out after Ns]`.
 
 > **These checks are best-effort, not a security boundary.** `allowed_commands`
-> is a guardrail against accidents, not a security boundary. Validation checks
+> is a guardrail against accidents. Validation checks
 > only the first token, and allowlisted commands such as `python`, `git`, `uv`,
 > and `make` can spawn arbitrary processes. A model that wants to work around
 > the allowlist can. For untrusted work, give the run an isolated workspace,
@@ -200,6 +208,15 @@ command stopped by `SIGTERM` reports `[exit code: 143]`.
 A background command is not tied to the run: a conversation spans several
 runs, so a later run on the same workspace can check or stop it by its ID. It
 keeps running until it exits, `stop_command` stops it, or the workspace ends.
+`stop_command` signals the entire process group, including children left after
+the wrapper exits, then removes the job's output files. When the command took
+write permission away from `.pydantic-ai-harness/shell/` (as `chmod -R a-w .`
+does), the job's directory stays behind and the result ends with
+`[job directory not removed: permission denied]`. In a workspace without
+`setsid` where the job cannot get a process group of its own, only the wrapper
+process is signalled, which does not stop the command or its children.
+
+Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 ## Persistent commands
 
@@ -269,10 +286,6 @@ that after it runs, its final working directory is recorded to a private file
 inside the workspace, and that directory is carried into subsequent calls. The path is only
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
-
-`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files.
-
-Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 

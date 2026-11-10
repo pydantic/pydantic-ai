@@ -14,12 +14,14 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
+from ...conversation_store import ConversationEntry, ConversationStore
 from ...messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -62,6 +64,8 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import BuilderCheckpoint, MessagesBuilder, UIAdapter
 from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
+    capability_load_delta_from_payload,
+    capability_load_delta_payload,
     compaction_part_from_payload,
     compaction_payload,
     is_request_compaction_part,
@@ -76,12 +80,15 @@ from .._adapter import (
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    tool_availability_delta_payload,
     tool_retry_payload,
 )
 from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
+    CONVERSATION_SAVED_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
     MODEL_SETTINGS_DELTA_DATA_TYPE,
     PROVIDER_METADATA_KEY,
@@ -193,6 +200,13 @@ def _generate_fresh_message_id(
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{message_index}'))
 
 
+def _delta_data_part(part: ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart) -> DataUIPart:
+    """The data part a tool availability delta or capability load delta rides through the client as."""
+    if isinstance(part, ToolAvailabilityDeltaPart):
+        return DataUIPart(type=TOOL_AVAILABILITY_DELTA_DATA_TYPE, data=tool_availability_delta_payload(part))
+    return DataUIPart(type=CAPABILITY_LOAD_DELTA_DATA_TYPE, data=capability_load_delta_payload(part))
+
+
 @dataclass
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
@@ -234,6 +248,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -253,6 +269,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -287,6 +305,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -323,6 +343,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -367,6 +389,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def _regenerates(self) -> bool:
         return isinstance(self.run_input, RegenerateMessage)
+
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseChunk]:
+        """A transient `data-conversation-saved` part with the stored entries' ids, for `useChat`'s `onData`."""
+        return [
+            DataChunk(
+                type=CONVERSATION_SAVED_DATA_TYPE,
+                data={'conversation_id': conversation_id, 'entry_ids': [entry.id for entry in entries]},
+                transient=True,
+            )
+        ]
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
@@ -490,6 +522,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
                         elif (
+                            part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (load_part := capability_load_delta_from_payload(part.data)) is not None
+                        ):
+                            builder.add(load_part)
+                        elif (
                             part.type == COMPACTION_DATA_TYPE
                             and _is_str_dict(part.data)
                             and (compaction_part := compaction_part_from_payload(part.data)) is not None
@@ -518,7 +556,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # response. Streamed messages mark steps with `step-start` parts; without them (as
                 # `dump_messages` writes, one response per message) content after a completed tool
                 # call is taken to start the next step.
-                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart | ModelSettingsDeltaPart] = []
+                pending_returns: list[
+                    ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
+                ] = []
                 # Enqueued messages were delivered after the step's tool returns, so they wait with them.
                 # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
                 pending_enqueued: list[ModelMessage] = []
@@ -596,6 +636,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # the request carrying that tool return, matching the server-side history. It waits
                             # with the step's held-back tool returns so it follows the return that caused it.
                             pending_returns.append(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == CAPABILITY_LOAD_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (load_part := capability_load_delta_from_payload(part.data)) is not None
+                        ):
+                            # Like a tool availability delta: it lands on the request carrying the return of the
+                            # tool call that loaded the capability, after the step's held-back tool returns.
+                            pending_returns.append(load_part)
                         elif (
                             part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
                             and _is_str_dict(part.data)
@@ -876,17 +924,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 pass
             elif isinstance(part, ModelSettingsDeltaPart):
                 add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))
-            elif isinstance(part, ToolAvailabilityDeltaPart):
-                add(
-                    'user',
-                    DataUIPart(
-                        type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-                        data={
-                            'added': part.tools_added,
-                            'tool_call_id': part.tool_call_id,
-                        },
-                    ),
-                )
+            elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart):
+                add('user', _delta_data_part(part))
             # TODO(v3): remove `RetryPromptPart`
             elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
                 translated = (

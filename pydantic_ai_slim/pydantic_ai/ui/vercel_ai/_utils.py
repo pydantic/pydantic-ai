@@ -54,6 +54,9 @@ __all__ = []
 TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 """Data chunk type for tool availability changes."""
 
+CAPABILITY_LOAD_DELTA_DATA_TYPE = 'data-capability-load-delta'
+"""Data chunk type for capabilities loaded from code."""
+
 MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
 """Data chunk type for changes to the thinking effort in effect."""
 
@@ -65,6 +68,9 @@ ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
+
+CONVERSATION_SAVED_DATA_TYPE = 'data-conversation-saved'
+"""Transient data chunk type for the entries a `conversation_store` save stored, sent after the run."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 

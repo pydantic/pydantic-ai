@@ -765,7 +765,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
-    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, complex_agent_mcp: None
 ):
     async with Worker(
         client_with_logfire,
@@ -1219,7 +1219,8 @@ async def test_complex_agent_run_in_workflow(
     )
 
 
-async def test_complex_agent_run(allow_model_requests: None):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: None):
     events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
@@ -1532,7 +1533,8 @@ async def test_complex_agent_run(allow_model_requests: None):
     )
 
 
-async def test_multiple_agents(allow_model_requests: None, client: Client):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_multiple_agents(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -4039,6 +4041,12 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
     async for event in stream:
         with pytest.raises(UserError, match='enqueued messages would be dropped'):
             ctx.enqueue('later')
+        with pytest.raises(UserError, match=r'`ctx\.dequeue\(\)` is not supported inside a durable activity'):
+            ctx.dequeue('some-enqueue-id')
+        with pytest.raises(
+            UserError, match=r'`ctx\.set_enqueue_priority\(\)` is not supported inside a durable activity'
+        ):
+            ctx.set_enqueue_priority('some-enqueue-id', 'asap')
         boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
         _enqueue_handler_boundaries.add(boundary)
 

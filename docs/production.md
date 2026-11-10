@@ -35,6 +35,8 @@ pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
 ```
 
 ```python {title="production_service.py" test="skip"}
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import logfire
@@ -47,8 +49,19 @@ from pydantic_ai.durable_exec.dbos import DBOSDurability
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-app = FastAPI()
-DBOS(fastapi=app, config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+DBOS(config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    DBOS.launch()  # after the module has registered every workflow
+    try:
+        yield
+    finally:
+        DBOS.destroy()
+
+
+app = FastAPI(lifespan=lifespan)
 
 agent = Agent(
     '{{ anthropic:medium }}',
@@ -215,7 +228,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent('{{ anthropic:medium }}', capabilities=[ModelFallback('{{ openai:medium }}')])
 ```
 
-[Provider SDK clients](retries.md#provider-sdk-retries) already retry some failures on their own. For rate limits and 5xx responses with backoff that respects `Retry-After`, install a [retrying transport](retries.md#transport-retries) on the HTTP client; nothing retries at that layer by default. [Retries](retries.md) explains how the layers multiply. The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
+[Provider SDK clients](retries.md#provider-sdk-retries) already retry some failures on their own. For rate limits and 5xx responses with backoff that respects `Retry-After`, install a [retrying transport](retries.md#transport-retries) on the HTTP client; nothing retries at that layer by default. [Retries](retries.md) explains how the layers multiply, how to [choose one retry owner](retries.md#choosing-one-retry-owner), and [when to retry and when to fall back](retries.md#recovery-scopes). The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
 
 ## Where do API keys go? {#keys}
 

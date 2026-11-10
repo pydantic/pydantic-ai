@@ -31,7 +31,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### Gate a capability on a profile flag
 
-- Where a capability is used, read only a profile flag or the adapter's own declaration, such as `_unsupported_file_inputs`. Never check the transport, the model name, the provider name or the `base_url` there. The transport is the client class, or the client's own mode, such as `genai.Client.vertexai` behind `GoogleModel._is_google_cloud`. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy.
+- Where a capability is used, read only a profile flag or the adapter's own declaration, such as `_unsupported_file_inputs`. Never check the transport, the model name, the provider name or the `base_url` there. The transport is the client class, or the client's own mode, such as `genai.Client.vertexai` behind `GoogleModel._is_google_cloud`. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy. `models/AGENTS.md` names the one host-based default that falls back to the `base_url` after the profile flag.
 - A gate decides whether to send a feature. A branch that sends the same feature in each transport's own wire form is mapping, not a gate, and may branch on the transport: Vertex takes the service tier as headers, the Gemini API as a request field.
 - Set each flag where its fact lives:
   - a model-family fact in the family's `*_model_profile()` in `profiles/`;
@@ -60,7 +60,8 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 ### Thinking round-trips
 
 - Send a `ThinkingPart` on a signed or encrypted reasoning channel only when this adapter owns it and it carries the signature or encrypted content the API checks.
-- Render every `ThinkingPart` the adapter doesn't send on its native channel with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedent: `models/anthropic/__init__.py::AnthropicModel._map_thinking_part`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
+- Send a `ThinkingPart` from any provider in an unsigned plain-text reasoning field (Mistral `ThinkChunk`, Cohere thinking, OpenAI Chat `reasoning_content` in `'field'` mode) as it is. Provenance checks belong only on signed or encrypted channels. — Rendered as text instead, the reasoning still sits in the assistant turn and is claimed as the model's own, so moving it gains nothing.
+- Render every other `ThinkingPart` the adapter doesn't send natively with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedent: `models/anthropic/__init__.py::AnthropicModel._map_thinking_part`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
 - Send nothing for a `ThinkingPart` that has neither content nor replay data.
 
 ### Native tool parts

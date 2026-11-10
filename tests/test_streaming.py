@@ -101,6 +101,7 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+from .realtime.simulation._loop import SimulatedLoop
 
 READINESS_WAIT_TIMEOUT = 5
 """Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
@@ -753,7 +754,6 @@ def test_sync_stream_bridge_rejects_iterator_resume_from_another_thread():
     assert cleanup_thread_id == owner_thread_id
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC queues cleanup without emitting an unraisable exception.
 
@@ -800,7 +800,6 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     bridge.shutdown()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytest.MonkeyPatch):
     """Foreign-thread iterator GC closes its receive stream after wrapper shutdown.
 
@@ -1068,7 +1067,6 @@ def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     """The non-context-manager fallback can request cleanup from its running owner loop.
 
@@ -1094,7 +1092,6 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     assert owner_task.done()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
     """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs.
 
@@ -1175,7 +1172,6 @@ def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
     asyncio.run(run())
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     """The non-context-manager fallback requests cleanup if another event loop is active.
 
@@ -1203,7 +1199,6 @@ def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     assert owner_task.done()
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_sync_stream_bridge_finalizes_on_another_thread():
     """The GC fallback never moves the stopped caller-owned loop to the finalizer thread.
 
@@ -1285,7 +1280,6 @@ def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pyte
     assert stream_closed.wait(timeout=5)
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
     """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
 
@@ -1474,11 +1468,17 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
         assert await anext(stream)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_run_stream_cancel_during_debounce_from_another_task():
     """`cancel()` interrupts a debounced background pull without cancelling its caller.
 
     A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
     guarantee that the debounced prefetch is still active when cancellation starts.
+
+    The deadlines only catch a hang, so the test runs on a virtual clock that moves when nothing else can run: a task
+    waiting forever fails at once, and no amount of real time on a stalled runner can expire them.
     """
     pull_started = anyio.Event()
     finalization_started = anyio.Event()
@@ -6132,6 +6132,190 @@ async def test_get_output_after_stream_output():
     )
 
 
+@pytest.mark.parametrize('entry', ['run_stream', 'iter'])
+async def test_stream_early_exit_in_cancelled_scope_closes_model_stream(entry: Literal['run_stream', 'iter']):
+    """Leaving a model stream early inside a cancelled `anyio` scope still closes it before teardown returns.
+
+    The stream is left through `run_stream()`, or through `iter()` and `node.stream()`. The cancelled scope re-cancels
+    the consumer at every checkpoint of the teardown; none of those cancels may cut short the stream's shielded close.
+    Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    stream_closed = False
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_closed
+        try:
+            while True:
+                yield 'chunk '
+        finally:
+            stream_closed = True
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with anyio.CancelScope() as scope:
+            if entry == 'run_stream':
+                async with agent.run_stream('hello') as result:
+                    stream = result.stream_text(delta=True, debounce_by=None)
+                    assert await anext(stream)
+                    scope.cancel()
+            else:
+                async with agent.iter('hello') as run:
+                    user_prompt = run.next_node
+                    assert Agent.is_user_prompt_node(user_prompt)
+                    node = await run.next(user_prompt)
+                    assert Agent.is_model_request_node(node)
+                    async with node.stream(run.ctx) as events:
+                        assert await anext(aiter(events))
+                        scope.cancel()
+
+    assert stream_closed
+
+
+@dataclass
+class _ModelRequestCleanup(AbstractCapability[None]):
+    """Cleanup in `wrap_model_request` that starts once its handler returns, and finishes once `permitted` is set."""
+
+    shielded: bool
+    started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        finally:
+            with anyio.CancelScope(shield=self.shielded):
+                self.started.set()
+                await self.permitted.wait()
+                self.finished.set()
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_run_stream_early_exit_in_cancelled_scope_cancels_model_request_cleanup_like_the_scope(shielded: bool):
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope lets `wrap_model_request` cleanup finish only if it
+    shields it. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup = _ModelRequestCleanup(shielded=shielded)
+
+    async def permit_cleanup() -> None:
+        await cleanup.started.wait()
+        # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        cleanup.permitted.set()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(permit_cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.run_stream('hello') as result:
+                    assert await anext(result.stream_text(delta=True, debounce_by=None))
+                    scope.cancel()
+
+    assert cleanup.finished.is_set() is shielded
+
+
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+async def test_run_stream_records_response_returned_after_absorbing_cancellation(
+    cancellation: Literal['native', 'anyio'],
+):
+    """A response `wrap_model_request` returns after absorbing a cancellation is recorded before the run is cancelled,
+    as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup_started = anyio.Event()
+    run_usages: list[RunUsage] = []
+
+    class AbsorbCancellation(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            response = await handler(request_context)
+            cleanup_started.set()
+            try:
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+            return response
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[AbsorbCancellation()])
+    messages: list[ModelMessage] = []
+    scope = anyio.CancelScope()
+
+    async def drive() -> None:
+        nonlocal messages
+        with capture_run_messages() as messages, scope:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):
+                    pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    if cancellation == 'native':
+        task.cancel()
+    else:
+        scope.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    if cancellation == 'native':
+        with pytest.raises(asyncio.CancelledError):
+            task.result()
+    else:
+        task.result()
+        assert scope.cancelled_caught
+    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+    # The run's live usage counts the response's tokens once (the stream handler recorded them) and the request once
+    # (recording the response counted it).
+    assert run_usages == snapshot([RunUsage(output_tokens=4, input_tokens=51, requests=1)])
+
+
+async def test_run_stream_cancellation_is_not_masked_by_usage_limit_of_response_returned_after_it():
+    """A response `wrap_model_request` returns once a cancelled `anyio` scope stopped the stream is recorded without
+    the usage-limit check, so `UsageLimitExceeded` can't mask the cancellation. Not a VCR test: no recorded response
+    can trigger the cancellation.
+    """
+    run_usages: list[RunUsage] = []
+
+    async def stream_then_fail_to_close(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'hello'
+        finally:
+            raise RuntimeError('stream close failed')
+
+    class SubstituteOnError(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            try:
+                return await handler(request_context)
+            except RuntimeError:
+                return ModelResponse(parts=[TextPart('substitute')], usage=RequestUsage(output_tokens=1000))
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_then_fail_to_close),
+        deps_type=type(None),
+        capabilities=[SubstituteOnError()],
+    )
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with capture_run_messages() as messages, anyio.CancelScope() as scope:
+            async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
+                assert await anext(result.stream_text(delta=True, debounce_by=None))
+                scope.cancel()
+
+    assert scope.cancelled_caught
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart('substitute')]
+    # The response's usage still counts towards the run, though it's over the limit.
+    assert run_usages == snapshot([RunUsage(output_tokens=1000, requests=1)])
+
+
 @pytest.mark.parametrize('delta', [True, False])
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
@@ -7477,7 +7661,6 @@ async def test_run_stream_events_first_iteration_starts_background_task():
         assert producer_started.is_set()
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
     """Breaking on the documented final-result event must still retrieve background task errors."""
     producer_finished = asyncio.Event()
@@ -7585,8 +7768,8 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
     """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
 
-    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
-    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    Target boundary: `ModelRequestNode.stream()` creates `wrap.task` and `ready_waiter`, then waits for
+    `_serve_stream_offers(handoff, ready_waiter, wrap.task)`. If the outer task is
     cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
     `wrap_model_request` cleanup never runs.
     """
@@ -7605,7 +7788,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
             try:
                 started.set()
                 # Suspend before calling handler() so we sit inside the readiness wait at
-                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                # `_agent_graph.py:_serve_stream_offers(handoff, ready_waiter, wrap.task)`.
                 return await never_finishes
             finally:
                 # Without the drain on the readiness wait, this finally never runs.

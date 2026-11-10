@@ -121,11 +121,8 @@ class HerdrClient:
         # A user rename relinquishes ownership, including on subsequent title updates.
         if self._last_label is not None and current != self._last_label:
             return
-        if isinstance(label, str):
-            target = label
-        elif self._original_label is not None:
-            target = self._original_label
-        else:
+        target = label if isinstance(label, str) else self._original_label
+        if target is None:
             return
         if current != target and not self._request('tab.rename', {'tab_id': self.tab_id, 'label': target}):
             return

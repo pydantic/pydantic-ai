@@ -209,8 +209,13 @@ orchestrator = Agent(
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
-  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Don't use either with the deprecated
+  wrapper agents (`TemporalAgent`, ...). On Temporal and DBOS, `dynamic_agents` and task control run each
+  delegation other than to `self` in a durable unit of its own; a durable task can't ask questions, take messages
+  or be resumed, `cancel_task` stops it right away, and its report arrives when the run would otherwise end.
+  `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
+  `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+  `DelegationTasks` owner.
 
 ## DelegationReports
 
@@ -222,7 +227,7 @@ metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTool
 metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
 history that round-trips through them returns the report as plain user text, and `is_task_report`
 no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
-client history with a UI adapter (`sanitize_messages` joins once #10943 lands; until then it keeps `TextContent.metadata`).
+client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -281,8 +286,9 @@ Gotchas:
 - Agent `name` must be a valid Python identifier; `WorkflowAgent(agent, name=..., description=...)`
   (from `pydantic_ai_harness.dynamic_workflow`) renames without editing the agent.
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
-- The parent `run(usage_limits=...)` is not forwarded into children; use `sub_agent_usage_limits` or
-  `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
+- Without `sub_agent_usage_limits`, children sharing usage run under the parent `run(usage_limits=...)`;
+  with `forward_usage=False` they get pydantic-ai's default `request_limit=50`. For an exact ceiling use
+  `max_agent_calls`. With shared usage and concurrent fan-out, limits are best-effort.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with
@@ -347,7 +353,9 @@ Gotchas:
   `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
-  For durable runs use `mode='native'`; local execution is unsupported there.
+- Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
+  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
 

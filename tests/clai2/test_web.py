@@ -17,6 +17,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, S
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import quote, urlparse
@@ -69,6 +70,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogOpened,
     DialogShown,
     ForkEntry,
+    Item,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -86,6 +88,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -93,7 +96,13 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -256,10 +265,15 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         settled, _ = receive_until(socket, SessionsChanged)
         final = [message.status for message in settled if isinstance(message, StatusChanged)][-1]
         assert final.run is None and final.output_tokens == end.usage.output_tokens
-        # A browser connecting now sees the finished turn as history.
+        # A browser connecting now sees the finished turn as history, with its usage line.
         state = web_.get('/api/state').json()
-        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
-        assert state['items'][-1]['text'] == 'All **done**.'
+        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant', 'turn']
+        assert state['items'][-2]['text'] == 'All **done**.'
+        assert state['items'][-1]['usage'] == {
+            'input_tokens': end.usage.input_tokens,
+            'output_tokens': end.usage.output_tokens,
+            'requests': 2,
+        }
         assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
@@ -854,7 +868,8 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         copy = web_.post(f'/api/sessions/{first}/fork').json()['id']
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.title) == (copy, 'Renamed (fork)')
-        assert [item.text for item in snapshot.items] == ['first', 'ok']
+        assert [item.text for item in snapshot.items if isinstance(item, Item)] == ['first', 'ok']
+        assert snapshot.items[-1].kind == 'turn'
 
         other = web_.portal.call(
             lambda: shell.sessions.store.save(
@@ -885,6 +900,11 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         'Mine': 'cancelled',
         'Dead': 'cancelled',
     }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
+    assert {entry['title']: entry['owner_pid'] for entry in removed['sessions']} == {
+        'Live': os.getppid(),
+        'Mine': None,
+        'Dead': None,
+    }, 'the sidebar names the process another turn runs in'
     web_.shell.turning = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
@@ -996,6 +1016,53 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Projects whose folders share a name each add the shortest end of their path that no other one shares.
+
+    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    """
+    web_ = make_web(Agent(TestModel()))
+    first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
+    git('init', '-b', 'main', str(first))
+    git('init', '-b', 'main', str(third))
+    second.mkdir(parents=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    workspaces = [('First', first.resolve()), ('Second', second.resolve()), ('Third', third.resolve())]
+    for title, workspace in [*workspaces, ('Other', other.resolve()), ('Relative', Path('scratch'))]:
+        summary = ConversationSummary(workspace=str(workspace), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.shell.session.workspace = str(first.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
+
+
+def test_projects_of_one_folder_show_their_keys() -> None:
+    """Two projects of one folder, as when Git failed once while listing it, show their keys.
+
+    Removed folders keeps its name, which a real folder of that name adds its parent to.
+    """
+    repository = ProjectIdentity(key='/x/scratch/.git', name='scratch', root='/x/scratch', checkout='main')
+    fallback = ProjectIdentity(key='/x/scratch', name='scratch', root='/x/scratch')
+    removed = ProjectIdentity(key=MISSING, name='Removed folders', root='/gone', missing=True)
+    named = ProjectIdentity(key='/y/Removed folders', name='Removed folders', root='/y/Removed folders')
+    identities = {identity.key: identity for identity in (repository, fallback, removed, named)}
+    assert project_names(identities) == {
+        '/x/scratch/.git': '/x/scratch/.git',
+        '/x/scratch': '/x/scratch',
+        MISSING: 'Removed folders',
+        '/y/Removed folders': str(Path('y', 'Removed folders')),
+    }
+
+
 def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
     web_ = make_web(Agent(TestModel()))
@@ -1017,6 +1084,22 @@ def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tm
         ('feature', False),
         ('gone', True),
     ]
+
+
+def test_sidebar_project_folder_is_its_main_checkout(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A repository's folder is its main checkout, not the Git folder that keys it; Removed folders has none."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    gone.mkdir()
+    for title, workspace in [('Feature', feature), ('Gone', gone)]:
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    gone.rmdir()
+    web_.shell.session.workspace = str(feature.resolve())
+
+    folders = {project['name']: project['folder'] for project in web_.get('/api/sessions').json()}
+    assert folders == {'repo': str(repo.resolve()), 'Removed folders': None}
 
 
 def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
@@ -1275,6 +1358,33 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
         assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
         receive_until(socket, SessionsChanged)
     assert listed('/api/sessions') == {'New session': False, 'Stale': False}
+
+
+def test_sessions_carry_their_creation_time(make_web: 'MakeWeb') -> None:
+    """Each row carries its creation time, which later saves keep, so the sidebar's order never changes."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    first = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='First'), messages=[])
+    )
+    second = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='Second'), messages=[])
+    )
+    later = web_.portal.call(lambda: store.save(summary=first, messages=[]))
+
+    def entries() -> dict[str, tuple[str, str]]:
+        return {
+            entry['title']: (entry['created_at'], entry['updated_at'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    listed = entries()
+    assert TypeAdapter(datetime).validate_python(listed['First'][0]) == first.created_at
+    assert TypeAdapter(datetime).validate_python(listed['First'][1]) == later.updated_at
+    assert TypeAdapter(datetime).validate_python(listed['Second'][0]) == second.created_at
+    assert first.created_at is not None and second.created_at is not None and first.created_at < second.created_at
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
@@ -2104,6 +2214,8 @@ def test_sessions_continue_in_their_own_directories(
     )
     follow_workspaces(web_)
     shell = web_.shell
+    # Approved for that folder, so moving there applies them; `test_project_settings_approval.py` covers the rest.
+    shell.context.store.approve_project_settings(other, {'run.instructions': 'Work in other.', 'model': 'test'})
     here = saved_in(web_, launch.resolve(), 'Here')
     there = saved_in(web_, other.resolve(), 'There')
     lost = saved_in(web_, gone, 'Lost')

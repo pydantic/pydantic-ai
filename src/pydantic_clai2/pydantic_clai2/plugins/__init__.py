@@ -27,7 +27,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
+from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
@@ -81,15 +81,16 @@ class Conversation(Protocol):
         """
         ...
 
-    async def resume(self, conversation_id: str) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
         """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
 
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
         directory, when persistence is not configured, or when another live session of this CLAI holds
-        it. A conversation still running in another process is not taken over: a fork of it is resumed,
-        and the notice says so.
+        it. `allow_other_workspace=True` continues a conversation saved in another directory in this one
+        instead, as confirming it in the `/resume` browser does. A conversation still running in another
+        process is not taken over: a fork of it is resumed, and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
@@ -110,10 +111,17 @@ class SessionCatalog(Protocol):
         ...
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
+        Newest means most recently active, or with `order_by='created_at'` most recently created, so the
+        conversations listed do not change as older ones are used again.
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
         calls the naming model, so poll it no more often than a person would look.
@@ -333,6 +341,11 @@ class LiveSession(Protocol):
     @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
+        ...
+
+    @property
+    def busy(self) -> bool:
+        """Whether the session handles input now (a turn, a command, or the terminal's rewind) or has input queued."""
         ...
 
     def setting(self, key: str, /) -> JsonValue:
@@ -573,7 +586,7 @@ class Transcript:
         """The `model` given at construction."""
         return self.model
 
-    async def resume(self, conversation_id: str) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
         """An in-memory transcript has no saved conversations to switch to."""
         raise LookupError(f'No saved session: {conversation_id}')
 

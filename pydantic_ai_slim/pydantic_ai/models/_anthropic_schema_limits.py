@@ -17,6 +17,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
+from itertools import chain
 from typing import cast
 
 from .._json_schema import DEFINITION_KEYS, JsonSchema, inline_objects, split_definitions
@@ -44,19 +45,8 @@ SCHEMA_TOO_COMPLEX_HINT = (
 _SCHEMA_TOO_COMPLEX_MESSAGES = ('schema is too complex', 'compiled grammar is too large')
 
 
-def reports_schema_too_complex(body: object) -> bool:
-    """Whether an error body is Anthropic's for strict schemas that are too complex to compile.
-
-    The direct API wraps the error in an `error` object, Bedrock's `InvokeModel` reports it at the top level, and
-    Bedrock's Converse API in an `Error` object, with capitalized keys.
-    """
-    if not is_str_dict(body):
-        return False
-    if is_str_dict(converse_error := body.get('Error')):
-        message = converse_error.get('Message')
-    else:
-        reported = body.get('error', body)
-        message = reported.get('message') if is_str_dict(reported) else None
+def is_schema_too_complex_error(message: object) -> bool:
+    """Whether an error message is Anthropic's for strict schemas that are too complex to compile."""
     return isinstance(message, str) and any(text in message.lower() for text in _SCHEMA_TOO_COMPLEX_MESSAGES)
 
 
@@ -67,21 +57,26 @@ def exceeded_limit(strict_tool_schemas: Sequence[JsonSchema], output_schema: Jso
     schemas = [*strict_tool_schemas, *([output_schema] if output_schema is not None else [])]
     if any(_is_recursive(schema) for schema in schemas):
         return 'a recursive schema, which strict mode does not support'
-    optional = union = 0
-    for schema in schemas:
-        # Only what's reached without following a `$ref` counts, as the API was observed to count.
-        for node, _ in inline_objects(schema):
-            required = node.get('required', [])
-            for name, prop in node['properties'].items():
-                if name not in required:
-                    optional += 1
-                if is_str_dict(prop) and ('anyOf' in prop or isinstance(prop.get('type'), list)):
-                    union += 1
+    optional, union = _parameter_counts(schemas)
     if optional > MAX_OPTIONAL_PARAMETERS:
         return f'{optional} optional parameters, over the limit of {MAX_OPTIONAL_PARAMETERS}'
     if union > MAX_UNION_PARAMETERS:
         return f'{union} parameters with union types, over the limit of {MAX_UNION_PARAMETERS}'
     return None
+
+
+def _parameter_counts(schemas: Sequence[JsonSchema]) -> tuple[int, int]:
+    """How many parameters of `schemas` are optional, and how many have union types."""
+    optional = union = 0
+    # Only what's reached without following a `$ref` counts, as the API was observed to count.
+    for node, _ in chain.from_iterable(inline_objects(schema) for schema in schemas):
+        required = node.get('required', [])
+        for name, prop in node['properties'].items():
+            if name not in required:
+                optional += 1
+            if is_str_dict(prop) and ('anyOf' in prop or isinstance(prop.get('type'), list)):
+                union += 1
+    return optional, union
 
 
 def request_exceeded_limit(params: ModelRequestParameters, sent_strict_tools: Iterable[ToolDefinition]) -> str | None:

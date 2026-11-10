@@ -302,6 +302,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
+When the Gemini API omits token usage, [`result.usage.unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] is `1`, so instrumentation omits an automatic `operation.cost` estimate. Explicit [`result.cost()`][pydantic_ai.embeddings.EmbeddingResult.cost] uses the zero token counts and can return a zero estimate when pricing data is available.
+
 ##### Google Cloud
 
 To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
