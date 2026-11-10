@@ -249,8 +249,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_o
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
-Commands are refused too, because a command could change files. On a workspace with a display,
-screenshots are allowed and mouse and keyboard actions are refused. A capability can check
+Commands are refused too, because a command could change files. A capability can check
 [`ctx.workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] to leave its write tools out.
 
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
@@ -529,35 +528,6 @@ and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular 
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
 
-### Controlling a display
-
-To give a workspace a screen, its backend implements [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a
-`display` property that returns a [`Display`][pydantic_ai.workspaces.Display], or `None` when there's no screen. It
-must not do I/O, and must return the same object every time. The display can live elsewhere, such as this machine's
-screen next to a local workspace.
-
-A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and `act()`, which runs one
-[`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press. Tools call them as
-`ctx.workspace.screenshot()` and `ctx.workspace.act(...)`. A display can also implement:
-
-- [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom]: capture part of the screen at full resolution.
-- [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]: capture the whole screen smaller, for
-  a model with a [screenshot size limit][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side].
-- [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]: report where the pointer is.
-
-Coordinates are screenshot pixels, and `display_size()` reports the screen's real size. Raise
-[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for any action the display
-can't do exactly, including action types added later;
-[`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Key names and text
-limits are on each action in the [API reference](api/workspaces.md). `LocalWorkspace` has no display.
-
-Under [durable execution](durable_execution/overview.md), workflow code can call `display_size()`, but `screenshot()`,
-`act()` and the rest raise a `UserError` there. Call them from a tool that runs as an activity, step or task, or from
-a [`@durable_operation`][pydantic_ai.capabilities.durable_operation] method, so a run of looks and actions is one
-durable step. Give that operation `policy=StepPolicy(repeatable=False)`
-([`StepPolicy`][pydantic_ai.durable_exec.StepPolicy]) to run it at most once. The policy applies when it's called from workflow code; called inside a tool's activity, step
-or task, it follows that tool's retry settings.
-
 ### Resolving symlinks
 
 `Workspace.realpath` answers "which file does this path really lead to?". Code that keeps an agent
@@ -697,9 +667,6 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
-- A display's screenshot is its declared size, a scaled screenshot is at most the size asked for, a
-  zoom keeps the region's shape at full resolution, and moving the mouse puts the pointer there, when the display
-  reports the pointer position.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.

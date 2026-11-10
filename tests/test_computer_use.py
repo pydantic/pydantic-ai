@@ -6,6 +6,7 @@ import pytest
 
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
+    Click,
     ComputerCallPart,
     ComputerReturnPart,
     SafetyCheck,
@@ -24,7 +25,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click
 
 SCREEN = BinaryImage(data=b'png', media_type='image/png')
 
@@ -123,3 +123,9 @@ def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> 
                 native_tools=[ComputerTool(display_size=(1, 1), optional=True)],
             )
         )
+
+
+@pytest.mark.parametrize('size', [(0, 800), (1280, -1)])
+def test_computer_tool_refuses_a_display_size_that_is_not_positive(size: tuple[int, int]) -> None:
+    with pytest.raises(ValueError, match='must be two positive numbers'):
+        ComputerTool(display_size=size)
