@@ -487,8 +487,11 @@ async def test_run_hook_history_edits_reach_the_seed() -> None:
             del ctx.messages[0]
             return self
 
+    def keep(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages
+
     model = _RecordingModel()
-    agent = Agent(capabilities=[DropFirst(), ProcessHistory(lambda messages: messages)], deps_type=type(None))
+    agent = Agent(capabilities=[DropFirst(), ProcessHistory(keep)], deps_type=type(None))
     async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
         async for _ in session:
             pass
@@ -708,14 +711,31 @@ async def test_before_realtime_connect_runs_without_a_seed() -> None:
         seen.append(list(connect_context.messages))
         return connect_context
 
-    hooks = Hooks[None](before_realtime_connect=record)
-    hooks.on.before_realtime_connect(timeout=5)(record)
-    agent = Agent(capabilities=[hooks], deps_type=type(None))
+    agent = Agent(capabilities=[Hooks[None](before_realtime_connect=record)], deps_type=type(None))
     await _drain(agent, _RecordingModel())
-    assert seen == [[], []]
+    assert seen == [[]]
 
     await agent.run('Hello.', model=TestModel())
-    assert seen == [[], []]
+    assert seen == [[]]
+
+
+async def test_before_realtime_connect_decorator_registration() -> None:
+    """`hooks.on.before_realtime_connect` registers the hook, bare or with a timeout."""
+    calls: list[str] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_realtime_connect
+    def bare(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        calls.append('bare')
+        return connect_context
+
+    @hooks.on.before_realtime_connect(timeout=5)
+    def with_timeout(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        calls.append('with_timeout')
+        return connect_context
+
+    await _drain(Agent(capabilities=[hooks], deps_type=type(None)), _RecordingModel())
+    assert calls == ['bare', 'with_timeout']
 
 
 def _replace_model(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
