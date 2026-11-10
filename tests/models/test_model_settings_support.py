@@ -175,7 +175,7 @@ ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
-    # Below every known maximum output, which a larger `max_tokens` is lowered to.
+    # Below the maximum output of every probed model, which a larger `max_tokens` is lowered to.
     'max_tokens': (12345,),
     'temperature': (0.123456,),
     'top_p': (0.234567,),
