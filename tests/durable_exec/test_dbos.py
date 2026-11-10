@@ -112,7 +112,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
@@ -225,7 +225,6 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 model = OpenAIChatModel(

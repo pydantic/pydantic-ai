@@ -8,7 +8,6 @@ adds what only DBOS has.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -51,14 +50,6 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         yield dbos
     finally:
         DBOS.destroy()
-        # DBOS leaves its log filter on every logger, and the filter's emit path imports
-        # `dbos._context`, which is fatal inside the Temporal workflow sandbox when an xdist
-        # worker later runs the Temporal suite. See the `dbos` fixture in `test_dbos.py`.
-        from dbos import _logger as dbos_logger_module
-
-        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-                logger.removeFilter(log_filter)
 
 
 # Function tools run inline in the workflow, so only a step may reach the environment.

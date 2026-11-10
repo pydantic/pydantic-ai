@@ -4,7 +4,6 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
-import logging
 import os
 import re
 import secrets
@@ -797,33 +796,6 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
-
-
-def detach_dbos_logging() -> None:
-    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
-
-    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
-    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
-    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
-    later test in the same process runs a Temporal workflow.
-    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-    https://github.com/dbos-inc/dbos-transact-py/issues/871
-    """
-    from dbos import _logger as dbos_logger_module
-    from opentelemetry.sdk._logs import LoggingHandler
-
-    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
-    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
-    with suppress(ImportError):
-        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
-
-        handler_types += (InstrumentationLoggingHandler,)
-
-    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
-            logger.removeHandler(handler)
-        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-            logger.removeFilter(log_filter)
 
 
 @pytest.fixture

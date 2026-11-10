@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
-from tests.conftest import detach_dbos_logging, try_import
+from tests.conftest import try_import
 from tests.harness.subagents._background import (
     WORKER_CALLS,
     EventKinds,
@@ -44,7 +44,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 async def test_created_agent_survives_recovery(dbos: DBOS) -> None:

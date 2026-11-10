@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -38,7 +36,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 class AdvancingClock:

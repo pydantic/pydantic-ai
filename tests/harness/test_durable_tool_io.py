@@ -57,7 +57,6 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smart_search import SmartSearch
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -98,7 +97,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:

@@ -17,8 +17,6 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
-from ..conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo
 
@@ -66,7 +64,6 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 @pytest.fixture(autouse=True)

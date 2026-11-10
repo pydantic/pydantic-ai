@@ -24,8 +24,6 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -69,7 +67,6 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 # ---------------------------------------------------------------------------
