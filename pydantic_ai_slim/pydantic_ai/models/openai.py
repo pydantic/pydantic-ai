@@ -5367,7 +5367,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
-        calls: dict[str, ComputerCallPart] | None = None,
+        calls: dict[str, ToolCallPart] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -5466,11 +5466,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         computer_call = (calls or {}).get(part.tool_call_id)
                         if call_id in computer_call_ids or (
                             # A call not replayed here is in the stored response (`previous_response_id` or a
-                            # conversation), where this model made it as a `computer_call`.
-                            computer_is_native
-                            and computer_call is not None
+                            # conversation), where this model made it as a `computer_call`, whatever the tool is now.
+                            computer_call is not None
                             and computer_call.provider_name == self.system
-                            and 'computer_call' in (computer_call.provider_details or {})
                             and call_id not in replayed_call_ids
                         ):
                             openai_messages.extend(_map_computer_call_output(part, call_id, computer_call))
@@ -5610,6 +5608,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # Sent back as it came, so the API can pair its output and safety checks.
                             computer_call_ids.add(call_id)
                             replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
+                            # The ID its output is sent with, which may be fitted to this request.
+                            replayed_call['call_id'] = call_id
                             openai_messages.append(cast(responses.ResponseComputerToolCallParam, replayed_call))
                         elif client_tool_search_active and isinstance(item, ToolSearchCallPart):
                             # Replay the local `search_tools` call as a `tool_search_call`
@@ -6758,8 +6758,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):
                         yield handle_function_call_part(chunk.item)
+                    elif isinstance(chunk.item, responses.ResponseComputerToolCall) and (
+                        computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+                    ):
+                        # Its actions arrive whole in its done event, but its place among the other calls is set
+                        # now, as when the response isn't streamed. Until then it reads as cut off, so nothing runs.
+                        call_id = _response_tool_call_id(
+                            chunk.item.call_id,
+                            self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                        )
+                        unfinished = chunk.item.model_copy(update={'status': 'incomplete'})
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_computer_call(unfinished, computer_name, call_id, self.provider_name),
+                        )
                     elif isinstance(chunk.item, responses.ResponseReasoningItem | responses.ResponseComputerToolCall):
-                        # A computer call's actions arrive whole in its done event.
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
                         if chunk.item.phase is not None:
@@ -8330,13 +8343,52 @@ _COMPUTER_ACTION_FIELDS: dict[str, frozenset[str]] = {
 }
 """The fields of each OpenAI computer action that map onto the `computer` tool."""
 
+_REQUIRED_COMPUTER_FIELDS: dict[str, frozenset[str]] = {
+    'click': frozenset({'x', 'y', 'button'}),
+    'double_click': frozenset({'x', 'y'}),
+    'drag': frozenset({'path'}),
+    'move': frozenset({'x', 'y'}),
+    'scroll': frozenset({'x', 'y', 'scroll_x', 'scroll_y'}),
+    'keypress': frozenset({'keys'}),
+    'type': frozenset({'text'}),
+}
+"""The fields OpenAI documents as required on each action; one that is missing is refused, not filled in."""
+
+
+class _OpenAIPoint(TypedDict):
+    x: int
+    y: int
+
+
+_COMPUTER_FIELD_TYPES: dict[str, TypeAdapter[Any]] = {
+    'x': TypeAdapter(int),
+    'y': TypeAdapter(int),
+    'scroll_x': TypeAdapter(int),
+    'scroll_y': TypeAdapter(int),
+    'button': TypeAdapter(str),
+    'text': TypeAdapter(str),
+    'keys': TypeAdapter(list[str]),
+    'path': TypeAdapter(list[_OpenAIPoint]),
+}
+"""The type of each action field, checked strictly: the SDK builds its items without validating them."""
+
 
 def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
-    """The fields of an OpenAI action that don't map onto the `computer` tool, or `None` when every one does."""
-    fields = _COMPUTER_ACTION_FIELDS.get(action.get('type', ''))
+    """The fields of an OpenAI action that don't map onto the `computer` tool, or `None` when every one does.
+
+    A field that is missing, has the wrong type or isn't one the tool takes doesn't map.
+    """
+    kind = action.get('type', '')
+    fields = _COMPUTER_ACTION_FIELDS.get(kind)
     if fields is None:
         return sorted(action.keys() - {'type'})
-    unsupported = action.keys() - fields
+    unsupported = (action.keys() - fields) | (_REQUIRED_COMPUTER_FIELDS.get(kind, frozenset()) - action.keys())
+    for name, value in action.items():
+        if (adapter := _COMPUTER_FIELD_TYPES.get(name)) is not None:
+            try:
+                adapter.validate_python(value, strict=True)
+            except ValidationError:
+                unsupported.add(name)
     path: list[Any] = action.get('path') or []
     if any(not isinstance(point, dict) or cast(dict[str, Any], point).keys() != {'x', 'y'} for point in path):
         unsupported.add('path')
@@ -8432,15 +8484,37 @@ def _map_computer_call(
     )
 
 
-def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ComputerCallPart]:
-    """Each `computer` call in the history, by tool call ID, so its output can read it."""
+def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
+    """Each call this API made as a `computer_call`, by tool call ID, so its output can read it.
+
+    Found by the item it came as, not by whether its arguments are valid: a call whose actions didn't map was still a
+    `computer_call` on the wire, and its output must be a `computer_call_output`.
+    """
     return {
         part.tool_call_id: part
         for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
-        if isinstance(part, ComputerCallPart)
+        if isinstance(part, ToolCallPart) and 'computer_call' in (part.provider_details or {})
     }
+
+
+def _scroll_conversions(call: ToolCallPart | None) -> list[str]:
+    """How each pixel scroll in the call ran as wheel clicks, when that differs from what the model asked for."""
+    item: dict[str, Any] = (call.provider_details or {}).get('computer_call', {}) if call else {}
+    actions: list[dict[str, Any]] = item.get('actions') or ([item['action']] if item.get('action') else [])
+    notes: list[str] = []
+    for action in actions:
+        if action.get('type') != 'scroll' or _unsupported_computer_fields(action) is not None:
+            continue
+        for axis in ('scroll_x', 'scroll_y'):
+            pixels: int = action[axis]
+            clicks = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK))) if pixels else 0
+            if clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
+                notes.append(
+                    f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
+                )
+    return notes
 
 
 def _needs_summary(result: ComputerResult | None) -> bool:
@@ -8453,7 +8527,7 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 
 
 def _map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ComputerCallPart | None
+    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
@@ -8474,7 +8548,7 @@ def _map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    if computer_return and call and (checks := call.safety_checks):
+    if computer_return and isinstance(call, ComputerCallPart) and (checks := call.safety_checks):
         output['acknowledged_safety_checks'] = [
             responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
                 id=check.id or '', code=check.code, message=check.message
@@ -8482,11 +8556,29 @@ def _map_computer_call_output(
             for check in checks
         ]
     items: list[responses.ResponseInputItemParam] = [output]
-    if image is None or computer_return is None or _needs_summary(computer_return.result):
+    # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
+    content = (computer_return.typed_content if computer_return else None) or part.content_items()
+    # Images before the closing screenshot, such as a zoom, can't go in the output.
+    images = [item for item in content if isinstance(item, BinaryImage)]
+    others = images[:-1] if image is not None else images
+    conversions = _scroll_conversions(call) if computer_return else []
+    if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
         # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's
         # result, so it is framed as one on the user channel, as for any tool result that can't go natively.
-        texts = [item for item in part.content_items() if isinstance(item, str)]
-        note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)
+        texts = [item for item in content if isinstance(item, str)]
+        note = (
+            ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
+        )
         framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-        items.append(responses.EasyInputMessageParam(role='user', content=framed))
+        if others:
+            message_content: list[responses.ResponseInputContentParam] = [
+                responses.ResponseInputTextParam(type='input_text', text=framed),
+                *(
+                    responses.ResponseInputImageParam(type='input_image', image_url=other.data_uri, detail='original')
+                    for other in others
+                ),
+            ]
+            items.append(responses.EasyInputMessageParam(role='user', content=message_content))
+        else:
+            items.append(responses.EasyInputMessageParam(role='user', content=framed))
     return items
