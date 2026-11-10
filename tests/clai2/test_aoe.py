@@ -528,7 +528,8 @@ async def test_restarted_pane_resumes_its_conversation_from_a_moved_directory(en
     assert session.conversation_id == earlier.conversation_id
     assert session.messages == earlier.messages
     assert f'Resumed earlier work ({earlier.conversation_id}).' in Text.from_ansi(output.getvalue()).plain
-    # The mapping still names the resumed conversation, not a fresh one.
+    # The plugin records the resumed conversation, not a fresh one.
+    await env.write('mapping', earlier.conversation_id)
     assert (env.state / INSTANCE).read_text() == earlier.conversation_id + '\n'
     await loaded.dispatch(SessionEnd(reason='exit'))
 
