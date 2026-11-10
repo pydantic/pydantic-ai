@@ -4209,7 +4209,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
         lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
-        # Replaced by the history the `before_realtime_connect` hooks leave, below.
+        # Taken from `run_context.messages` once the run hooks have run, then replaced by the history the
+        # `before_realtime_connect` hooks leave, below.
         seeded_history = list(message_history or ())
 
         def _build_session_result() -> AgentRunResult[Any]:
@@ -4319,6 +4320,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
             # The model sends this standing prompt as instructions, and the session records it.
+            # Seeded from the run's own history, as `iter` is, so what `for_run` and `before_run` hooks change in
+            # `ctx.messages` is what the session is seeded with.
+            seeded_history = list(run_context.messages)
             system_prompt_parts: list[_messages.SystemPromptPart] = []
             if seeded_history:
                 await _system_prompt.reevaluate_dynamic_system_prompts(

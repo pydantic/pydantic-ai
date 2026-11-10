@@ -475,6 +475,33 @@ async def test_process_history_transforms_seeded_history() -> None:
     assert session.new_messages() == session.all_messages()[2:]
 
 
+async def test_run_hook_history_edits_reach_the_seed() -> None:
+    """What a `for_run` hook removes from `ctx.messages` isn't seeded, as in `iter()`.
+
+    `ProcessHistory` then runs over the edited history, so the edit also stays out of `all_messages()` and the
+    reconnect replay.
+    """
+
+    class DropFirst(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            del ctx.messages[0]
+            return self
+
+    model = _RecordingModel()
+    agent = Agent(capabilities=[DropFirst(), ProcessHistory(lambda messages: messages)], deps_type=type(None))
+    async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
+        async for _ in session:
+            pass
+        replayed = session._replayable_messages()  # pyright: ignore[reportPrivateUsage]
+
+    assert model.messages is not None
+    assert model.messages[:1] == _SECRET_HISTORY[1:]
+    assert 'secret' not in str(model.messages)
+    assert session.all_messages()[:1] == _SECRET_HISTORY[1:]
+    assert 'secret' not in str(session.all_messages())
+    assert 'secret' not in str(replayed)
+
+
 async def test_process_history_sees_reevaluated_dynamic_system_prompts() -> None:
     """Seeded dynamic system prompts are re-evaluated before the processors run, as in a standard run.
 

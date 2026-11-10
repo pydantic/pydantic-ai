@@ -205,7 +205,8 @@ async def main():
 ```
 
 The hooks run in capability order, inside `wrap_run`, after `before_run` and after the history's dynamic system
-prompts are re-evaluated, so they see and can redact the current content. They run even when there's no history to
+prompts are re-evaluated, so they see and can redact the current content. As in a standard run, what `for_run` and `before_run`
+hooks change in [`ctx.messages`][pydantic_ai.tools.RunContext.messages] is what the session is seeded with. They run even when there's no history to
 seed, but not on a [reconnect](lifecycle.md#reconnecting), which replays the history they left. If one raises, the session
 doesn't connect, and the error goes through `on_run_error`. [WebRTC signaling](deployment.md#browser-webrtc-server-sideband)
 resolves the same configuration a session connects with, so the hooks also run, outside any run, when
