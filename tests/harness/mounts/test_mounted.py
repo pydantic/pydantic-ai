@@ -119,14 +119,14 @@ async def test_the_first_operation_mounts_and_later_ones_do_not() -> None:
                 'mounts': [
                     {
                         'path': '/workspace/data',
-                        'fingerprint': 'bf9302603951bc93',
+                        'fingerprint': 'a89e9054fca5c54b',
                         'remote': {
                             'type': 's3',
                             'provider': 'Other',
                             'endpoint': 'https://minio.example',
                             'region': 'eu-1',
                         },
-                        'root': 'bucket/reports',
+                        'root': 'bucket/reports/',
                         'read_only': True,
                         'keys': {
                             'access_key_id': 'AKIA-the-key-id',
@@ -300,6 +300,13 @@ def test_overlapping_paths_are_refused(first: str, second: str) -> None:
         mounted(FakeWorkspace('box'), FakeRoot(), [s3(first), s3(second, 's3://other/')], CTX)
 
 
+def test_overlapping_paths_with_a_folder_sorted_between_them_are_refused() -> None:
+    mounts = [s3('data'), s3('data-other', 's3://other/'), s3('data/inner', 's3://third/')]
+
+    with pytest.raises(MountError, match="The mount paths 'data' and 'data/inner' overlap"):
+        mounted(FakeWorkspace('box'), FakeRoot(), mounts, CTX)
+
+
 async def test_fresh_keys_are_fetched_before_the_old_ones_expire(clock: Clock) -> None:
     root = FakeRoot()
     keys = iter(['first', 'second'])
@@ -347,9 +354,7 @@ CHANGES: dict[str, Callable[[], list[S3Mount]]] = {
 
 
 @pytest.mark.parametrize('changed', list(CHANGES.values()), ids=list(CHANGES))
-async def test_mounts_that_change_between_calls_are_refused(
-    changed: Callable[[], list[S3Mount]], clock: Clock
-) -> None:
+async def test_mounts_that_change_between_calls_are_refused(changed: Callable[[], list[S3Mount]], clock: Clock) -> None:
     calls = iter([[s3()], changed()])
     workspace = wrap(FakeRoot(), lambda: next(calls))
     await workspace.exists('data')
@@ -382,6 +387,17 @@ async def test_output_that_is_not_the_helpers_is_quoted_with_the_keys_blanked() 
     assert str(raised.value) == snapshot(
         'Could not mount storage in the sandbox: Traceback (most recent call last):\nValueError: ***'
     )
+
+
+async def test_a_sandbox_that_never_runs_the_helper_is_timed_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('pydantic_ai_harness._mounts._CALL_SECONDS', 0)
+    root = FakeRoot(wait=anyio.Event())
+    workspace = wrap(root, lambda: [s3()])
+
+    with pytest.raises(
+        MountError, match=re.escape('The sandbox did not run the mount helper within 0 seconds. Try again.')
+    ):
+        await workspace.exists('data')
 
 
 async def test_an_operation_after_a_failed_mount_tries_again() -> None:
@@ -526,9 +542,12 @@ def test_any_accepted_url_names_a_bucket_and_a_clean_prefix(url: str) -> None:
     except MountError:
         return
     request, _ = _request([mount], '/workspace')
-    bucket, *prefix = request['mounts'][0]['root'].split('/')
+    root: str = request['mounts'][0]['root']
+    bucket, *prefix = root.removesuffix('/').split('/')
     assert url.startswith(f's3://{bucket}')
     assert all(part not in ('', '.', '..') for part in prefix)
+    # A prefix is sent as a folder, so rclone never takes it for an object of the same name.
+    assert root.endswith('/') == bool(prefix)
 
 
 @given(st.text())

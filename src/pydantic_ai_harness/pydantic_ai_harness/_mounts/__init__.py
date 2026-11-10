@@ -7,6 +7,7 @@ logs. The line carries the request, keys included; the argv runs `_helper.py`'s 
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import posixpath
 import re
@@ -32,6 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WrapperWorkspace,
 )
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS
 
 __all__ = ('MountError', 'S3Mount')
 
@@ -42,6 +44,9 @@ _HELPER = (Path(__file__).parent / '_helper.py').read_text(encoding='utf-8')
 
 _REFRESH_MARGIN = timedelta(minutes=5)
 """How long before the keys expire the next operation gets fresh ones, so a long command doesn't outlive them."""
+
+_CALL_SECONDS = DEADLINE_SECONDS + 60
+"""How long one helper call may take: its own deadline, plus the sandbox starting it."""
 
 _ERROR_TAIL = 500
 """How much of the helper's output a `MountError` quotes when the helper didn't answer."""
@@ -101,7 +106,7 @@ class S3Mount:
 
 
 def _root(url: str) -> str:
-    """`bucket/prefix`, what rclone mounts, from `s3://bucket/prefix/`."""
+    """`bucket/prefix/`, what rclone mounts, from `s3://bucket/prefix/`."""
     found = _URL.fullmatch(url)
     if found is None:
         raise MountError(f"The mount URL {url!r} must look like 's3://bucket/' or 's3://bucket/prefix/'.")
@@ -118,7 +123,8 @@ def _root(url: str) -> str:
         raise MountError(
             f"The prefix in {url!r} must not hold empty, '.' or '..' parts. Write it like 's3://bucket/reports/2026/'."
         )
-    return f'{bucket}/{prefix}'
+    # The trailing slash tells rclone it is a folder, even beside an object of the same name.
+    return f'{bucket}/{prefix}/'
 
 
 def _settings(mount: S3Mount) -> tuple[dict[str, str], str, dict[str, str]]:
@@ -188,8 +194,8 @@ def _scrubbed(result: CommandResult, secrets: Sequence[str]) -> CommandResult:
 
 
 def _check_paths(mounts: Sequence[S3Mount]) -> None:
-    paths = sorted(mount.path for mount in mounts)
-    for path, after in zip(paths, paths[1:]):
+    # Every pair, not neighbours: `data-other` sorts between `data` and `data/inner`.
+    for path, after in itertools.combinations(sorted(mount.path for mount in mounts), 2):
         if after == path or after.startswith(f'{path}/'):
             raise MountError(
                 f'The mount paths {path!r} and {after!r} overlap. Give each mount its own folder, neither inside another.'
@@ -300,10 +306,12 @@ class _Mounted(WrapperWorkspace):
         secrets = [value for wanted in request['mounts'] for value in wanted['keys'].values() if value]
         # A cancelled caller waits for the helper, which has a deadline of its own: stopped halfway, it could leave a
         # mount half made, or keep the lock that every later call waits for.
+        # The helper's own deadline starts only once it runs, so a sandbox that never starts it is timed out here.
         result: CommandResult | None = None
-        with anyio.CancelScope(shield=True):
+        with anyio.CancelScope(shield=True), anyio.move_on_after(_CALL_SECONDS):
             result = await self._run_as_root(['python3', '-c', _HELPER], f'{json.dumps(request)}\n'.encode())
-        assert result is not None  # A shielded scope never swallows the return.
+        if result is None:
+            raise MountError(f'The sandbox did not run the mount helper within {_CALL_SECONDS} seconds. Try again.')
         return _reply(_scrubbed(result, secrets))
 
     async def run(

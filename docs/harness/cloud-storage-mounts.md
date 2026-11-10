@@ -195,6 +195,8 @@ The keys keep working after the run, through the mount and for anything else cod
 
 In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in the container more access to the kernel it shares with your machine, which makes it a weaker boundary, so add these flags only to containers that use mounts.
 
+The helper runs as root and makes the mount folder inside the working directory, which the agent's user owns. It doesn't follow links that user puts in the folder, but a command running at the same moment as a mount can still swap the folder for a link to elsewhere before rclone mounts on it. That matters only when commands run as a user that can't already become root, as in a Docker image with a non-root `USER`: there, treat the agent as able to reach root.
+
 ## Telemetry
 
 Mounting emits no spans or attributes of its own.

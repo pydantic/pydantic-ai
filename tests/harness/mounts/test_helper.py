@@ -239,7 +239,35 @@ def test_a_dead_mount_is_replaced(sandbox: Sandbox) -> None:
 
     ensure(sandbox, mount)
 
-    assert sandbox.commands() == ['vfs/stats', 'mount/unmount', 'config/delete', 'config/create', 'mount/mount']
+    assert sandbox.commands() == [
+        'backend/command',
+        'vfs/stats',
+        'mount/unmount',
+        'config/delete',
+        'config/create',
+        'mount/mount',
+    ]
+
+
+def test_a_mount_whose_keys_expired_gets_fresh_ones_before_it_is_probed(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mount = wanted(sandbox)
+    sandbox.mounted(mount['path'], 'aaaa')
+    # With expired keys, a lookup in the mount fails until fresh ones arrive.
+    sandbox.dead.add(mount['path'])
+    rc = sandbox.rc
+
+    def fresh_keys_revive(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+        if command == 'backend/command':
+            sandbox.dead.discard(mount['path'])
+        return rc(command, body, timeout)
+
+    monkeypatch.setattr(helper, 'rc', fresh_keys_revive)
+
+    ensure(sandbox, mount)
+
+    assert sandbox.commands() == ['backend/command']
 
 
 def test_a_mount_whose_daemon_is_gone_is_detached_and_replaced(sandbox: Sandbox) -> None:
@@ -311,6 +339,21 @@ def test_a_symlink_where_recovered_files_go_is_refused(sandbox: Sandbox) -> None
 
     with pytest.raises(helper.MountFailed, match=re.escape('is a symlink. Remove it')):
         ensure(sandbox, mount)
+
+
+def test_a_link_put_where_the_marker_goes_is_not_followed(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> None:
+    mount = wanted(sandbox)
+    Path(mount['path']).mkdir()
+    target = sandbox.root / 'precious'
+    target.write_text('keep')
+    (Path(mount['path']) / helper.MARKER).symlink_to(target)
+    # As if the link appeared just after the folder was listed empty.
+    monkeypatch.setattr(helper.os, 'listdir', returns([]))
+
+    with pytest.raises(helper.MountFailed, match='already holds files'):
+        ensure(sandbox, mount)
+
+    assert target.read_text() == 'keep'
 
 
 def test_a_folder_with_other_files_is_refused(sandbox: Sandbox) -> None:
@@ -413,6 +456,31 @@ def test_no_key_reaches_a_command_line(sandbox: Sandbox, monkeypatch: pytest.Mon
 
     assert started and sandbox.processes
     assert not any(SECRET in arg for argv in [*started, *sandbox.processes] for arg in argv)
+
+
+def test_the_daemon_ignores_rclone_settings_in_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[dict[str, str]] = []
+    answers = iter([OSError('no daemon yet')])
+
+    def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+        if (error := next(answers, None)) is not None:
+            raise error
+        return {}
+
+    def popen(argv: Sequence[str], *, env: dict[str, str], **kwargs: Any) -> None:
+        started.append(env)
+
+    monkeypatch.setattr(helper, 'STATE', str(tmp_path))
+    monkeypatch.setattr(helper, 'SOCKET', str(tmp_path / 'rc.sock'))
+    monkeypatch.setattr(helper, 'CACHE', str(tmp_path / 'cache'))
+    monkeypatch.setattr(helper, 'rc', rc)
+    monkeypatch.setattr(helper.subprocess, 'Popen', popen)
+    monkeypatch.setenv('RCLONE_LOG_LEVEL', 'DEBUG')
+    monkeypatch.setenv('KEEP_ME', 'yes')
+
+    START_DAEMON('/usr/bin/rclone')
+
+    assert [('RCLONE_LOG_LEVEL' in env, env.get('KEEP_ME')) for env in started] == [(False, 'yes')]
 
 
 def test_the_daemon_already_running_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -704,6 +772,44 @@ def test_main_reports_a_refusal_as_json(
         'error': 'conflict',
         'message': f'{mount["path"]} already has something else mounted on it. Mount at another folder.',
     }
+
+
+def test_a_state_folder_made_by_another_user_is_refused(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(helper.signal, 'alarm', returns(None))
+    monkeypatch.setattr(helper.signal, 'signal', returns(None))
+    monkeypatch.setattr(helper.os, 'geteuid', returns(os.geteuid() + 1))
+    request = {'working_dir': str(sandbox.root / 'workspace'), 'mounts': [wanted(sandbox)]}
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(f'{json.dumps(request)}\n'))
+
+    helper.main()
+
+    assert json.loads(capsys.readouterr().out) == {
+        'error': 'conflict',
+        'message': f'{helper.STATE} was not made by root. Remove it, or restart the sandbox.',
+    }
+    assert not (sandbox.root / 'state' / 'lock').exists()
+
+
+def test_a_state_folder_that_is_a_link_is_refused(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> None:
+    elsewhere = sandbox.root / 'elsewhere'
+    elsewhere.mkdir()
+    link = sandbox.root / 'linked-state'
+    link.symlink_to(elsewhere)
+    monkeypatch.setattr(helper, 'STATE', str(link))
+
+    with pytest.raises(helper.MountFailed, match='was not made by root'):
+        helper.private_state()
+
+
+def test_the_state_folder_is_made_private(sandbox: Sandbox) -> None:
+    state = sandbox.root / 'state'
+    state.chmod(0o755)
+
+    helper.private_state()
+
+    assert state.stat().st_mode & 0o777 == 0o700
 
 
 def test_running_out_of_time_is_a_refusal() -> None:

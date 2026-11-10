@@ -22,6 +22,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -161,12 +162,15 @@ def start_daemon(rclone: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         os.unlink(SOCKET)
     os.makedirs(CACHE, mode=0o700, exist_ok=True)
+    # rclone reads any `RCLONE_*` variable as a flag: one like `RCLONE_LOG_LEVEL=DEBUG` would log the keys.
+    env = {name: value for name, value in os.environ.items() if not name.startswith('RCLONE_')}
     with open(f'{STATE}/rcd.log', 'ab') as log:
         subprocess.Popen(
             [rclone, 'rcd', '--rc-addr', f'unix://{SOCKET}', '--rc-no-auth', '--config', '', '--cache-dir', CACHE],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=log,
+            env=env,
             start_new_session=True,
         )
     deadline = time.monotonic() + DAEMON_START_SECONDS
@@ -256,7 +260,7 @@ def make_folder(path: str, owner: os.stat_result) -> None:
         path = os.path.dirname(path)
     for folder in reversed(missing):
         os.mkdir(folder)
-        os.chown(folder, owner.st_uid, owner.st_gid)
+        os.chown(folder, owner.st_uid, owner.st_gid, follow_symlinks=False)
 
 
 def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
@@ -270,8 +274,11 @@ def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
     if MARKER not in entries:
         if entries:
             raise MountFailed('conflict', f'{path} already holds files. Mount at a new or empty folder.')
-        with open(os.path.join(path, MARKER), 'wb'):
-            pass
+        # The agent's user owns the folder: never follow a link it put there since the listing.
+        try:
+            os.close(os.open(os.path.join(path, MARKER), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644))
+        except FileExistsError:
+            raise MountFailed('conflict', f'{path} already holds files. Mount at a new or empty folder.') from None
         return True, None
     strays = [entry for entry in entries if entry != MARKER]
     if not strays:
@@ -287,7 +294,7 @@ def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
     os.makedirs(destination)
     # The agent's user can then move or remove what was found.
     for folder in (recovered, destination):
-        os.chown(folder, owner.st_uid, owner.st_gid)
+        os.chown(folder, owner.st_uid, owner.st_gid, follow_symlinks=False)
     for entry in strays:
         shutil.move(os.path.join(path, entry), os.path.join(destination, entry))
     return False, destination
@@ -352,13 +359,14 @@ def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
         if not source.startswith('pai-'):
             raise MountFailed('conflict', f'{path} already has something else mounted on it. Mount at another folder.')
         fs = served().get(path)
-        healthy = fs is not None and alive(path)
-        if healthy and source == f'pai-{fingerprint}':
-            # The same bucket: only the keys change, and commands using the mount carry on.
+        if fs is not None and source == f'pai-{fingerprint}':
+            # The same bucket: only the keys change, and commands using the mount carry on. The keys go first, since
+            # a mount whose keys expired can't answer the lookup that tells whether it is alive.
             rc('backend/command', {'command': 'set', 'fs': fs, 'opt': wanted['keys']})
-            record_expiry(fingerprint, float(wanted['expires_at']))
-            return None
-        if healthy and not expired(source.removeprefix('pai-')):
+            if alive(path):
+                record_expiry(fingerprint, float(wanted['expires_at']))
+                return None
+        elif fs is not None and alive(path) and not expired(source.removeprefix('pai-')):
             raise MountFailed(
                 'conflict',
                 f'{path} already shows another bucket in this sandbox. Mount at another folder, or destroy the sandbox.',
@@ -393,15 +401,31 @@ def main() -> None:
     signal.signal(signal.SIGALRM, _out_of_time)
     signal.alarm(DEADLINE_SECONDS)
     request = json.loads(sys.stdin.readline())
-    os.makedirs(STATE, mode=0o700, exist_ok=True)
-    with open(f'{STATE}/lock', 'w', encoding='utf-8') as lock:
-        # Two calls at once would mount twice on one path.
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            result = ensure(request)
-        except MountFailed as error:
-            result = {'error': error.code, 'message': str(error)}
+    try:
+        result = locked(request)
+    except MountFailed as error:
+        result = {'error': error.code, 'message': str(error)}
     print(json.dumps(result))
+
+
+def locked(request: dict[str, Any]) -> dict[str, Any]:
+    """`ensure`, one call at a time: two at once would mount twice on one path."""
+    private_state()
+    with os.fdopen(os.open(f'{STATE}/lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600), 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return ensure(request)
+
+
+def private_state() -> None:
+    """Make `STATE` a folder only this user (root) can open, refusing one someone else made.
+
+    Its parent is open to every user, so another could make it first, with links in it to files root would then write.
+    """
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    info = os.lstat(STATE)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise MountFailed('conflict', f'{STATE} was not made by root. Remove it, or restart the sandbox.')
+    os.chmod(STATE, 0o700)
 
 
 if __name__ == '__main__':
