@@ -4,9 +4,11 @@ import os
 from typing import overload
 
 import httpx2
+from pydantic import SecretStr
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.profiles.typesafe import typesafe_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
@@ -50,7 +52,7 @@ class TypeSafeProvider(Provider[AsyncTypeSafeClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         typesafe_client: AsyncTypeSafeClient | None = None,
         http_client: httpx2.AsyncClient | None = None,
@@ -66,6 +68,7 @@ class TypeSafeProvider(Provider[AsyncTypeSafeClient]):
                 `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if typesafe_client is not None:
             assert api_key is None, 'Cannot provide both `typesafe_client` and `api_key`'
             assert base_url is None, 'Cannot provide both `typesafe_client` and `base_url`'

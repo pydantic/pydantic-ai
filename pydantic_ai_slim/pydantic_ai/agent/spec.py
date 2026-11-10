@@ -2,27 +2,44 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
+import os
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Union, cast, get_args, get_origin
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PydanticUserError,
+    SecretStr,
+    TypeAdapter,
+    create_model,
+    model_serializer,
+    with_config,
+)
 from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from typing_extensions import TypedDict
 
 from pydantic_ai._agent_graph import EndStrategy
-from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
+from pydantic_ai._spec import CapabilitySpec, ProviderSpec, build_registry, build_schema_types
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.models import Model
 
-__all__ = ['CapabilitySpec']  # re-exported from _spec
+__all__ = ['CapabilitySpec', 'ProviderSpec']  # re-exported from _spec
 
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the spec filename stem."""
@@ -30,12 +47,30 @@ DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 
 
+class ModelSpec(BaseModel, extra='forbid'):
+    """A model with a configured provider, for the `model` field of an [`AgentSpec`][pydantic_ai.agent.AgentSpec].
+
+    See [Models with a configured provider](../agent-spec.md#models-with-a-configured-provider).
+    """
+
+    name: str
+    """The model name, in the `'<provider>:<model>'` form [`Agent`][pydantic_ai.agent.Agent] takes.
+
+    Its prefix picks the model class, like `openai-chat` for
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], as it does for a plain model name.
+    """
+
+    provider: ProviderSpec
+    """The provider the model uses, by the class-style name of its class, like `OpenAICompatible`, or a provider name
+    from a model name, like `azure` or `gateway/openai`, with its arguments."""
+
+
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
     # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
-    model: str | None = None
+    model: str | ModelSpec | None = None
     name: str | None = None
     description: TemplateStr[Any] | str | None = None
     instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
@@ -116,6 +151,7 @@ class AgentSpec(BaseModel):
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
     ) -> None:
         """Save the agent spec to a YAML or JSON file.
 
@@ -125,6 +161,7 @@ class AgentSpec(BaseModel):
             schema_path: Path to save the JSON schema to. If None, no schema will be saved.
                 Can be a string template with {stem} which will be replaced with the spec filename stem.
             custom_capability_types: Custom capability classes to include in the schema.
+            custom_provider_types: Custom provider classes to include in the schema.
         """
         path = Path(path)
         fmt = _infer_fmt(path, fmt)
@@ -141,7 +178,7 @@ class AgentSpec(BaseModel):
                 schema_ref = str(schema_path.relative_to(path.parent))
             else:
                 schema_ref = str(schema_path)
-            self._save_schema(schema_path, custom_capability_types)
+            self._save_schema(schema_path, custom_capability_types, custom_provider_types)
 
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
@@ -174,28 +211,40 @@ class AgentSpec(BaseModel):
     def model_json_schema_with_capabilities(
         cls,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
     ) -> dict[str, Any]:
-        """Generate a JSON schema for this agent spec type, including capability details.
+        """Generate a JSON schema for this agent spec type, including capability and provider details.
 
         This is useful for generating a schema that can be used to validate YAML-format agent spec files.
 
         Args:
             custom_capability_types: Custom capability classes to include in the schema.
+            custom_provider_types: Custom provider classes to include in the schema.
 
         Returns:
             A dictionary representing the JSON schema.
         """
         capability_schema_types = _build_capability_schema_types(get_capability_registry(custom_capability_types))
+        provider_schema_types = _build_provider_schema_types(custom_provider_types)
+
+        # Named `ModelSpec` in the schema, like the class it describes.
+        model_spec_schema = create_model(
+            'ModelSpec',
+            __config__=ConfigDict(extra='forbid'),
+            name=str,
+            provider=Union[tuple(provider_schema_types)],  # pyright: ignore[reportArgumentType]  # noqa: UP007
+        )
 
         # Build a schema-only model with the resolved capability union.
         # NOTE: This duplicates the field list from AgentSpec above. We can't inherit from
         # AgentSpec because the types intentionally differ for schema generation:
         # - TemplateStr is replaced with plain str (templates are just strings in YAML/JSON)
         # - capabilities uses a resolved Union of typed schema models instead of CapabilitySpec
+        # - a model spec's provider uses a resolved Union of typed provider schemas instead of ProviderSpec
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
         class _AgentSpecSchema(BaseModel, extra='forbid', arbitrary_types_allowed=True):
-            model: str | None = None
+            model: str | model_spec_schema | None = None  # pyright: ignore[reportInvalidTypeForm]
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None
@@ -232,15 +281,17 @@ class AgentSpec(BaseModel):
         cls,
         path: Path | str,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
     ) -> None:
         """Save the JSON schema for this agent spec type to a file.
 
         Args:
             path: Path to save the schema to.
             custom_capability_types: Custom capability classes to include in the schema.
+            custom_provider_types: Custom provider classes to include in the schema.
         """
         path = Path(path)
-        json_schema = cls.model_json_schema_with_capabilities(custom_capability_types)
+        json_schema = cls.model_json_schema_with_capabilities(custom_capability_types, custom_provider_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
         if not path.exists() or path.read_text(encoding='utf-8') != schema_content:
             path.write_text(schema_content, encoding='utf-8')
@@ -376,3 +427,316 @@ def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict
     # Clean up the CapabilitySpec $def entry
     defs: dict[str, Any] = schema.get('$defs', {})
     defs.pop('CapabilitySpec', None)
+
+
+_PROVIDER_CLASS_KEYS: dict[str, str] = {
+    'openai': 'OpenAI',
+    'openai-chat': 'OpenAI',
+    'openai-responses': 'OpenAI',
+    'openai-decisions': 'OpenAI',
+    'openai-codex': 'OpenAICodex',
+    'openai-compatible': 'OpenAICompatible',
+    'deepseek': 'DeepSeek',
+    'openrouter': 'OpenRouter',
+    'vercel': 'Vercel',
+    'azure': 'Azure',
+    'azure-responses': 'Azure',
+    'google': 'Google',
+    'google-cloud': 'GoogleCloud',
+    'bedrock': 'Bedrock',
+    'bedrock-mantle': 'BedrockMantle',
+    'groq': 'Groq',
+    'anthropic': 'Anthropic',
+    'mistral': 'Mistral',
+    'cerebras': 'Cerebras',
+    'cohere': 'Cohere',
+    'system-one': 'SystemOne',
+    'crusoe': 'Crusoe',
+    'elevenlabs': 'ElevenLabs',
+    'xai': 'Xai',
+    'moonshotai': 'MoonshotAI',
+    'meta': 'Meta',
+    'fireworks': 'Fireworks',
+    'together': 'Together',
+    'heroku': 'Heroku',
+    'huggingface': 'HuggingFace',
+    'ollama': 'Ollama',
+    'github-copilot': 'GitHubCopilot',
+    'litellm': 'LiteLLM',
+    'vllm': 'VLLM',
+    'nebius': 'Nebius',
+    'ovhcloud': 'OVHcloud',
+    'alibaba': 'Alibaba',
+    'sambanova': 'SambaNova',
+    'sentence-transformers': 'SentenceTransformers',
+    'snowflake': 'Snowflake',
+    'typesafe': 'TypeSafe',
+    'voyageai': 'VoyageAI',
+    'zai': 'Zai',
+}
+"""The provider names a spec takes, with the class-style name of the built-in provider class each resolves to.
+
+These are the names `infer_provider` takes, plus `'openai-compatible'`, which only specs take. Left out are
+deprecated providers and `'openai-chatgpt'`, whose provider needs credentials a spec can't hold. Listing the class
+names lets a class be imported on its own when a spec names it.
+"""
+
+
+@with_config(ConfigDict(extra='forbid'))
+class EnvVar(TypedDict):
+    """A reference to an environment variable, which is read when the model is built."""
+
+    env: str
+    """The name of the environment variable."""
+
+
+def model_from_spec(model: str | ModelSpec, custom_provider_types: Sequence[type[Provider[Any]]] = ()) -> Model | str:
+    """Turn a spec's model into what `Agent` takes: a model name stays a name, and a model spec is built.
+
+    Building a model spec creates its provider, reading the environment variables its arguments reference.
+
+    Raises:
+        UserError: If the model spec is invalid, an environment variable it references is not set,
+            or its provider can't be used with its model class.
+    """
+    if isinstance(model, str):
+        return model
+
+    from pydantic_ai.models import infer_model, parse_model_id
+    from pydantic_ai.providers import infer_provider_class
+
+    provider_name, _ = parse_model_id(model.name)
+    if provider_name is None:
+        raise UserError(f'A model spec `name` must have the form `<provider>:<model>`, got {model.name!r}.')
+    try:
+        default_provider_class = infer_provider_class(provider_name)
+    except ValueError:
+        raise UserError(f'Unknown model: {model.name}') from None
+
+    provider = _load_provider(model.provider, custom_provider_types)
+    client_type = _provider_client_type(default_provider_class)
+    if client_type is not None and not isinstance(provider.client, client_type):
+        raise UserError(
+            f'Provider {model.provider.name!r} ({type(provider).__name__}) cannot be used with model {model.name!r},'
+            f' which needs a provider like `{default_provider_class.__name__}`.'
+        )
+    return infer_model(model.name, provider_factory=lambda _: provider)
+
+
+def _load_provider(spec: ProviderSpec, custom_provider_types: Sequence[type[Provider[Any]]]) -> Provider[Any]:
+    """Create the provider a provider spec describes, reading the environment variables its secret arguments reference."""
+    name = spec.name
+    if spec.args:
+        raise UserError(f'The arguments of provider {name!r} in a spec must be given by name, as an object.')
+
+    custom_registry = _get_custom_provider_registry(custom_provider_types)
+    target: Callable[..., Provider[Any]]
+    if name in custom_registry:
+        target = custom_registry[name].from_spec
+        hints = _provider_spec_type_hints(custom_registry[name])
+    elif name.startswith('gateway/'):
+        target = functools.partial(_gateway_provider_from_spec, name.removeprefix('gateway/'))
+        hints = get_function_type_hints(_gateway_provider_from_spec)
+    else:
+        provider_name = name if name in _PROVIDER_CLASS_KEYS else _provider_name_for_class_key(name)
+        if provider_name is None:
+            valid_names = [*custom_registry, *dict.fromkeys(_PROVIDER_CLASS_KEYS.values()), *_PROVIDER_CLASS_KEYS]
+            raise UserError(
+                f'Provider {name!r} is not a built-in provider or in the provided `custom_provider_types`.'
+                f' Valid choices: {valid_names}, or `gateway/<upstream provider>`.'
+            )
+        provider_class = _builtin_provider_class(provider_name)
+        target = provider_class.from_spec
+        hints = _provider_spec_type_hints(provider_class)
+
+    kwargs = {
+        param: _resolve_env_var(name, param, value, secret=_is_secret_type(hints.get(param)))
+        for param, value in spec.kwargs.items()
+    }
+    return target(**kwargs)
+
+
+def _gateway_provider_from_spec(
+    upstream_provider: str,
+    /,
+    *,
+    route: str | None = None,
+    api_key: SecretStr | None = None,
+    base_url: str | None = None,
+) -> Provider[Any]:
+    """Create a Gateway provider from the arguments in a spec, which can't set a client."""
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    return gateway_provider(upstream_provider, route=route, api_key=api_key, base_url=base_url)
+
+
+def _resolve_env_var(provider: str, param: str, value: Any, *, secret: bool) -> Any:
+    """The value for a provider argument, reading the environment variable a secret argument references."""
+    is_env_var = is_str_dict(value) and value.keys() == {'env'} and isinstance(value['env'], str)
+    if not secret:
+        if is_env_var:
+            raise UserError(
+                f'Argument {param!r} of provider {provider!r} is not a secret, so it cannot be read from an environment variable.'
+            )
+        return value
+    if value is None:
+        return None
+    if not is_env_var:
+        raise UserError(
+            f'Argument {param!r} of provider {provider!r} is a secret, so a spec can only reference an environment'
+            ' variable for it, as `{env: VAR_NAME}`.'
+        )
+    env_var = cast(str, value['env'])
+    if not (secret_value := os.environ.get(env_var)):
+        raise UserError(
+            f'The environment variable {env_var!r} referenced by argument {param!r} of provider {provider!r} is not set or empty.'
+        )
+    return SecretStr(secret_value)
+
+
+def _provider_name_for_class_key(class_key: str) -> str | None:
+    """A provider name that resolves to the built-in provider class with this class-style name, if any."""
+    return next((name for name, key in _PROVIDER_CLASS_KEYS.items() if key == class_key), None)
+
+
+def _builtin_provider_class(provider_name: str) -> type[Provider[Any]]:
+    """The built-in provider class a provider name in a spec resolves to."""
+    if provider_name == 'openai-compatible':
+        from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider
+
+    from pydantic_ai.providers import infer_provider_class
+
+    return infer_provider_class(provider_name)
+
+
+def _get_custom_provider_registry(
+    custom_types: Sequence[type[Provider[Any]]],
+) -> Mapping[str, type[Provider[Any]]]:
+    """Create a registry of custom provider types by their class-style names."""
+
+    def _validate_provider(cls: type[Provider[Any]]) -> None:
+        if not issubclass(cls, Provider):
+            raise ValueError(f'All custom provider classes must be subclasses of Provider, but {cls} is not')
+        name = cls.get_serialization_name()
+        if name is not None and (name in _PROVIDER_CLASS_KEYS or name.startswith('gateway/')):
+            raise ValueError(
+                f'Custom provider class {cls.__name__} has the name {name!r}, which is a provider name.'
+                ' Custom providers need class-style names, like the default derived from the class name.'
+            )
+
+    return build_registry(
+        custom_types=custom_types,
+        defaults=(),
+        get_name=lambda cls: cls.get_serialization_name(),
+        label='provider',
+        validate=_validate_provider,
+    )
+
+
+def _provider_client_type(provider_class: type[Provider[Any]]) -> Any:
+    """The client type in the `Provider[...]` base of a provider class, or `None` if it's not a concrete type."""
+    for cls in provider_class.__mro__:
+        for base in cls.__dict__.get('__orig_bases__', ()):
+            if get_origin(base) is Provider:
+                [client_type] = get_args(base)
+                return client_type if client_type is not Any else None
+    return None  # pragma: no cover
+
+
+def _provider_spec_target(provider_class: type[Provider[Any]]) -> Callable[..., Any]:
+    """The function whose parameters are a provider's spec arguments: `from_spec` if it's overridden, `__init__` otherwise."""
+    if provider_class.from_spec.__func__ is Provider.from_spec.__func__:
+        return provider_class.__init__
+    return provider_class.from_spec
+
+
+def _provider_spec_type_hints(provider_class: type[Provider[Any]]) -> dict[str, Any]:
+    return get_function_type_hints(_provider_spec_target(provider_class))
+
+
+def _is_secret_type(tp: Any) -> bool:
+    return tp is SecretStr or SecretStr in get_args(tp)
+
+
+def _provider_param_schema_type(tp: Any) -> Any | None:
+    """The type of a provider argument in the JSON schema, or `None` if a spec can't set it."""
+    if _is_secret_type(tp):
+        return EnvVar | None if type(None) in get_args(tp) else EnvVar
+    try:
+        TypeAdapter(tp).json_schema()
+    except PydanticUserError:
+        return None
+    return tp
+
+
+def _provider_params_typed_dict(target: Callable[..., Any], title: str) -> tuple[Any, bool]:
+    """A TypedDict of the spec arguments of a provider's spec target, and whether any argument is required.
+
+    Positional-only parameters, like the Gateway's upstream provider, are left out.
+    """
+    hints = get_function_type_hints(target)
+    fields: dict[str, Any] = {}
+    has_required = False
+    for p in inspect.signature(target).parameters.values():
+        if p.name == 'self' or p.kind in (p.POSITIONAL_ONLY, p.VAR_POSITIONAL, p.VAR_KEYWORD) or p.name not in hints:
+            continue
+        if (schema_type := _provider_param_schema_type(hints[p.name])) is None:
+            continue
+        if p.default is p.empty:
+            has_required = True
+            fields[p.name] = schema_type
+        else:
+            fields[p.name] = NotRequired[schema_type]
+    td = TypedDict(title, fields)  # pyright: ignore[reportArgumentType]
+    return with_config(ConfigDict(extra='forbid'))(td), has_required
+
+
+def _build_provider_schema_types(custom_provider_types: Sequence[type[Provider[Any]]]) -> list[Any]:
+    """Build the schema types for a model spec's provider: one per provider name, sharing one TypedDict per class."""
+    from pydantic_ai.providers.gateway import UpstreamProvider
+
+    builtin_classes: dict[str, type[Provider[Any]]] = {}
+    for provider_name, class_key in _PROVIDER_CLASS_KEYS.items():
+        if class_key in builtin_classes:
+            continue
+        # Providers whose optional dependencies aren't installed are left out.
+        with suppress(ImportError):
+            builtin_classes[class_key] = _builtin_provider_class(provider_name)
+
+    schema_types: list[Any] = []
+    custom_registry = _get_custom_provider_registry(custom_provider_types)
+    for class_key, provider_class in builtin_classes.items():
+        # A provider name always resolves to the built-in class, also when a custom class took over its class-style name.
+        names = [name for name, key in _PROVIDER_CLASS_KEYS.items() if key == class_key]
+        if class_key not in custom_registry:
+            names.insert(0, class_key)
+        schema_types.extend(
+            _provider_schema_entries(names, _provider_spec_target(provider_class), f'{provider_class.__name__}Spec')
+        )
+    for class_key, provider_class in custom_registry.items():
+        schema_types.extend(
+            _provider_schema_entries(
+                [class_key], _provider_spec_target(provider_class), f'{provider_class.__name__}Spec'
+            )
+        )
+
+    upstream_providers = [arg for literal in get_args(UpstreamProvider) for arg in get_args(literal)]
+    gateway_names = [f'gateway/{upstream}' for upstream in upstream_providers]
+    schema_types.extend(_provider_schema_entries(gateway_names, _gateway_provider_from_spec, 'GatewayProviderSpec'))
+    return schema_types
+
+
+def _provider_schema_entries(names: Sequence[str], target: Callable[..., Any], title: str) -> list[Any]:
+    """The schema types for provider names that resolve to the same class or function, sharing its arguments TypedDict."""
+    params_td, has_required = _provider_params_typed_dict(target, title)
+    entries: list[Any] = []
+    for name in names:
+        if not has_required:
+            entries.append(Literal[name])
+        if params_td.__annotations__:
+            fields = {name: params_td}
+            td = TypedDict(f'provider_spec_{name}', fields)  # pyright: ignore[reportArgumentType]
+            entries.append(with_config(ConfigDict(extra='forbid'))(td))
+    return entries

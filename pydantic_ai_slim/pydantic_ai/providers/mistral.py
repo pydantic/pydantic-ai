@@ -3,8 +3,11 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -86,7 +89,7 @@ class MistralProvider(Provider[Mistral]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         mistral_client: Mistral | None = None,
         base_url: str | None = None,
         http_client: AsyncHTTPClient | None = None,
@@ -100,6 +103,7 @@ class MistralProvider(Provider[Mistral]):
             base_url: The base url for the Mistral requests.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if mistral_client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'

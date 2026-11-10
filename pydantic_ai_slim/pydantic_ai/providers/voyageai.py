@@ -3,6 +3,9 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
+from pydantic import SecretStr
+
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider
 
@@ -39,7 +42,7 @@ class VoyageAIProvider(Provider[AsyncClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         voyageai_client: AsyncClient | None = None,
     ) -> None:
         """Create a new VoyageAI provider.
@@ -51,6 +54,7 @@ class VoyageAIProvider(Provider[AsyncClient]):
                 [AsyncClient](https://github.com/voyage-ai/voyageai-python)
                 client to use. If provided, `api_key` must be `None`.
         """
+        api_key = secret_value(api_key)
         if voyageai_client is not None:
             assert api_key is None, 'Cannot provide both `voyageai_client` and `api_key`'
             self._client = voyageai_client

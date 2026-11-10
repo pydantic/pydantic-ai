@@ -85,6 +85,29 @@ class Provider(ABC, Generic[InterfaceClient]):
         # running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """The name this provider class has in an [agent spec](../agent-spec.md#models-with-a-configured-provider).
+
+        Defaults to the class name without its `Provider` suffix, like `'OpenAICompatible'` for
+        [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
+        Return `None` to opt out of spec-based construction.
+        """
+        return cls.__name__.removesuffix('Provider')
+
+    @classmethod
+    def from_spec(cls, *args: Any, **kwargs: Any) -> Self:
+        """Create the provider from the arguments in an agent spec. Defaults to `cls(*args, **kwargs)`.
+
+        The spec's JSON schema is derived from the parameters of this method if it's overridden, and from
+        `__init__` otherwise. Parameters whose types have no JSON schema, like client objects, are left out.
+        A parameter that accepts a [`SecretStr`][pydantic.SecretStr] can only be set from an environment
+        variable, as `{env: VAR_NAME}`, and receives the value as a `SecretStr`.
+
+        Override this when `__init__` takes parameters a spec shouldn't set.
+        """
+        return cls(*args, **kwargs)
+
     @property
     @abstractmethod
     def name(self) -> str:

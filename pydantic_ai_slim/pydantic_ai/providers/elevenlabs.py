@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 import os
 
+from pydantic import SecretStr
+
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 
@@ -40,7 +43,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str = 'https://api.elevenlabs.io',
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
@@ -57,6 +60,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
             http_client: An existing async HTTP client to use. If not provided, a new one is created
                 (and closed with the provider).
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('ELEVENLABS_API_KEY')
         if not api_key:
             raise missing_api_key_error(

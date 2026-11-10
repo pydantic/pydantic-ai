@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal, overload
 
 import httpx2
+from pydantic import SecretStr
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import (
@@ -14,6 +15,7 @@ from pydantic_ai._http import (
     create_async_httpx2_client,
     warn_if_legacy_httpx_client,
 )
+from pydantic_ai._utils import secret_value
 from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -144,7 +146,7 @@ class GoogleProvider(BaseGoogleProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
@@ -156,7 +158,7 @@ class GoogleProvider(BaseGoogleProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         client: Client | None = None,
         http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
@@ -177,6 +179,7 @@ class GoogleProvider(BaseGoogleProvider):
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.
         """
+        api_key = secret_value(api_key)
         # The credentials the provider built its client from, for `_client_for_api_version`; unknown for a
         # client the caller built.
         self._api_key: str | None = None

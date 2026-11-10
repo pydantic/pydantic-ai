@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 
 try:
     from openai import AsyncOpenAI
@@ -42,7 +45,7 @@ class LiteLLMProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         api_base: str | None = None,
     ) -> None: ...
 
@@ -50,7 +53,7 @@ class LiteLLMProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         api_base: str | None = None,
         http_client: _OpenAIHTTPClient,
     ) -> None: ...
@@ -61,7 +64,7 @@ class LiteLLMProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         api_base: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -74,6 +77,7 @@ class LiteLLMProvider(_OpenAISDKProvider):
             openai_client: Pre-configured OpenAI client. If provided, other parameters are ignored.
             http_client: Custom HTTP client to use.
         """
+        api_key = secret_value(api_key)
         if openai_client is not None:
             self._client = openai_client
             return

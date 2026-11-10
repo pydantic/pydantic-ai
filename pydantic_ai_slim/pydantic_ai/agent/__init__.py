@@ -170,7 +170,7 @@ from .abstract import (
     _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
-from .spec import AgentSpec, get_capability_registry
+from .spec import AgentSpec, ModelSpec, get_capability_registry, model_from_spec
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -179,6 +179,7 @@ if TYPE_CHECKING:
     from pydantic_graph import Graph, GraphRunContext
 
     from .. import result as _result
+    from ..providers import Provider
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -205,6 +206,7 @@ __all__ = (
     'EventStreamProcessor',
     'InstrumentationSettings',
     'ModelRequestNode',
+    'ModelSpec',
     'ParallelExecutionMode',
     'UserPromptNode',
     'WrapperAgent',
@@ -519,7 +521,7 @@ class _ResolvedSpec:
 
     capability: CombinedCapability[Any] | None
     instructions: list[_instructions.AgentInstruction[Any]]
-    model: str | None
+    model: str | ModelSpec | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
     name: str | None
@@ -950,6 +952,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -976,6 +979,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1001,6 +1005,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1028,6 +1033,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1054,6 +1060,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
@@ -1086,7 +1093,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 compiled and validated against this type.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
-            model: Override the model from the spec.
+            custom_provider_types: Additional provider classes to make available for a
+                [model spec](../agent-spec.md#models-with-a-configured-provider)'s `provider`
+                beyond the built-in providers.
+            model: Override the model from the spec. When given, the spec's model is not built.
             output_type: The type of the output data, defaults to `str`.
             instructions: Instructions for the agent.
             system_prompt: Static system prompts.
@@ -1130,7 +1140,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             all_capabilities.extend(capabilities)
 
-        effective_model = model or validated_spec.model
+        effective_model = model or (
+            model_from_spec(validated_spec.model, custom_provider_types) if validated_spec.model is not None else None
+        )
 
         agent = Agent(
             model=effective_model,
@@ -1165,6 +1177,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1192,6 +1205,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1218,6 +1232,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1246,6 +1261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1273,6 +1289,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        custom_provider_types: Sequence[type[Provider[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
@@ -1306,6 +1323,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
+            custom_provider_types=custom_provider_types,
             model=model,
             output_type=output_type,
             instructions=instructions,
@@ -1699,9 +1717,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         effective_output_retries = retry_overrides.get('output')
         effective_tool_retries = retry_overrides.get('tools')
         if resolved is not None:
-            # Model: spec as fallback (run param > spec > agent)
-            if model is None and resolved.model is not None:
-                model = resolved.model
+            # Model: spec as fallback (override > run param > spec > agent), only built when it's used
+            if model is None and self._override_model.get() is None and resolved.model is not None:
+                model = model_from_spec(resolved.model)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
@@ -2498,7 +2516,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not _utils.is_set(name) and resolved.name is not None:
                 name = resolved.name
             if not _utils.is_set(model) and resolved.model is not None:
-                model = resolved.model
+                model = model_from_spec(resolved.model)
             if not _utils.is_set(instructions) and resolved.instructions:
                 instructions = resolved.instructions
             if not _utils.is_set(model_settings) and resolved.model_settings is not None:

@@ -6,8 +6,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TypeAlias, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import (
     _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
@@ -191,7 +194,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None: ...
@@ -199,7 +202,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicClient | None = None,
         http_client: httpx2.AsyncClient | None = None,
@@ -219,6 +222,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 If provided, the `api_key` and `http_client` arguments will be ignored.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `anthropic_client` and `api_key`'

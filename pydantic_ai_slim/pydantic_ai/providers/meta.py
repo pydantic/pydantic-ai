@@ -3,7 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.meta import muse_model_profile
@@ -61,10 +64,10 @@ class MetaProvider(_OpenAISDKProvider):
     def __init__(self) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -72,7 +75,7 @@ class MetaProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -84,6 +87,7 @@ class MetaProvider(_OpenAISDKProvider):
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('META_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(

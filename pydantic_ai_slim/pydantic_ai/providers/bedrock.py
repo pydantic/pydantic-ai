@@ -6,8 +6,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, ClassVar, Literal, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
@@ -779,7 +782,7 @@ class BedrockProvider(Provider[BaseClient]):
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | SecretStr,
         base_url: str | None = None,
         region_name: str | None = None,
         profile_name: str | None = None,
@@ -792,8 +795,8 @@ class BedrockProvider(Provider[BaseClient]):
         self,
         *,
         aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
+        aws_secret_access_key: str | SecretStr | None = None,
+        aws_session_token: str | SecretStr | None = None,
         base_url: str | None = None,
         region_name: str | None = None,
         profile_name: str | None = None,
@@ -806,12 +809,12 @@ class BedrockProvider(Provider[BaseClient]):
         *,
         bedrock_client: BaseClient | None = None,
         aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
+        aws_secret_access_key: str | SecretStr | None = None,
+        aws_session_token: str | SecretStr | None = None,
         base_url: str | None = None,
         region_name: str | None = None,
         profile_name: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
     ) -> None:
@@ -829,6 +832,9 @@ class BedrockProvider(Provider[BaseClient]):
             aws_read_timeout: The read timeout for Bedrock client.
             aws_connect_timeout: The connect timeout for Bedrock client.
         """
+        aws_secret_access_key = secret_value(aws_secret_access_key)
+        aws_session_token = secret_value(aws_session_token)
+        api_key = secret_value(api_key)
         if bedrock_client is not None:
             self._client = bedrock_client
         else:

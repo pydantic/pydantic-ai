@@ -3,9 +3,11 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx2
+from pydantic import SecretStr
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.decision import decision_model_profile
 from pydantic_ai.providers import Provider
@@ -45,7 +47,7 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
         self,
         *,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Create a new System One provider.
@@ -57,6 +59,7 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
                 `SYSTEM_ONE_API_KEY` environment variable is used if set.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         base_url = base_url or os.getenv('SYSTEM_ONE_BASE_URL')
         if not base_url:
             raise UserError(

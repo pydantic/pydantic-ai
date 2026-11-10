@@ -4,7 +4,10 @@ import os
 import re
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -105,16 +108,16 @@ class HerokuProvider(_OpenAISDKProvider):
     def __init__(self) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, base_url: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient, base_url: str) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, http_client: _OpenAIHTTPClient, base_url: str) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -123,10 +126,11 @@ class HerokuProvider(_OpenAISDKProvider):
         self,
         *,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
+        api_key = secret_value(api_key)
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
