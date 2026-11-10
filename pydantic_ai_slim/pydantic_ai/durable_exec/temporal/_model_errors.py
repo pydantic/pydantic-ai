@@ -39,7 +39,6 @@ from ...exceptions import (
     UnexpectedModelBehavior,
     UserError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
-    _ModelResponseError,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import ModelResponse
 from .._utils import mark_streamed_before_failing, streamed_before_failing
@@ -217,7 +216,7 @@ def _retry_policy_type(error: ModelAPIError) -> str:
     """
     if type(error).__module__ != ModelAPIError.__module__:
         return type(error).__name__
-    if isinstance(error, _ModelResponseError):
+    if isinstance(error, UnexpectedModelBehavior):
         return UnexpectedModelBehavior.__name__
     if isinstance(error, ModelHTTPError):
         return 'ModelHTTPError'

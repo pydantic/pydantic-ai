@@ -529,6 +529,8 @@ class GroqModel(Model[AsyncGroq]):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if not response.choices:
+            raise ModelEmptyResponseError(self.model_name, f'Empty response from {self.system}: no choices')
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:

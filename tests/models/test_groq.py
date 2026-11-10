@@ -6418,6 +6418,20 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
 
 
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error rather than an `IndexError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
+    response.choices = []
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(response)))
+
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from groq: no choices') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+
+
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
     """Mocked because no provider sends an empty stream on demand."""
     mock_client = MockGroq.create_mock_stream([[]])
