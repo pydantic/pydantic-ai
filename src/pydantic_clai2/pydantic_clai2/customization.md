@@ -172,7 +172,7 @@ or to a program inside the project that a list command runs, such as
 needs approval again (a string command is approved as written), and so does
 any change to a project plugin's file. The user's own table is the settings of
 the built-in hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
-clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
+clai2 plugins only lists and disables declarations, since the agent can run clai2 too.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 

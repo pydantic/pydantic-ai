@@ -812,7 +812,10 @@ def test_existing_observability_rows_are_coalesced(tmp_path: Path, with_legacy: 
             legacy = PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False)
             connection.execute('INSERT INTO plugins VALUES (?, ?)', (legacy.id, legacy.model_dump_json()))
     assert store.plugins() == [current]
-    plugins_command(store, [action, 'observability'])
+    if action == 'disable':
+        plugins_command(store, ['disable', 'observability'])
+    else:
+        store.delete_plugin('observability')
     assert store.plugins() == ([current.model_copy(update={'enabled': False})] if action == 'disable' else [])
     with closing(sqlite3.connect(store.path)) as connection:
         assert connection.execute('SELECT id FROM plugins').fetchall() == (
@@ -835,13 +838,9 @@ def test_plugin_alias_coalescing_rolls_back_on_failure(tmp_path: Path) -> None:
 
 def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    store.save_plugin(PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'))
     plugins_command(store, ['disable', 'logfire'])
     assert store.plugins()[0].id == 'observability' and not store.plugins()[0].enabled
-    plugins_command(store, ['enable', 'logfire'])
-    assert store.plugins()[0].enabled
-    plugins_command(store, ['remove', 'logfire'])
-    assert store.plugins() == []
 
 
 @pytest.mark.parametrize(
@@ -877,7 +876,6 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
     )
     assert (settings.url, settings.read_only) == (url, False)
     # `/plugins ... logfire` still means `observability`, as in older builds.
-    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
     plugins_command(store, ['disable', 'logfire'])
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
 

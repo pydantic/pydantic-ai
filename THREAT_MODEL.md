@@ -200,6 +200,7 @@ On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its d
 - Repository instructions, project skills, and project agent definitions reach the model by default. Agent definitions get no tools or model choice of their own.
 - Most tools, `shell` included, run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
+- The agent's shell can run `clai2`, so `clai2 config` and `clai2 plugins` refuse a change that could let the agent do more; such changes are `/` commands the user types. A process that writes the settings database directly or drives CLAI's input is not stopped.
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
 

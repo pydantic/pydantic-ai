@@ -24,9 +24,11 @@ from pydantic_clai2.config import (
     TOOL_CALL_DISPLAYS,
     UPDATE_CHANNELS,
     PluginSettings,
+    Settings,
+    resolve_settings,
 )
 from pydantic_clai2.config.builtins import STOCK_PLUGINS
-from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
+from pydantic_clai2.config.project_settings import widens
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
@@ -299,12 +301,37 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
     if len(args) == 2 and args[0] == 'reset':
         store.reset(args[1])
     elif len(args) == 3 and args[0] == 'set':
-        adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-        value: JsonValue = args[2] if args[1] in STRING_SETTINGS else adapter.validate_json(args[2])
-        store.set(args[1], value)
+        store.set(args[1], _typed(args[1], args[2]))
     else:
         raise ValueError('Usage: config show|get KEY|set KEY VALUE|reset KEY')
     return 'Saved. Applies when you restart CLAI.'
+
+
+def _typed(key: str, raw: str) -> JsonValue:
+    adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+    return raw if key in STRING_SETTINGS else adapter.validate_json(raw)
+
+
+def refuse_widening(store: SettingsStore, args: list[str]) -> None:
+    """Refuse a `clai2 config` change that could widen what the agent may do: only `/config` in a session makes it."""
+    match args:
+        case ['set', key, raw] if key in SETTING_FIELDS:
+            value = _typed(key, raw)
+            resolve_settings({key: value})
+        case ['reset', key] if key in SETTING_FIELDS:
+            value = Settings().model_dump()[SETTING_FIELDS[key]]
+        case _:
+            return
+    if widens(key, value, saved=store.load()):
+        raise _session_only('config', args)
+
+
+def _session_only(command: str, args: list[str]) -> ValueError:
+    """The agent can run `clai2` from its shell, so a change that lets it do more is a `/command` the user types."""
+    return ValueError(
+        f'`clai2 {command} {args[0]}` cannot let the agent do more, since the agent can run clai2 from its shell. '
+        f'Run `/{shlex.join([command, *args])}` in a CLAI session instead.'
+    )
 
 
 def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> Iterable[str]:
@@ -344,22 +371,16 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
-PLUGINS_USAGE = (
-    'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
-    '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
-)
-
-
 def added_plugin(args: list[str]) -> PluginSettings:
-    """The declaration `plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
+    """The declaration `/plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
     if len(args) not in (3, 4) or args[0] != 'add':
-        raise ValueError(PLUGINS_USAGE)
+        raise ValueError('Usage: /plugins add ID MODULE[:ATTR] [JSON]')
     settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
     return PluginSettings(id=args[1], factory=args[2], settings=settings)
 
 
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
-    """Manage explicit plugin declarations without importing plugins."""
+    """`clai2 plugins`: list or disable plugin declarations without importing plugins; `/plugins` does the rest."""
     if len(args) > 1:
         args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
     declarations = store.plugins()
@@ -369,19 +390,15 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
                 '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
                 or 'No plugins.'
             )
-        case ['add', *_]:
-            added = added_plugin(args)
-            # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
-            store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
-        case ['enable' | 'disable', plugin_id]:
+        case ['disable', plugin_id]:
             # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
             builtin = {p.id: p for p in STOCK_PLUGINS}
             plugin = next((p for p in declarations if p.id == plugin_id), builtin.get(plugin_id))
             if plugin is None:
                 raise ValueError(f'Unknown plugin: {plugin_id}')
-            store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))
-        case ['remove', plugin_id]:
-            store.delete_plugin(plugin_id)
+            store.save_plugin(plugin.model_copy(update={'enabled': False}))
+        case ['add' | 'enable' | 'remove', *_]:
+            raise _session_only('plugins', args)
         case _:
-            raise ValueError(PLUGINS_USAGE)
-    return 'Saved. Plugin code is trusted and loads on next startup.'
+            raise ValueError('Usage: plugins list|disable ID')
+    return 'Saved. Applies when you restart CLAI.'

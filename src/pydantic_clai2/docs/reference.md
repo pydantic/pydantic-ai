@@ -76,8 +76,8 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
-| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
-| `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `clai2` too |
+| `clai2 plugins list\|disable ID` | List or turn off saved plugin declarations from your shell; add, enable, and remove them with `/plugins` in a session |
 
 ### Settings
 
@@ -2652,10 +2652,10 @@ For a repository where Git cannot perform the cleanup you want, set
 canonical absolute Git common directory to a nonempty argv list. Find the key
 with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
 The match is exact, with no wildcards. Keys resolving to the same directory are
-rejected rather than silently choosing one command. For example:
+rejected rather than silently choosing one command. For example, in a CLAI session:
 
-```sh
-clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
+```text
+/set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
 ```
 
 The executable is your own cleanup program. Only whole argv tokens are
@@ -2965,7 +2965,7 @@ CLAI2's separate `notifications` plugin is unchanged; use
 
 ### Agent of Empires integration
 
-Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
+Run `/plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
 (AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error` and reopen a
 restarted session's conversation. Titling the AoE session after the conversation is
 opt-in: turn off AoE's `session.tie_workdir_to_name` first, so a rename does not move the
