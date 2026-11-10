@@ -1941,6 +1941,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
 
+        # GPT-6 rejects function tools while reasoning is on over Chat Completions with a 400, so reject the
+        # combination here rather than at the API. `thinking=False` maps to `reasoning_effort='none'` on models
+        # that accept it; on models that pin their efforts it maps to the lowest effort, where only
+        # `OpenAIResponsesModel` is a way out.
+        if (
+            profile.get('openai_chat_function_tools_require_reasoning_off', False)
+            and model_request_parameters.function_tools
+            and _reasoning_active(profile, model_settings, model_request_parameters)
+        ):
+            remedy = ', or disable reasoning with `thinking=False`' if _supports_reasoning_effort_none(profile) else ''
+            raise UserError(
+                f'OpenAI rejects function tools while reasoning is enabled on {self.model_name} over Chat '
+                f'Completions. Use `OpenAIResponsesModel`{remedy} instead.'
+            )
+
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
         self._finalize_cache_breakpoints(tools, openai_messages)
 
