@@ -134,6 +134,18 @@ behavior. Snapshot keys use a per-run save sequence together with
 `step_index` and `state`. Replay produces the same sequence, while distinct
 snapshots at the same step and state retain their write order and newer history.
 
+!!! warning "Compatibility impact: recorded tool-failure operations"
+    Recording a tool call that raises `ModelRetry` or `ToolFailed` as `failed`
+    adds a tool-effect failure and an event append to the recorded operation
+    sequence. Before upgrading, let in-flight DBOS or Temporal runs that already
+    made such a call finish, or deploy the upgrade as a new DBOS application
+    version or with
+    [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning).
+    Set the DBOS `application_version` explicitly: the computed one does not
+    change with a library upgrade. Replaying an older run with the new code
+    raises `DBOSUnexpectedStepError` on DBOS and a nondeterminism error on
+    Temporal.
+
 The orchestrator pattern -- one logical agent serving many turns -- uses
 `conversation_id`, not a shared `run_id`:
 
