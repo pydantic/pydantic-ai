@@ -1,20 +1,14 @@
-import pytest
+from __future__ import annotations
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 
 QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': ['Yes', 'No']}]
-
-
-def anyio_backend():
-    return 'asyncio'
-
-
-pytestmark = pytest.mark.anyio
 
 
 def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final: str):
@@ -29,24 +23,35 @@ def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final
     return model
 
 
-async def test_deny_unanswered_answers_approval_required_tool_in_run():
-    """A held approval is denied in-run with the capability's message; the tool body never runs."""
+def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
+    return [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+
+
+def _approval_agent(ran: list[int], *, deny: bool) -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose model calls `danger`, which needs approval, recording each run of its body in `ran`."""
     agent = Agent(
         FunctionModel(_call_then_echo('danger', {'x': 1}, 'c1', 'done')),
-        capabilities=[DenyUnanswered()],
+        capabilities=[DenyUnanswered()] if deny else [],
         output_type=[str, DeferredToolRequests],
     )
 
     @agent.tool_plain(requires_approval=True)
     def danger(x: int) -> str:
-        raise AssertionError('the tool body must not run')
+        ran.append(x)
+        return 'ran'
 
-    result = await agent.run('do it')
+    return agent
+
+
+async def test_deny_unanswered_answers_approval_required_tool_in_run():
+    """A held approval is denied in-run with the capability's message; the tool body never runs."""
+    ran: list[int] = []
+    result = await _approval_agent(ran, deny=True).run('do it')
     assert result.output == 'done'
-    tool_returns = [
-        part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
-    ]
-    assert any('No one was available to approve it' in str(part.content) for part in tool_returns)
+    assert ran == []
+    assert any(
+        'No one was available to approve it' in str(part.content) for part in _tool_returns(result.all_messages())
+    )
 
 
 async def test_deny_unanswered_answers_ask_user_question_in_run():
@@ -59,22 +64,39 @@ async def test_deny_unanswered_answers_ask_user_question_in_run():
 
     result = await agent.run('go')
     assert result.output == 'done'
-    tool_returns = [
-        part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
-    ]
-    assert any(part.tool_name == 'ask_user_question' for part in tool_returns)
+    assert any(part.tool_name == 'ask_user_question' for part in _tool_returns(result.all_messages()))
 
 
-async def test_without_capability_calls_stay_deferred():
-    """Without `DenyUnanswered` the run still pauses on `DeferredToolRequests`."""
+async def test_deny_unanswered_leaves_other_deferred_calls_deferred():
+    """A deferred call that is neither an approval nor an `AskUser` question is left for its own handler."""
     agent = Agent(
-        FunctionModel(_call_then_echo('danger', {'x': 1}, 'c1', 'unreached')),
+        FunctionModel(_call_then_echo('wait_for_job', {}, 'j1', 'unreached')),
+        capabilities=[DenyUnanswered()],
         output_type=[str, DeferredToolRequests],
     )
 
-    @agent.tool_plain(requires_approval=True)
-    def danger(x: int) -> str:
-        raise AssertionError('the tool body must not run')
+    @agent.tool_plain
+    def wait_for_job() -> str:
+        raise CallDeferred
+
+    result = await agent.run('start the job')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in result.output.calls] == ['j1']
+    assert result.output.approvals == []
+
+
+async def test_without_capability_calls_stay_deferred():
+    """Without `DenyUnanswered` the run pauses on `DeferredToolRequests`, and the caller's approval runs the tool."""
+    ran: list[int] = []
+    agent = _approval_agent(ran, deny=False)
 
     result = await agent.run('do it')
     assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in result.output.approvals] == ['c1']
+    assert ran == []
+
+    resumed = await agent.run(
+        message_history=result.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'c1': True})
+    )
+    assert resumed.output == 'done'
+    assert ran == [1]

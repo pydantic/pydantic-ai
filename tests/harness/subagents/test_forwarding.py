@@ -1,4 +1,4 @@
-import pytest
+from __future__ import annotations
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -8,13 +8,6 @@ from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.subagents import SubAgent
 
 QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
-
-
-def anyio_backend():
-    return 'asyncio'
-
-
-pytestmark = pytest.mark.anyio
 
 
 def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final: str, observed: list[str]):
@@ -56,6 +49,5 @@ async def test_deny_unanswered_reaches_subagents_children_by_default():
     )
 
     result = await parent.run('delegate')
-    assert result.output == 'parent done'
     assert result.output == 'parent done'
     assert any('declined to answer' in content for content in observed)

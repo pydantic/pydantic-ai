@@ -1,4 +1,4 @@
-import pytest
+from __future__ import annotations
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -7,13 +7,6 @@ from pydantic_ai_harness import DenyUnanswered, DynamicWorkflow
 from pydantic_ai_harness.ask_user import AskUser
 
 QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
-
-
-def anyio_backend():
-    return 'asyncio'
-
-
-pytestmark = pytest.mark.anyio
 
 
 def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final: str, observed: list[str]):
