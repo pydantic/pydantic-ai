@@ -905,6 +905,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
         supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
         cancellation wins.
+
+        Raises:
+            UserError: If the run's event loop can't be reached from the calling thread or loop, as
+                with a run inside a Temporal workflow cancelled from outside it (see
+                [Temporal cancellation](../durable_execution/temporal.md#cancellation)). The run is
+                left untouched.
         """
         self.ctx.deps.cancellation.cancel()
 

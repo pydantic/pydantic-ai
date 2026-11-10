@@ -69,7 +69,15 @@ class CancellationToken:
     def cancel(self) -> None:
         """Cancel every live run registered with this token.
 
-        This method is idempotent and may be called from any thread.
+        This method is idempotent and may be called from any thread, as long as each run's event
+        loop can be reached from it.
+
+        Raises:
+            UserError: If a run's event loop can't be reached from the calling thread or loop, as with
+                a run inside a Temporal workflow fired from outside it (see
+                [Temporal cancellation](../durable_execution/temporal.md#cancellation)). The other
+                registered runs are still cancelled, but the token stays uncancelled and that run
+                untouched, so firing the token again from the run's own loop still cancels it.
         """
         with self._lock:
             if self._cancelled:
@@ -77,17 +85,21 @@ class CancellationToken:
             self._cancelled = True
             registrations = tuple(self._registrations)
 
-        # `RunCancellation.cancel()` is itself thread-safe: it delivers synchronously when called
-        # on the run's own loop and marshals via `call_soon_threadsafe` otherwise.
-        try:
-            for cancellation in registrations:
+        # `RunCancellation.cancel()` delivers synchronously when called on the run's own loop and
+        # marshals via `call_soon_threadsafe` otherwise, raising `UserError` for a loop that can't be
+        # reached that way. Every run is still tried: one unreachable run doesn't shield the others.
+        error: UserError | None = None
+        for cancellation in registrations:
+            try:
                 cancellation.cancel()
-        except UserError:
-            # A run's loop couldn't be reached from here (see `RunCancellation.cancel()`): leave the
-            # token uncancelled, so firing it again from the right place still cancels the run.
+            except UserError as e:
+                error = error or e
+        if error is not None:
+            # Leave the token uncancelled so firing it again from the right place still reaches the
+            # run that was missed; runs already cancelled ignore the repeat request.
             with self._lock:
                 self._cancelled = False
-            raise
+            raise error
 
     def _register(self, cancellation: RunCancellation) -> None:
         with self._lock:
