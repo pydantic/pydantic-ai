@@ -6,7 +6,7 @@ module keeps a shim package at its old path, and a renamed class keeps a module-
 `warn_default_changed` covers an option whose default moved, where existing callers keep
 working but get different behavior, `warn_argument_ignored` an argument that is still
 accepted but no longer does anything, and `warn_argument_renamed` an argument still accepted
-under its old name.
+under its old name, and `warn_callable_renamed` a function or method still callable under its old name.
 """
 
 from __future__ import annotations
@@ -104,6 +104,19 @@ def warn_argument_renamed(owner: str, old: str, new: str, *, stacklevel: int = 3
         'Update the call; this deprecated alias will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=stacklevel,
+    )
+
+
+def warn_callable_renamed(old: str, new: str) -> None:
+    """Emit a `HarnessDeprecationWarning` that `<old>()` is now `<new>()`.
+
+    Called from the thin wrapper left under the old function or method name.
+    """
+    warnings.warn(
+        f'`{old}()` has been renamed to `{new}()`. '
+        'Update the call; this deprecated alias will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=3,
     )
 
 

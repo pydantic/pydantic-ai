@@ -32,7 +32,7 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypedDict, TypeVarTuple, Unpack
 
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_callable_renamed
 
 try:
     from pydantic_monty import (
@@ -247,12 +247,17 @@ class MontyRunState:
         self.has_executed_feed = False
         await _release_monty(stack)
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         """Return the checked-out worker, then close the owning pool (and portal) even if that fails."""
         try:
             await self.reset()
         finally:
             await self._release_pool()
+
+    async def close(self) -> None:
+        """Deprecated: renamed to `aclose`."""
+        warn_callable_renamed('MontyRunState.close', 'MontyRunState.aclose')
+        await self.aclose()
 
     async def _release_pool(self) -> None:
         stack, self._pool_stack = self._pool_stack, AsyncExitStack()

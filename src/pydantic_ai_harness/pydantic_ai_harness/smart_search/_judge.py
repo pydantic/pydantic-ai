@@ -22,6 +22,7 @@ from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
+from pydantic_ai_harness._warn import warn_callable_renamed
 from pydantic_ai_harness.smart_search._chunks import Chunk
 
 REQUEST_TIMEOUT_SECONDS = 30
@@ -70,7 +71,7 @@ def _instructions(query: str) -> str:
     )
 
 
-def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
+def make_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     """The one-shot judge agent for `query`, named after the capability."""
     agent = Agent(
         model,
@@ -86,6 +87,12 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     # ignore the host agent's content or opt-out settings.
     agent.instrument = False
     return agent
+
+
+def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
+    """Deprecated: renamed to `make_agent`."""
+    warn_callable_renamed('build_agent', 'make_agent')
+    return make_agent(model, query)
 
 
 def judgment_allowance(ctx: RunContext[Any]) -> int | None:
@@ -125,7 +132,7 @@ async def judge(
     Any failed judgment fails the whole search and cancels the rest: a partial scan reported as a complete
     one is worse than an error.
     """
-    agent = build_agent(model, query)
+    agent = make_agent(model, query)
     # Judgments start through the gate while others finish, so the nested run takes the claimed-request
     # limits rather than `claim_offset_limits`, whose preflight would see the other claims too.
     limits = claimed_request_limits(ctx.usage_limits)

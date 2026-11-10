@@ -876,7 +876,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             ) from exc
         finally:
             _in_workflow.reset(in_workflow_token)
-            await monty.close()
+            await monty.aclose()
 
         # Monty lets workflow code catch host exceptions. Exhausting the budget remains
         # terminal even if the script catches that error and otherwise finishes normally.

@@ -43,6 +43,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,
@@ -857,12 +858,18 @@ class TestSpeculationEdgeCases:
             # launches at the limit.
             assert run_capability.speculation_stats.launched == 32
             assert toolset.speculation is not None
-            await toolset.speculation.close()
+            await toolset.speculation.aclose()
 
         # Run-end cleanup cancels what no snippet claimed, without eviction events: the stream
         # is closed by then.
         assert run_capability.speculation_stats.evicted == 32
         assert not [e for e in emitted(ctx) if isinstance(e, SpeculativeCallEvictedEvent)]
+
+    async def test_close_is_a_deprecated_alias_of_aclose(self) -> None:
+        async with prepared_toolset([], CodeMode[None](speculate=['search'])) as (_, toolset, _, _):
+            assert toolset.speculation is not None
+            with pytest.warns(HarnessDeprecationWarning, match=r'`SpeculationCoordinator\.close\(\)` has been renamed'):
+                await toolset.speculation.close()
 
     @pytest.mark.parametrize(
         ('padding_lines', 'chunk_size', 'prefetched'),
