@@ -67,7 +67,7 @@ class HttpKeenableClient:
     """
 
     _DEFAULT_BASE_URL = 'https://api.keenable.ai'
-    # Both the HTTPX timeout on each connect, read, write, and pool wait, and
+    # Both the httpx2 timeout on each connect, read, write, and pool wait, and
     # the deadline for the request as a whole.
     _TIMEOUT_SECONDS = 30.0
     _MAX_RESPONSE_BYTES = 10 * 1024 * 1024
