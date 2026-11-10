@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_instances'
 """`DBOS.patch_async()` name marking workflows in which `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
 
-_tool_instance_defaults_patched: WeakKeyDictionary[DBOSContext, asyncio.Task[bool]] = WeakKeyDictionary()
+_tool_instance_defaults_patched: WeakKeyDictionary[DBOSContext, asyncio.Task[bool] | bool] = WeakKeyDictionary()
 """Each workflow execution's `DBOS.patch_async()` result, shared by the agent runs in it like `workflow.patched()`'s."""
 
 
@@ -48,16 +48,18 @@ class ToolInstanceDefaultsGateToolset(WrapperToolset[AgentDepsT]):
         if in_workflow_code() and holds_tool_instance_defaults(self.function_toolset):
             context = workflow_context()
             patched = _tool_instance_defaults_patched.get(context)
-            if patched is None:
-                patched = asyncio.ensure_future(_patch_tool_instance_defaults())
-                _tool_instance_defaults_patched[context] = patched
-            await asyncio.shield(patched)
+            if not isinstance(patched, bool):
+                if patched is None:
+                    patched = asyncio.ensure_future(_patch_tool_instance_defaults())
+                    _tool_instance_defaults_patched[context] = patched
+                # A task keeps the context it ran in, and with it this key, alive; keep only its result.
+                _tool_instance_defaults_patched[context] = await asyncio.shield(patched)
         return await super().__aenter__()
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
         patched = _tool_instance_defaults_patched.get(workflow_context()) if in_workflow_code() else None
-        if patched is None or patched.result():
+        if patched is None or patched is True:
             return tools
         return {**tools, **tools_before_tool_instance_defaults(self.function_toolset, tools)}
 

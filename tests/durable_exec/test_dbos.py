@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import re
 import subprocess
@@ -126,6 +127,9 @@ from pydantic_ai.durable_exec.dbos import (
     DBOSDurability,
     DBOSModel,
     StepConfig,
+)
+from pydantic_ai.durable_exec.dbos._function_toolset import (
+    _tool_instance_defaults_patched,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -6997,3 +7001,26 @@ async def test_dbos_tool_instance_defaults_patch_shared_by_concurrent_runs(dbos:
     assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
 
     assert (await _tool_instances_agents['sequential'].run('Call both tools.')).output == 'done'
+
+
+@DBOS.workflow()
+async def sequential_tool_instances_runs_workflow() -> list[str]:
+    agent = _tool_instances_agents['sequential']
+    return [(await agent.run('Call both tools.')).output for _ in range(2)]
+
+
+async def test_dbos_tool_instance_defaults_patch_freed_with_workflow(dbos: DBOS) -> None:
+    """Runs one after another in a workflow reuse its patch result, and the gate drops it once the workflow ends.
+
+    Not a VCR test: the model is a `FunctionModel`. It reads the gate's private cache because a workflow that
+    outlives its cache entry is only visible as memory that a long-lived worker never gets back.
+    """
+    cached = len(_tool_instance_defaults_patched)
+    workflow_id = f'tool-instances-sequential-runs-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        assert await sequential_tool_instances_runs_workflow() == ['done', 'done']
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+    assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
+
+    gc.collect()
+    assert len(_tool_instance_defaults_patched) == cached
