@@ -12,8 +12,8 @@ import socket
 import stat
 import struct
 import sys
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -305,6 +305,13 @@ def _unlink_published(path: Path, socket_inode: int, record_path: Path, instance
         pass
 
 
+@contextmanager
+def _shielded() -> Generator[None]:
+    """A shielding cancel scope that type checkers know never swallows, so names bound inside stay bound."""
+    with CancelScope(shield=True):
+        yield
+
+
 class LiveRegistry:
     """Serve one process's live sessions and maintain its static discovery record."""
 
@@ -408,16 +415,19 @@ class LiveRegistry:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
         listener = socket.socket(socket.AF_UNIX)
-        # On the loop: the umask is process-wide, and no cancellation may land before the inode is known.
-        previous_umask = os.umask(0o077)
         try:
-            listener.bind(str(path))
-            socket_inode = path.lstat().st_ino
+            # The umask is process-wide, so it only changes while no other task can run.
+            previous_umask = os.umask(0o077)
+            try:
+                listener.bind(str(path))
+            finally:
+                os.umask(previous_umask)
+            # Shielded so no cancellation lands between binding and knowing which inode to remove.
+            with _shielded():
+                socket_inode = (await to_thread.run_sync(path.lstat)).st_ino
         except BaseException:
             listener.close()
             raise
-        finally:
-            os.umask(previous_umask)
         try:
             await to_thread.run_sync(path.chmod, 0o600)
             listener.listen()
