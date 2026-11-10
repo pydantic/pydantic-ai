@@ -267,7 +267,7 @@ OpenAI image-model landmines:
 - **List Bedrock inference profiles, not only foundation models.** Claude Sonnet 5.5 launched with `global.anthropic.claude-sonnet-5-5` and no `us.` profile. Run `aws bedrock list-inference-profiles` and add only the profiles it returns.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
-- **`providers/bedrock.py` `bedrock_structured_output_unsupported`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
+- **`providers/_bedrock_model_names.py` `bedrock_lacks_claude_structured_output`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
 
 ### xAI (Grok)
 
