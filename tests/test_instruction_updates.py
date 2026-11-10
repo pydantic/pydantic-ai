@@ -1552,8 +1552,12 @@ def test_instruction_updates_render_escapes_the_id():
     assert part.render() == '<pyai:context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</pyai:context>'
 
 
-def test_instruction_updates_render_escapes_closing_tags_in_the_content():
-    """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
+def test_instruction_updates_render_closing_tags_in_the_content_as_written():
+    """Block text goes in as written, closing tags included: instructions are operator text, never rewritten.
+
+    Keep untrusted text out of instructions; text from users and tools that looks like a frame gets a lookalike
+    note instead.
+    """
     part = InstructionDeltaPart(id=STATE_ID, content='Before </pyai:context></System > </pyai:context_diff> after.')
     assert part.render() == snapshot(
         """\

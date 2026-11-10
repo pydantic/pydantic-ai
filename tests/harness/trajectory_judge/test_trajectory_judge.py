@@ -6,15 +6,17 @@ import asyncio
 import re
 import secrets
 from dataclasses import dataclass, is_dataclass
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import ValidationError
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import lookalike_note_announcement
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -119,17 +121,19 @@ def _without_mark(metadata: dict[str, object] | None) -> dict[str, object] | Non
     return None if metadata is None else {key: item for key, item in metadata.items() if key != '__pydantic_ai__'}
 
 
+def _is_list(value: object) -> TypeIs[list[object]]:
+    return isinstance(value, list)
+
+
 def _plain(value: object) -> object:
     """`value` as the judge's frame was written, without the framework mark."""
     if isinstance(value, TextContent):
         return TextContent(value.content, metadata=_without_mark(value.metadata))
-    if isinstance(value, list):
-        items = cast('list[object]', value)
-        return [_plain(item) for item in items]
+    if _is_list(value):
+        return [_plain(item) for item in value]
     # The rest is a `TextContent`'s metadata.
-    assert isinstance(value, dict)
-    metadata = cast('dict[str, object]', value)
-    return _without_mark(metadata)
+    assert is_str_dict(value)
+    return _without_mark(value)
 
 
 def _all_user_text(messages: list[ModelMessage]) -> str:

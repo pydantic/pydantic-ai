@@ -8,14 +8,16 @@ import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -88,16 +90,18 @@ def _without_mark(metadata: dict[str, object] | None) -> dict[str, object] | Non
     return None if metadata is None else {key: item for key, item in metadata.items() if key != '__pydantic_ai__'}
 
 
+def _is_list(value: object) -> TypeIs[list[object]]:
+    return isinstance(value, list)
+
+
 def _plain(value: object) -> object:
     """`value` as the background result's frame was written, without the framework mark."""
     if isinstance(value, TextContent):
         return TextContent(value.content, metadata=_without_mark(value.metadata))
-    if isinstance(value, list):
-        items = cast('list[object]', value)
-        return [_plain(item) for item in items]
-    if isinstance(value, dict):
-        metadata = cast('dict[str, object]', value)
-        return _without_mark(metadata)
+    if _is_list(value):
+        return [_plain(item) for item in value]
+    if is_str_dict(value):
+        return _without_mark(value)
     return value
 
 

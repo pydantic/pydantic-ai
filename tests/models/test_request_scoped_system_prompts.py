@@ -19,7 +19,7 @@ projection on both sides of the `supports_request_scoped_system_prompts` flag.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -72,7 +72,7 @@ with try_import() as anthropic_available:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
     from .test_anthropic import (
         MockAnthropic,
@@ -893,7 +893,7 @@ async def test_sealed_model_keeps_request_scoped_prompts_in_sealed_clear_at_entr
 @pytest.mark.parametrize('model_name', ['claude-sonnet-5-5', 'claude-haiku-5-5'])
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 def test_request_scoped_support_follows_the_transport_on_sealed_models(
-    make_client: Any, expected: bool, model_name: str
+    make_client: Callable[[], AsyncAnthropicClient], expected: bool, model_name: str
 ):
     """The entry needs a transport that serves the `system` role, whatever the model's lasting messages use."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=make_client()))
