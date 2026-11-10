@@ -9,11 +9,13 @@ from pathlib import Path
 from uuid import UUID, uuid4, uuid5
 
 import pytest
+from anyio.to_thread import run_sync
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import TypeAdapter
 from rich.console import Console
+from termflow.ansi.utils import ANSI_ESCAPE_RE
 from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
@@ -34,19 +36,22 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli import cli, headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
@@ -65,6 +70,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -306,6 +312,16 @@ def context(part: ModelRequestPart | ModelResponsePart) -> tuple[str, str]:
     return metadata['kind'], item.content
 
 
+class ClaudeCodeProvider(AnthropicProvider):
+    @property
+    def name(self) -> str:
+        return 'claude-code'
+
+
+def openai_model() -> OpenAIResponsesModel:
+    return OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(api_key='key'))
+
+
 def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> None:
     path = claude_session(tmp_path)
     messages = claude_code_sessions.messages(path)
@@ -333,6 +349,12 @@ def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> Non
     assert response.model_name == 'claude-sonnet-4-5' and response.provider_name == 'anthropic'
     assert response.usage == RequestUsage(
         input_tokens=115, cache_read_tokens=100, cache_write_tokens=5, output_tokens=7
+    )
+    # A provider that only renames `AnthropicProvider`, such as one signing in with Claude Code's subscription,
+    # continues from the signed thinking too.
+    claude_code = AnthropicModel('claude-sonnet-4-5', provider=ClaudeCodeProvider(api_key='key'))
+    assert all(
+        claude_code.accepts_stateless_artifacts(response, part) for part in (response.parts[0], response.parts[3])
     )
     first, second, prompt = results.parts
     assert isinstance(first, ToolReturnPart) and (first.tool_name, first.content) == ('Read', 'file text')
@@ -471,7 +493,7 @@ def claude_agent_session(cwd: Path) -> Path:
     return path
 
 
-async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
+def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
     messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
@@ -524,7 +546,7 @@ async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> No
 
 async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
-    review, child = claude_code_sessions.tasks(path, 'conversation')
+    review, child = await run_sync(claude_code_sessions.tasks, path, 'conversation')
     # CLAI runs `general-purpose` as itself, by the name a resume checks.
     assert (review.agent_name, review.prompt, review.output) == ('self', 'Review the diff', 'Looks good')
     assert (review.conversation_id, review.status, review.outcome, review.background) == (
@@ -542,7 +564,7 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     assert parts(child.messages) == [('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart'])]
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     async with DelegationTasks(directory=tmp_path / 'tasks').opened() as owner:
-        conversation_id = await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
+        conversation_id = await save_import(store, await run_sync(find_import, 'claude', CLAUDE_ID), delegations=owner)
         assert owner.records[review.id].conversation_id == conversation_id
         assert (tmp_path / 'tasks' / f'{review.id}.json').is_file()
         assert owner.reports(conversation_id=conversation_id) == []
@@ -563,7 +585,7 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
         )
         resumed = owner.records[review.id]
         assert (resumed.output, resumed.generation) == ('Resumed', 2)
-        await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
+        await save_import(store, await run_sync(find_import, 'claude', CLAUDE_ID), delegations=owner)
         assert owner.records[review.id] is resumed
     async with DelegationTasks(directory=tmp_path / 'tasks').opened() as reopened:
         assert set(reopened.records) == {review.id, child.id}
@@ -577,7 +599,7 @@ async def test_resume_by_id_saves_sub_agents_before_the_task_owner_opens(tmp_pat
     await service.command(['claude', CLAUDE_ID])
     async with service.tasks.opened() as owner:
         assert {task.id for task in owner.records.values()} == {
-            task.id for task in claude_code_sessions.tasks(path, service.session.summary.id)
+            task.id for task in await run_sync(claude_code_sessions.tasks, path, service.session.summary.id)
         }
 
 
@@ -585,15 +607,19 @@ async def test_reimport_keeps_a_task_resumed_on_disk(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     path = claude_agent_session(tmp_path)
     await save_import(
-        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+        store,
+        await run_sync(find_import, 'claude', CLAUDE_ID),
+        delegations=DelegationTasks(directory=tmp_path / 'tasks'),
     )
-    review = claude_code_sessions.tasks(path, 'conversation')[0]
+    review = (await run_sync(claude_code_sessions.tasks, path, 'conversation'))[0]
     saved = tmp_path / 'tasks' / f'{review.id}.json'
     resumed = replace(review, run_id='f' * 32, output='Resumed')
     saved.write_bytes(TypeAdapter(DelegationTask).dump_json(resumed))
     # A later launch's owner has not opened, so only the file says the task was resumed.
     await save_import(
-        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+        store,
+        await run_sync(find_import, 'claude', CLAUDE_ID),
+        delegations=DelegationTasks(directory=tmp_path / 'tasks'),
     )
     assert TypeAdapter(DelegationTask).validate_json(saved.read_bytes()).output == 'Resumed'
 
@@ -694,6 +720,8 @@ def test_codex_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
         ToolCallPart('apply_patch', {'input': '*** Begin Patch'}, tool_call_id='c2', provider_name='openai-codex'),
     ]
     assert response.model_name == 'gpt-6-astra' and response.provider_name == 'openai-codex'
+    # The OpenAI API reads Codex's encrypted reasoning too.
+    assert openai_model().accepts_stateless_artifacts(response, response.parts[0])
     assert response.usage == RequestUsage(input_tokens=50, cache_read_tokens=40, output_tokens=3)
     assert [(p.tool_name, p.content) for p in results.parts if isinstance(p, ToolReturnPart)] == [
         ('exec_command', 'a.py'),
@@ -828,7 +856,11 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
     for body, image in (('See', 'https://example.com/d.png'), ('out', 'https://example.com/c.png')):
         [kept] = [p for p in requests if is_imported_context(p) and context(p)[1] == body]
         assert isinstance(kept, UserPromptPart) and kept.content[1:] == [ImageUrl(image)]
-    # A boundary for `openai-codex` models, which continue from the summary as Codex's did; others read past it.
+    # A boundary for OpenAI models, `openai-codex` or `openai`, which continue from the summary as Codex's did;
+    # others read past it.
+    compacted = messages[5]
+    assert isinstance(compacted, ModelResponse)
+    assert openai_model().accepts_stateless_artifacts(compacted, compacted.parts[0])
     assert messages[5].parts == [
         CompactionPart(
             None,
@@ -1069,7 +1101,7 @@ def test_history_builder_edges(tmp_path: Path) -> None:
     assert list(records(path, limit=1)) == [{'n': 1}]
 
 
-async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
+def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     claude = claude_session(tmp_path / 'claude-project')
     codex = codex_session(tmp_path / 'codex-project')
     os.utime(claude, (1_000, 1_000))
@@ -1113,11 +1145,11 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
 async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     path = codex_session(tmp_path)
-    imported = find_import('codex', CODEX_ID)
+    imported = await run_sync(find_import, 'codex', CODEX_ID)
     conversation_id = await save_import(store, imported)
     saved = await store.get(conversation_id=conversation_id)
     assert (saved.summary.revision, saved.summary.tags) == (1, ('codex',))
-    assert saved.messages == codex_sessions.messages(path)
+    assert saved.messages == await run_sync(codex_sessions.messages, path)
     assert await store.name(source=saved.summary, title='My rename', subtitle='Mine', tags=('flags',), manual=True)
     assert await save_import(store, imported) == conversation_id
     renamed = (await store.get(conversation_id=conversation_id)).summary
@@ -1141,7 +1173,7 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     assert [p.content for p in refreshed.messages[-2].parts if isinstance(p, TextPart)] == ['Added', 'And more']
     # Once CLAI continues it, the copy is CLAI's own.
     continued = await store.save(summary=refreshed.summary, messages=refreshed.messages[:1])
-    assert await save_import(store, find_import('codex', CODEX_ID)) == conversation_id
+    assert await save_import(store, await run_sync(find_import, 'codex', CODEX_ID)) == conversation_id
     assert (await store.get(conversation_id=conversation_id)).summary == continued
 
 
@@ -1150,13 +1182,13 @@ async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -
     path = write_jsonl(Path.home() / '.claude' / 'projects' / '-w' / 'synthetic.jsonl', [prompt])
     os.utime(path, (1_000, 1_000))
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
-    conversation_id = await save_import(store, find_import('claude', 'synthetic'))
+    conversation_id = await save_import(store, await run_sync(find_import, 'claude', 'synthetic'))
     previous = await store.get(conversation_id=conversation_id)
     # Claude Code then ended on a notice of its own, leaving nothing to continue.
     synthetic = claude_entry('s', None, 'assistant', [{'type': 'text', 'text': 'API Error'}], model='<synthetic>')
     write_jsonl(path, [prompt, synthetic])
     with pytest.raises(ValueError, match='Claude Code session synthetic has no conversation to import'):
-        await save_import(store, find_import('claude', 'synthetic'))
+        await save_import(store, await run_sync(find_import, 'claude', 'synthetic'))
     # The failed refresh keeps the copy that was there.
     assert await store.get(conversation_id=conversation_id) == previous
 
@@ -1272,7 +1304,14 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
 def test_browser_marks_sessions_to_import() -> None:
     imported = str(uuid5(UUID(int=0), 'claude:session'))
     entries = [
-        ConversationSummary(id=imported, workspace='/w', title='From Claude Code', tags=('claude',)),
+        ConversationSummary(
+            id=imported,
+            workspace='/w',
+            title='From Claude Code',
+            tags=('claude',),
+            message_count=123,
+            total_tokens=1_234_567,
+        ),
         # CLAI's own, with a topic tag that names a source.
         ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
     ]
@@ -1299,8 +1338,13 @@ def test_browser_marks_sessions_to_import() -> None:
     assert imported_from(ConversationSummary(id='not-a-uuid', workspace='/w', tags=('claude',))) is None
     importing[0] = False
     frame = '\n'.join(browser.frame(width=100, height=20))
-    assert frame.count('Claude Code · 0 msgs') == 1 and frame.count('#claude') == 1
-    importing[0] = True
+    assert frame.count('Claude Code · 123 msgs / 1,234,567 tok') == 1 and frame.count('#claude') == 1
+    # A narrower pane drops the tokens before the source, and the source before it squeezes out the title.
+    for width, counts in ((80, 'Claude Code · 123 msgs'), (22, '123 msgs'), (22, 'to import')):
+        importing[0] = counts == 'to import'
+        frame = ANSI_ESCAPE_RE.sub('', '\n'.join(browser.frame(width=width, height=20)))
+        card = next((line for line in frame.splitlines() if '> ' in line and ' Fr' in line), frame)
+        assert card.endswith(f' {counts}') and card.count('·') == counts.count('·'), frame
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''
@@ -1369,8 +1413,8 @@ def test_cli_resume_flags(
     async def fake_chat(*args: object, resume: str | None, resume_from: str | None, **kwargs: object) -> None:
         seen.append((resume, resume_from))
 
-    monkeypatch.setattr('pydantic_clai2._app.chat', fake_chat)
-    _cli.run()
+    monkeypatch.setattr('pydantic_clai2.app.chat', fake_chat)
+    cli.run()
     assert seen == [(resume, source)]
 
 
@@ -1385,7 +1429,7 @@ def test_cli_prompt_with_imported_session(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(headless, 'run_headless', run_headless)
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 0
     assert seen == [(CODEX_ID, 'codex')]
 
@@ -1399,7 +1443,7 @@ def test_cli_rejects_conflicting_resume_flags(
 ) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'config.db'), *flags])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 

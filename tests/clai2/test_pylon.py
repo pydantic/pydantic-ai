@@ -113,9 +113,9 @@ async def built(loaded: LoadedPlugin[None]) -> Pylon[None]:
     return result
 
 
-def config(settings: pylon.PylonSettings | None = None) -> pylon.PylonConfig:
+def config(settings: pylon.PylonSettings | None = None) -> pylon.PylonSource:
     saved: list[pylon.PylonSettings] = []
-    return pylon.PylonConfig(settings or pylon.PylonSettings(), saved.append)
+    return pylon.PylonSource(settings or pylon.PylonSettings(), saved.append)
 
 
 def reset(key: str) -> MenuResult:

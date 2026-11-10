@@ -240,6 +240,20 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
+# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
+# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+boxd = "2026-10-27T23:56:00Z"
+# render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
+# TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+render = "2026-10-30T01:06:03Z"
+# durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
+# of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
+# TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+durabletask = "2026-11-02T22:34:00Z"
+durabletask-azuremanaged = "2026-11-02T22:34:00Z"
 
 [dependency-groups]
 dev = [
@@ -249,7 +263,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
-    "coverage[toml]>=7.10.7",
+    "coverage[toml]>=7.17.0",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "pydocket>=0.20.2",
@@ -300,6 +314,9 @@ dev = [
     # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
     # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
+    # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
+    # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
+    "grpclib>=0.4.7",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -312,12 +329,21 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
+    # The cognitive complexity gate scores code with complexipy in-process. This exact release was
+    # audited by dsfaccini, which is why it is pinned. Bump it deliberately, after auditing the new release.
+    "complexipy==8.3.0",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
 clai2-browser = [
     "playwright>=1.45",
+]
+# The real span exporter behind the gh-aw engine's `PAI_OTEL_EXPORT_PATH`, which
+# `tests/harness/gh_aw/test_logfire_isolation.py` runs. It brings `opentelemetry-sdk`, so it stays out
+# of `dev`: the `pydantic-evals` CI cell covers `pydantic_evals.otel`'s fallback for installs without the SDK.
+gh-aw-tracing = [
+    "opentelemetry-exporter-otlp-json-file>=0.64b0",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -344,17 +370,22 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
+    ".github/scripts/pr_gates.py",
+    ".github/scripts/publish_douwebot_review.py",
+    ".github/scripts/review_gates.py",
+    ".github/scripts/test_pr_gates.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
-    ".github/scripts/semantic_owner_router.py",
-    ".github/scripts/test_semantic_owner_router.py",
     ".github/scripts/community_demand.py",
     ".github/scripts/test_community_demand.py",
     ".github/scripts/triage_telemetry.py",
@@ -363,13 +394,23 @@ include = [
     ".github/scripts/test_feature_digest.py",
     ".github/scripts/agentic_workflow_guard.py",
     ".github/scripts/test_agentic_workflow_guard.py",
+    ".github/scripts/weekly_ce_audit.py",
+    ".github/scripts/test_weekly_ce_audit.py",
     ".github/scripts/agent_spend_report.py",
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_pr_guard.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
+    ".github/scripts/douwebot_usage_limit.py",
+    ".github/scripts/test_douwebot_usage_limit.py",
+    ".github/scripts/douwebot_opencode_run.py",
+    ".github/scripts/douwebot_opencode_result.py",
+    ".github/scripts/test_douwebot_opencode_run.py",
+    ".github/scripts/test_douwebot_opencode_result.py",
 ]
 
 [tool.ruff.lint]
@@ -446,9 +487,10 @@ quote-style = "single"
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
+".github/scripts/test_pr_gates.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
+".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
-".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
 ".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
@@ -456,10 +498,17 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_pr_guard.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_latest_versions_canary_report.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
+".github/scripts/test_douwebot_usage_limit.py" = ["D"]
+".github/scripts/test_douwebot_opencode_run.py" = ["D"]
+".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
@@ -469,6 +518,18 @@ quote-style = "single"
 "tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
+
+# Read by `scripts/check_complexity.py`, which pre-commit and CI run, and by a plain `complexipy` run.
+[tool.complexipy]
+paths = [
+    "pydantic_ai_slim/pydantic_ai",
+    "pydantic_graph/pydantic_graph",
+    "pydantic_evals/pydantic_evals",
+    "src/pydantic_ai_harness/pydantic_ai_harness",
+    "src/pydantic_clai2/pydantic_clai2",
+]
+max-complexity-allowed = 15
+cache-dir = ".cache/complexipy"
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -488,6 +549,8 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -498,15 +561,17 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
-    # Imports `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose root
-    # contains a file, so this one precedes `tests`.
+    # These two import `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose
+    # root contains a file, so they precede `tests`.
     { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full
     # type check on an older interpreter, so they are analysed above the library's floor.
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
@@ -531,8 +596,11 @@ faulthandler_timeout = 120
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
+    "render_live: runs against a real Render sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
+    "boxd_live: runs against a real boxd control plane; needs credentials",
+    "opensandbox_live: runs against a real OpenSandbox server; needs one running",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
@@ -548,6 +616,9 @@ filterwarnings = [
     # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
     # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
     "ignore:coroutine '.*' was never awaited:RuntimeWarning",
+    # Tests hand the Google providers mock-transport clients with httpx's default timeout, which never waits on a
+    # model; `tests/providers/test_google.py` asserts the warning where it matters.
+    "ignore:The `http_client` passed to the Google provider has httpx's default 5-second timeout:UserWarning",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.
     # Matched by message: the warning class lives in a package some install cells do not have.
     "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
@@ -571,6 +642,8 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
+    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
     # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
     # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
     # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
@@ -596,7 +669,8 @@ filterwarnings = [
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
-    "ignore:Found propagated trace context:RuntimeWarning",
+    # logfire < 5.5 says 'Found propagated trace context', 5.5+ says 'Found propagated context'.
+    "ignore:Found propagated (trace )?context:RuntimeWarning",
     # `starlette.testclient` still references the `anyio.abc.BlockingPortal` alias that anyio 4.15.0
     # deprecated, so the warning fires at import time and fails collection of every test module that
     # imports it. There is nothing to bump to: starlette's `master` still uses the alias.
@@ -698,4 +772,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,fpr,aci,gage'
+ignore-words-list = 'asend,fpr,aci,aks,gage'

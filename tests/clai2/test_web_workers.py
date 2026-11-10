@@ -15,11 +15,12 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import DelegationStartEvent, DelegationTask, TaskQuestionEvent
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
     ItemAdded,
     ServerMessage,
+    SessionsChanged,
     Snapshot,
     TaskChanged,
     TaskEntry,
@@ -274,9 +275,11 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)))
     with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
-        # A turn ending means the prompt is open, and with it the session's tasks.
+        # A turn ending means the prompt is open, and with it the session's tasks. The browser hears of
+        # the run's end before the session stores it, and of the sessions changing once it has.
         assert web_.post('/api/input', {'text': 'hello'}).json() == {'menu': None}
         receive_until(socket, TurnEnded)
+        receive_until(socket, SessionsChanged)
         conversation = list(web_.shell.session.messages)
         record = finished_task(web_)
         record.user_stopped = True

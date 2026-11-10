@@ -78,6 +78,7 @@ from pydantic_ai.realtime import (
     WebRTCSession,
     infer_realtime_model,
 )
+from pydantic_ai.realtime._lifecycle import ResponseEnded
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -97,7 +98,8 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
+from .simulation._loop import SimulatedLoop
 
 with try_import() as imports_successful:
     import httpx2
@@ -115,7 +117,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai_live as live_module
+    from pydantic_ai.realtime._utils import InstructionChangeContext
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.openai_live import (
         AUTO_BACKEND_MODEL,
@@ -187,6 +191,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_thinking=True,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
         synthesizes_turn_boundary=True,
         # Its spoken replies are inferred turns; the requests that spend tokens are the backend's.
@@ -206,9 +211,24 @@ def test_websocket_url_is_the_live_endpoint(model: OpenAILiveModel) -> None:
     assert model._live_url() == snapshot('wss://api.openai.com/v1/live/sessions')  # pyright: ignore[reportPrivateUsage]
 
 
-def test_azure_is_rejected() -> None:
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_is_rejected(kind: str) -> None:
     """Azure does not serve GPT-Live, so pointing at it fails with a pointer to what does."""
-    provider = AzureProvider(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
+
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    endpoint = 'https://example.openai.azure.com'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=f'{endpoint}/openai/v1/', api_key='k')
     with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
         OpenAILiveModel('gpt-live-1', provider=provider)
 
@@ -724,6 +744,102 @@ async def test_text_turn_runs_the_backend_and_context_is_thinking() -> None:
     )
 
 
+async def test_instruction_change_updates_the_backend_instructions() -> None:
+    """The agent's instructions are the backend's, so a change is appended to them with `session.update`, and the
+    configuration a redial starts the new session with has it too."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    backend: dict[str, Any] = {'model': 'gpt-5.6-sol', 'instructions': 'Be brief.'}
+    connection = _Recorder(object(), backend=backend)  # pyright: ignore[reportArgumentType]
+    first = '<context id="agent:mood">\nBe calm.\n</context>'
+    second = '<context id="agent:mood">\nBe cheerful.\n</context>'
+    await connection.send(InstructionChangeContext(f'<system>{first}</system>', system_prompt=first))
+    await connection.send(InstructionChangeContext(f'<system>{second}</system>', system_prompt=second))
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>\
+"""
+                        },
+                    }
+                },
+            },
+            {
+                'type': 'session.update',
+                'session': {
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>
+
+<context id="agent:mood">
+Be cheerful.
+</context>\
+"""
+                        },
+                    }
+                },
+            },
+        ]
+    )
+    assert backend == snapshot(
+        {
+            'model': 'gpt-5.6-sol',
+            'instructions': """\
+Be brief.
+
+<context id="agent:mood">
+Be calm.
+</context>
+
+<context id="agent:mood">
+Be cheerful.
+</context>\
+""",
+        }
+    )
+    assert connection._replays_instruction_changes is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_instruction_change_without_backend_instructions() -> None:
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(InstructionChangeContext('<system>Be calm.</system>', system_prompt='Be calm.'))
+    assert sent == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {'delegation': {'type': 'responses', 'responses': {'instructions': 'Be calm.'}}},
+            }
+        ]
+    )
+
+
 async def test_tool_result_continues_the_delegated_response() -> None:
     """A delegated response waiting on tool output does not resume on its own."""
     sent: list[dict[str, Any]] = []
@@ -1090,6 +1206,9 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         BinaryContent(data=b'png', media_type='image/png'),
         TextContent(content='The invoice:'),
         BinaryContent(data=b'pdf', media_type='application/pdf'),
+        BinaryContent(
+            data=b'pptx', media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        ),
         CachePoint(),
         ImageUrl(url='https://example.com/kiwi.jpg'),
         DocumentUrl(url='https://example.com/terms.pdf'),
@@ -1117,6 +1236,11 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
                             'file_data': 'data:application/pdf;base64,cGRm',
                             'filename': 'filename.pdf',
                         },
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,cHB0eA==',
+                            'filename': 'filename.pptx',
+                        },
                         {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
                         {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
                         {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
@@ -1135,6 +1259,8 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
         (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
         (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        # No document either: `mimetypes` knows no extension for it
+        (BinaryContent(data=b'x', media_type='application/custom'), 'cannot send `application/custom` content'),
         (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
         (
             DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
@@ -1760,6 +1886,19 @@ async def test_the_agents_model_is_used_when_reached_the_same_way(
     agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider(agent_route)))
     live = OpenAILiveModel('gpt-live-1', provider=provider(live_route))
     assert await _session_backend(agent, live) == backend
+
+
+async def test_the_agents_model_is_used_through_a_renamed_provider() -> None:
+    """A provider that renames itself reaches the Live session's server as long as both models use it."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='x')
+    agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider))
+    assert await _session_backend(agent, OpenAILiveModel('gpt-live-1', provider=provider)) == 'gpt-6-luna'
 
 
 async def test_an_agent_model_not_at_openai_is_not_a_backend(model: OpenAILiveModel) -> None:
@@ -2648,6 +2787,222 @@ async def test_speech_through_a_delegated_call_is_one_part_ahead_of_it() -> None
         ]
     )
     assert [type(part) for part in returned.parts] == [ToolReturnPart]
+
+
+def _said(text: str, start_ms: int) -> dict[str, Any]:
+    return {
+        'type': 'session.output_transcript.delta',
+        'delta': text,
+        'start_ms': start_ms,
+        'end_ms': start_ms + 100,
+        'event_id': 'e',
+    }
+
+
+_VOICE = {'type': 'session.output_audio.delta', 'delta': base64.b64encode(b'\x00\x10' * 2400).decode()}
+_SILENCE = {'type': 'session.output_audio.delta', 'delta': base64.b64encode(b'\x00' * 4800).decode()}
+"""100 ms of Live's idle track."""
+
+
+class _ContinuedWebSocket(_FakeWebSocket):
+    """A socket whose `continued` frames come once the client continues the delegated backend (`response.create`)."""
+
+    def __init__(self, frames: list[str], *, continued: list[str]) -> None:
+        super().__init__(frames)
+        self._continued = continued
+
+    async def send(self, data: str) -> None:
+        await super().send(data)
+        if json.loads(data)['type'] == 'response.create':
+            self._frames.extend(self._continued)
+            self._arrived.set()
+
+
+@pytest.mark.parametrize('pause', ['audio', 'transcript'])
+async def test_a_reply_that_delegated_ends_at_lives_next_pause(pause: str) -> None:
+    """Live goes on with what it was saying as the backend answers, and only then speaks the answer.
+
+    The backend settling used to end the reply that called the tools right away, so the rest of Live's sentence was
+    recorded as the start of the answer. The reply ends where Live next pauses, on its audio or its transcript.
+    """
+    answer_start = 900 if pause == 'audio' else 800
+    ws = _ContinuedWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            _said('Checking the', 0),
+            _VOICE,
+            {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
+            _backend_completion('d1'),
+        ),
+        continued=[
+            json.dumps(frame)
+            for frame in (
+                _VOICE,
+                # The continuation, with the tool's result, settles the delegation while Live is mid-sentence.
+                _backend_completion('d1'),
+                _said(' weather now.', 100),
+                _VOICE,
+                *([_SILENCE] * 5 if pause == 'audio' else []),
+                _said('It is sunny.', answer_start),
+                _VOICE,
+            )
+        ],
+    )
+    agent = Agent()
+
+    @agent.tool_plain
+    async def weather() -> str:
+        return 'Sunny.'
+
+    model = OpenAILiveModel(
+        # Long enough that only Live's pause, not the turn clock, can end the reply on a slow runner.
+        'gpt-live-1',
+        provider='openai',
+        settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10_000),
+    )
+    with _patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            with anyio.fail_after(5):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                        if 'sunny' in (event.delta.transcript or ''):
+                            # The answer is under way; closing the session ends it.
+                            break
+
+    assert [
+        [part.transcript if isinstance(part, SpeechPart) else type(part).__name__ for part in message.parts]
+        for message in session.all_messages()
+    ] == snapshot([['Checking the weather now.', 'ToolCallPart'], ['ToolReturnPart'], [' It is sunny.']])
+
+
+def _step(connection: OpenAILiveConnection, payload: dict[str, Any]) -> list[Any]:
+    """Map one Live frame through the connection and its lifecycle, as its frame loop does."""
+    return connection._frame(connection._map_frame(json.dumps(payload)))  # pyright: ignore[reportPrivateUsage]
+
+
+def _settled_mid_sentence(connection: OpenAILiveConnection) -> None:
+    """Live speaks, the backend calls a tool, its result goes back, and the backend settles while Live still talks.
+
+    Live decides when its backend settles relative to its own speech, so a recording can't be made to hit each way the
+    held report goes out: the tests built on this drive the connection's frames directly instead.
+    """
+    _step(connection, _VOICE)
+    _step(connection, _delegation_created('d1'))
+    _step(connection, {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')})
+    connection._delegations['d1'].pending_tool_calls.clear()  # pyright: ignore[reportPrivateUsage]
+    _step(connection, _VOICE)
+    # The backend's report is held: the reply goes on with what Live is saying.
+    assert _step(connection, _backend_completion('d1')) == []
+
+
+@pytest.mark.parametrize('forwards_output_audio', [True, False], ids=['websocket', 'sideband'])
+def test_a_reply_held_for_a_pause_ends_on_the_pause(forwards_output_audio: bool) -> None:
+    """Half a second of quiet on the audio track, which a sideband reads too (see `_settled_mid_sentence`)."""
+    connection = _connection(forwards_output_audio=forwards_output_audio)
+    _settled_mid_sentence(connection)
+    for _ in range(4):
+        assert not any(isinstance(event, ResponseEnded) for event in _step(connection, _SILENCE))
+    ended = _step(connection, _SILENCE)
+    assert [type(event).__name__ for event in ended if isinstance(event, (SessionUsage, ResponseEnded))] == [
+        'SessionUsage',
+        'ResponseEnded',
+    ]
+
+
+def test_a_reply_held_for_a_pause_ends_ahead_of_anything_else() -> None:
+    """The user speaking, say: the reply that called the tools ends ahead of it."""
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    frame = _step(
+        connection,
+        {'type': 'session.input_transcript.delta', 'delta': 'thanks', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+    )
+    assert [
+        type(event).__name__ for event in frame if isinstance(event, (SessionUsage, ResponseEnded, InputTranscript))
+    ] == ['SessionUsage', 'ResponseEnded', 'InputTranscript']
+
+
+def test_a_reply_held_for_a_pause_ends_ahead_of_an_error_frame_the_sdk_refuses() -> None:
+    """OpenAI's guide says to expect `error` frames with a null `code`, which the SDK's model refuses."""
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    frame = _step(
+        connection,
+        {'type': 'error', 'event_id': 'e', 'error': {'type': 'server_error', 'code': None, 'message': 'Boom.'}},
+    )
+    assert [
+        type(event).__name__
+        for event in frame
+        if isinstance(event, (SessionUsage, ResponseEnded, RealtimeSessionErrorEvent))
+    ] == ['SessionUsage', 'ResponseEnded', 'RealtimeSessionErrorEvent']
+
+
+@pytest.mark.parametrize('failure', ['drifted', 'nested'])
+def test_a_reply_held_for_a_pause_ends_ahead_of_a_frame_that_fails_to_map(failure: str) -> None:
+    """A frame that doesn't parse still isn't Live's speech: the reply ends ahead of the error it is reported as."""
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    malformed = (
+        {'type': 'session.delegation.created', 'event_id': 'e'}
+        if failure == 'drifted'
+        else {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd2', 'event': {'type': 'response.completed'}}
+    )
+    frame = _step(connection, malformed)
+    assert [
+        type(event).__name__
+        for event in frame
+        if isinstance(event, (SessionUsage, ResponseEnded, RealtimeSessionErrorEvent))
+    ] == ['SessionUsage', 'ResponseEnded', 'RealtimeSessionErrorEvent']
+
+
+def test_a_reply_held_for_a_pause_is_cut_off_when_the_session_expires() -> None:
+    """The reply keeps the backend usage it reported, and is recorded as cut off (see `_settled_mid_sentence`)."""
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    frame = _step(connection, _session_closed('expired'))
+    ended = [event for event in frame if isinstance(event, ResponseEnded)]
+    assert any(isinstance(event, SessionUsage) and event.response_scoped for event in frame)
+    assert [event.status for event in ended] == ['cancelled']
+
+
+async def test_a_reply_held_for_a_pause_keeps_its_usage_when_the_connection_drops() -> None:
+    """The reply is lost with the connection, but not the backend usage it reported (see `_settled_mid_sentence`)."""
+
+    class _DroppingWebSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            if self._frames:
+                return self._frames.pop(0)
+            raise OSError('gone')
+
+    ws = _DroppingWebSocket(
+        [
+            json.dumps(frame)
+            for frame in (
+                _VOICE,
+                _delegation_created('d1'),
+                {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
+            )
+        ]
+    )
+    connection = OpenAILiveConnection(ws, turn_silence_ms=10_000)  # pyright: ignore[reportArgumentType]
+    events: list[Any] = []
+    with anyio.fail_after(5):
+        async for event in connection:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, ToolCall):
+                connection._delegations['d1'].pending_tool_calls.clear()  # pyright: ignore[reportPrivateUsage]
+                ws._frames.extend(json.dumps(frame) for frame in (_VOICE, _backend_completion('d1')))  # pyright: ignore[reportPrivateUsage]
+    usage = [event for event in events if isinstance(event, SessionUsage)]
+    assert [report.usage.input_tokens for report in usage] == [10]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
+
+
+async def test_a_reply_held_for_a_pause_hands_its_usage_over_when_the_session_ends() -> None:
+    """The session stopped reading: the held report is final usage like any other (see `_settled_mid_sentence`)."""
+    connection = OpenAILiveConnection(_FakeWebSocket([]))  # pyright: ignore[reportArgumentType]
+    _settled_mid_sentence(connection)
+    reports = await _ended(connection)
+    assert [report.usage.input_tokens for report in reports] == [10]
 
 
 @pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
@@ -3722,8 +4077,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
     assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
-    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+    """A link that fails while Live is asked to end the session leaves nothing to wait for.
+
+    On a virtual clock, which only moves when nothing can run, a stalled runner can't use up the deadline, and only
+    waiting out `_END_SESSION_TIMEOUT` can.
+    """
 
     class _DroppingSocket(_FakeWebSocket):
         async def send(self, data: str) -> None:
@@ -3818,6 +4180,77 @@ async def _first_events(connection: OpenAILiveConnection, count: int) -> list[An
             if len(events) == count:
                 break
     return events
+
+
+async def _all_events(connection: OpenAILiveConnection) -> list[Any]:
+    with anyio.fail_after(5):
+        return [event async for event in connection]
+
+
+async def _no_reattach() -> Any:
+    """A sideband's re-attach, for a session that has ended, which nothing re-attaches to."""
+    raise AssertionError('re-attached to a session that ended')  # pragma: no cover
+
+
+@pytest.mark.parametrize('sideband', [True, False], ids=['sideband', 'websocket'])
+async def test_connection_lost_ends_a_sideband_cleanly_and_a_websocket_with_an_error(sideband: bool) -> None:
+    """Live reports a browser that closed its WebRTC connection as `connection_lost`, then drops the sideband without a
+    closing handshake. On a sideband that is the call ending, as on any hangup, while a WebSocket session that loses
+    its connection still reports it.
+    """
+    # Distinct ids: a sideband skips an event id it has already handled, as Live sends some again on a re-attach.
+    closed = {**_session_closed('connection_lost', 4), 'event_id': 'e2'}
+    dropping = _DroppingWebSocket([_output_transcript('Goodbye.', 'e1'), json.dumps(closed)])
+    connection = OpenAILiveConnection(dropping, reattach=_no_reattach if sideband else None)  # pyright: ignore[reportArgumentType]
+    events = await _all_events(connection)
+    if sideband:
+        # The final usage is recorded, the reply settled as finished, and the stream ends.
+        assert events == snapshot(
+            [
+                OutputTranscript(text='Goodbye.'),
+                SessionUsage(usage=RequestUsage(audio_seconds=4.0), response_scoped=False),
+                ResponseDone(),
+            ]
+        )
+    else:
+        # The connection a WebSocket session loses is its own: reported as lost, then as closed.
+        assert events == snapshot(
+            [
+                OutputTranscript(text='Goodbye.'),
+                SessionUsage(usage=RequestUsage(audio_seconds=4.0), response_scoped=False),
+                ResponseDone(interrupted=True),
+                RealtimeSessionErrorEvent(
+                    message='The OpenAI GPT-Live session ended: connection_lost.',
+                    code='live_session_connection_lost',
+                    recoverable=False,
+                ),
+                RealtimeSessionErrorEvent(
+                    message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+                ),
+            ]
+        )
+
+
+class _BrokenPipeWebSocket(_FakeWebSocket):
+    async def recv(self) -> str:
+        raise OSError('broken pipe')
+
+
+async def test_a_socket_error_ends_the_session_with_an_error() -> None:
+    """A link that fails below the WebSocket is a drop, however the session stood."""
+    events = await _all_events(OpenAILiveConnection(_BrokenPipeWebSocket([])))  # pyright: ignore[reportArgumentType]
+    assert events == [
+        RealtimeSessionErrorEvent(message='OpenAI GPT-Live connection closed: broken pipe', recoverable=False)
+    ]
+
+
+async def test_a_session_hung_up_elsewhere_ends_without_a_connection_error() -> None:
+    """Hung up through the REST API rather than this connection: Live sends `session.closed` and drops the socket
+    without a closing handshake, which is the session ending, not the connection failing.
+    """
+    dropping = _DroppingWebSocket([json.dumps(_session_closed('close_requested', 2))])
+    events = await _all_events(OpenAILiveConnection(dropping, reattach=_no_reattach))  # pyright: ignore[reportArgumentType]
+    assert events == snapshot([SessionUsage(usage=RequestUsage(audio_seconds=2.0), response_scoped=False)])
 
 
 async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
@@ -4283,34 +4716,33 @@ async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
 
     dead = _SignallingDeadWebSocket([])
     connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
-    tasks_before = asyncio.all_tasks()
+    with no_leaked_tasks():
 
-    async def first_event() -> Any:
-        # The receive loop itself, closed explicitly, so what the check below finds left running is the connection's
-        # own doing rather than the event loop's cleanup of an abandoned generator.
-        frames = cast('AsyncGenerator[Sequence[Any]]', connection.frames())
-        try:
-            frame = await anext(frames)
-        finally:
-            await frames.aclose()
-        [error] = [event for event in frame if isinstance(event, RealtimeSessionErrorEvent)]
-        return error
+        async def first_event() -> Any:
+            # The receive loop itself, closed explicitly, so what the check below finds left running is the connection's
+            # own doing rather than the event loop's cleanup of an abandoned generator.
+            frames = cast('AsyncGenerator[Sequence[Any]]', connection.frames())
+            try:
+                frame = await anext(frames)
+            finally:
+                await frames.aclose()
+            [error] = [event for event in frame if isinstance(event, RealtimeSessionErrorEvent)]
+            return error
 
-    events = asyncio.create_task(first_event())
-    await reattaching.wait()
-    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await dead.send_failed.wait()
-    await connection.aclose()
-    with pytest.raises(websockets.ConnectionClosedError):
-        await sending
-    release.set()
-    # Closed, the receive loop gives up on re-attaching, and says so.
-    error = await events
-    assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
-    assert late.closed
-    assert late.sent == []
-    assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
-    assert asyncio.all_tasks() <= tasks_before
+        events = asyncio.create_task(first_event())
+        await reattaching.wait()
+        sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+        await dead.send_failed.wait()
+        await connection.aclose()
+        with pytest.raises(websockets.ConnectionClosedError):
+            await sending
+        release.set()
+        # Closed, the receive loop gives up on re-attaching, and says so.
+        error = await events
+        assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
+        assert late.closed
+        assert late.sent == []
+        assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
 
 
 class _ConfirmingWebSocket(_FakeWebSocket):
@@ -4516,17 +4948,13 @@ async def test_a_sideband_that_cannot_reattach_ends_the_session() -> None:
 
 @pytest.mark.parametrize('reason', ['close_requested', 'connection_lost'])
 async def test_a_sideband_does_not_reattach_to_a_session_that_ended(reason: str) -> None:
-    """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to."""
-
-    async def reattach() -> Any:
-        raise AssertionError('re-attached to a session that ended')  # pragma: no cover
-
+    """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to, and the
+    socket closing after it is the session's end, not a drop to recover from.
+    """
     dropping = _DroppingWebSocket([json.dumps(_session_closed(reason))])
-    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
-    events = await _first_events(connection, 1 if reason == 'close_requested' else 2)
-    assert events[-1] == RealtimeSessionErrorEvent(
-        message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
-    )
+    connection = OpenAILiveConnection(dropping, reattach=_no_reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = await _all_events(connection)
+    assert events == snapshot([])
 
 
 async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:

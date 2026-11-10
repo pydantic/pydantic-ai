@@ -4,6 +4,10 @@ Let an agent delegate self-contained tasks to named child agents.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](https://pydantic.dev/docs/ai/img/harness/subagents.svg)
+
 ## The problem
 
 A single agent that does everything accumulates a large tool set and a long context. Splitting the work across specialized sub-agents keeps each context focused, but wiring up delegation by hand means writing a tool per agent, forwarding deps, threading usage limits, and telling the model what it can delegate to.
@@ -44,7 +48,8 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 ## Deps, usage, tools, and capabilities
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
-- Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
+- Delegated agents inherit the parent's workspace unless `workspace_resolver` selects another directory.
+  Parent read-only restrictions still apply.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
@@ -70,7 +75,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
-- **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, which has no access to the parent run's model, so a delegate needs a model of its own or a `models` option; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -144,6 +149,49 @@ orchestrator = Agent(
 - **Resolution order.** The key the parent passed, else the delegate's first allowed key (see below), else the delegate's own model, else the parent run's model.
 - **A delegate can be restricted.** `SubAgent(linter, models=['fast'])` pins that delegate to `fast`: the first listed key is what it runs on when the parent passes no `model`, and the others are refused with a `ModelRetry`. The restriction is rendered in the prompt listing (`- linter: Runs the linter (models: fast)`). Restricting to a key the menu does not define is a `ValueError` at construction.
 - **A rejected key costs nothing.** An unknown or unavailable key comes back as a `ModelRetry` listing the valid options, before the delegate's `max_calls` budget is charged.
+
+## Per-delegation working directory
+
+Set `workspace_resolver` to offer `delegate_task(working_directory=...)`. The async callback receives
+the parent `RunContext` and a `DelegationWorkspaceRequest` with the delegate name and requested
+directory, and returns a `Workspace`. The host
+validates the request and decides which delegates may use another workspace. Without this option,
+the tool omits `working_directory` and children inherit the parent's workspace.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+
+workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
+
+
+async def resolve_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    if request.agent_name != 'reviewer' or request.directory not in workspaces:
+        raise ModelRetry('Choose the reviewer and a configured directory.')
+    return workspaces[request.directory]
+
+
+reviewer = Agent(name='reviewer', deps_type=object, capabilities=[FileSystem(read_only=True)])
+delegation = SubAgents(
+    agents=[SubAgent(reviewer, read_only=True)],
+    workspace_resolver=resolve_workspace,
+)
+```
+
+The child runs with the returned workspace, so its relative file paths and repository instructions
+use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply.
+Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
+API. The resolver must preserve any additional backend restrictions the application requires.
+
+The caller owns the returned workspace and keeps its resources alive until background children
+finish. Managed tasks record the resolved directory in `DelegationTask.working_directory`. On resume,
+omitting the argument resolves that saved directory again; changing it is rejected. The resolver must
+therefore accept its own resolved directory spelling. Older tasks without this field inherit the
+parent workspace. Remote and durable delegations reject directory overrides. This option does not
+change where disk agent definitions are discovered: `SubAgents.workspace` controls that separately.
 
 ## Failure handling
 
@@ -240,7 +288,12 @@ orchestrator = Agent(
 - **Limits.** `TaskControl(auto_background_after=...)` moves a task still running after that many seconds to the background. `TaskControl(max_running_tasks=...)` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot (see [Managed delegation sessions](#managed-delegation-sessions) for `one_shot`). All are off by default.
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
-- Only one `SubAgents` on an agent can set `task_control`. Task control and `dynamic_agents` are not supported under durable execution: a run that uses them under a durability capability raises a `UserError`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so this check can't catch them; don't use either feature with them.
+- Only one `SubAgents` on an agent can set `task_control`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so the checks below can't catch them; don't use task control or `dynamic_agents` with them.
+- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. Under durable execution, these raise a `UserError`:
+    - task control with `include_self`, `remote_agents` or `forward_events`
+    - task control with `auto_background_after` or `max_running_tasks` outside Temporal
+    - task control or `dynamic_agents` on another durable engine, or within a bound `DelegationTasks` owner
+- On Temporal and DBOS, `dynamic_agents` keeps the roster in the workflow and runs each delegation other than to `self` in a durable unit of its own, on the parent run's model unless the created agent has one, so recovery rebuilds the created agents and reuses each delegation's result. The `factory` runs again on replay, so keep it deterministic. Engines that record each tool call in a unit of its own would lose the roster on replay, so they raise a `UserError`. Under any durability capability, `SubAgents` needs an `id`, which it has by default; `id=None` raises a `UserError`.
 - Task control and `DelegationTasks` run tasks as asyncio tasks, so they need the asyncio event loop: AnyIO's Trio backend is not supported.
 
 ### Task events
@@ -336,217 +389,34 @@ SubAgents(models={'fast': 'anthropic:claude-haiku-4-5'}, dynamic_agents=DynamicA
 
 Task control, remote agents, and created agents are a port of [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai), a community package by [Vstorm](https://vstorm.co/) (MIT licensed).
 
-## Discovery
-
-The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.
-
-## Loading sub-agents from disk
-
-A repo's agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every Claude-style `*.md` file and Codex-style `*.toml` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`. Files are read in sorted filename order.
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai_harness import SubAgents
-
-orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
-    capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
-)
-```
-
-Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
-
-`agent_folders` controls which folders are read:
-
-- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working directory, in that order, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from the others. A run without a workspace skips them.
-- A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
-- `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
-
-Earlier releases loaded the conventional folders by default. Pass `agent_folders='agents'` to keep doing so.
-
-Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence. Convention discovery warns once when it skips a folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
-
-### Definition format
-
-A definition is a Claude-style markdown file with optional frontmatter, or a Codex-style TOML file. Markdown:
-
-```markdown
----
-name: researcher
-description: Researches a topic and reports findings
-tools: Read, Grep
----
-You research topics. Report your findings, each with a source.
-```
-
-- `name` is the delegate name (how the parent refers to it and how it is listed). It falls back to the filename stem when absent.
-- `description` drives the prompt listing.
-- The markdown body becomes the agent's instructions.
-- `tools` (or `allowed-tools`) is a comma-separated string or a YAML block list. See "Tools" below.
-- `model` and `color` are ignored: the model is inherited from the parent (see below), and `color` has no pyai equivalent.
-
-Frontmatter is read by a small, dependency-free parser limited to those keys (`pyyaml` is not a harness dependency). Full YAML frontmatter is not supported.
-
-A Codex-style standalone TOML file:
-
-```toml
-name = "reviewer"
-description = "Reviews code for bugs"
-developer_instructions = "Inspect the code and report findings. Do not edit files."
-tools = ["Read", "Grep"]
-```
-
-- `name`, `description`, and `developer_instructions` are required nonempty strings.
-- `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
-- `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
-- Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
-- TOML files are parsed with the standard-library `tomllib` module.
-
-Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
-
-### Models and effort
-
-Disk agents inherit the parent run's model by default. Per agent, the caller can override the model and set a thinking/effort level via `agent_overrides`, keyed by the agent's name:
-
-```python
-from pydantic_ai_harness import SubAgents
-from pydantic_ai_harness.subagents import AgentOverride
-
-SubAgents(
-    agent_folders='agents',
-    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
-)
-```
-
-When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
-
-`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
-
-### Tools
-
-Without a `tool_resolver`, a disk agent gets no tools and its `tools` frontmatter is ignored. To map the frontmatter tool names to toolsets, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
-
-```python {names="defined"}
-from collections.abc import Sequence
-
-from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness import SubAgents
-
-TOOLSETS: dict[str, Sequence[AgentToolset[object]]] = {}  # your tool name -> toolsets mapping
-
-
-def resolve(tool_name: str) -> Sequence[AgentToolset[object]] | None:
-    return TOOLSETS.get(tool_name)
-
-SubAgents(agent_folders='agents', tool_resolver=resolve)
-```
-
-### Precedence
-
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder before its `.claude/` folder; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
-
-## Configuration
-
-```python {names="defined"}
-from pydantic_ai_harness import SubAgents
-
-SubAgents(
-    agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
-    models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
-    agent_folders=None,    # folder-name str ('agents' is conventional) | Sequence[str | Path] workspace paths | None
-    agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
-    tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
-    forward_usage=True,    # share the parent's usage with sub-agent runs
-    inherit_tools=False,   # deprecated: use include_self=True, or tool_resolver for disk agents
-    shared_capabilities=(),# capabilities applied to every sub-agent run
-    event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
-    tool_name='delegate_task',
-    tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
-    contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
-    workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
-    include_self=False,    # also list the running agent itself as the delegate `self`
-    max_depth=3,           # delegation levels, counting the top-level run
-    task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events
-    dynamic_agents=None,   # DynamicAgents -- let the model create sub-agents with `create_agent`
-)
-```
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import SubAgent
-
-agent = Agent('anthropic:claude-opus-5-5')
-
-SubAgent(
-    agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
-    name=None,             # delegate name; defaults to the agent's own `name`
-    description=None,      # prompt-listing description; defaults to the agent's own `description`
-    models=None,           # Sequence[str] -- menu keys this delegate may run on; the first is its default
-    usage_limits=None,     # per-delegation request/token budget (isolated accounting)
-    timeout_seconds=None,  # per-delegation wall-clock budget
-    max_calls=None,        # max delegations to this sub-agent per parent run
-    on_failure=None,       # steering message for soft degradations of this delegate
-    contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
-    resumable=True,        # whether a finished task can be resumed, with a task owner
-    can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
-)
-```
-
-```python {names="defined"}
-from pydantic_ai_harness.subagents import TaskControl
-
-TaskControl(
-    remote_agents=(),      # Sequence[RemoteSubAgent] -- agents a SubAgentWorker serves
-    transport=None,        # SubAgentTransport reaching that worker, required with remote_agents
-    accept_timeout=30.0,   # seconds a remote task waits for a worker to pick it up
-    auto_background_after=None,  # seconds a delegation waits before its task moves to the background
-    max_running_tasks=None,      # tasks a conversation may run at once, across its delegation tree
-    forward_events=False,  # forward the events of task runs as TaskProgressEvent
-)
-```
-
-`SubAgents` is not serializable via the agent spec (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
-
-## Notes
-
-- Sub-agents can themselves have `SubAgents`, forming a tree. Each `SubAgents` stops offering delegation once the run is at its own `max_depth`, so a delegate with a higher limit can go deeper than its parent's. Share `usage` (the default) and set a `usage_limits` on the top-level run to bound the whole tree.
-- Delegations the model issues in parallel run as independent sub-agent runs.
-
-## Further reading
-
-- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Multi-agent applications](https://ai.pydantic.dev/multi-agent-applications/)
-
 ## Managed delegation sessions
 
-`SubAgents` keeps its existing foreground-only behavior unless a caller explicitly
-opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
-delegate tool's schema, gives every child a stable conversation ID, and owns every
-worker, an asyncio task, until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's queued-message API. Each report is the child's
-output in a `UserPromptPart`, framed as `<task_output task_id="..." agent_name="...">`
-data, with `outcome="..."` added when the task didn't succeed, like a background
-tool's `<tool_result>`. The output was written by a model, so it never enters
-system voice, and a closing tag inside it can't end the frame early. Nothing
-precedes the frame: the acceptance receipt the parent got at launch already said a
-report would follow. Use `is_task_report(part)` to
-recognize the output part, or a task's question, which arrives the same way framed as
-`<task_question task_id="..." agent_name="...">`, for example to keep it out of a transcript of what the
-user typed. Like `BackgroundTools` completions, the metadata is never sent to the
-model, but the Vercel AI and AG-UI message conversions omit it: a history that
-round-trips through them returns the report or question as plain user text, and
-`is_task_report` no longer matches it. History passed in `message_history` is
-trusted as the caller's own, this metadata included. Load history from an untrusted
-client with a UI adapter, which never puts client metadata on message content;
-`sanitize_messages` becomes a
-safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands; until then it keeps
-`TextContent.metadata`. No extra
-agent loop is implemented. Reports default to `priority='when_idle'`
-so active parents finish their current work first. A host that starts an idle
-continuation should use `DelegationReports(..., priority='asap')` and
-`agent.run(None, ...)`: pending reports then enter the first model request, with
-no synthetic user prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
+`SubAgents` delegates in the foreground only, unless a caller opens and binds a `DelegationTasks`
+owner. The owner adds `background` and `resume` to the delegate tool's schema, gives every child a
+stable conversation ID, and owns every worker, an asyncio task, until shutdown. No extra agent loop
+is implemented.
+
+Use `DelegationReports` on the parent run to deliver settled background reports through core's
+queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
+`<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
+didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
+never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
+the frame: the acceptance receipt the parent got at launch already said a report would follow.
+
+Reports default to `priority='when_idle'` so active parents finish their current work first. A host
+that starts an idle continuation should use `DelegationReports(..., priority='asap')` and
+`agent.run(None, ...)`: pending reports then enter the first model request, with no synthetic user
+prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
 run has read its last queued messages is kept for the conversation's next run.
+
+Use `is_task_report(part)` to recognize the output part, or a task's question, which arrives the
+same way framed as `<task_question task_id="..." agent_name="...">`, for example to keep it out of
+a transcript of what the user typed. Like `BackgroundTools` completions, the metadata is never sent
+to the model, but the Vercel AI and AG-UI message conversions omit it: a history that round-trips
+through them returns the report or question as plain user text, and `is_task_report` no longer
+matches it. History passed in `message_history` is trusted as the caller's own, this metadata
+included. Load history from an untrusted client with a UI adapter, which never puts client metadata
+on message content, or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
 from pathlib import Path
@@ -633,3 +503,183 @@ readers and expose no shell, code execution, or parent plugin tools.
 
 Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
 and child run IDs provide correlation. This owner adds no logging exporter.
+
+## Discovery
+
+The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.
+
+## Loading sub-agents from disk
+
+A repo's agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every Claude-style `*.md` file and Codex-style `*.toml` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`. Files are read in sorted filename order.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SubAgents
+
+orchestrator = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
+)
+```
+
+Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
+
+`agent_folders` controls which folders are read:
+
+- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working directory, in that order, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from the others. A run without a workspace skips them.
+- A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
+- `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
+
+Folders are read only through a workspace. A run without a workspace fails at its start when given a path sequence. Convention discovery warns once when it skips a `.agents/` or `.claude/` folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
+
+### Definition format
+
+A definition is a Claude-style markdown file with optional frontmatter, or a Codex-style TOML file. Markdown:
+
+```markdown
+---
+name: researcher
+description: Researches a topic and reports findings
+tools: Read, Grep
+---
+You research topics. Report your findings, each with a source.
+```
+
+- `name` is the delegate name (how the parent refers to it and how it is listed). It falls back to the filename stem when absent.
+- `description` drives the prompt listing.
+- The markdown body becomes the agent's instructions.
+- `tools` (or `allowed-tools`) is a comma-separated string or a YAML block list. See "Tools" below.
+- `model` and `color` are ignored: the model is inherited from the parent (see below), and `color` has no pyai equivalent.
+
+Frontmatter is read by a small, dependency-free parser limited to those keys (`pyyaml` is not a harness dependency). Full YAML frontmatter is not supported.
+
+A Codex-style standalone TOML file:
+
+```toml
+name = "reviewer"
+description = "Reviews code for bugs"
+developer_instructions = "Inspect the code and report findings. Do not edit files."
+tools = ["Read", "Grep"]
+```
+
+- `name`, `description`, and `developer_instructions` are required nonempty strings.
+- `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
+- `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
+- Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
+- TOML files are parsed with the standard-library `tomllib` module.
+
+Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
+
+### Models and effort
+
+Disk agents inherit the parent run's model by default. Per agent, the caller can override the model and set a thinking/effort level via `agent_overrides`, keyed by the agent's name:
+
+```python
+from pydantic_ai_harness import SubAgents
+from pydantic_ai_harness.subagents import AgentOverride
+
+SubAgents(
+    agent_folders='agents',
+    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
+)
+```
+
+When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
+
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
+
+### Tools
+
+Without a `tool_resolver`, a disk agent gets no tools and its `tools` frontmatter is ignored. To map the frontmatter tool names to toolsets, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
+
+```python {names="defined"}
+from collections.abc import Sequence
+
+from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness import SubAgents
+
+TOOLSETS: dict[str, Sequence[AgentToolset[object]]] = {}  # your tool name -> toolsets mapping
+
+
+def resolve(tool_name: str) -> Sequence[AgentToolset[object]] | None:
+    return TOOLSETS.get(tool_name)
+
+SubAgents(agent_folders='agents', tool_resolver=resolve)
+```
+
+### Precedence
+
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder, then `.claude/`, then `.codex/`; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
+
+## Configuration
+
+```python {names="defined"}
+from pydantic_ai_harness import SubAgents
+
+SubAgents(
+    agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
+    models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
+    agent_folders=None,    # folder-name str ('agents' is conventional) | Sequence[str | Path] workspace paths | None
+    agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
+    tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
+    forward_usage=True,    # share the parent's usage with sub-agent runs
+    inherit_tools=False,   # deprecated: use include_self=True, or tool_resolver for disk agents
+    shared_capabilities=(),# capabilities applied to every sub-agent run
+    event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
+    tool_name='delegate_task',
+    tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
+    contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
+    workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
+    workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
+    include_self=False,    # also list the running agent itself as the delegate `self`
+    max_depth=3,           # delegation levels, counting the top-level run
+    task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events
+    dynamic_agents=None,   # DynamicAgents -- let the model create sub-agents with `create_agent`
+)
+```
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import SubAgent
+
+agent = Agent('anthropic:claude-opus-5-5')
+
+SubAgent(
+    agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
+    name=None,             # delegate name; defaults to the agent's own `name`
+    description=None,      # prompt-listing description; defaults to the agent's own `description`
+    models=None,           # Sequence[str] -- menu keys this delegate may run on; the first is its default
+    usage_limits=None,     # per-delegation request/token budget (isolated accounting)
+    timeout_seconds=None,  # per-delegation wall-clock budget
+    max_calls=None,        # max delegations to this sub-agent per parent run
+    on_failure=None,       # steering message for soft degradations of this delegate
+    contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
+    resumable=True,        # whether a finished task can be resumed, with a task owner
+    can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
+)
+```
+
+```python {names="defined"}
+from pydantic_ai_harness.subagents import TaskControl
+
+TaskControl(
+    remote_agents=(),      # Sequence[RemoteSubAgent] -- agents a SubAgentWorker serves
+    transport=None,        # SubAgentTransport reaching that worker, required with remote_agents
+    accept_timeout=30.0,   # seconds a remote task waits for a worker to pick it up
+    auto_background_after=None,  # seconds a delegation waits before its task moves to the background
+    max_running_tasks=None,      # tasks a conversation may run at once, across its delegation tree
+    forward_events=False,  # forward the events of task runs as TaskProgressEvent
+)
+```
+
+`SubAgents` is not serializable via the agent spec (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
+
+## Notes
+
+- Sub-agents can themselves have `SubAgents`, forming a tree. Each `SubAgents` stops offering delegation once the run is at its own `max_depth`, so a delegate with a higher limit can go deeper than its parent's. Share `usage` (the default) and set a `usage_limits` on the top-level run to bound the whole tree.
+- Delegations the model issues in parallel run as independent sub-agent runs.
+
+## Further reading
+
+- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
+- [Multi-agent applications](https://ai.pydantic.dev/multi-agent-applications/)

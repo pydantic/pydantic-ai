@@ -1,11 +1,18 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    inline_objects,
+    resolve_json_pointer,
+    split_definitions,
+)
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -126,7 +133,7 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
+_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
@@ -148,8 +155,11 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         supports_context=True,
         efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
-    # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
+    # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.1-terra': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
     'gpt-6-sol': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),
@@ -291,7 +301,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the API rejects a thinking request whose tool-calling assistant turn lacks `openai_chat_thinking_field`. Default: `False`.
 
     Only applies when `openai_chat_send_back_thinking_parts` is `'field'`. In that mode, a tool-calling assistant
-    turn that lacks the field gets it empty once the history holds a `ThinkingPart`. Set this for an API that also
+    turn that lacks the field gets it empty from the first response in the history that holds a `ThinkingPart` on;
+    an earlier turn was already sent without it, so it keeps going out that way. Set this for an API that also
     rejects such a turn before any response has thought, such as a step served without thinking: the field is then
     sent empty on every such turn whenever thinking is on for the request, through a setting or
     `thinking_enabled_by_default`."""
@@ -544,6 +555,32 @@ class OpenAIModelProfile(ModelProfile, total=False):
     endpoints may reject the field (OpenRouter does), so it stays off for them.
     """
 
+    openai_responses_supports_websocket: bool
+    """Whether the model can send Responses requests over a WebSocket. Default: `True`.
+
+    When `False`, [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport]
+    warns with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] and sends each request
+    over HTTP. Set by `AzureProvider`, and by `OpenAIResponsesModel` for an `AsyncAzureOpenAI` client and the
+    Pydantic AI Gateway; a `True` in the model's `profile=` wins over these. It stays `False` whatever `profile=` says
+    for providers that add OAuth credentials to HTTP requests only (`openai-chatgpt`, `openai-codex`),
+    and `OpenAICodexModel`, whose HTTP authentication or session headers cannot configure the SDK socket client.
+    Per-request credentials are a runtime fallback instead: API key callbacks, workload identities, Azure AD token
+    providers and HTTP client authentication use HTTP regardless of this capability flag.
+    """
+
+    openai_responses_supports_websocket_stream_id: bool
+    """Whether the Responses WebSocket endpoint runs concurrent responses on separate `stream_id` lanes.
+
+    When `True`, concurrent requests that
+    [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] sends
+    over the model's socket each run on their own named `stream_id` lane. When `False`, requests send no `stream_id`
+    and the socket runs one at a time, sending the others over HTTP, since an endpoint that doesn't route events by
+    `stream_id` would hand one request another's events. When unset, the socket decides by the host of the SDK
+    client's WebSocket URL when it opens: lanes on `api.openai.com`, one at a time on any other host, including
+    services and proxies reached through `OpenAIProvider`. An explicit value wins, set either in the model's
+    `profile=` or in a provider subclass's `model_profile`.
+    """
+
     openai_responses_requires_streaming: bool
     """Whether the Responses endpoint serves streaming responses only. Default: `False`.
 
@@ -633,7 +670,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
     profile = OpenAIModelProfile(
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        json_schema_transformer=(
+            _GptOssJsonSchemaTransformer if model_name.startswith('gpt-oss') else OpenAIJsonSchemaTransformer
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
@@ -660,6 +699,16 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
     return profile
+
+
+def _gpt_oss_schema_profile(model_name: str) -> ModelProfile | None:  # pyright: ignore[reportUnusedFunction]
+    """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
+
+    Returns `None` for every other model, so they keep the provider's defaults.
+    """
+    if model_name.startswith('gpt-oss'):
+        return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
+    return None
 
 
 def is_openai_live_model(model_name: str) -> bool:
@@ -786,6 +835,28 @@ _TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
 
 _sentinel = object()
 
+_STRICT_MAX_NESTING_DEPTH = 10
+_STRICT_MAX_PROPERTIES = 5000
+"""OpenAI's limits on one strict schema, enforced by both the Chat Completions and Responses APIs.
+
+https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size
+"""
+
+
+def _exceeds_strict_size_limits(schema: JsonSchema) -> bool:
+    """Whether a schema has more levels of nested objects, or more object properties, than OpenAI's strict mode allows.
+
+    The API counts the schema and each of its definitions on their own, without following `$ref`s.
+    """
+    root, definitions = split_definitions(schema)
+    for part in [root, *definitions]:
+        objects = list(inline_objects(part))
+        if max((depth for _, depth in objects), default=0) > _STRICT_MAX_NESTING_DEPTH:
+            return True
+        if sum(len(node['properties']) for node, _ in objects) > _STRICT_MAX_PROPERTIES:
+            return True
+    return False
+
 
 def _regex_contains_lookaround(pattern: str) -> bool:
     escaped = False
@@ -848,7 +919,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
 
         return result
 
-    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa: C901
+    def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('$schema', None)
@@ -864,22 +935,55 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         if schema_ref := schema.get('$ref'):
-            if schema_ref == self.root_ref:
-                schema['$ref'] = '#'
-            elif (
-                self.strict is None
-                and schema_ref.startswith('#/')
-                and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
-            ):
-                # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
-                # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
-                self.is_strict_compatible = False
-            if len(schema) > 1:
-                # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
-                # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
-                schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+            self._transform_ref(schema, schema_ref)
 
-        # Track strict-incompatible keys
+        self._transform_strict_incompatible_values(schema)
+
+        schema_type = schema.get('type')
+        if 'oneOf' in schema:
+            # OpenAI does not support oneOf in strict mode
+            if self.strict is True:
+                schema['anyOf'] = schema.pop('oneOf')
+            else:
+                self.is_strict_compatible = False
+
+        if schema_type == 'object':
+            self._transform_object(schema)
+
+        if schema_type == 'array':
+            self._check_array_items(schema)
+        return schema
+
+    def _transform_ref(self, schema: JsonSchema, schema_ref: str) -> None:
+        if schema_ref == self.root_ref:
+            schema['$ref'] = '#'
+        elif (
+            self.strict is None and schema_ref.startswith('#/') and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
+            # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
+            self.is_strict_compatible = False
+        if len(schema) > 1:
+            # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
+            # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
+            schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+
+    def _transform_strict_incompatible_values(self, schema: JsonSchema) -> None:
+        incompatible_values = self._strict_incompatible_values(schema)
+        description = schema.get('description')
+        if incompatible_values:
+            if self.strict is True:
+                notes: list[str] = []
+                for key, value in incompatible_values.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_string = ', '.join(notes)
+                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
+
+    def _strict_incompatible_values(self, schema: JsonSchema) -> dict[str, Any]:
+        """The keywords in `schema` that strict mode doesn't support, with their values."""
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
             if self._strict_supports_length_constraints and key in ('minLength', 'maxLength'):
@@ -893,73 +997,93 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         pattern = schema.get('pattern')
         if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
             incompatible_values['pattern'] = pattern
-        description = schema.get('description')
-        if incompatible_values:
+        return incompatible_values
+
+    def _transform_object(self, schema: JsonSchema) -> None:
+        # Always ensure 'properties' key exists - OpenAI drops objects without it
+        if 'properties' not in schema:
+            schema['properties'] = dict[str, Any]()
+
+        if self.strict is True:
+            # additional properties are disallowed
+            schema['additionalProperties'] = False
+
+            # all properties are required
+            schema['required'] = list(schema['properties'].keys())
+
+        elif self.strict is None:
+            if schema.get('additionalProperties', None) not in (None, False):
+                self.is_strict_compatible = False
+            else:
+                # additional properties are disallowed by default
+                schema['additionalProperties'] = False
+
+            if 'properties' not in schema or 'required' not in schema:
+                self.is_strict_compatible = False
+            elif any(k not in schema['required'] for k in schema['properties'].keys()):
+                self.is_strict_compatible = False
+
+    def _check_array_items(self, schema: JsonSchema) -> None:
+        # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+        # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+        # may omit `items` entirely; none of these give the element a type, so they're rejected by
+        # the API in strict mode and there's no way to repair them without inventing an element
+        # type. `items` only types its elements when it's a schema object carrying a type-bearing
+        # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+        # not).
+        # See https://github.com/pydantic/pydantic-ai/issues/4425
+        items = schema.get('items')
+        has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
+        if not has_typed_items and not schema.get('prefixItems'):
             if self.strict is True:
-                notes: list[str] = []
-                for key, value in incompatible_values.items():
-                    schema.pop(key)
-                    notes.append(f'{key}={value}')
-                notes_string = ', '.join(notes)
-                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
+                raise UserError(
+                    'OpenAI strict mode requires array items to have a type, but got an untyped array '
+                    '(e.g. a bare `list`). Add a type parameter such as `list[str]`, or set `strict=False`.'
+                )
             elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
 
-        schema_type = schema.get('type')
-        if 'oneOf' in schema:
-            # OpenAI does not support oneOf in strict mode
-            if self.strict is True:
-                schema['anyOf'] = schema.pop('oneOf')
+
+class _GptOssInlineDefsJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """`InlineDefsJsonSchemaTransformer` for the gpt-oss models, which don't see a tool schema's `$defs` on any host.
+
+    A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, would be left
+    pointing at a definition it dropped, so such a schema is kept as it was.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = super().walk()
+        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
+            return self.schema
+        return inlined
+
+
+class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    """`OpenAIJsonSchemaTransformer` on a schema whose `$defs` are inlined first, for the gpt-oss models.
+
+    gpt-oss doesn't see a tool schema's `$defs`, wherever it's served, so it guesses the shape of every field that
+    refers to one and fails validation. Only recursive definitions, which can't be inlined, are kept under `$defs`.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = _GptOssInlineDefsJsonSchemaTransformer(self.schema).walk()
+        transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
+        result = transformer.walk()
+        self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+
+def _refs(node: object) -> Iterator[str]:
+    """Every `$ref` in `node`, at any depth."""
+    if isinstance(node, dict):
+        for key, value in cast(dict[str, object], node).items():
+            if key == '$ref' and isinstance(value, str):
+                yield value
             else:
-                self.is_strict_compatible = False
-
-        if schema_type == 'object':
-            # Always ensure 'properties' key exists - OpenAI drops objects without it
-            if 'properties' not in schema:
-                schema['properties'] = dict[str, Any]()
-
-            if self.strict is True:
-                # additional properties are disallowed
-                schema['additionalProperties'] = False
-
-                # all properties are required
-                schema['required'] = list(schema['properties'].keys())
-
-            elif self.strict is None:
-                if schema.get('additionalProperties', None) not in (None, False):
-                    self.is_strict_compatible = False
-                else:
-                    # additional properties are disallowed by default
-                    schema['additionalProperties'] = False
-
-                if 'properties' not in schema or 'required' not in schema:
-                    self.is_strict_compatible = False
-                else:
-                    required = schema['required']
-                    for k in schema['properties'].keys():
-                        if k not in required:
-                            self.is_strict_compatible = False
-
-        if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
-            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
-            # may omit `items` entirely; none of these give the element a type, so they're rejected by
-            # the API in strict mode and there's no way to repair them without inventing an element
-            # type. `items` only types its elements when it's a schema object carrying a type-bearing
-            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
-            # not).
-            # See https://github.com/pydantic/pydantic-ai/issues/4425
-            items = schema.get('items')
-            has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
-            if not has_typed_items and not schema.get('prefixItems'):
-                if self.strict is True:
-                    raise UserError(
-                        'OpenAI strict mode requires array items to have a type, but got an untyped array '
-                        '(e.g. a bare `list`). Add a type parameter such as `list[str]`, or set `strict=False`.'
-                    )
-                elif self.strict is None:  # pragma: no branch
-                    self.is_strict_compatible = False
-        return schema
+                yield from _refs(value)
+    elif isinstance(node, list):
+        for value in cast(list[object], node):
+            yield from _refs(value)
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
@@ -1001,6 +1125,9 @@ class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyri
             transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
+        if self.strict is None and self.is_strict_compatible and _exceeds_strict_size_limits(result):
+            # OpenAI rejects such a schema in strict mode but accepts it without.
+            self.is_strict_compatible = False
         return result
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:

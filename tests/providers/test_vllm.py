@@ -12,7 +12,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
@@ -121,7 +124,7 @@ def test_vllm_provider_openai_client_is_exclusive() -> None:
         ('deepseek-ai/DeepSeek-V4-Pro', OpenAIJsonSchemaTransformer, True),
         ('mistralai/Magistral-Small-2509', OpenAIJsonSchemaTransformer, True),
         ('CohereLabs/command-a-reasoning-08-2025', OpenAIJsonSchemaTransformer, True),
-        ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer, False),
+        ('openai/gpt-oss-20b', _GptOssJsonSchemaTransformer, False),
         ('zai-org/GLM-4.7', OpenAIJsonSchemaTransformer, True),
         ('zai-org/GLM-4-9B', OpenAIJsonSchemaTransformer, False),
         ('unknown-model', OpenAIJsonSchemaTransformer, False),

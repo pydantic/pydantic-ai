@@ -26,12 +26,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime.session import Session, StockAgent
 from pydantic_clai2.runtime.session_runtime import create_shell
 from tests.clai2.menu_script import make_context
 
@@ -424,7 +424,7 @@ async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | 
     )
     recorder = Recorder()
     shell.session.resolve_model = recorder.resolve
-    fork = shell.fork_session(model, [])
+    fork = await shell.fork_session(model, [])
     await fork.prompt('hello')
     assert recorder.calls[-1][0] == (model or 'openai:gpt-6-luna')
 

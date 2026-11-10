@@ -9,6 +9,8 @@ Warn when a conversation's prompt cache hit collapses between model requests, wi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](../img/harness/warn-on-cache-busts.svg)
+
 ## What it watches
 
 Prompt caching pays off only while the cacheable prefix (tools, then system instructions, then message history) stays byte-stable across a run's consecutive requests. When something moves that prefix -- reordered tools, a timestamp injected into instructions, a serialization-level block hop -- the provider re-charges tokens it could have served from cache.
@@ -29,7 +31,7 @@ result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix c
 await agent.run('...', message_history=result.all_messages())
 ```
 
-The verdict is cross-provider for free -- pyai normalizes every provider into the `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
+Providers report cache reads and writes in `RequestUsage.cache_read_tokens` and `cache_write_tokens`, so the monitor works the same on every provider that reports them.
 
 ## Retention and classification
 
@@ -118,7 +120,6 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 - **Observational only.** It reports that a cached prefix collapsed and whether the provider's retention window explains it, not what moved the prefix. The structural explanation ("what moved the prefix this turn") is a separate job.
 - **Cache busts need an established cache.** A run that never establishes a cache never emits a `CacheBustWarning`; only the `CacheNotEnabledWarning` above can fire.
 - **History rewritten by a history processor can warn.** Harness compaction strategies (such as `ClearToolResults` or `SummarizingCompaction`) rewrite messages the provider already cached, which moves the prefix like any other rewrite; only provider-native compaction, recognized by its `CompactionPart`, is classified `compacted`. Silence the warning around the runs where compaction is expected, as shown above.
-- **A mid-run model switch does not warn.** Marks are per `(provider_name, provider_url, model_name)`, so a `FallbackModel` failover starts a fresh mark rather than collapsing the previous model's.
 - **Marks are in-process memory.** They are held on the capability instance, so a conversation continued through a different instance, a different process, or a different worker starts from a clean mark; nothing is persisted or shared.
 
 ## API reference
@@ -127,8 +128,10 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Pydantic AI hooks](../hooks.md)
 
-The public module exports `WarnOnCacheBusts` and `CacheBustWarning`. Import them from `pydantic_ai_harness.warn_on_cache_busts`.
+The public module exports `WarnOnCacheBusts`, `CacheBustWarning`, and `CacheNotEnabledWarning`. Import them from `pydantic_ai_harness.warn_on_cache_busts`.
 
 ::: pydantic_ai_harness.warn_on_cache_busts.WarnOnCacheBusts
 
 ::: pydantic_ai_harness.warn_on_cache_busts.CacheBustWarning
+
+::: pydantic_ai_harness.warn_on_cache_busts.CacheNotEnabledWarning

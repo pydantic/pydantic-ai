@@ -3,7 +3,9 @@
 import asyncio
 import io
 import signal
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -25,8 +27,8 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -149,13 +151,10 @@ async def test_snapshot_failure_forks_fresh(tmp_path: Path) -> None:
     def broken() -> list[ModelMessage]:
         raise RuntimeError('no history')
 
-    forks = Forks(
-        console=console,
-        history=broken,
-        spawn=lambda _, history: Session(
-            Agent(FunctionModel(stream_function=model.respond)), deps=None, message_history=history
-        ),
-    )
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+        return Session(Agent(FunctionModel(stream_function=model.respond)), deps=None, message_history=history)
+
+    forks = Forks(console=console, history=broken, spawn=spawn)
     await forks.fork_command(['hello'])
     (record,) = forks.records
     await record.task
@@ -282,11 +281,11 @@ async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
 
 async def test_structured_output_prints_as_is() -> None:
     output = io.StringIO()
-    forks = Forks(
-        console=Console(file=output, width=200),
-        history=lambda: [],
-        spawn=lambda _, history: Session(Agent(TestModel(), output_type=list[int]), deps=None),
-    )
+
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, list[int]]:
+        return Session(Agent(TestModel(), output_type=list[int]), deps=None)
+
+    forks = Forks(console=Console(file=output, width=200), history=lambda: [], spawn=spawn)
     await forks.fork_command(['numbers'])
     (record,) = forks.records
     await record.task
@@ -296,13 +295,21 @@ async def test_structured_output_prints_as_is() -> None:
 
 
 async def test_first_forks_on_a_new_database_all_run(tmp_path: Path) -> None:
-    for attempt in range(25):
-        model, output = Model(), io.StringIO()
-        shell = shell_for(tmp_path / str(attempt), model, output)
-        for prompt in ('one', 'two', 'three'):
-            await shell.commands.execute_async(f'/fork {prompt}')
-        await asyncio.gather(*(record.task for record in shell.forks.records))
-        assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
+    """Concurrent first connections to a brand-new store can fail on its WAL switch, so `/fork` opens it first."""
+    model, output = Model(), io.StringIO()
+    shell = shell_for(tmp_path, model, output)
+    conversations = shell.session.conversations
+    assert conversations is not None
+    assert not conversations.database.exists()
+    await shell.commands.execute_async('/fork one')
+    # The fork has not run yet, and the command has already switched the new store to WAL.
+    assert model.seen == {}
+    with closing(sqlite3.connect(f'{conversations.database.as_uri()}?mode=ro', uri=True)) as connection:
+        assert connection.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+    for prompt in ('two', 'three'):
+        await shell.commands.execute_async(f'/fork {prompt}')
+    await asyncio.gather(*(record.task for record in shell.forks.records))
+    assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
 
 
 async def test_forks_fire_turn_hooks() -> None:
@@ -318,12 +325,10 @@ async def test_forks_fire_turn_hooks() -> None:
         elif isinstance(event, TurnStart) and event.text == 'broken hook':
             raise RuntimeError('hook broke')
 
-    forks = Forks(
-        console=Console(file=output, width=200),
-        history=lambda: [],
-        spawn=lambda _, history: Session(Agent(FunctionModel(stream_function=model.respond)), deps=None),
-        fire=fire,
-    )
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+        return Session(Agent(FunctionModel(stream_function=model.respond)), deps=None)
+
+    forks = Forks(console=Console(file=output, width=200), history=lambda: [], spawn=spawn, fire=fire)
     with pytest.raises(ValueError, match='Fork cancelled by a plugin: policy says no'):
         await forks.fork_command(['forbidden'])
     with pytest.raises(RuntimeError, match='hook broke'):
@@ -446,7 +451,7 @@ async def test_a_fork_that_cannot_start_closes_its_turn() -> None:
     async def fire(event: HostEvent) -> None:
         events.append(event)
 
-    def spawn(model: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+    async def spawn(model: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
         raise ValueError(f'Unknown model {model}')
 
     forks = Forks(console=Console(file=io.StringIO()), history=lambda: [], spawn=spawn, fire=fire)

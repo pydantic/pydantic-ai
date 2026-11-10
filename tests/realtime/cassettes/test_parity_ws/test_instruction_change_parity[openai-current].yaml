@@ -1,0 +1,815 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: event_EeUF21sZw4TlocPy2Sh0b
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EeUF2c2rZgVWKHLlQgcQl
+      model: gpt-realtime-2.1
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793321676
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 500
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-live-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.062
+  data:
+    type: session.updated
+    event_id: event_EeUF2cb1u2a2iAXSbkYR1
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EeUF2c2rZgVWKHLlQgcQl
+      model: gpt-realtime-2.1
+      output_modalities:
+      - text
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793321676
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-live-transcribe
+            language: null
+            languages: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 500
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.063
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+- kind: message
+  direction: sent
+  at: 0.063
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.115
+  data:
+    type: conversation.item.added
+    event_id: event_EeUF2nxgxouHv8XW3X80c
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+- kind: message
+  direction: received
+  at: 0.119
+  data:
+    type: conversation.item.done
+    event_id: event_EeUF2gj6HGDwztZYcJzc9
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+- kind: message
+  direction: received
+  at: 0.14
+  data:
+    type: response.created
+    event_id: event_EeUF282KOjJ44lF7hXs1b
+    response:
+      object: realtime.response
+      id: resp_EeUF2lEIOLPDB9mQgKx1u
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EeUF2j9eO9N77kcTeAPss
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.577
+  data:
+    type: response.output_item.added
+    event_id: event_EeUF2WzlbZFvdhnVGT0wJ
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    output_index: 0
+    item:
+      id: item_EeUF2hATwFT781KmC4tSq
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 0.577
+  data:
+    type: conversation.item.added
+    event_id: event_EeUF2nNfb5zlxHrVSlAig
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_EeUF2hATwFT781KmC4tSq
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 0.578
+  data:
+    type: response.content_part.added
+    event_id: event_EeUF26YlwwB6EWU8tAiBG
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.579
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2x8Y1334hQN7a5kIE
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: The
+    obfuscation: i0F6oxKPNR8Ps
+- kind: message
+  direction: received
+  at: 0.583
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2b02m8evRbxLPCxWs
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: ' code'
+    obfuscation: kIqScNzQ65E
+- kind: message
+  direction: received
+  at: 0.588
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2JqyPwzjDijEtasqj
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: ' word'
+    obfuscation: BPkd5sDCxKu
+- kind: message
+  direction: received
+  at: 0.597
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2MhdRHYoEyF6uswkz
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+    obfuscation: y33bfPkRDJbXX
+- kind: message
+  direction: received
+  at: 0.604
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2BdnxNqefQwPeExnW
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: ' BLUE'
+    obfuscation: teuvcpuNw1i
+- kind: message
+  direction: received
+  at: 0.61
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF2qxnkbiE7GK4XpQ3F
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: TjbAjUhQHI8oSnY
+- kind: message
+  direction: received
+  at: 0.639
+  data:
+    type: response.output_text.done
+    event_id: event_EeUF25gpEZvDtBejWVFAa
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    text: The code word is BLUE.
+- kind: message
+  direction: received
+  at: 0.64
+  data:
+    type: response.content_part.done
+    event_id: event_EeUF2pTkBFlknPlIa6330
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    item_id: item_EeUF2hATwFT781KmC4tSq
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: The code word is BLUE.
+- kind: message
+  direction: received
+  at: 0.64
+  data:
+    type: conversation.item.done
+    event_id: event_EeUF2ZaFRoWKMwof6aDOT
+    previous_item_id: null
+    item:
+      id: item_EeUF2hATwFT781KmC4tSq
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The code word is BLUE.
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 0.642
+  data:
+    type: response.output_item.done
+    event_id: event_EeUF2nmnvZha8AEuFUPoI
+    response_id: resp_EeUF2lEIOLPDB9mQgKx1u
+    output_index: 0
+    item:
+      id: item_EeUF2hATwFT781KmC4tSq
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The code word is BLUE.
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 0.645
+  data:
+    type: response.done
+    event_id: event_EeUF2wBvCyTwAVckB0iOU
+    response:
+      object: realtime.response
+      id: resp_EeUF2lEIOLPDB9mQgKx1u
+      status: completed
+      status_details: null
+      output:
+      - id: item_EeUF2hATwFT781KmC4tSq
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: The code word is BLUE.
+        phase: final_answer
+      conversation_id: conv_EeUF2j9eO9N77kcTeAPss
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 108
+        input_tokens: 77
+        output_tokens: 31
+        input_token_details:
+          text_tokens: 77
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 31
+          audio_tokens: 0
+          reasoning_tokens: 21
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: sent
+  at: 0.647
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: system
+      content:
+      - type: input_text
+        text: '<context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context>'
+- kind: message
+  direction: sent
+  at: 0.647
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+- kind: message
+  direction: sent
+  at: 0.647
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 0.678
+  data:
+    type: rate_limits.updated
+    event_id: event_EeUF2IxK9D27Gps1kutoW
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14998959
+      reset_seconds: 0.004
+- kind: message
+  direction: received
+  at: 0.731
+  data:
+    type: conversation.item.added
+    event_id: event_EeUF2swJtT01bgvkbEsxH
+    previous_item_id: item_EeUF2hATwFT781KmC4tSq
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: '<context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context>'
+- kind: message
+  direction: received
+  at: 0.732
+  data:
+    type: conversation.item.done
+    event_id: event_EeUF29z5MoO2pEwETD2BF
+    previous_item_id: item_EeUF2hATwFT781KmC4tSq
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: '<context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context>'
+- kind: message
+  direction: received
+  at: 0.733
+  data:
+    type: conversation.item.added
+    event_id: event_EeUF2MOHkKccgxvxROX26
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+- kind: message
+  direction: received
+  at: 0.734
+  data:
+    type: conversation.item.done
+    event_id: event_EeUF2RChXZKiytJsjD5H5
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+- kind: message
+  direction: received
+  at: 0.763
+  data:
+    type: response.created
+    event_id: event_EeUF2jUmbBxLr6mSWhQtN
+    response:
+      object: realtime.response
+      id: resp_EeUF2aFvb3HfODpgSCeaC
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EeUF2j9eO9N77kcTeAPss
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.144
+  data:
+    type: response.output_item.added
+    event_id: event_EeUF3A69skAtGVX4HhbwL
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    output_index: 0
+    item:
+      id: item_EeUF2lN5gLbwBnYRN3wWk
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 1.145
+  data:
+    type: conversation.item.added
+    event_id: event_EeUF3n1EpYSjU2zZajiiA
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_EeUF2lN5gLbwBnYRN3wWk
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 1.145
+  data:
+    type: response.content_part.added
+    event_id: event_EeUF3PA4izZhhk9B4yjyO
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 1.148
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3Ky2tGaNFEdIgdxpv
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: The
+    obfuscation: ppDIz9rf4ried
+- kind: message
+  direction: received
+  at: 1.152
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3vqXOEHB52jWVLXXi
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: ' code'
+    obfuscation: 3QKGzNCKSHw
+- kind: message
+  direction: received
+  at: 1.156
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3faHjwrvMIESgbUfA
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: ' word'
+    obfuscation: zbO8oZBH58R
+- kind: message
+  direction: received
+  at: 1.158
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3VGXPI4fWTK5Thozz
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+    obfuscation: 8ZP08Eh02ISEc
+- kind: message
+  direction: received
+  at: 1.165
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3TKQHfsPp08qmZOhl
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: ' OR'
+    obfuscation: wXZXM6sSd7mn1
+- kind: message
+  direction: received
+  at: 1.172
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3esKQYeqtmqUtEkX3
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: ANGE
+    obfuscation: 00EnOY5VdbJw
+- kind: message
+  direction: received
+  at: 1.183
+  data:
+    type: response.output_text.delta
+    event_id: event_EeUF3KMpYSyYF8Y5yT4nv
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: 57lM6eM2baepmBW
+- kind: message
+  direction: received
+  at: 1.207
+  data:
+    type: response.output_text.done
+    event_id: event_EeUF3B2dHTpyhkO7U641e
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    text: The code word is ORANGE.
+- kind: message
+  direction: received
+  at: 1.208
+  data:
+    type: response.content_part.done
+    event_id: event_EeUF3CjYtwFGW3zgtVB9j
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    item_id: item_EeUF2lN5gLbwBnYRN3wWk
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: The code word is ORANGE.
+- kind: message
+  direction: received
+  at: 1.209
+  data:
+    type: conversation.item.done
+    event_id: event_EeUF3XXMsd0FtMXMcggJy
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_EeUF2lN5gLbwBnYRN3wWk
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The code word is ORANGE.
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 1.21
+  data:
+    type: response.output_item.done
+    event_id: event_EeUF34HCFBhqMi3xKEP9i
+    response_id: resp_EeUF2aFvb3HfODpgSCeaC
+    output_index: 0
+    item:
+      id: item_EeUF2lN5gLbwBnYRN3wWk
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The code word is ORANGE.
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 1.213
+  data:
+    type: response.done
+    event_id: event_EeUF3bGbbn8Il2gURxXRt
+    response:
+      object: realtime.response
+      id: resp_EeUF2aFvb3HfODpgSCeaC
+      status: completed
+      status_details: null
+      output:
+      - id: item_EeUF2lN5gLbwBnYRN3wWk
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: The code word is ORANGE.
+        phase: final_answer
+      conversation_id: conv_EeUF2j9eO9N77kcTeAPss
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 165
+        input_tokens: 134
+        output_tokens: 31
+        input_token_details:
+          text_tokens: 134
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 31
+          audio_tokens: 0
+          reasoning_tokens: 20
+      metadata:
+        pydantic_ai_inputs: '2'

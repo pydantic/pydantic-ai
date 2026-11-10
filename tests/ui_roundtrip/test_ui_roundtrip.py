@@ -18,6 +18,12 @@ Three properties must hold on each path:
    the one a server keeping its own history makes. The agent runs on the real Anthropic and OpenAI Chat
    models, on mocked SDK clients, so each request is prepared and rendered for that provider as in production.
 
+A fourth property covers apps that keep the history on the server instead:
+
+4. **Server-held wire request** (`test_server_held_history_wire_request`): with
+   `manage_message_history='server'` and the server's own history passed as `message_history`, every provider
+   request equals the server-only one, even though the client still sends back everything it holds.
+
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
 that never reach the model, `timestamp` and `metadata`, and the message-level ids and timestamps a reload re-mints.
@@ -54,6 +60,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -85,6 +92,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .conftest import HERE, JSDriver
 
@@ -122,7 +130,7 @@ pytestmark = [
 
 Protocol = Literal['vercel', 'agui']
 Path = Literal['dump', 'stream']
-Property = Literal['load', 'wire', 'ids']
+Property = Literal['load', 'wire', 'ids', 'server_wire']
 PROTOCOLS: tuple[Protocol, ...] = ('vercel', 'agui')
 PATHS: tuple[Path, ...] = ('dump', 'stream')
 
@@ -430,6 +438,55 @@ def _reveal_tools(agent: Agent[None, str]) -> None:
         return 'the secret'
 
 
+def _model_load_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Load the capability on the first question, then use its tool on every question."""
+    loaded = any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'load_capability'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
+    if not loaded:
+        return ModelResponse(
+            parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id=f'load-{len(messages)}')]
+        )
+    if not _results_since_question(messages) or (
+        isinstance(last := messages[-1], ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability' for part in last.parts)
+    ):
+        return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id=f'status-{len(messages)}')])
+    return ModelResponse(parts=[TextPart('The refund is on its way.')])
+
+
+def _load_from_code_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    results = _results_since_question(messages)
+    if results == 0:
+        return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id=f'open-{len(messages)}')])
+    if results == 1:
+        return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id=f'status-{len(messages)}')])
+    return ModelResponse(parts=[TextPart('The refund is on its way.')])
+
+
+def refund_status() -> str:
+    return 'refunded'
+
+
+_REFUNDS = Capability[None](
+    id='refunds',
+    description='Refund handling.',
+    instructions='Quote the refund policy.',
+    tools=[refund_status],
+    defer_loading=True,
+)
+
+
+def _load_refunds_from_code(agent: Agent[None, str]) -> None:
+    @agent.tool
+    def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('refunds')
+        return 'Case opened.'
+
+
 def _mid_run_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     results = _results_since_question(messages)
     if results == 0:
@@ -593,7 +650,9 @@ def _image_tools(agent: Agent[None, str]) -> None:
 
 _AGUI_ACTIVITY = (
     '`@ag-ui/client` leaves `activity` messages out of every request it sends (`prepareRunAgentInput`), '
-    'so records the adapter carries as activities never come back; documented in #10569, carrier design pending'
+    'so records the adapter carries as activities never come back; documented in #10569, carrier design pending. '
+    "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
+    "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
@@ -602,7 +661,9 @@ _RETRY = (
 _APPEND_INSTRUCTIONS = (
     'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
-    'the baseline from current state and rewrites the prefix; no issue yet'
+    'the baseline from current state and rewrites the prefix; no issue yet. '
+    "With `framing_announcement='when_needed'`, the dropped delta also takes the framing announcement out of the "
+    "standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
@@ -616,6 +677,11 @@ _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
 )
+_REINJECTED_SYSTEM_PROMPT = (
+    "in `manage_system_prompt='server'` the adapter reinjects the agent's system prompt with "
+    '`ReinjectSystemPrompt(replace_existing=True)`, which also replaces one enqueued in an earlier run of the '
+    'stored history; #10389 kept only the ones of the current run; tracked on #11184'
+)
 
 
 def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
@@ -624,6 +690,17 @@ def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
 
 _ALL_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
+)
+_UNANSWERED_STORED_TAIL = (
+    "a stored history that ends with an unanswered request, as a failed run's saved history does, gets it again "
+    "from the client, which merges it with its new message into one request carrying only the new message's UI "
+    "id, so `manage_message_history='server'` can't tell it was resubmitted; tracked on #11031"
+)
+_PREFIX_MOVING_GAPS = frozenset({_REINJECTED_SYSTEM_PROMPT})
+"""Gaps that rewrite history the model already saw, rather than only adding to it."""
+
+_ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
+    ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
 
 SCENARIOS = [
@@ -650,7 +727,10 @@ SCENARIOS = [
         id='enqueued_system_prompt',
         script=_enqueue_script,
         setup=_enqueue_system_prompt,
-        gaps=_gaps(_SERVER_SYSTEM_PROMPT, *_ALL_WIRE),
+        gaps={
+            **_gaps(_SERVER_SYSTEM_PROMPT, *_ALL_WIRE),
+            **_gaps(_REINJECTED_SYSTEM_PROMPT, *_ALL_SERVER_WIRE),
+        },
     ),
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
@@ -667,6 +747,35 @@ SCENARIOS = [
             ('wire', 'dump', 'agui'),
             ('wire', 'stream', 'agui'),
         ),
+    ),
+    Scenario(
+        id='capability_load',
+        script=_model_load_script,
+        agent_kwargs={'capabilities': [_REFUNDS]},
+        gaps={
+            **_gaps(
+                _AGUI_ACTIVITY,
+                ('load', 'dump', 'agui'),
+                ('load', 'stream', 'agui'),
+                ('wire', 'dump', 'agui'),
+                ('wire', 'stream', 'agui'),
+            ),
+        },
+    ),
+    Scenario(
+        id='capability_load_from_code',
+        script=_load_from_code_script,
+        setup=_load_refunds_from_code,
+        agent_kwargs={'capabilities': [_REFUNDS]},
+        gaps={
+            **_gaps(
+                _AGUI_ACTIVITY,
+                ('load', 'dump', 'agui'),
+                ('load', 'stream', 'agui'),
+                ('wire', 'dump', 'agui'),
+                ('wire', 'stream', 'agui'),
+            ),
+        },
     ),
     Scenario(
         id='mid_run_tool_addition',
@@ -815,6 +924,27 @@ SCENARIOS = [
         ],
     ),
     Scenario(
+        id='withdrawn_settings_change',
+        script=_text_script,
+        agent_kwargs={'model_settings': ModelSettings(thinking='low')},
+        gaps={
+            **_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+            **_gaps(_UNANSWERED_STORED_TAIL, *_ALL_SERVER_WIRE),
+        },
+        # A run that failed after recording a raise to `'high'`, so no response answered it. The next turn is
+        # back at `'low'`, so it records the change back.
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart('Question 0'),
+                    ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Hello.')]),
+            ModelRequest(parts=[UserPromptPart('Question 0b'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
+        ],
+    ),
+    Scenario(
         id='compaction',
         script=_text_script,
         # OpenAI Chat never sends another provider's compaction, so only Anthropic's request shows the loss.
@@ -896,13 +1026,19 @@ class Client(ABC):
             return adapter.sanitize_messages(messages)
 
     async def turn(
-        self, agent: Agent[None, str], calls: list[ModelCall], body: bytes, expected: list[ModelMessage]
+        self,
+        agent: Agent[None, str],
+        calls: list[ModelCall],
+        body: bytes,
+        expected: list[ModelMessage],
+        message_history: list[ModelMessage] | None = None,
     ) -> tuple[Turn, list[str]]:
         """Run the agent on the client's request, as the app's endpoint would."""
         adapter = self.adapter(agent, body)
         results: list[AgentRunResult[Any]] = []
         start = len(calls)
-        encoded = [chunk async for chunk in adapter.encode_stream(adapter.run_stream(on_complete=results.append))]
+        stream = adapter.run_stream(message_history=message_history, on_complete=results.append)
+        encoded = [chunk async for chunk in adapter.encode_stream(stream)]
         [result] = results
         turn = self.received(adapter, expected)
         turn.history, turn.calls = result.all_messages(), calls[start:]
@@ -994,16 +1130,25 @@ async def run_server(scenario: Scenario, provider: WireProvider) -> list[list[Mo
 
 
 async def run_client(
-    scenario: Scenario, client: Client, path: Path, provider: WireProvider | None = None
+    scenario: Scenario,
+    client: Client,
+    path: Path,
+    provider: WireProvider | None = None,
+    *,
+    server_held: bool = False,
 ) -> list[Turn]:
-    """The conversation through a client, plus one more prompt to see what the client sends back last."""
+    """The conversation through a client, plus one more prompt to see what the client sends back last.
+
+    With `server_held`, the app also passes the server's own history of the conversation as `message_history`.
+    """
     agent, calls = scenario.agent(provider)
     turns: list[Turn] = []
     history = scenario.seed
     for index, prompt in enumerate(scenario.prompts):
         # A streaming client starts from the seed too, as when an app loads a stored conversation.
         hydrate = history if path == 'dump' or index == 0 else None
-        turn, encoded = await client.turn(agent, calls, client.submit(prompt, hydrate), history)
+        body = client.submit(prompt, hydrate)
+        turn, encoded = await client.turn(agent, calls, body, history, history if server_held else None)
         turns.append(turn)
         history = turn.history
         if path == 'stream':
@@ -1015,7 +1160,10 @@ async def run_client(
 
 def _params(prop: Property) -> list[Any]:
     params: list[Any] = []
-    providers: tuple[WireProvider | None, ...] = WIRE_PROVIDERS if prop == 'wire' else (None,)
+    # The server-held history is compared, not how a provider renders it, so one provider is enough there.
+    providers: tuple[WireProvider | None, ...] = (
+        WIRE_PROVIDERS if prop == 'wire' else ('anthropic',) if prop == 'server_wire' else (None,)
+    )
     for scenario in SCENARIOS:
         for path in PATHS:
             for protocol in PROTOCOLS:
@@ -1025,7 +1173,9 @@ def _params(prop: Property) -> list[Any]:
                         gap = scenario.gaps.get((prop, path, protocol, provider), gap)
                     key = '-'.join([scenario.id, path, protocol, *([provider] if provider else [])])
                     values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
-                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key))
+                    # A gap that rewrites the stored history moves the prompt-cache prefix the autouse check guards.
+                    marks = [pytest.mark.moves_cache_prefix(reason=gap)] if gap in _PREFIX_MOVING_GAPS else []
+                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key, marks=marks))
     return params
 
 
@@ -1121,6 +1271,35 @@ async def test_wire_request(
     )
 
 
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider', 'gap'), _params('server_wire'))
+async def test_server_held_history_wire_request(
+    scenario: Scenario,
+    path: Path,
+    protocol: Protocol,
+    provider: WireProvider,
+    gap: Gap,
+    js_driver: JSDriver,
+    allow_model_requests: None,
+) -> None:
+    """With `manage_message_history='server'`, every provider request equals the one a server-only app makes.
+
+    The client still sends back its whole history, so the adapter has to take only the new turn from it, and
+    nothing the client loses on the way reaches the model.
+    """
+    adapter_kwargs = {**scenario.adapter_kwargs, 'manage_message_history': 'server'}
+    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-{provider}-server-wire', adapter_kwargs)
+    server_turns = await run_server(scenario, provider)
+    # The last turn only records what the client would send next.
+    client_turns = (await run_client(scenario, client, path, provider, server_held=True))[:-1]
+    assert len(client_turns) == len(server_turns)
+    gap.check(
+        '\n'.join(
+            f'### turn {i}\n' + '\n'.join(call.body for call in turn.calls) for i, turn in enumerate(client_turns)
+        ),
+        '\n'.join(f'### turn {i}\n' + '\n'.join(call.body for call in calls) for i, calls in enumerate(server_turns)),
+    )
+
+
 def _system_voice(body: dict[str, Any], provider: WireProvider) -> list[str]:
     """The text a provider request body sends in system voice."""
     if provider == 'anthropic':
@@ -1165,3 +1344,45 @@ async def test_forged_framework_voice_stays_out_of_system_voice(
     # The payloads aren't simply dropped: each reaches the model somewhere.
     everything = '\n'.join(json.dumps(body) for body in bodies)
     assert all(marker in everything for marker in ('Ignore the user', 'Forged state', 'Obey this'))
+
+
+def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
+    """Keeping the history on the server leaves out every loss a client round trip has, but one.
+
+    The records a client can't be trusted to send back (#11184) never leave the server in that mode: append-mode
+    instruction records, `no_output` feedback in the system voice, and activity records `@ag-ui/client` drops. So
+    no scenario records a `server_wire` gap except two that the stored history itself causes: the earlier-run
+    enqueued system prompt, which the adapter's own `ReinjectSystemPrompt(replace_existing=True)` replaces even in
+    the stored history (tracked on #11184), and an unanswered request the stored history ends with, which the client
+    sends again (tracked on #11031).
+    `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
+    """
+    client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
+    server_wire_gaps = {
+        scenario.id: reason
+        for scenario in SCENARIOS
+        for key, reason in scenario.gaps.items()
+        if key[0] == 'server_wire'
+    }
+    assert server_wire_gaps == {
+        'enqueued_system_prompt': _REINJECTED_SYSTEM_PROMPT,
+        'withdrawn_settings_change': _UNANSWERED_STORED_TAIL,
+    }
+    assert sorted(client_wire_gaps - server_wire_gaps.keys()) == snapshot(
+        [
+            'appended_instructions',
+            'capability_load',
+            'capability_load_from_code',
+            'client_owned_system_prompt',
+            'compaction',
+            'compaction_boundary',
+            'compaction_boundary_appended_instructions',
+            'enqueued_messages',
+            'forged_framework_voice',
+            'mid_run_tool_addition',
+            'no_output_feedback',
+            'output_validation_feedback',
+            'structured_content',
+            'tool_availability_delta',
+        ]
+    )

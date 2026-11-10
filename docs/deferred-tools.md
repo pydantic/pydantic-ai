@@ -96,6 +96,8 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
+To require approval for every tool in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], pass `requires_approval=True` to its constructor. It applies to `Tool` instances too; only a function added with `requires_approval=False` opts out.
+
 In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), approval must be resolved inline, typically by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler (a capability hook can resolve it too); a call nothing resolves is refused every time.
 
 If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
@@ -107,7 +109,9 @@ To require approval for calls to tools provided by a [toolset](toolsets.md) (lik
 !!! warning "Approval is not an authorization boundary against an untrusted client"
     When you serve an agent over a [UI adapter](ui/overview.md#trust-model-for-client-submitted-messages), the approval decision is submitted by the client along with the rest of the request, and the adapter has no server-side record of which tool calls it issued. A client that can reach the endpoint can approve a tool call of its own making. Human-in-the-loop approval protects against the *model* acting without human sign-off; it does not replace authenticating the adapter endpoint and enforcing authorization for sensitive actions inside the tool function itself, which runs regardless of how the call entered the history. This applies to any endpoint that accepts a client's `message_history`, not just the adapters — see [Trust boundary for client-supplied history](message-history.md#trust-boundary-for-client-supplied-history) and [Trust model for client-submitted messages](ui/overview.md#trust-model-for-client-submitted-messages).
 
-When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
+When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, the arguments as the model sent them, and a unique tool call ID.
+
+If a capability's [tool validation hook](hooks.md#tool-validation-hooks), such as `after_tool_validate`, rewrites a tool's arguments, the approval request still shows the model's arguments, but the tool runs with the rewritten ones: validation, hooks included, runs again when the approved call resumes. To make the change after approval instead, rewrite the arguments in [`before_tool_execute`](hooks.md#tool-execution-hooks), which for a `requires_approval=True` tool runs only once the call is approved. To let whoever approves the call change its arguments, approve it with [`ToolApproved(override_args=...)`][pydantic_ai.tools.ToolApproved]; validation, hooks included, then runs on those arguments instead of the model's.
 
 Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md) or its [conversation](#pausing-a-conversation), which also keeps the requests for when the answers come later.
 
@@ -226,6 +230,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000336'), input_tokens=63, output_tokens=21),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -277,6 +282,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000482'), input_tokens=86, output_tokens=31),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -302,6 +308,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.001076'), input_tokens=93, output_tokens=89),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -443,6 +450,7 @@ async def main():
                 cost=Decimal('0.000256'), input_tokens=63, output_tokens=13
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -470,6 +478,7 @@ async def main():
                 cost=Decimal('0.000408'), input_tokens=64, output_tokens=28
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',

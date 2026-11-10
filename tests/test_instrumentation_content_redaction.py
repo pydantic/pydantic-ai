@@ -42,6 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     MessageJsonCache,
+    current_model_request_span,
     has_stale_message_json,
     include_content_ctx,
     model_request_parameters_attributes,
@@ -176,7 +177,9 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
         native_tools=[
             tool,
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
@@ -194,7 +197,7 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
     assert native_tool['allowed_tools'] == ['search']
     assert exported['function_tools'][0]['metadata'] == {'source': 'user'}
     assert exported['native_tools'][1]['files'][0]['file_id'] == 'file-123'
-    assert exported['native_tools'][2]['instructions'] == 'search only these files'
+    assert exported['native_tools'][2]['provider_settings']['xai']['instructions'] == 'search only these files'
     assert tool.authorization_token == 'SENTINEL-token'
     response = ModelResponse(parts=[NativeToolCallPart(tool_name='mcp_server:docs', tool_call_id='call-1')])
     settings, exporter = redacted_setup(include_content)
@@ -212,7 +215,9 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
         ],
         native_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     expected = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
@@ -221,7 +226,7 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert json.loads(serialized) == expected
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
-    assert expected['native_tools'][1]['instructions'] == 'search only these files'
+    assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:
@@ -495,7 +500,10 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup(include_content)
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=server)
+    # This module's in-process servers are passed as a pre-built `Client`, which keeps fastmcp's default of
+    # no handshake deadline. Wrapping the bare server would apply `MCPToolset`'s 5-second `init_timeout`,
+    # and a stalled CI worker can exceed it.
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=Client(server))
     assert capability.id is not None
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('previous'),
@@ -587,7 +595,7 @@ async def test_explicit_mcp_toolset_id_remains_in_request_telemetry() -> None:
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup()
-    toolset = MCPToolset(server, id='github')
+    toolset = MCPToolset(Client(server), id='github')
     await Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[Instrumentation(settings=settings)]).run('go')
     chat = next(
         span
@@ -674,7 +682,7 @@ async def test_combined_mcp_keeps_the_winning_id_provenance(last_explicit: bool)
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
 async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     server = FastMCP('test', instructions='server guidance')
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -743,7 +751,7 @@ async def test_unrelated_toolset_id_matching_local_mcp_id_is_retained() -> None:
     def ping() -> str:
         return 'pong'
 
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
     unrelated = FunctionToolset(id=capability.id)
 
@@ -1054,6 +1062,27 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_current_model_request_span_requires_the_owned_span() -> None:
+    """A model records request attributes on the open `chat` span only while it's the current span.
+
+    Not on a span opened inside the request, which is the current span instead, nor on a finished request's span.
+    """
+    settings, _ = redacted_setup(include_content=False)
+    tracer = settings.tracer
+    previous = include_content_ctx.get()
+    try:
+        include_content_ctx.set(None)
+        assert current_model_request_span() is None
+        with tracer.start_as_current_span('chat') as chat_span:
+            include_content_ctx.set(ContentPolicy(chat_span, include_content=False, tracer=tracer))
+            assert current_model_request_span() is chat_span
+            with tracer.start_as_current_span('nested span'):
+                assert current_model_request_span() is None
+        assert current_model_request_span() is None
+    finally:
+        include_content_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:

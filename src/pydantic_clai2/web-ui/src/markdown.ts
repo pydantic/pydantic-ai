@@ -85,9 +85,38 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     node.setAttribute('rel', 'noreferrer noopener')
   }
 })
+// Set once: a config passed to each `sanitize` call is parsed and its allow-lists copied again every time.
+DOMPurify.setConfig({ ADD_ATTR: ['target', 'data-copy'], FORBID_TAGS: ['style', 'form', 'input'] })
 
 /** Model output as safe HTML: Markdown parsed, then sanitized, since the page holds a token that runs commands. */
 export function renderMarkdown(text: string): string {
-  const html = marked.parse(text, { async: false })
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['target', 'data-copy'], FORBID_TAGS: ['style', 'form', 'input'] })
+  return DOMPurify.sanitize(marked.parse(text, { async: false }))
+}
+
+/** How many characters of Markdown and its HTML `cachedMarkdown` keeps, before dropping the least recent. */
+const CACHED = 8_000_000
+const rendered = new Map<string, string>()
+let cachedSize = 0
+
+/**
+ * `renderMarkdown`, kept for the page's lifetime by text: opening a session again, or remounting a transcript,
+ * renders each finished message once. Text still streaming changes with every delta, so it is not cached.
+ */
+export function cachedMarkdown(text: string): string {
+  const found = rendered.get(text)
+  if (found !== undefined) {
+    // Most recently used last, so the oldest is the first to go.
+    rendered.delete(text)
+    rendered.set(text, found)
+    return found
+  }
+  const html = renderMarkdown(text)
+  rendered.set(text, html)
+  cachedSize += text.length + html.length
+  for (const [oldest, oldHtml] of rendered) {
+    if (cachedSize <= CACHED) break
+    rendered.delete(oldest)
+    cachedSize -= oldest.length + oldHtml.length
+  }
+  return html
 }

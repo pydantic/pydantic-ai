@@ -31,9 +31,9 @@ from pydantic_ai import AgentStreamEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ModelMessage
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session, session_context
+from pydantic_clai2.runtime.session import Session, session_context
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -124,7 +124,7 @@ class Forks(Generic[DepsT, OutputT]):
         *,
         console: Console,
         history: Callable[[], Sequence[ModelMessage]],
-        spawn: Callable[[str | None, Sequence[ModelMessage]], Session[DepsT, OutputT]],
+        spawn: Callable[[str | None, Sequence[ModelMessage]], Awaitable[Session[DepsT, OutputT]]],
         models: Callable[[], Iterable[str]] = lambda: (),
         fire: Callable[[HostEvent], Awaitable[None]] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -267,7 +267,7 @@ class Forks(Generic[DepsT, OutputT]):
         )
 
     async def _prepare(self, model: str | None) -> Session[DepsT, OutputT]:
-        session = self._spawn(model, self._snapshot())
+        session = await self._spawn(model, self._snapshot())
         if session.conversations is not None and not self._store_ready:
             # Concurrent first connections to a brand-new sessions.db can fail on the store's WAL switch.
             # Open it here, while the command owns the shell and before any fork runs.
@@ -363,11 +363,11 @@ class Forks(Generic[DepsT, OutputT]):
                 state = muted + 'done, prints after this turn'
             else:
                 continue
-            minutes, secs = divmod(int(seconds), 60)
+            minutes, remaining_seconds = divmod(int(seconds), 60)
             rows.append(
                 f'\x1b[7m{theme.sgr(theme.THINKING, bold=True)} FORK #{record.fork_id} {reset} '
                 f'{theme.sgr(theme.INFO)}{terminal_text(record.model)}{reset}  '
-                f'{mark}{reset} {muted}{minutes:02d}:{secs:02d}{reset}  {state}{reset}'
+                f'{mark}{reset} {muted}{minutes:02d}:{remaining_seconds:02d}{reset}  {state}{reset}'
             )
         return tuple(rows)
 

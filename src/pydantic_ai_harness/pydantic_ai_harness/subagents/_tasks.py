@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import anyio
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
@@ -41,12 +43,16 @@ _CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""
 
+RESUME_DIRECTORY_MISMATCH = 'A resumed task cannot change its working directory.'
+"""Why a resume cannot select a different workspace."""
+
 
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
     try:
         return handler(messages)
-    except UnicodeDecodeError:
-        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them.
+    except (UnicodeDecodeError, PydanticSerializationError):
+        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them. The
+        # error arrives wrapped when a serializer function sits between, as tool results' do.
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
@@ -60,6 +66,8 @@ class DelegationTask:
     conversation_id: str
     parent_id: str | None = None
     model: str | None = None
+    working_directory: str | None = None
+    """Resolved directory selected for this task, or `None` to inherit the parent workspace."""
     background: bool = False
     backgroundable: bool = True
     resumable: bool = True
@@ -156,7 +164,7 @@ _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 async def _read(path: anyio.Path) -> DelegationTask:
     """A saved task, checked to have the identity its file name gives it."""
-    record = _ADAPTER.validate_json(await path.read_bytes())
+    record = _ADAPTER.validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
     if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
         raise ValueError(f'Invalid saved task identity in {path.name!r}')
     return record
@@ -248,30 +256,9 @@ class DelegationTasks:
                 async for path in directory.glob('*.json'):
                     record = await _read(path)
                     if record.status == 'running':
-                        if self.step_store is not None:
-                            snapshot = await self.step_store.latest_snapshot(
-                                run_id=record.run_id, include_interrupted=True
-                            )
-                            if snapshot is not None:
-                                record.messages = snapshot.messages
-                        record.status, record.outcome = 'finished', 'cancelled'
-                        record.output = (
-                            'Execution interrupted by process exit while waiting for an answer to:\n'
-                            f'{record.pending_question}\nResume it with the answer. Inspect effects before resuming.'
-                            if record.pending_question is not None
-                            else 'Execution interrupted by process exit. Inspect effects before resuming.'
-                        )
-                        record.pending_question = None
-                        record.finished_at = time.time()
+                        await self._settle_interrupted(record)
                     self.records[record.id] = record
-                for record in self.records.values():
-                    ancestors = {record.id}
-                    parent = record.parent_id
-                    while parent is not None and parent in self.records:
-                        if parent in ancestors:
-                            raise ValueError('Cyclic saved task ancestry')
-                        ancestors.add(parent)
-                        parent = self.records[parent].parent_id
+                self._check_ancestry()
             yield self
         finally:
             # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
@@ -287,6 +274,33 @@ class DelegationTasks:
                     await self.save(record)
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
+
+    async def _settle_interrupted(self, record: DelegationTask) -> None:
+        """Settle a saved child that was still running when its process exited."""
+        if self.step_store is not None:
+            snapshot = await self.step_store.latest_snapshot(run_id=record.run_id, include_interrupted=True)
+            if snapshot is not None:
+                record.messages = snapshot.messages
+        record.status, record.outcome = 'finished', 'cancelled'
+        record.output = (
+            'Execution interrupted by process exit while waiting for an answer to:\n'
+            f'{record.pending_question}\nResume it with the answer. Inspect effects before resuming.'
+            if record.pending_question is not None
+            else 'Execution interrupted by process exit. Inspect effects before resuming.'
+        )
+        record.pending_question = None
+        record.finished_at = time.time()
+
+    def _check_ancestry(self) -> None:
+        """Refuse saved tasks whose parent chain loops."""
+        for record in self.records.values():
+            ancestors = {record.id}
+            parent = record.parent_id
+            while parent is not None and parent in self.records:
+                if parent in ancestors:
+                    raise ValueError('Cyclic saved task ancestry')
+                ancestors.add(parent)
+                parent = self.records[parent].parent_id
 
     def persistence_capabilities(self) -> list[AbstractCapability[object]]:
         """Capture child steps using the application's existing persistence store."""
@@ -353,6 +367,7 @@ class DelegationTasks:
         backgroundable: bool = True,
         task_id: str | None = None,
         resumable: bool = True,
+        working_directory: str | None = None,
     ) -> str:
         """Start or resume a child; foreground waiting can be released by `background`.
 
@@ -363,35 +378,18 @@ class DelegationTasks:
             raise RuntimeError('Delegation task owner is closed')
         if background and not backgroundable:
             raise ModelRetry(NOT_BACKGROUNDABLE)
-        parent_id = _CHILD.get()
-        if parent_id is not None:
-            conversation_id = self.records[parent_id].conversation_id
-        if resume is not None:
-            record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
-            record.prompt, record.model = prompt, model
-            record.background, record.status = background, 'running'
-            record.outcome, record.output, record.finished_at = None, '', None
-            record.started_at, record.delivered = time.time(), False
-            self._stopping.discard(record.id)
-            self._stops.discard(record.id)
-            self._unsteered.pop(record.id, None)
-            record.generation += 1
-            record.run_id = uuid4().hex
-            record.parent_id = parent_id
-            record.backgroundable = backgroundable
-        else:
-            record = DelegationTask(
-                id=task_id or uuid4().hex,
-                agent_name=agent_name,
-                prompt=prompt,
-                conversation_id=conversation_id,
-                parent_id=_CHILD.get(),
-                model=model,
-                background=background,
-                resumable=resumable and agent_name not in self.one_shot,
-                backgroundable=backgroundable,
-            )
-            self.records[record.id] = record
+        record = self._prepare_record(
+            agent_name=agent_name,
+            prompt=prompt,
+            conversation_id=conversation_id,
+            model=model,
+            background=background,
+            resume=resume,
+            backgroundable=backgroundable,
+            task_id=task_id,
+            resumable=resumable,
+            working_directory=working_directory,
+        )
         release = self._released[record.id] = asyncio.Event()
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
         try:
@@ -432,6 +430,55 @@ class DelegationTasks:
             waiter.cancel()
             with anyio.move_on_after(5, shield=True):
                 await asyncio.gather(waiter, return_exceptions=True)
+
+    def _prepare_record(
+        self,
+        *,
+        agent_name: str,
+        prompt: str,
+        conversation_id: str,
+        model: str | None,
+        background: bool,
+        resume: str | None,
+        backgroundable: bool,
+        task_id: str | None,
+        resumable: bool,
+        working_directory: str | None,
+    ) -> DelegationTask:
+        """The record a delegation runs as: the resumed child reset for its next generation, or a new child."""
+        parent_id = _CHILD.get()
+        if parent_id is not None:
+            conversation_id = self.records[parent_id].conversation_id
+        if resume is not None:
+            record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
+            if working_directory != record.working_directory:
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
+            record.prompt, record.model = prompt, model
+            record.background, record.status = background, 'running'
+            record.outcome, record.output, record.finished_at = None, '', None
+            record.started_at, record.delivered = time.time(), False
+            self._stopping.discard(record.id)
+            self._stops.discard(record.id)
+            self._unsteered.pop(record.id, None)
+            record.generation += 1
+            record.run_id = uuid4().hex
+            record.parent_id = parent_id
+            record.backgroundable = backgroundable
+            return record
+        record = DelegationTask(
+            id=task_id or uuid4().hex,
+            agent_name=agent_name,
+            prompt=prompt,
+            conversation_id=conversation_id,
+            parent_id=_CHILD.get(),
+            model=model,
+            working_directory=working_directory,
+            background=background,
+            resumable=resumable and agent_name not in self.one_shot,
+            backgroundable=backgroundable,
+        )
+        self.records[record.id] = record
+        return record
 
     def check_resume(self, task_id: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
         """The settled child `task_id` names, when `agent_name` can resume it in this conversation.

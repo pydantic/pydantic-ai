@@ -8,19 +8,31 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import reprlib
 import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
+from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
-from functools import cache, cached_property
+from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -30,6 +42,7 @@ from typing import (
     Generic,
     Literal,
     NamedTuple,
+    ParamSpec,
     Self,
     TypeAlias,
     TypeVar,
@@ -44,6 +57,7 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._canonical_system import accepts_stateless_artifact
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -51,7 +65,17 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._framing import CONVERSATION_SUMMARY_TAG, SYSTEM_TAG, neutralize_tags, wrap
+from .._framing import (
+    CONVERSATION_SUMMARY_TAG,
+    SYSTEM_TAG,
+    SYSTEM_VOICE_ANNOUNCEMENT,
+    LookalikeSource,
+    context_lookalike_note,
+    neutralize_tags,
+    neutralize_voice_tag,
+    opens_context_element,
+    wrap,
+)
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -69,12 +93,21 @@ from .._instructions import (
     window_boundary_index,
 )
 from .._json_schema import (
+    InlinedSchemaTooLargeError,
     JsonSchemaTransformer,
     JsonSchemaTransformerWithOutputOverride,
 )
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
+from .._special_tokens import (
+    StreamRestorer,
+    break_special_tokens,
+    break_special_tokens_in_messages,
+    restore_special_tokens_in_response,
+    restore_special_tokens_in_stream,
+)
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -83,7 +116,10 @@ from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryContent,
     BinaryImage,
+    CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -109,6 +145,7 @@ from ..messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
@@ -124,9 +161,15 @@ from ..messages import (
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
+    tool_return_ta,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -145,6 +188,7 @@ from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import (
     CacheSetting,
+    FramingAnnouncement,
     ModelSettingName,
     ModelSettings,
     ThinkingEffort,
@@ -174,13 +218,58 @@ else:
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
 
+# Set at Vertex AI's documented 500 MiB request payload limit, the largest of OpenAI, Anthropic, the Gemini API and
+# Vertex AI. Files are sent base64-encoded, so the request body is about a third larger than the bytes counted here.
+_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES = 500 * 1024 * 1024
+"""Maximum total size of the [`FileUrl`][pydantic_ai.messages.FileUrl] downloads made for one model request."""
+
+
+@dataclass
+class _DownloadBudget:
+    """The bytes left for the file URLs one model request downloads."""
+
+    remaining: int
+
+
+# A mutable budget, so a download in a task the request spawned charges the same total.
+_request_download_budget: ContextVar[_DownloadBudget | None] = ContextVar('_request_download_budget', default=None)
+
+
+@contextmanager
+def _open_request_download_budget() -> Generator[None]:
+    """Give the file URLs downloaded until exit one total of `_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES`."""
+    token = _request_download_budget.set(_DownloadBudget(_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES))
+    try:
+        yield
+    finally:
+        _request_download_budget.reset(token)
+
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+
+
+def _within_request_download_budget(method: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+    """Wrap `method` so the file URLs each call downloads share one total."""
+
+    @wraps(method)
+    async def budgeted(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _open_request_download_budget():
+            return await method(*args, **kwargs)
+
+    return budgeted
+
 
 ModelContextDepsT = TypeVar('ModelContextDepsT')
 
 
 @cache
 def known_model_names() -> tuple[str, ...]:
-    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+    """Return the model names [`KnownModelName`][pydantic_ai.models.KnownModelName] lists.
+
+    The list is curated for autocomplete and error suggestions: per provider and model line, the newest
+    model of the newest generation and of the previous one. It is not exhaustive of the model ids accepted
+    by providers and should not be used to validate user input.
 
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
@@ -251,7 +340,7 @@ InstructionVisibility = Literal['prefix', 'via_history']
 
 - `'prefix'`: in the instructions every request starts with.
 - `'via_history'`: in message history. That's the instructions of a loaded
-  [deferred capability](../capabilities/on-demand.md), stated after its `load_capability` tool return as an
+  [deferred capability](../../capabilities/on-demand.md), stated after its `load_capability` tool return as an
   [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] for the capability's block,
   `capability:<id>`, holding all of its parts joined, and appended again whenever they change.
 
@@ -276,6 +365,10 @@ class ModelRequestParameters:
         default=None, repr=False, compare=False
     )
     """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
+    _framing_announcement: Annotated[FramingAnnouncement | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """The request's `ModelSettings['framing_announcement']`, for `Model.prepare_messages`; `None` when unset."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -343,7 +436,7 @@ class ModelRequestParameters:
     boundaries at the static/dynamic instruction boundary.
 
     While `before_model_request` hooks run, this also holds the instructions of the
-    [deferred capabilities](../capabilities/on-demand.md) the model has loaded, which
+    [deferred capabilities](../../capabilities/on-demand.md) the model has loaded, which
     [`instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility] marks
     `'via_history'`. The agent takes those out before the model is called, so a model only sees the prefix.
     """
@@ -444,6 +537,8 @@ class ModelRequestParameters:
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
     attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
+    rejected: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    """The responses in `responses` that a hook rejected to make another attempt."""
 
 
 @dataclass(kw_only=True)
@@ -526,6 +621,24 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
+    attempt: int = 1
+    """Which attempt at this request step is about to run, starting at `1`.
+
+    A step makes more than one attempt when a hook raises
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] — a fallback capability moving to
+    the next model, or a backoff capability re-running the same one. Only
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request],
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] and
+    [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    can observe a value above `1`; `before_model_request` and `wrap_model_request` run once for the
+    step, before any attempt.
+
+    Distinct from [`RunContext.run_step`][pydantic_ai.tools.RunContext.run_step], which counts
+    request steps: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] starts a new step (the model
+    sees a retry prompt), while a `RetryModelRequest` stays within this one (the model sees nothing).
+    Read-only from hooks: the loop owns it, and reassigning it doesn't change how many attempts run.
+    """
+
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
@@ -546,6 +659,34 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _rejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that a hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is a failed attempt, like a response a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        rejected, but its usage was counted at the provider boundary, so it stays in `_usage_responses`.
+
+        Private for now: read by the Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.rejected)
+
+    @property
+    def _unrejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that no hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is recorded as a failed [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] with
+        its own span instead, the way a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        records the responses it rejected, so the request's `chat` span doesn't report its usage again.
+
+        Private for now: read by the `Instrumentation` capability.
+        """
+        ledger = self._usage_response_ledger
+        return tuple(
+            response for response in ledger.responses if not any(response is rejected for rejected in ledger.rejected)
+        )
 
     @property
     def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:
@@ -732,6 +873,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Set by a model that judges the conversation rather than answering it: translated, the feedback would
     read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
     """
+    _announces_system_voice: ClassVar[bool] = True
+    """Whether `prepare_messages` adds the `<system>` tag announcement to the standing prompt where the profile's `supports_inline_system_prompts` is `False`.
+
+    `False` for a model with no provider system field the sentence reliably reaches a model in: the test doubles,
+    which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system prompt parts joined
+    into one string with no separator.
+    """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
 
@@ -740,9 +888,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
-    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
-    listed here.
+    This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
+    enforced by Pydantic AI for every model, `framing_announcement` is applied by it, and `thinking`, `cache` and
+    `tool_choice` are resolved through the model profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -904,6 +1052,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
+
+        Unlike `__aenter__`, it leaves the provider's HTTP client alone. A model can use it to keep a connection it
+        opens on demand open for the run. Wrappers should inherit from `WrapperModel`, or forward this context
+        manager to their wrapped models as `WrapperModel` and `FallbackModel` do. Without forwarding, wrapped
+        models cannot acquire run-scoped resources and may fall back to HTTP.
+        """
+        return nullcontext()
+
     def __eq__(self, other: object) -> bool:
         """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
         if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
@@ -926,6 +1084,93 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             shown.append(f'profile={self._profile!r}')
         return f'{self.__class__.__qualname__}({", ".join(shown)})'
 
+    _answers_requests_itself: ClassVar[bool] = True
+    """Whether this class's `request` and `request_stream` produce a model's output, as opposed to another `Model`'s."""
+
+    @property
+    def _restores_special_tokens(self) -> bool:
+        """Whether this model's responses lose the joiner that `prepare_messages` put inside each special token."""
+        if not self._answers_requests_itself:
+            return False
+        try:
+            return self.profile.get('may_tokenize_special_tokens_in_content', False)
+        except NotImplementedError:
+            # A third-party router with no profile of its own that doesn't set `_answers_requests_itself`: the models
+            # it answers through restore for themselves.
+            return False
+
+    @classmethod
+    def _restore_special_tokens_at_the_model_boundary(cls) -> None:
+        """Have each method of `cls` that returns a model's output remove the joiner `prepare_messages` put in its tokens.
+
+        Done here, for every model class, because a model copies the joiner into what it writes. A class that left this
+        out would corrupt the files its model edits, and everything after this boundary (tools, output validation,
+        users, stored history) sees the same value whichever way the response was produced.
+        """
+        request = cls.__dict__.get('request')
+        if inspect.iscoroutinefunction(request):
+
+            @wraps(request)
+            async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = await request(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.request = restoring_request
+
+        request_stream = cls.__dict__.get('request_stream')
+        if inspect.isfunction(request_stream):
+
+            @wraps(request_stream)
+            @asynccontextmanager
+            async def restoring_request_stream(
+                self: Model, *args: Any, **kwargs: Any
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                async with request_stream(self, *args, **kwargs) as stream:
+                    if self._restores_special_tokens:
+                        stream._parts_manager.special_token_restorer = StreamRestorer()
+                    yield stream
+
+            cls.request_stream = restoring_request_stream
+
+        batch_decode = cls.__dict__.get('batch_decode')
+        if inspect.isfunction(batch_decode):
+
+            @wraps(batch_decode)
+            def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = batch_decode(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.batch_decode = restoring_batch_decode
+
+    @classmethod
+    def _budget_downloads_at_the_model_boundary(cls) -> None:
+        """Give each call of a method of `cls` that builds one request its own total for the file URLs it downloads.
+
+        Done here, for every model class, so a request that carries many file URLs can't download the per-file limit
+        once per URL. A model that calls another one, like `FallbackModel`, gives each inner request its own total.
+        """
+        for name in ('request', 'count_tokens', 'batch_encode', 'compact_messages'):
+            method = cls.__dict__.get(name)
+            if inspect.iscoroutinefunction(method):
+                setattr(cls, name, _within_request_download_budget(method))
+
+        request_stream = cls.__dict__.get('request_stream')
+        if inspect.isfunction(request_stream):
+
+            @wraps(request_stream)
+            @asynccontextmanager
+            async def budgeted_request_stream(
+                self: Model, *args: Any, **kwargs: Any
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                async with AsyncExitStack() as stack:
+                    # Files are downloaded while the request is built, before the stream opens. The budget ends there,
+                    # since a stream can be closed from a task other than the one that opened it.
+                    with _open_request_download_budget():
+                        stream = await stack.enter_async_context(request_stream(self, *args, **kwargs))
+                    yield stream
+
+            cls.request_stream = budgeted_request_stream
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
@@ -947,6 +1192,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
+        cls._restore_special_tokens_at_the_model_boundary()
+        cls._budget_downloads_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by model settings.
@@ -981,13 +1228,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        """Start the deadlines of a request to this model made now, if they're set here or on the model.
 
-        A model that makes its requests through other models, each under a deadline of its own, overrides this to
-        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its
+        requests through other models, each under deadlines of their own, overrides this to return `None`, as
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
         """
-        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
+        return RequestDeadline.start(
+            self.model_name, merge_model_settings(self.settings, model_settings), stream=stream
+        )
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -1053,6 +1303,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _max_cache_retention(
         *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
+        if '12h' in cache_settings:
+            return timedelta(hours=12)
         if '1h' in cache_settings:
             return timedelta(hours=1)
         if '30m' in cache_settings:
@@ -1073,6 +1325,118 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
 
+    @property
+    def canonical_system(self) -> str:
+        """The system whose keys and format verify the stateless signed or encrypted data this model returns.
+
+        The provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system], or `system` for a
+        model without a provider. See
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts] for how it's used.
+        """
+        provider = self.provider
+        return provider.canonical_system if provider is not None else self.system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """Other canonical systems whose stateless data this model also sends back to its provider.
+
+        The provider's [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems], or none for a
+        model without a provider.
+        """
+        provider = self.provider
+        return provider.compatible_systems if provider is not None else frozenset()
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """Whether this model can send back the stateless signed or encrypted data `part` carries in `response`.
+
+        That data is encrypted reasoning, thinking and thought signatures, redacted thinking, encrypted
+        server-side tool results and OpenAI compaction items: the API checks it by its own key and format
+        rather than by looking up stored state. The data's canonical system is `response.canonical_system`
+        for a part with the response's `provider_name`, and is otherwise derived from the part's
+        `provider_name`. It's accepted when that is this model's
+        [`canonical_system`][pydantic_ai.models.Model.canonical_system] or one of its
+        [`compatible_systems`][pydantic_ai.models.Model.compatible_systems]. Data from a part with this
+        model's own `system`, in a history that doesn't say otherwise, is accepted as before.
+
+        Every model that sends such data back decides with this method, as does the trim that drops history
+        before a compaction part, so the two always agree. Data that isn't accepted gets the model's fallback
+        for foreign data, such as thinking rendered as text. Server-side state, such as response and container
+        IDs, is judged by [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] instead.
+
+        Args:
+            response: The response the part is in.
+            part: The part carrying the data, or `None` for data the response carries without a part of its
+                own provider, which is judged by the response's `provider_name`. A part without a
+                `provider_name` is never accepted.
+        """
+        return accepts_stateless_artifact(
+            response,
+            response.provider_name if part is None else part.provider_name,
+            system=self.system,
+            canonical_system=self.canonical_system,
+            compatible_systems=self.compatible_systems,
+        )
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """Whether this model can send back the IDs of server-side state created by `response`.
+
+        That's state the API stores and looks up by ID, rather than verifying by its own key: stored responses
+        (`previous_response_id`), output item IDs, conversations and code execution containers. It's accepted
+        when the response has this model's `system` as its `provider_name` and was created at an endpoint this
+        model's provider [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+        A response without a `provider_url`, such as one recorded by hand, and a model without a provider are
+        judged by `provider_name` alone. Stateless data has its own check,
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts], so a response from
+        another endpoint of the same API still has its encrypted reasoning sent back, without the IDs.
+
+        Uploaded files aren't judged here: the endpoint an
+        [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to is the one you pass it to.
+        """
+        if response.provider_name != self.system:
+            return False
+        provider = self.provider
+        if provider is None or response.provider_url is None:
+            return True
+        return provider.shares_server_state_with(response.provider_url)
+
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """The `canonical_system` to set on a response this model creates.
+
+        Its own, when that isn't `system`, or always when the provider derives it from its client rather than its
+        name (see `Provider._canonical_system_follows_client`), as the name alone then doesn't say which it was.
+        """
+        canonical_system = self.canonical_system
+        provider = self.provider
+        if provider is not None and provider._canonical_system_follows_client:  # pyright: ignore[reportPrivateUsage]
+            return canonical_system
+        return None if canonical_system == self.system else canonical_system
+
+    _honors_compaction_boundaries: ClassVar[bool] = False
+    """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        """The model that produced `response`, for a model that delegates requests to others."""
+        return self
+
+    def _compaction_window_predicate(self, response: ModelResponse) -> _StatelessArtifactPredicate | None:
+        """The predicate the request that produced `response` was trimmed by, for its execution-availability window.
+
+        That's the producing model's
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts] when it trims before
+        compaction parts and `response` is evidently its own. Otherwise `None`, for the window to treat a compaction
+        part as a boundary only when it's from the response's own provider: the producer then can't be asked, as
+        when a run resumes from another model's response, or never trimmed the history.
+        """
+        model = self._model_for_response(response)
+        if (
+            not model._honors_compaction_boundaries
+            or model.system != response.provider_name
+            or model._canonical_system_stamp != response.canonical_system
+        ):
+            return None
+        return model.accepts_stateless_artifacts
+
     def _trim_before_compaction(
         self,
         messages: list[ModelMessage],
@@ -1092,7 +1456,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return _trim_messages_before_compaction(
             messages,
-            self.system,
+            self.accepts_stateless_artifacts,
             requires_encrypted_content=self.compaction_requires_encrypted_content,
             standing_prompt_retained=self.compaction_retains_standing_prompt
             if standing_prompt_retained is None
@@ -1494,6 +1858,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             has_function_tools=bool(model_request_parameters.function_tools),
         )
 
+    def _format_inlined_text_file(self, text: str, *, media_type: str, identifier: str) -> str:
+        """Frame a text file for a message-mapping step that inlines it into a text prompt.
+
+        It's downloaded or decoded in that step, so `prepare_messages` can't have seen its text.
+        """
+        formatted = _utils.format_inlined_text_file(text, media_type=media_type, identifier=identifier)
+        if self.profile.get('may_tokenize_special_tokens_in_content', False):
+            return break_special_tokens(formatted)
+        return formatted
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
@@ -1521,17 +1895,39 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
 
+        Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
+        model sees a capability's load as its instructions and tools, not as the record that loads it.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
         until the latest compaction alone, since no baseline restates it.
+
+        Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
+        `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
+        or withdraws the first.
+
+        Where the profile's `may_tokenize_special_tokens_in_content` is `True`, puts a zero-width joiner inside each
+        chat-template special token in user prompts, tool results and replayed model output, so a host can't encode it
+        as a control token. The same text always comes out the same, and the history itself isn't changed. The
+        joiner is removed again from each response, by `_restore_special_tokens_at_the_model_boundary`.
+
+        When the conversation has `<context>` elements, follows each user prompt, attached text file and tool result
+        whose text opens one with a note saying who wrote it, so the model doesn't take it as a change to its
+        instructions. The item itself is sent as written.
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`, converts
+        the profile's `supports_inline_system_prompts` is `False`. On such a profile it also escapes every
+        `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
+        when the request has a standing system prompt or instructions, adds one fixed sentence saying what
+        the tag means ahead of the first request's leading system prompts, so the operator's own text comes last: from the first request whose history
+        has a mid-conversation system prompt and on every request after it, unless the
+        [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says
+        otherwise. It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume, replaces each file a tool returned that the
         profile's file-input flags say the model can't read with a note naming it, and puts the
@@ -1554,28 +1950,54 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        inline_system = self.profile.get('supports_inline_system_prompts', False)
+        prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
+        # Asked before the instruction state is projected, which drops the records it's read from.
+        first_context_request = _first_context_request(messages, prefix)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
-                inline_system=self.profile.get('supports_inline_system_prompts', False),
-                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+                inline_system=inline_system,
+                prefix=prefix,
             )
+        messages = _drop_capability_load_deltas(messages)
 
+        messages = _render_system_prompt_contexts(
+            messages,
+            inline_system=inline_system,
+            # The appending instruction blocks the prefix opens are followed by the sentence already.
+            prefix_states_rule=model_request_parameters is not None
+            and bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
+        )
         messages = _project_model_settings_deltas(
             messages,
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
         )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        if not inline_system:
+            # After speech becomes user text, and before any step below renders `<system>` text for the
+            # framework, so only text from the user and tools is escaped.
+            messages = _neutralize_voice_tags(messages)
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        # After retry feedback becomes user text, and before any step below renders the application's own text.
+        messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
+        if first_context_request is not None:
+            # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
+            messages = _note_context_lookalikes(messages, first_context_request)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Looked for before answered request-scoped prompts are dropped, so the announcement stays once it's in.
+        had_system_prompt = _has_mid_conversation_system_prompt(messages, standing_prompt_count)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
@@ -1646,14 +2068,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
-        target_provider_name = self.system if supports_native_tool_search else None
-        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+        messages = synthesize_local_tool_search_messages(
+            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+        )
 
         if not clears_request_scoped_prompts:
             messages = _move_request_scoped_prompts_to_tail(messages)
 
-        if not self.profile.get('supports_inline_system_prompts', False):
+        if not inline_system:
+            unwrapped = messages
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+            if first_request is not None and self._should_announce_system_voice(
+                messages,
+                # A rendered tool-availability delta is a `<system>` block too, so a wrap counts.
+                needed=had_system_prompt or messages is not unwrapped,
+                standing_prompt_count=standing_prompt_count,
+                model_request_parameters=model_request_parameters,
+            ):
+                messages = _announce_system_voice(messages)
 
         messages = _order_tool_results_by_call(messages)
 
@@ -1661,6 +2093,40 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _should_announce_system_voice(
+        self,
+        messages: list[ModelMessage],
+        *,
+        needed: bool,
+        standing_prompt_count: int,
+        model_request_parameters: ModelRequestParameters | None,
+    ) -> bool:
+        """Whether `prepare_messages` adds `SYSTEM_VOICE_ANNOUNCEMENT` to a history whose mid-conversation system prompts it has `<system>`-wrapped.
+
+        By default (`framing_announcement='when_needed'`) the tag is announced only once the history has, or had, a
+        `<system>` block for it to explain (`needed`), so an agent that never sends a mid-conversation system prompt
+        keeps its standing prompt as written. `needed` counts a request-scoped prompt that's no longer sent because its
+        request was answered, so the announcement stays on every later request once it's in. It's decided by the
+        messages alone, so a replay or a later run of the same history renders the same. The sentence joins an
+        existing standing prompt or instructions, never creates one.
+
+        The agent passes the setting in on the request parameters, from the run's merged settings; without it, the
+        model's own `settings` apply.
+        """
+        if not self._announces_system_voice:
+            return False
+        mode = (
+            (model_request_parameters._framing_announcement if model_request_parameters else None)  # pyright: ignore[reportPrivateUsage]
+            or (self.settings or {}).get('framing_announcement')
+            or 'when_needed'
+        )
+        if mode == 'never' or (mode == 'when_needed' and not needed):
+            return False
+        return bool(
+            standing_prompt_count
+            or self._get_instruction_parts(messages, model_request_parameters or ModelRequestParameters())
+        )
 
     def _translate_legacy_tool_reveals(
         self,
@@ -1851,7 +2317,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         if (provider := self.provider) is None:
             return {}
-        return provider.model_profile(self.model_name) or {}
+        return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -1917,6 +2383,8 @@ class StreamedResponse(ABC):
 
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
+    canonical_system: str | None = field(default=None, init=False)
+    """See [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system]. Set by the model that opened the stream."""
     finish_reason: FinishReason | None = field(default=None, init=False)
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
@@ -1939,7 +2407,8 @@ class StreamedResponse(ABC):
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
     _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
-    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+    """The `ModelSettings['request_timeout']` and `ModelSettings['first_event_timeout']` deadlines each pull of the next
+    event runs under, if any.
 
     Set before iteration starts by whoever opened the stream under that deadline."""
 
@@ -2050,14 +2519,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            events = self._get_event_iterator()
+            events = restore_special_tokens_in_stream(
+                self._get_event_iterator(), self._parts_manager.special_token_restorer
+            )
             if self._request_deadline is not None:
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
-        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        """Pull each event under `deadline`, the deadlines this stream was opened under."""
         assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
         self._request_deadline = deadline
 
@@ -2115,7 +2586,9 @@ class StreamedResponse(ABC):
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
 
-        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
+        It should use the `_parts_manager` to handle deltas, forwarding the events that `handle_text_delta`,
+        `handle_thinking_delta` and `handle_tool_call_delta_events` yield, and should update the `_usage` attributes
+        as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -2144,6 +2617,7 @@ class StreamedResponse(ABC):
             usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
+            canonical_system=self.canonical_system,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -2760,6 +3234,36 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     """
 
 
+async def _download_within_request_budget(url: str, *, allow_local: bool) -> httpx2.Response:
+    """Download `url` within the per-file limit and what is left of the current model request's total."""
+    from .._ssrf import DownloadTooLargeError, safe_download
+
+    budget = _request_download_budget.get()
+    if budget is None:
+        return await safe_download(url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+
+    # Reserved before the download and the unused part refunded after, so downloads running at the same time can't
+    # each claim what is left. Each reservation takes up to the per-file limit, so more downloads in flight at once
+    # than the total holds per-file limits are refused however small they are: no model downloads concurrently, and
+    # one that starts to needs a different scheme.
+    max_bytes = min(_MAX_FILE_URL_DOWNLOAD_BYTES, budget.remaining)
+    budget.remaining -= max_bytes
+    downloaded = 0
+    try:
+        response = await safe_download(url, allow_local=allow_local, max_bytes=max_bytes)
+        downloaded = len(response.content)
+    except DownloadTooLargeError as e:
+        if max_bytes == _MAX_FILE_URL_DOWNLOAD_BYTES:
+            raise
+        raise ValueError(
+            f'File URL downloads for one model request exceed the total of {_MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES} bytes; '
+            'pass large files as `BinaryContent` instead.'
+        ) from e
+    finally:
+        budget.remaining += max_bytes - downloaded
+    return response
+
+
 @overload
 async def download_item(
     item: FileUrl,
@@ -2788,7 +3292,7 @@ async def download_item(
     - Private/internal IP addresses are blocked by default
     - Cloud metadata endpoints (169.254.169.254) are always blocked
     - Hostnames are resolved before requests to prevent DNS rebinding
-    - Response bodies are limited to 50 MiB
+    - Response bodies are limited to 50 MiB, and the files one model request downloads to 500 MiB in total
 
     Set `item.force_download='allow-local'` to allow private IP addresses.
 
@@ -2806,15 +3310,14 @@ async def download_item(
     Raises:
         UserError: If the URL points to a YouTube video.
         ValueError: If the URL uses an unsupported protocol or targets a private/internal
-            IP address (unless allow-local is set), or the body exceeds 50 MiB.
+            IP address (unless allow-local is set), the body exceeds 50 MiB, or the downloads of one model
+            request exceed 500 MiB in total.
     """
     if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    from .._ssrf import safe_download
-
     allow_local = item.force_download == 'allow-local'
-    response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+    response = await _download_within_request_budget(item.url, allow_local=allow_local)
 
     # A media type the caller passed explicitly is the only way to correct a wrong server type, so it wins.
     media_type = item._media_type or None  # pyright: ignore[reportPrivateUsage]
@@ -2858,13 +3361,34 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
+def _with_default_user_agent(headers: Mapping[str, str]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    """A copy of `headers` with our `User-Agent` added, unless they hold a user-agent in any spelling.
+
+    Fits an SDK that merges per-request headers into its own case-insensitively, as OpenAI's and Anthropic's do.
+    """
+    extra_headers = dict(headers)
+    if all(name.lower() != 'user-agent' for name in extra_headers):
+        extra_headers['User-Agent'] = get_user_agent()
+    return extra_headers
+
+
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
-    parameters_json_schema = schema_transformer.walk()
+    try:
+        schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+        # Walking can also raise, e.g. for a malformed node only reachable through a `$ref`.
+        parameters_json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError(
+            f'The JSON schema of tool {tool_def.name!r}',
+            'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
+            'or a `FilteredToolset`.',
+        ) from None
+    except UserError as e:
+        raise UserError(f'Tool {tool_def.name!r}: {e}') from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -2876,7 +3400,10 @@ def _customize_output_object(
     transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
 ) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
-    json_schema = schema_transformer.walk()
+    try:
+        json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError('The output JSON schema') from None
     return replace(
         output_object,
         json_schema=json_schema,
@@ -3158,7 +3685,7 @@ def prepare_return_schemas(
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
-    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that could produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (
@@ -3254,12 +3781,16 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
 
 def _trim_messages_before_compaction(
     messages: list[ModelMessage],
-    system: str,
+    accepts: _StatelessArtifactPredicate,
     *,
     requires_encrypted_content: bool = False,
     standing_prompt_retained: bool = False,
 ) -> list[ModelMessage]:
-    """Drop history before the latest same-provider compaction part the request will send.
+    """Drop history before the latest compaction part the request will send.
+
+    `accepts` is the adapter's [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts],
+    the predicate it renders compaction parts by, so a part from another provider with the same canonical system
+    is a boundary exactly when the adapter sends it.
 
     Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
     which derives both flags from the adapter's declarations; adapters call that from their own
@@ -3300,7 +3831,7 @@ def _trim_messages_before_compaction(
         for part_index in range(len(message.parts) - 1, -1, -1):
             part = message.parts[part_index]
             if not isinstance(part, CompactionPart) or not _compaction_part_is_wire_boundary(
-                part, system, requires_encrypted_content=requires_encrypted_content
+                message, part, accepts, requires_encrypted_content=requires_encrypted_content
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
@@ -3420,6 +3951,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
         | ModelSettingsDeltaPart,
     ):
         return False
@@ -3530,6 +4062,32 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     )
 
 
+def _with_framing_announcement(  # pyright: ignore[reportUnusedFunction]
+    params: ModelRequestParameters, model_settings: ModelSettings | None
+) -> ModelRequestParameters:
+    """`params` carrying the request's `framing_announcement` setting, or none where `model_settings` doesn't set it.
+
+    `prepare_messages` reads the setting from the parameters, since it isn't given the settings. So every caller that
+    prepares a request's messages passes its parameters through this first: the agent graph, the direct API,
+    `FallbackModel` for its candidates, and a durable activity that re-prepares, where the private field isn't
+    serialized. A caller that skips it gets the model's own `settings` or the default instead of the request's setting.
+    """
+    framing_announcement = (model_settings or {}).get('framing_announcement')
+    if framing_announcement == params._framing_announcement:  # pyright: ignore[reportPrivateUsage]
+        return params
+    return replace(params, _framing_announcement=framing_announcement)
+
+
+def _has_mid_conversation_system_prompt(messages: list[ModelMessage], standing_prompt_count: int) -> bool:
+    """Whether any request has a `SystemPromptPart` other than the first request's standing prompt."""
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    return any(
+        isinstance(part, SystemPromptPart)
+        for index, request in enumerate(requests)
+        for part in request.parts[standing_prompt_count if index == 0 else 0 :]
+    )
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
@@ -3569,6 +4127,98 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Add `SYSTEM_VOICE_ANNOUNCEMENT` to the standing prompt, for a model that gets mid-conversation system prompts as `<system>`-tagged user text.
+
+    Models without mid-conversation system messages follow a `<system>`-tagged change, withdrawal or new rule
+    far more reliably when the standing prompt has said what the tag is. The sentence is fixed, and by default
+    (`framing_announcement='when_needed'`) is added from the first request whose history has a mid-conversation
+    system prompt, and to every request after it, even once a request-scoped prompt that triggered it is no longer
+    sent. An agent that never sends one pays nothing for it, and one that does changes its cache prefix once, at that
+    request, and keeps it stable from then on, as long as the history keeps that prompt: a UI adapter's frontend doesn't
+    send it back, so UI apps should use `'always'`. It goes ahead of the first request's opening system prompts, which
+    every adapter lifts into the provider's system field ahead of the instructions, so the operator's own text, from
+    `system_prompt` or `instructions`, keeps the last word: with the sentence after the operator's prompt, Gemini acted
+    more often on requests quoted in a tool result that an operator instruction seemed to cover.
+    """
+    first_request_idx, first_request = next(
+        (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
+    )
+    announcement = SystemPromptPart(
+        content=SYSTEM_VOICE_ANNOUNCEMENT, timestamp=first_request.timestamp or _utils.now_utc()
+    )
+    parts = [announcement, *first_request.parts]
+    return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
+
+
+def _neutralize_voice_tags(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Escape every `<system>` tag in user prompts and tool returns, for a model whose framework voice is `<system>`-tagged user text.
+
+    The `<` of each opening or closing spelling becomes `&lt;`, as by `neutralize_voice_tag`, so the text reads
+    as written and can neither open nor close the tag the framework speaks in. A legacy `RetryPromptPart` that
+    answers a tool call is translated to the `ToolReturnPart` it stands for first, as `_translate_retry_parts`
+    would. Other retry feedback is fenced in a data tag later, which escapes every framing tag in it.
+
+    Parts without a `<system>` tag are left as they are, and the original list comes back when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_part_without_voice_tags(part) for part in message.parts]
+            if any(new is not old for new, old in zip(parts, message.parts)):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _part_without_voice_tags(part: ModelRequestPart) -> ModelRequestPart:
+    if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
+        translated = _translate_legacy_retry_part(part)
+        neutralized = _part_without_voice_tags(translated)
+        return part if neutralized is translated else neutralized
+    if isinstance(part, UserPromptPart | ToolReturnPart):
+        content = _without_voice_tags(part.content)
+        return part if content is part.content else replace(part, content=content)
+    return part
+
+
+def _without_voice_tags(value: Any) -> Any:
+    """`value` with every `<system>` tag in its text neutralized, or `value` itself when it has none.
+
+    Strings, text content and the strings in lists and dicts are neutralized in place, files are left alone, and
+    any other value, which the adapter sends as its JSON text, is replaced by its neutralized JSON form.
+    """
+    if isinstance(value, str):
+        neutralized = neutralize_voice_tag(value)
+        return value if neutralized == value else neutralized
+    if isinstance(value, TextContent):
+        content = neutralize_voice_tag(value.content)
+        # A `StructuredContent` would still send its `value` to a model that takes it natively.
+        return value if content == value.content else TextContent(content, metadata=value.metadata)
+    if isinstance(value, list | tuple):
+        sequence = cast('list[Any] | tuple[Any, ...]', value)
+        items = [_without_voice_tags(item) for item in sequence]
+        return sequence if all(new is old for new, old in zip(items, sequence)) else items
+    if isinstance(value, dict):
+        mapping = cast('dict[Any, Any]', value)
+        entries = [(_without_voice_tags(key), _without_voice_tags(item)) for key, item in mapping.items()]
+        if all(
+            new_key is key and new_item is item for (new_key, new_item), (key, item) in zip(entries, mapping.items())
+        ):
+            return mapping
+        if len({key for key, _ in entries}) < len(entries):
+            # Escaping made two keys equal: send the JSON text, which keeps every entry.
+            return neutralize_voice_tag(_tool_return_text(mapping))
+        return dict(entries)
+    if value is None or isinstance(value, bool | int | float | CachePoint) or is_multi_modal_content(value):
+        return value
+    dumped = tool_return_ta.dump_python(value, mode='json', by_alias=True)
+    neutralized = _without_voice_tags(dumped)
+    return value if neutralized is dumped else neutralized
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
@@ -3698,6 +4348,26 @@ def _project_instruction_state(
     return projected
 
 
+def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without their `CapabilityLoadDeltaPart`s, or `messages` itself when there are none.
+
+    A request left with no parts is kept, as it is when every other part of it is dropped.
+    """
+    if not any(
+        isinstance(part, CapabilityLoadDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    return [
+        replace(message, parts=[part for part in message.parts if not isinstance(part, CapabilityLoadDeltaPart)])
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
 def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
     """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
 
@@ -3783,6 +4453,164 @@ def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingE
 def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
     """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
     return _project_model_settings_deltas(messages, keep=False)
+
+
+def _render_system_prompt_contexts(
+    messages: list[ModelMessage], *, inline_system: bool, prefix_states_rule: bool
+) -> list[ModelMessage]:
+    """Send each `SystemPromptPart` with a `context_id` as its `<context>` element, which history holds only the content of.
+
+    The first statement of an id in `messages` opens it, and later ones replace or withdraw it. A statement that
+    would open an id without content has nothing to state and is left out.
+
+    The sentence saying that a later element with the same id replaces an earlier one is sent once per request,
+    after the last element opened where the first ones are. The standing system prompt is sent with the instruction
+    prefix, which ends with the sentence itself when it opens an appending instruction block
+    (`prefix_states_rule`), so the standing prompt's elements get it only when the prefix doesn't. When neither
+    states it, the sentence follows the last element opened by the first later request that opens one, and isn't
+    repeated after that. History is append-only, so each statement renders the same on every later request.
+
+    Returns `messages` itself when no part has an id.
+    """
+    if not any(
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    first_request = next(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
+    opened: set[str] = set()
+    stated = prefix_states_rule
+    rendered: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            rendered.append(message)
+            continue
+        parts: list[ModelRequestPart | None] = list(message.parts)
+        # The standing system prompt is sent with the instruction prefix, ahead of the rest of the first request.
+        standing = _standing_system_prompt_count(message) if index == first_request else 0
+        for group in (range(standing), range(standing, len(parts))):
+            statements: list[tuple[int, SystemPromptPart]] = []
+            last_opening: int | None = None
+            for part_index in group:
+                part = message.parts[part_index]
+                if not isinstance(part, SystemPromptPart) or part.context_id is None:
+                    continue
+                if part.context_id not in opened:
+                    if not part.content:
+                        parts[part_index] = None
+                        continue
+                    opened.add(part.context_id)
+                    last_opening = part_index
+                statements.append((part_index, part))
+            states_rule_at = last_opening if not stated else None
+            for part_index, part in statements:
+                content = _render_system_prompt_context(
+                    part, inline_system=inline_system, states_rule=part_index == states_rule_at
+                )
+                parts[part_index] = replace(part, content=content)
+            stated = stated or states_rule_at is not None
+        rendered.append(replace(message, parts=[part for part in parts if part is not None]))
+    return rendered
+
+
+def _first_context_request(messages: list[ModelMessage], prefix: Sequence[InstructionPart] | None) -> int | None:
+    """The position, among `messages`' requests, of the first one sent with a `<context>` element, or `None` if none is.
+
+    That's the first request that records an append-mode instruction window, an instruction change or an appending
+    system prompt. History is append-only, so once one exists the position never moves, and lookalike notes from it on
+    render the same on every later request, while requests sent before it never gain one. A history without such a
+    record, as a direct caller's, has `<context>` elements throughout when the instruction prefix opens an append-mode
+    block.
+    """
+    requests = (message for message in messages if isinstance(message, ModelRequest))
+    for index, request in enumerate(requests):
+        if any(_records_context_element(part) for part in request.parts):
+            return index
+    return 0 if _tagged_append_parts(prefix or []) else None
+
+
+def _records_context_element(part: ModelRequestPart) -> bool:
+    if isinstance(part, InstructionBaselinePart):
+        return any(isinstance(block, InstructionPart) and block.on_change == 'append' for block in part.instructions)
+    return isinstance(part, InstructionDeltaPart) or (
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+    )
+
+
+def _note_context_lookalikes(messages: list[ModelMessage], first_request: int) -> list[ModelMessage]:
+    """Follow each user prompt, file and tool result whose text opens a `<context>` or `<context_diff>` element with a note.
+
+    Only requests from the `first_request`th on, the first sent with a `<context>` element, are noted. The note is a
+    `SystemPromptPart` saying the text was written by the user, the author of the file or the tool, not by the
+    application (`context_lookalike_note`). It goes right after the user prompt, or after the request's last tool
+    result, so it's never part of the standing system prompt and never comes between tool results, and it's worded
+    "preceding" to match. The item itself is left as written.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    request_index = -1
+    for message in messages:
+        if isinstance(message, ModelRequest) and (request_index := request_index + 1) >= first_request:
+            timestamp = message.timestamp or _utils.now_utc()
+            parts: list[ModelRequestPart] = []
+            tool_note_at: int | None = None
+            for part in message.parts:
+                parts.append(part)
+                if isinstance(part, ToolReturnPart):
+                    if tool_note_at is not None or _tool_return_opens_context_element(part):
+                        tool_note_at = len(parts)
+                elif isinstance(part, UserPromptPart):
+                    parts.extend(
+                        SystemPromptPart(content=context_lookalike_note(source), timestamp=timestamp)
+                        for source in _user_prompt_context_lookalike_sources(part)
+                    )
+            if tool_note_at is not None:
+                parts.insert(
+                    tool_note_at, SystemPromptPart(content=context_lookalike_note('tool'), timestamp=timestamp)
+                )
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _user_prompt_context_lookalike_sources(part: UserPromptPart) -> list[LookalikeSource]:
+    """Who wrote a user prompt's text that opens a `<context>` element: the user, the author of an attached text file, or both."""
+    items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
+    sources: list[LookalikeSource] = []
+    if any(opens_context_element(text) for item in items if (text := _typed_text(item)) is not None):
+        sources.append('user')
+    if any(opens_context_element(text) for item in items if (text := _text_file_text(item)) is not None):
+        sources.append('file')
+    return sources
+
+
+def _tool_return_opens_context_element(part: ToolReturnPart) -> bool:
+    """Whether a tool result's text, its text files included, opens a `<context>` or `<context_diff>` element."""
+    return any(
+        text is not None and opens_context_element(text)
+        for item in part.content_items(mode='str', wrap_if_error=False)
+        for text in (_typed_text(item), _text_file_text(item))
+    )
+
+
+def _typed_text(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, TextContent):
+        return item.content
+    return None
+
+
+def _text_file_text(item: object) -> str | None:
+    if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
+        return item.data.decode(errors='replace')
+    return None
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
@@ -3927,15 +4755,20 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart | CompactionPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart
+    | CapabilityLoadDeltaPart
+    | ModelSettingsDeltaPart
+    | RetryFeedbackPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | CompactionPart
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
-into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
-on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
+thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
+step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
 """
@@ -4408,3 +5241,12 @@ def _synthesize_tool_availability_delta_messages(
             transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages
+
+
+_REMOVED_IN_V2 = {
+    'cached_async_http_client': 'use `create_async_http_client()`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

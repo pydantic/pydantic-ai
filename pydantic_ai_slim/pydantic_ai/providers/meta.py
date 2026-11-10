@@ -19,13 +19,10 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 MetaModelName = Literal[
-    'muse-spark-1.1',
-    'muse-spark-1.2',
-    'muse-spark-1.2-contributor',
     'muse-spark-1.3',
     'muse-spark-1.3-contributor',
     'muse-wonder-1.0',
@@ -36,7 +33,7 @@ See <https://dev.meta.ai/docs/models> for an up to date list of models.
 """
 
 
-class MetaProvider(_OpenAICompatibleProvider):
+class MetaProvider(_OpenAISDKProvider):
     """Provider for Meta's Model API (Muse models)."""
 
     @property

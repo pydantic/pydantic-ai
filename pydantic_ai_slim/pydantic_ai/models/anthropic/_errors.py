@@ -20,6 +20,7 @@ from ...exceptions import (
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
 )
+from .._anthropic_schema_limits import SCHEMA_TOO_COMPLEX_HINT, is_schema_too_complex_error
 from .._transport_errors import transport_error_message
 
 # https://platform.claude.com/docs/en/api/errors#http-errors
@@ -92,6 +93,10 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
             in_stream=e.status_code < 400,
         ) from e
     except APIConnectionError as e:
+        if isinstance(cause := e.__cause__, httpx2.HTTPStatusError):
+            # A retrying transport raises this for a status it gave up on, and `anthropic` wraps it as if the
+            # connection had failed, though the provider responded.
+            raise _model_errors.transport_status_error(model_name, cause.response) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except httpx2.TransportError as e:
         # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
@@ -113,32 +118,48 @@ def api_error(
     """The error for an error response, stream `error` event, or errored Message Batches result with `body`."""
     error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
     error_type, error_message = error.get('type'), error.get('message')
-    category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
+    category = error_category(error_type, error_message)
+    provider_error_type = error_type if isinstance(error_type, str) else None
+    if status_code < 400:
+        # An `error` event inside a stream whose type has no known status.
+        return (category or ModelAPIError)(
+            model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
+        )
+    suggested_model_id = None
+    if error_type == 'not_found_error' and error_message == f'model: {model_name}':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reported = reported_error_body(body)
+    reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
+    provider_error_code = None
+    if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
+        # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
+        # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
+        provider_error_code = amzn_error_type.split(':', 1)[0]
+        category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
+    hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, reported_message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        hint=hint,
+        provider_error_code=provider_error_code,
+        provider_error_type=provider_error_type,
+        in_stream=in_stream,
+    )
+
+
+def error_category(error_type: object, error_message: object) -> _model_errors.HTTPErrorCategory | None:
+    """The error category an error body's `type` and `message` name, if any."""
     if error_type == 'invalid_request_error' and isinstance(error_message, str):
         if 'prompt is too long' in error_message.lower():
-            category = ModelContextWindowExceededError
-        elif 'credit balance is too low' in error_message.lower():
+            return ModelContextWindowExceededError
+        if 'credit balance is too low' in error_message.lower():
             # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
-            category = ModelQuotaExceededError
-    provider_error_type = error_type if isinstance(error_type, str) else None
-    if status_code >= 400:
-        suggested_model_id = None
-        if error_type == 'not_found_error' and error_message == f'model: {model_name}':
-            suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, error_message),
-            status_code=status_code,
-            model_name=model_name,
-            body=body,
-            headers=headers,
-            suggested_model_id=suggested_model_id,
-            provider_error_type=provider_error_type,
-            in_stream=in_stream,
-        )
-    # An `error` event inside a stream whose type has no known status.
-    return (category or ModelAPIError)(
-        model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
-    )
+            return ModelQuotaExceededError
+    return _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
 
 
 _ERROR_TYPE_CATEGORIES: dict[str, _model_errors.HTTPErrorCategory] = {

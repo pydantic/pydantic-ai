@@ -64,9 +64,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestCohereEmbeddingModelNames = Literal[
     'embed-v4.0',
     'embed-english-v3.0',
-    'embed-english-light-v3.0',
     'embed-multilingual-v3.0',
-    'embed-multilingual-light-v3.0',
 ]
 """Latest Cohere embeddings models.
 

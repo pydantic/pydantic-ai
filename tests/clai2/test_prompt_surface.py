@@ -598,6 +598,21 @@ def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
     assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
 
 
+def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS, select_pinned=True)
+    for report in (press(1, 8), drag(5, 8)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['DRAFT']
+    screen.surface.paint(ROWS)
+    assert highlighted(screen.surface) == []
+    assert screen.surface.transcript_key('mouse', release(5, 8)) is None
+    for row in (8, 10):
+        for report in (press(1, row), drag(5, row), release(5, row)):
+            assert screen.surface.transcript_key('mouse', report) is None
+        assert not any(text.strip() for text in highlighted(screen.surface))
+
+
 def test_dragging_backwards_selects_the_same_cells_in_reading_order() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS)
