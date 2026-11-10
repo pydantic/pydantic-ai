@@ -7,30 +7,17 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from e2b.exceptions import NotFoundException, SandboxException
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
-from pydantic_ai_harness import MountError, S3Mount
+from pydantic_ai_harness import MountError
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+from tests.harness.mounts.probing import bucket, probing
 
 from .fake_e2b import FakeE2B, FakeSandbox
-
-
-def bucket(key: str = 'the-key-id') -> S3Mount:
-    return S3Mount(
-        path='data',
-        url='s3://bucket/',
-        access_key_id=key,
-        secret_access_key='the-secret-key',
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        endpoint='http://minio:9000',
-    )
 
 
 def helper_replies(
@@ -50,16 +37,6 @@ def helper_replies(
 
 def root_requests(sandbox: FakeSandbox) -> list[dict[str, Any]]:
     return [json.loads(data) for _, data in sandbox.commands.stdin_sent]
-
-
-def probing(capability: E2BSandbox[str]) -> Agent[str, str]:
-    agent = Agent(TestModel(call_tools=['probe']), deps_type=str, capabilities=[capability])
-
-    @agent.tool
-    async def probe(ctx: RunContext[str]) -> str:
-        return (await ctx.workspace.run(['echo', 'contained'])).stdout
-
-    return agent
 
 
 async def test_a_run_mounts_as_root_with_the_keys_only_on_stdin(fake_e2b: FakeE2B) -> None:

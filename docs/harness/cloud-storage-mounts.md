@@ -186,7 +186,7 @@ Files belong to the owner of the working directory. Writes are cached on the san
 | [Docker Sandbox](docker-sandbox.md) | The FUSE device, added when the container is created: `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`. A container without it is refused with `MountError` naming these flags. The container must reach the store, so leave `allow_internet_access` on; to limit where it connects, pass a `--network` of your own in `docker_args`. |
 | [E2B Sandbox](e2b-sandbox.md) | Internet access, on by default, to reach the store and install FUSE and rclone. The helper runs through E2B's `user='root'`, not `sudo`. |
 | [Modal Sandbox](modal-sandbox.md) | Modal's VM runtime: `ModalSandbox(runtime='vm')`. A sandbox on gVisor is refused with `MountError`, as gVisor can't mount FUSE file systems. |
-| [Sprites Sandbox](sprites-sandbox.md) | Nothing beyond a network path to the store: a Sprite has the FUSE device, and its `sprite` user runs the helper through passwordless `sudo`. |
+| [Sprites Sandbox](sprites-sandbox.md) | The FUSE device, `/dev/fuse`, which the Sprites this was tested on had; a Sprite without it is refused with `MountError`. A network path to the store. Its `sprite` user runs the helper through passwordless `sudo`. |
 
 The other sandboxes don't support `mounts=` yet.
 

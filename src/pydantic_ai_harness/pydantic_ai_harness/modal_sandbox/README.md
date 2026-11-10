@@ -198,7 +198,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 sandbox = ModalSandbox(runtime='vm')
 ```
 
-The default, `None`, lets Modal choose, which was gVisor when this was written. `runtime=` applies only to a sandbox `ModalSandbox` creates: an attached one keeps the runtime it was created with. It takes precedence over Modal's `MODAL_FUNCTION_RUNTIME` setting, which otherwise picks the runtime for every sandbox the process creates. [Mounting a bucket](#mount-a-bucket) needs `'vm'`, since gVisor can't mount the FUSE file systems mounts use.
+The default, `None`, leaves the choice to Modal, whose default is gVisor. `runtime=` applies only to a sandbox `ModalSandbox` creates: an attached one keeps the runtime it was created with. It takes precedence over Modal's `MODAL_FUNCTION_RUNTIME` setting, which otherwise picks the runtime for every sandbox the process creates. [Mounting a bucket](#mount-a-bucket) needs `'vm'`, since gVisor can't mount the FUSE file systems mounts use.
 
 ## Mount a bucket
 
@@ -285,7 +285,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
-| `runtime` | Modal's runtime for a new sandbox: `'gvisor'` or `'vm'`. Default: `None`, which lets Modal choose; that was gVisor when this was written. `mounts` needs `'vm'`. |
+| `runtime` | Modal's runtime for a new sandbox: `'gvisor'` or `'vm'`. Default: `None`, which leaves the choice to Modal (gVisor by default). `mounts` needs `'vm'`. |
 | `mounts` | Buckets to show as folders in the sandbox, as `S3Mount`s, or a function of the run returning them with fresh keys. The sandbox must be on the VM runtime; see [Mount a bucket](#mount-a-bucket). Default: `()`. Left out of agent specs, since it holds keys. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |

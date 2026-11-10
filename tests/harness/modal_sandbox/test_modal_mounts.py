@@ -7,30 +7,17 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_ai_harness import MountError, S3Mount
+from pydantic_ai_harness import MountError
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from tests.harness.mounts.probing import bucket, probing
 
 from .fake_modal import FakeModal, FakeSandbox
-
-
-def bucket(key: str = 'the-key-id') -> S3Mount:
-    return S3Mount(
-        path='data',
-        url='s3://bucket/',
-        access_key_id=key,
-        secret_access_key='the-secret-key',
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        endpoint='http://minio:9000',
-    )
 
 
 def helper_replies(fake_modal: FakeModal, stdout: str = '{"recovered": []}\n', exit_code: int = 0) -> None:
@@ -46,23 +33,13 @@ def helper_replies(fake_modal: FakeModal, stdout: str = '{"recovered": []}\n', e
     fake_modal.responder = respond
 
 
-def root_runs(sandbox: FakeSandbox) -> list[tuple[list[str], str | None, dict[str, Any]]]:
-    """Each helper run's argv and workdir, with the request it read from stdin."""
+def root_runs(sandbox: FakeSandbox) -> list[tuple[list[str], str | None, int | None, dict[str, Any]]]:
+    """Each helper run's argv, workdir and Modal timeout, with the request it read from stdin."""
     return [
-        (call.argv, call.workdir, json.loads(process.stdin.data))
+        (call.argv, call.workdir, call.timeout, json.loads(process.stdin.data))
         for call, process in zip(sandbox.exec_calls, sandbox.processes)
         if call.argv[4:6] == ['python3', '-c']
     ]
-
-
-def probing(capability: ModalSandbox[str]) -> Agent[str, str]:
-    agent = Agent(TestModel(call_tools=['probe']), deps_type=str, capabilities=[capability])
-
-    @agent.tool
-    async def probe(ctx: RunContext[str]) -> str:
-        return (await ctx.workspace.run(['echo', 'contained'])).stdout
-
-    return agent
 
 
 async def test_a_run_mounts_with_the_keys_only_on_stdin(fake_modal: FakeModal) -> None:
@@ -74,9 +51,11 @@ async def test_a_run_mounts_with_the_keys_only_on_stdin(fake_modal: FakeModal) -
 
     assert result.output == '{"probe":"echo contained\\n"}'
     (sandbox,) = fake_modal.sandboxes
-    ((argv, workdir, request),) = root_runs(sandbox)
+    ((argv, workdir, timeout, request),) = root_runs(sandbox)
     assert argv[:2] == ['sh', '-c'] and 'gvisor' in argv[2] and argv[3] == 'sh'
     assert workdir == '/'
+    # Modal stops the helper before the mount call's own 1860 second wait runs out.
+    assert timeout == 1830
     assert request['working_dir'] == '/root'
     assert request['mounts'][0]['keys']['secret_access_key'] == 'the-secret-key'
     assert next(process for process in sandbox.processes if process.stdin.data).stdin.closed

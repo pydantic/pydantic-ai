@@ -139,9 +139,6 @@ _AUTH_MESSAGE = (
 _MISSING_TOKEN_MESSAGE = (
     'No Sprites credentials found. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
 )
-_FUSE_CHECK = 'if [ -c /dev/fuse ]; then exec "$@"; fi; head -n 1 > /dev/null; exit 86'
-"""Runs a root command only in a Sprite with the FUSE device that mounting needs; it reads the stdin line either way."""
-_NO_FUSE = 86
 
 
 # Seconds a successful lookup is trusted by later backends in this process.
@@ -916,21 +913,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         """Run `argv` as root in the Sprite with `stdin` as its input, which reaches no command line or log."""
+        # Runs the command only in a Sprite with the FUSE device that mounting needs; it reads the stdin line either way.
+        no_fuse = 86
+        fuse_check = f'if [ -c /dev/fuse ]; then exec "$@"; fi; head -n 1 > /dev/null; exit {no_fuse}'
         async with self._operation():
             sandbox = await self._get_sandbox()
             # The Sprite's user has passwordless `sudo`; `-n` fails rather than prompting where it does not.
             result = await self._run(
-                ['sudo', '-n', '--', 'sh', '-c', _FUSE_CHECK, 'sh', *argv],
+                ['sudo', '-n', '--', 'sh', '-c', fuse_check, 'sh', *argv],
                 check_working_dir=False,
                 sandbox=sandbox,
                 cwd='/',
                 stdin=stdin,
             )
-        if result.exit_code == _NO_FUSE:
-            raise MountError(
-                f'Sprite {sandbox.name} has no FUSE device (`/dev/fuse`), which mounts need. '
-                'Create a new Sprite, which has one.'
-            )
+        if result.exit_code == no_fuse:
+            raise MountError(f'Sprite {sandbox.name} has no FUSE device (`/dev/fuse`), which mounts need.')
         return result
 
 

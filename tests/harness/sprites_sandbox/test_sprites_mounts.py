@@ -11,16 +11,14 @@ import inspect
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness import MountError, S3Mount
+from pydantic_ai_harness import MountError
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
+from tests.harness.mounts.probing import bucket, probing
 
 from .fake_sprites import SpriteTransport
 
@@ -63,27 +61,6 @@ def sudo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeSudo:
     return fake
 
 
-def bucket(key: str = 'the-key-id') -> S3Mount:
-    return S3Mount(
-        path='data',
-        url='s3://bucket/',
-        access_key_id=key,
-        secret_access_key='the-secret-key',
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        endpoint='http://minio:9000',
-    )
-
-
-def probing(capability: SpritesSandbox[str]) -> Agent[str, str]:
-    agent = Agent(TestModel(call_tools=['probe']), deps_type=str, capabilities=[capability])
-
-    @agent.tool
-    async def probe(ctx: RunContext[str]) -> str:
-        return (await ctx.workspace.run(['echo', 'contained'])).stdout
-
-    return agent
-
-
 async def test_a_run_mounts_through_sudo_with_the_keys_only_on_stdin(
     transport: SpriteTransport, sudo: FakeSudo
 ) -> None:
@@ -113,9 +90,7 @@ async def test_a_sprite_without_fuse_is_refused(transport: SpriteTransport, sudo
         await probing(SpritesSandbox[str](mounts=[bucket()])).run('go', deps='')
 
     (name,) = transport.created
-    assert str(raised.value) == (
-        f'Sprite {name} has no FUSE device (`/dev/fuse`), which mounts need. Create a new Sprite, which has one.'
-    )
+    assert str(raised.value) == (f'Sprite {name} has no FUSE device (`/dev/fuse`), which mounts need.')
 
 
 async def test_the_helpers_refusal_fails_the_operation(transport: SpriteTransport, sudo: FakeSudo) -> None:

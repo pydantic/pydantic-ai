@@ -46,6 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._mounts import MountError
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -103,10 +104,6 @@ _PARTIAL_OUTPUT_LIMIT = 65_536
 # process's memory, so reading stops once combined stdout and stderr pass this.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
-_GVISOR_EXIT = 86
-# gVisor shows a `/dev/fuse` but refuses to mount one, so the kernel's name is what tells; the input is read first,
-# so it never waits on a pipe nothing reads.
-_FUSE_CHECK = 'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit 86 ;; esac; exec "$@"'
 logger = logging.getLogger(__name__)
 
 
@@ -786,14 +783,22 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         """Run `argv` with `stdin` as its input, which reaches no command line or log; Modal runs commands as root."""
+        # gVisor shows a `/dev/fuse` but refuses to mount one, so the kernel's name (`4.19.0-gvisor`) is what tells;
+        # the input is read first, so it never waits on a pipe nothing reads.
+        gvisor = 86
+        fuse_check = f'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit {gvisor} ;; esac; exec "$@"'
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, 'Could not mount storage in the Modal sandbox'):
-            process = await sandbox.exec.aio('sh', '-c', _FUSE_CHECK, 'sh', *argv, workdir='/', text=False)
+            # Modal stops the helper if its own alarm never fires, before the caller stops waiting for it, so a
+            # helper never outlives the call that started it.
+            process = await sandbox.exec.aio(
+                'sh', '-c', fuse_check, 'sh', *argv, timeout=DEADLINE_SECONDS + 30, workdir='/', text=False
+            )
             process.stdin.write(stdin)
             process.stdin.write_eof()
             await process.stdin.drain.aio()
             stdout, stderr, exit_code, _ = await _collect_output(process, ['', ''], anyio.Event())
-        if exit_code == _GVISOR_EXIT:
+        if exit_code == gvisor:
             raise MountError(
                 f'Modal sandbox {sandbox.object_id} runs on gVisor, which cannot mount the FUSE file systems mounts '
                 "use. Create it on Modal's VM runtime: `ModalSandbox(runtime='vm')`."
