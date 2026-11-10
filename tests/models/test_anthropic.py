@@ -2412,20 +2412,25 @@ async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
     )
 
 
+@pytest.mark.parametrize(
+    'model_settings', [pytest.param({'temperature': 1}, id='temperature'), pytest.param({'top_p': 0.97}, id='top_p')]
+)
 async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    model_settings: ModelSettings,
 ):
-    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent."""
+    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent.
+
+    One at a time, since Claude Sonnet 4.6 takes only one of them either way.
+    """
     agent = Agent(anthropic_model('claude-sonnet-4-6', capture=True))
 
-    await agent.run(
-        'What is 2+2? Answer with the number only.', model_settings=ModelSettings(thinking=True, top_p=0.97)
-    )
+    await agent.run('What is 2+2? Answer with the number only.', model_settings={**model_settings, 'thinking': True})
 
     body = request_capture.body('/v1/messages')
-    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == snapshot(
-        {'top_p': 0.97}
-    )
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == model_settings
 
 
 async def test_anthropic_drops_top_p_set_together_with_temperature(
@@ -2442,6 +2447,21 @@ async def test_anthropic_drops_top_p_set_together_with_temperature(
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot(
         {'temperature': 0.5}
     )
+
+
+async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepted(allow_model_requests: None):
+    """Models without `anthropic_disallows_temperature_with_top_p`, like Claude Opus 4.1, get both.
+
+    A mock, since this only checks that the drop is limited to the flagged models, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-opus-4-1', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, top_p=0.9))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
 
 
 async def test_anthropic_betas_setting(allow_model_requests: None):

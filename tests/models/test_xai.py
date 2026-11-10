@@ -1875,7 +1875,11 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
 
 
 async def test_xai_penalties_are_not_sent(allow_model_requests: None, xai_provider: XaiProvider) -> None:
-    """Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400, so they're dropped silently."""
+    """Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400, so they're dropped silently.
+
+    The recording shows the request succeeds with them set. Its replay doesn't compare the `chat.create` arguments, so
+    `test_xai_penalties_are_not_passed_to_the_sdk` pins that they're left out.
+    """
     m = XaiModel('grok-4.3', provider=xai_provider)
     agent = Agent(m, model_settings=ModelSettings(temperature=0.7, presence_penalty=0.5, frequency_penalty=0.3))
 
@@ -1885,6 +1889,7 @@ async def test_xai_penalties_are_not_sent(allow_model_requests: None, xai_provid
 
 
 async def test_xai_penalties_are_not_passed_to_the_sdk(allow_model_requests: None) -> None:
+    """A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks."""
     response = create_response(content='test response')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
@@ -1910,6 +1915,10 @@ async def test_xai_reasoning_model_drops_stop_sequences(allow_model_requests: No
 
 
 async def test_xai_non_reasoning_model_sends_stop_sequences(allow_model_requests: None) -> None:
+    """The Grok 4.20 non-reasoning models take `stop_sequences`, so they're sent.
+
+    A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks.
+    """
     mock_client = MockXai.create_mock([create_response(content='ok')])
     m = XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))

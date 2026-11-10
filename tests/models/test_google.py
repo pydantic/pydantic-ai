@@ -1083,7 +1083,11 @@ async def test_google_cloud_sends_penalties(allow_model_requests: None, vertex_p
     ],
 )
 def test_google_cloud_penalty_support_by_model(model_name: str, supports_penalties: bool):
-    """Which models Google Cloud accepts penalties for (verified live); the Gemini API accepts them for none."""
+    """Which models Google Cloud accepts penalties for (verified live); the Gemini API accepts them for none.
+
+    A unit test over the model names, since a recording per name would only repeat the request that
+    `test_google_cloud_sends_penalties` and `test_google_gemini_api_drops_penalties` record.
+    """
     google_cloud = GoogleModel(
         model_name, provider=GoogleCloudProvider(client=Client(vertexai=True, project='p', location='global'))
     )
