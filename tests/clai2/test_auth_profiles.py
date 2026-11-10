@@ -3,6 +3,7 @@
 import io
 import json
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -329,6 +330,22 @@ async def test_a_chain_falls_back_from_a_limited_account(tmp_path: Path) -> None
     assert result.output == 'spare answered with b'
 
 
+def refuses(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[], finish_reason='content_filter')
+
+
+async def test_a_chain_falls_back_from_a_refusal(tmp_path: Path) -> None:
+    providers = {
+        'strict': ModelProvider(prefix='strict', resolve=lambda name: FunctionModel(refuses)),
+        'pooled': ModelProvider(prefix='pooled', resolve=echo),
+    }
+    models = resolver(tmp_path, providers)
+    assert models.store is not None
+    models.store.save_chain(name='pool', models=['strict:a', 'pooled:b'])
+    result = await Agent(await models.resolve('chain:pool')).run('hello')
+    assert result.output == 'b'
+
+
 def echo(name: str) -> Model:
     return TestModel(custom_output_text=name)
 
@@ -430,8 +447,37 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     assert 'Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.' in text
     assert 'Fast mode on for chain:pool' in text
     assert 'openai-codex:test answered' in text
-    assert resolved == ['openai-codex:test', 'openai-codex@work:test']
+    # `ModelFallback` resolves a later model only once the run falls back to it.
+    assert resolved == ['openai-codex:test']
     assert store.model_settings('chain:pool') == {'service_tier': 'priority'}
+
+
+async def test_shell_chain_falls_back_with_its_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_chain(name='pool', models=['openai-codex:test', 'openai-codex@work:test'])
+    inputs(monkeypatch, ['/model chain:pool', '/fast', 'hello', '/exit'])
+    tiers: list[tuple[str, object]] = []
+
+    def model(self: CodexAuth, name: str) -> FunctionModel:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tiers.append((name, (info.model_settings or {}).get('service_tier')))
+            if name == 'openai-codex:test':
+                raise ModelHTTPError(status_code=429, model_name=name, body='usage limit reached')
+            yield f'{name} answered'
+
+        return FunctionModel(stream_function=stream)
+
+    monkeypatch.setattr(CodexAuth, 'model', model)
+    output = io.StringIO()
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='test', session_namer=False),
+        store=store,
+        console=Console(file=output, width=200),
+    )
+    assert 'openai-codex@work:test answered' in output.getvalue()
+    assert tiers == [('openai-codex:test', 'priority'), ('openai-codex@work:test', 'priority')]
 
 
 def test_key_users_cover_profile_connections() -> None:

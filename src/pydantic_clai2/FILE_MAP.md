@@ -73,7 +73,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/key_menu.py` | `/keys`: the terminal list, its add/replace/rename/delete steps asking through `Dialogs`, and `keys_menu`, the same steps as `/keys`' `Command.menu`; secrets never leave it, only names |
 | `models/usage.py` | account usage fetchers: Codex through the core provider's own client (so tokens refresh as for model requests), Copilot with the saved GitHub login, plugins through `PluginLogin.usage` |
 | `ui/menus/account_usage.py` | `UsageBoard`: `/accounts` usage loaded in the background while the menu is open; the menu thread redraws itself from `read_key`, never another thread |
-| `models/chains.py` | `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings. Made in the `/model` picker (`/chain` is an alias of `/model chains`) |
+| `models/chains.py` | `chain:NAME` fallback chains, run with core's `ModelFallback` capability; a chain takes its first model's settings. Made in the `/model` picker (`/chain` is an alias of `/model chains`) |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | `edit_custom_params`, the editor for custom model parameters, asking through `Dialogs` |

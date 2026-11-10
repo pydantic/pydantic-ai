@@ -1003,7 +1003,8 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
   it, after asking. The model you are using, or your saved default, cannot be renamed
   or deleted.
 
-A chain uses its first model's
+A chain or `@*` also moves on when a model refuses a request, unless the refusal was
+already streamed, as an interactive turn's is. A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
 `chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
 `openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn

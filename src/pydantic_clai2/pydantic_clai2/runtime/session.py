@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
+    ModelFallback,
     ResolveModelId,
     WrapperCapability,
 )
@@ -509,10 +510,13 @@ class Session(Generic[DepsT, OutputT]):
         self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
         """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name
+        self.expand_model: Callable[[str], Sequence[str] | Awaitable[Sequence[str]]] = lambda name: [name]
+        """The models a selected name runs on, in order: a run falls back through the later ones with `ModelFallback`."""
         self.agent = agent
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self._bound_model: str | None = None
+        self._bound_fallbacks: tuple[str, ...] = ()
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -810,42 +814,57 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
-    def _run_settings(self) -> AgentModelSettings[DepsT] | None:
-        """`model_settings` for requests on this session's model only."""
+    def _run_settings(self, models: Sequence[str]) -> AgentModelSettings[DepsT] | None:
+        """`model_settings` for requests on this session's model only: any of `models`, else the agent's own."""
         settings = self.model_settings
-        own = self.model if self.model is not None else self.agent.model
-        if settings is None or own is None:
+        own = self.agent.model
+        names = set(models) or ({own if isinstance(own, str) else own.model_name} if own is not None else set())
+        if settings is None or not names:
             return settings
-        name = own if isinstance(own, str) else own.model_name
 
         def for_own_model(ctx: RunContext[DepsT]) -> ModelSettings:
-            if _requested_model(ctx) != name:
+            if _requested_model(ctx) not in names:
                 return ModelSettings()
             return settings(ctx) if callable(settings) else settings
 
         return for_own_model
 
-    def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
-        """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
-        run_model = self.model
-        capabilities = list(self.plugins)
+    async def _models(self) -> Sequence[str]:
+        """What the selected model runs on, in order, as `expand_model` lists it; none for the agent's own."""
+        if self.model is None:
+            return ()
+        models = self.expand_model(self.model)
+        return await models if isinstance(models, Awaitable) else models
+
+    def _bind(self, models: Sequence[str]) -> tuple[str | None, list[AgentCapability[DepsT]]]:
+        """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first.
+
+        The run starts on the first of `models`, from `_models`, and falls back through the rest with
+        `ModelFallback`, which a stock agent binds, so its delegated tasks fall back too.
+        """
+        selected = models[0] if models else None
+        fallbacks = [ModelFallback[DepsT](*models[1:])] if len(models) > 1 else []
+        run_model = selected
+        capabilities = [*self.plugins, *fallbacks]
         if isinstance(self._base_agent, StockAgent):
             # CLAI's default is the agent's own model, so a capability that selects one wins.
-            agent_model = None if self.model_chosen else self.model
+            agent_model = None if self.model_chosen else selected
             if agent_model is not None:
                 run_model = None
             if (
                 agent_model != self._bound_model
+                or tuple(models[1:]) != self._bound_fallbacks
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*self.plugins, *fallbacks, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
+                self._bound_fallbacks = tuple(models[1:])
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
-        if self.model is not None:
+        if selected is not None:
             capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
@@ -884,7 +903,7 @@ class Session(Generic[DepsT, OutputT]):
         self._running = True
         try:
             with session_context(self.summary.id):
-                _, capabilities = self._bind()
+                _, capabilities = self._bind(await self._models())
                 self._add_local_workspace(capabilities)
                 await self.agent.run(
                     "Run the user's Monty cell.",
@@ -913,7 +932,7 @@ class Session(Generic[DepsT, OutputT]):
             raise RuntimeError('This session delegates no tasks.')
         script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
         with session_context(self.summary.id), self.delegations.bind():
-            run_model, capabilities = self._bind()
+            run_model, capabilities = self._bind(await self._models())
             capabilities.append(script)
             self._add_local_workspace(capabilities)
             await self.agent.run(
@@ -954,13 +973,13 @@ class Session(Generic[DepsT, OutputT]):
         return content
 
     def _bind_prompt(
-        self, text: str | None, previous: Sequence[ModelMessage]
+        self, text: str | None, previous: Sequence[ModelMessage], models: Sequence[str]
     ) -> tuple[str | None, list[AgentCapability[DepsT]], Literal['new'] | None]:
         """`_bind` for a prompt, plus its task reports and CLAI's `LocalWorkspace`, and the run's `workspace`.
 
         The `workspace` is `'new'` when `previous` last worked in another local directory.
         """
-        run_model, capabilities = self._bind()
+        run_model, capabilities = self._bind(models)
         if self.delegations is not None:
             capabilities.append(
                 DelegationReports(
@@ -1004,12 +1023,13 @@ class Session(Generic[DepsT, OutputT]):
                         # The first save titles a new conversation. Inside the handlers below, so a
                         # failed or cancelled observer still finalizes the `running` head saved above.
                         await self._publish()
-                        run_model, capabilities, workspace = self._bind_prompt(text, previous)
+                        models = await self._models()
+                        run_model, capabilities, workspace = self._bind_prompt(text, previous, models)
                         result = await self.agent.run(
                             content,
                             deps=self.deps,
                             model=run_model,
-                            model_settings=self._run_settings(),
+                            model_settings=self._run_settings(models),
                             # Run-level, not a capability: composing one more would split a plugin group that
                             # supplies the workspace into its members. A rebuilt stock agent has them bound already.
                             instructions=self._user_instructions if self.agent is self._base_agent else None,
