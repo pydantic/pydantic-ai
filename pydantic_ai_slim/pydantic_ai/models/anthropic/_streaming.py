@@ -44,6 +44,7 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
+from ...exceptions import UnexpectedModelBehavior
 from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
@@ -104,6 +105,12 @@ class AnthropicStreamedResponse(StreamedResponse):
             native_computer = self._native_computer
             computer_blocks: list[dict[str, Any]] = []
             computer_input: list[str] = []
+            # Calls whose input didn't arrive whole, and the other tools called between the batch's calls.
+            incomplete: set[str] = set()
+            between: list[str] = []
+            split: dict[str, list[str]] = {}
+            # Only a response that reached its end is known to hold every call it made.
+            ended = False
             pending_citations: dict[int, list[BetaTextCitation]] = {}
             # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
             fetched_pages: list[tuple[str, str]] = list(self._history_fetched_pages)
@@ -138,7 +145,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = event.content_block
                     if native_computer and native_computer.answers(current_block):
                         computer_input = []
+                        if between:
+                            split[current_block.id] = between
+                            between = []
                         continue
+                    if computer_blocks and isinstance(current_block, BetaToolUseBlock):
+                        between.append(current_block.name)
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=current_block.text
@@ -361,22 +373,27 @@ class AnthropicStreamedResponse(StreamedResponse):
                         ):
                             yield event_
                     if native_computer and native_computer.answers(current_block):
-                        # A call cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
                         computer_input_json = ''.join(computer_input) or '{}'
-                        block = {
-                            'id': current_block.id,
-                            'name': current_block.name,
-                            'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
-                        }
+                        try:
+                            computer_args = pydantic_core.from_json(computer_input_json)
+                        except ValueError:
+                            # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of
+                            # it runs, as a missing field such as a held key would change what the rest does.
+                            computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
+                            incomplete.add(current_block.id)
+                        block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
                         if native_computer.is_toolset:
                             computer_blocks.append(block)
                             self._parts_manager.handle_part(
                                 vendor_part_id=computer_blocks[0]['id'],
-                                part=native_computer.call_part(list(computer_blocks), self.provider_name),
+                                part=native_computer.call_part(
+                                    list(computer_blocks), self.provider_name, incomplete=incomplete, split=split
+                                ),
                             )
                         else:
                             yield self._parts_manager.handle_part(
-                                vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
+                                vendor_part_id=block['id'],
+                                part=native_computer.call_part([block], self.provider_name, incomplete=incomplete),
                             )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
@@ -405,10 +422,18 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+                    ended = True
+            if native_computer and not ended and (computer_blocks or native_computer.answers(current_block)):
+                # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
+                raise UnexpectedModelBehavior(
+                    'The response ended before Claude finished its computer use calls, so none of them ran.'
+                )
             if native_computer and computer_blocks:
                 yield self._parts_manager.handle_part(
                     vendor_part_id=computer_blocks[0]['id'],
-                    part=native_computer.call_part(computer_blocks, self.provider_name),
+                    part=native_computer.call_part(
+                        computer_blocks, self.provider_name, incomplete=incomplete, split=split
+                    ),
                 )
 
     async def close_stream(self) -> None:
