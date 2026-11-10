@@ -4968,9 +4968,6 @@ async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_
             result_sent.set()
 
         async def receive(self) -> AsyncIterator[Any]:
-            if result_sent.is_set():
-                # `receive()` serves one turn at a time; the next one never comes.
-                await asyncio.Event().wait()
             yield _tool_call_message()
             await result_sent.wait()
             if separate_boundary:
