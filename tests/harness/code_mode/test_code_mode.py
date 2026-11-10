@@ -1446,6 +1446,14 @@ class TestCodeMode:
         with pytest.raises(UserError, match='Unknown `resource_limits` key'):
             await invalid.__aenter__()
 
+        stale = CodeModeToolset[object](wrapped=_build_function_toolset(add))
+        stale.resource_limits = {'max_duration_secs': 5}
+        with pytest.raises(
+            UserError,
+            match=r"key\(s\): \['max_duration_secs'\]\. Valid keys are \['max_duration_seconds', 'max_memory', 'max_suspensions'\]",
+        ):
+            await stale.__aenter__()
+
         zero_calls = CodeModeToolset[object](wrapped=_build_function_toolset(add), max_tool_calls=0)
         with pytest.raises(UserError, match='`max_tool_calls` must be at least 1'):
             await zero_calls.__aenter__()

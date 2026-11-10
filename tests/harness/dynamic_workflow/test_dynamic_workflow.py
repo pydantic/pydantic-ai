@@ -1424,7 +1424,7 @@ def test_max_duration_secs_is_a_deprecated_alias() -> None:
 @pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
 def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
     # Unknown keys must not be silently dropped, which would disable the intended cap.
-    with pytest.raises(UserError, match='Unknown `resource_limits` key'):
+    with pytest.raises(UserError, match=r"Valid keys are \['max_duration_seconds', 'max_memory'"):
         DynamicWorkflowToolset[object](
             agents=[_wf_agent()],
             resource_limits={unknown_key: 5},  # pyright: ignore[reportArgumentType]
