@@ -494,7 +494,10 @@ class AoePlugin(Plugin[AoeSettings]):
             _LOGGER.debug('aoe: could not attach to the AoE session', exc_info=True)
 
     async def _restore(self, conversation_id: str | None) -> None:
-        """Pick up the conversation a restarted pane held, unless this one already has history."""
+        """Pick up the conversation a restarted pane held, unless this one already has history.
+
+        Its history shows through the renderers loaded so far, not those of plugins registered after this one.
+        """
         conversation = self.host.conversation
         if conversation_id is None or conversation.messages or conversation.title is not None:
             return
