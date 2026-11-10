@@ -1235,13 +1235,13 @@ AAAAAAAAAAAAAAAAAAAA
             else:
                 yield 'done'
 
-        options = {} if nested_exclude is None else {'nested_exclude': nested_exclude}
+        repo_context = (
+            RepoContext(autoload_instructions=False, nested_inject='pointer')
+            if nested_exclude is None
+            else RepoContext(autoload_instructions=False, nested_inject='pointer', nested_exclude=nested_exclude)
+        )
         result = await Agent(
-            FunctionModel(stream_function=stream),
-            capabilities=[
-                FileSystem(root_dir=tmp_path),
-                RepoContext(autoload_instructions=False, nested_inject='pointer', **options),
-            ],
+            FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path), repo_context]
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         notes = _repo_notes(result.all_messages())
         assert [path for path in expected if any(path in note for note in notes)] == expected
