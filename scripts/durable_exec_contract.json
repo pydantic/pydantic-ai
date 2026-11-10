@@ -2674,6 +2674,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_serialization_name"
       ]
     },
+    "AbstractCapability.get_toolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset"
+      ]
+    },
     "AbstractCapability.get_wrapper_toolset": {
       "engines": [
         "dbos",
