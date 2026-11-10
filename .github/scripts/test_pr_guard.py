@@ -28,8 +28,8 @@ ISSUE_NUMBER = 1200
 CONTRIBUTOR = 'outside-contributor'
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-guard.yml'
 
-# Each login's `role_name` on the repo. A login missing here gets the 404 GitHub returns for
-# bots and deleted accounts.
+# Each login's `role_name` on the repo. The role lookup fails for a login missing here, as it
+# does for a bot (GitHub answers 404) or for any login during a rate limit or outage.
 ROLES = {
     CONTRIBUTOR: 'read',
     'reporter': 'read',
@@ -189,7 +189,7 @@ CASES: list[Case] = [
         id='unreadable-role-of-an-issue-commenter',
         closed=False,
         fails=True,
-        issue_timeline=[_event('commented', 'deleted-account')],
+        issue_timeline=[_event('commented', 'unresolvable-login')],
     ),
     Case(
         id='contributor-assigned-to-someone-elses-issue', closed=False, issue_author='reporter', assignees=[CONTRIBUTOR]
