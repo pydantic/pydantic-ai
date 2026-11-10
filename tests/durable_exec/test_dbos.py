@@ -6346,16 +6346,17 @@ async def _take_turns(ctx: RunContext[object]) -> str:
     return 'Answer.'
 
 
+async def _run_swap_agent(label: str) -> AgentRunResult[str]:
+    try:
+        return await swap_agent.run(label, run_id=f'run-{label.lower()}')
+    finally:
+        if label == 'B' and swap_turns.recovering:
+            swap_turns.b_finished.set()
+
+
 @DBOS.workflow()
 async def swap_workflow() -> list[str]:
-    async def run_b() -> AgentRunResult[str]:
-        try:
-            return await swap_agent.run('B', run_id='run-b')
-        finally:
-            if swap_turns.recovering:
-                swap_turns.b_finished.set()
-
-    results = await asyncio.gather(swap_agent.run('A', run_id='run-a'), run_b(), return_exceptions=True)
+    results = await asyncio.gather(_run_swap_agent('A'), _run_swap_agent('B'), return_exceptions=True)
     if not swap_turns.recovering:
         raise _ProcessCrash
     return [
@@ -6398,6 +6399,58 @@ async def test_dbos_recovery_rejects_another_concurrent_runs_steps(
     else:
         assert outcomes == ['answer for B', 'answer for A']
     # Every step replayed: no model request ran again.
+    assert swap_turns.requests == ['A', 'B']
+
+
+def _ask_both(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if not returns:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('ask_swap_agent', {'label': 'A'}, tool_call_id='ask-a'),
+                ToolCallPart('ask_swap_agent', {'label': 'B'}, tool_call_id='ask-b'),
+            ]
+        )
+    return ModelResponse(parts=[TextPart(' | '.join(str(part.content) for part in returns))])
+
+
+swap_lead_agent = Agent(FunctionModel(_ask_both), name='swap_lead_agent', capabilities=[DBOSDurability()])
+
+
+@swap_lead_agent.tool_plain
+async def ask_swap_agent(label: str) -> str:
+    return (await _run_swap_agent(label)).output
+
+
+@DBOS.workflow()
+async def swap_tools_workflow() -> str:
+    try:
+        outcome = (await swap_lead_agent.run('Ask both.')).output
+    except Exception as error:
+        outcome = f'{type(error).__name__}: {error}'
+    if not swap_turns.recovering:
+        raise _ProcessCrash
+    return outcome
+
+
+async def test_dbos_recovery_rejects_another_parallel_tool_calls_nested_run_steps(dbos: DBOS) -> None:
+    """Parallel tool calls that each run the same nested agent fail on recovery instead of crossing results.
+
+    The nested runs take their steps in the lead's workflow, so when they start them in a different order on
+    recovery, one tool's nested run gets the response the other recorded.
+    """
+    global swap_turns
+    swap_turns = _Turns()
+    workflow_id = f'swap-tools-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await swap_tools_workflow()
+    assert swap_turns.requests == ['A', 'B']
+
+    swap_turns.recovering = True
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert (await handle.get_result()).replace(workflow_id, '<workflow>') == snapshot(
+        "UserError: Recovering DBOS workflow '<workflow>' replayed a model response that agent run 'run-b' recorded into agent run 'run-a'. DBOS replays steps by position, so concurrent runs of one agent in one workflow can swap their recorded steps on recovery. Give each concurrent run a workflow of its own: a `@DBOS.workflow` function that runs the agent once, or a tool with `child_workflow` metadata that runs a nested agent."
+    )
     assert swap_turns.requests == ['A', 'B']
 
 

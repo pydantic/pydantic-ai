@@ -71,9 +71,10 @@ def replayed_response_for_run(response: _ResponseT, ctx: RunContext[Any]) -> _Re
 
     The recorded `run_id` names the run that recorded the step. DBOS replays a recovered workflow's steps by
     position, checking only their names, so concurrent runs of one agent can take each other's recorded steps:
-    a response recorded by another run of this workflow execution raises. Any other recorded `run_id` names
-    this run in an earlier execution, such as the workflow a fork was copied from. A response recorded before
-    steps carried a `run_id` has none, and is returned as is.
+    a response recorded by another run that has started in this workflow execution raises. Any other recorded
+    `run_id` is taken to name this run in an earlier execution, such as the workflow a fork was copied from, so
+    a swap with a run that hasn't started yet goes undetected. A response recorded before steps carried a
+    `run_id` has none, and is returned as is.
     """
     if not isinstance(response, ModelResponse) or response.run_id in (None, ctx.run_id):
         return response
