@@ -41,7 +41,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
-    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -49,7 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -58,6 +57,7 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
 )
 from pydantic_ai_harness._x11 import DESKTOP_IMAGE, DISPLAY, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -295,7 +295,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             self,
             self._desktop_size,
             lambda: f'smolvm VM {self._ref.id if self._ref else "(not created)"}',
-            screen_key=lambda: self._ref,
         )
         self._machine: smol.Machine | None = None
         self._sandbox: smol.AsyncMachine | None = None
@@ -312,7 +311,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         return self._ref
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The VM's desktop, when created with `desktop=True`."""
         return self._display
 

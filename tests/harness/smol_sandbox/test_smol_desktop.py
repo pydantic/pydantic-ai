@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.computer_use import Click
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Click
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
 from .._fake_x_display import FakeDisplay
+from ..display_fakes import screen
 from .fake_smol import FakeSmol
 
 
@@ -21,8 +22,9 @@ async def test_a_desktop_vm_runs_debian_and_drives_its_display(fake_smol: FakeSm
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        size = await ctx.workspace.display_size()
-        await ctx.workspace.act(Click(x=3, y=4))
+        desktop = screen(ctx.workspace.backend)
+        size = await desktop.display_size()
+        await desktop.act(Click(x=3, y=4))
         await ctx.workspace.run(['true'])
         assert ctx.workspace.ref is not None and sandbox.backend(ctx.workspace.ref).display is not None
         return 'x'.join(map(str, size))
