@@ -36,7 +36,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsDisplay,
     SupportsFilesystem,
     Workspace,
     WorkspaceBackend,
@@ -46,7 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_timeout,
@@ -57,6 +56,7 @@ from pydantic_ai_harness._workspace_provider import (
     stop_shielded,
 )
 from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 # Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
 # deferred to a worker thread on first use. A `None` entry in `sys.modules` blocks the import.
@@ -298,7 +298,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             self,
             self._desktop_size,
             lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
-            screen_key=lambda: self._ref,
         )
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
@@ -375,7 +374,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         return self._ref
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
 

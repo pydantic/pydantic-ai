@@ -655,6 +655,11 @@ class ComputerTool(AbstractNativeTool):
 
     executed_by: ClassVar[frozenset[ToolKind]] = frozenset({COMPUTER_KIND})
 
+    def __post_init__(self) -> None:
+        width, height = self.display_size
+        if width <= 0 or height <= 0:
+            raise ValueError(f'`display_size` must be two positive numbers of pixels, not {self.display_size}')
+
 
 @dataclass(kw_only=True)
 class MCPServerTool(AbstractNativeTool):
