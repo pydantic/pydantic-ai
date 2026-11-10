@@ -22,7 +22,7 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -699,6 +699,7 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    tool_failed_message: str | None = None
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -718,6 +719,7 @@ class RunCodeExecution:
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
+        self.tool_failed_message = outcome.tool_failed_message
         record_nested_call(
             call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, user_content=self.user_content
         )
@@ -1354,7 +1356,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     async def _feed_failure_retry(
         self, error: BaseException, run_state: MontyRunState, execution: RunCodeExecution, *, fresh_repl: bool
-    ) -> ModelRetry | None:
+    ) -> ModelRetry | ToolFailed | None:
         """Reset the session a failed feed left unusable and build the retry to raise for it.
 
         Returns `None` for an interruption, which the caller re-raises unchanged.
@@ -1373,6 +1375,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
                 run_state.has_executed_feed = True
+                failed_message = execution.tool_failed_message
+                if failed_message is not None and failed_message in error.display():
+                    # The host classified this before Monty erased the exception's identity.
+                    return ToolFailed(failed_message)
                 return _runtime_failure_retry(
                     error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
                 )
