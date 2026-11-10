@@ -24,7 +24,7 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.shell import CommandFinishedEvent
 from pydantic_ai_harness.subagents import DelegationEndEvent
 
-_events = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+_EVENTS = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
 _ITEM = PlanItem(id='step-1', content='ship')
 _PREVIOUS = PlanItem(id='step-1', content='draft')
 
@@ -80,12 +80,12 @@ _PREVIOUS = PlanItem(id='step-1', content='draft')
     ids=lambda value: type(value).__name__ if isinstance(value, CapabilityEvent) else None,
 )
 def test_renamed_field(event: CapabilityEvent, old: str, new: str) -> None:
-    payload = _events.dump_python(event, mode='json')
+    payload = _EVENTS.dump_python(event, mode='json')
     assert old not in payload
-    assert _events.validate_python(payload) == event
+    assert _EVENTS.validate_python(payload) == event
 
     payload[old] = payload.pop(new)
-    assert _events.validate_python(payload) == event
+    assert _EVENTS.validate_python(payload) == event
 
     with pytest.warns(HarnessDeprecationWarning, match=f'`{old}` is deprecated, use `{new}` instead'):
         assert getattr(event, old) == getattr(event, new)
@@ -95,13 +95,13 @@ def test_delegation_duration_seconds() -> None:
     event = DelegationEndEvent(
         agent_name='worker', outcome='ok', output='done', truncated=False, usage=None, duration_ms=1500
     )
-    payload = _events.dump_python(event, mode='json')
+    payload = _EVENTS.dump_python(event, mode='json')
     assert 'duration_seconds' not in payload
-    assert _events.validate_python(payload) == event
+    assert _EVENTS.validate_python(payload) == event
 
-    assert _events.validate_python({**payload, 'duration_seconds': 9}) == event
+    assert _EVENTS.validate_python({**payload, 'duration_seconds': 9}) == event
     del payload['duration_ms']
-    assert _events.validate_python({**payload, 'duration_seconds': 1.5}) == event
+    assert _EVENTS.validate_python({**payload, 'duration_seconds': 1.5}) == event
 
     with pytest.warns(HarnessDeprecationWarning, match='`duration_seconds` is deprecated, use `duration_ms` instead'):
         assert event.duration_seconds == 1.5  # pyright: ignore[reportDeprecated]

@@ -323,7 +323,7 @@ empties the log during the call, output events start again from its notice,
 `truncated` is true and `line_count` is `None`. A cancelled call may emit no
 finished event. Events carry command text and command output, so treat them as
 untrusted when rendering. They add no telemetry spans; core already traces the
-tool call.
+tool call. `total_lines` is the deprecated name of `line_count`. It still reads, with a warning, and a payload saved under it still loads.
 
 ## Working directory
 

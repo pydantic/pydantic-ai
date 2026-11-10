@@ -213,9 +213,10 @@ lands, without parsing tool arguments:
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
 | `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
-| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
+| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search_kind` (`grep` or `find`), `match_count`, `truncated` |
 
 `FileChangeRequestEvent` is a decision; the other events are notifications.
+`search` is the deprecated name of `FilesSearchedEvent.search_kind`. It still reads, with a warning, and a payload saved under it still loads.
 
 - **When it fires**: after the path has passed the access checks and, for
   `write_file` and `edit_file`, after the conflict check. A denied path, a

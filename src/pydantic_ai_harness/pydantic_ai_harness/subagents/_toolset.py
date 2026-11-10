@@ -361,6 +361,10 @@ async def _emit_delegation(
         await ctx.emit(event)
 
 
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000
+
+
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether the running tool belongs to a capability, so `ctx.emit` accepts a capability event.
 
@@ -1327,7 +1331,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                             output=str(exc),
                             truncated=False,
                             usage=child_usage,
-                            duration_ms=(time.perf_counter() - started) * 1000,
+                            duration_ms=_elapsed_ms(started),
                         )
                     )
             raise
@@ -1346,7 +1350,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     output=text,
                     truncated=truncated,
                     usage=child_usage,
-                    duration_ms=(time.perf_counter() - started) * 1000,
+                    duration_ms=_elapsed_ms(started),
                 )
             )
         return ended
