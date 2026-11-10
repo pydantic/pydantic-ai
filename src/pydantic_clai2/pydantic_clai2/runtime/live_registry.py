@@ -13,13 +13,13 @@ import stat
 import struct
 import sys
 from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from anyio import CancelScope
+from anyio import CancelScope, to_thread
 from pydantic import Field, TypeAdapter, ValidationError
 
 from pydantic_ai import _utils
@@ -200,42 +200,50 @@ def _record_socket(record: LiveRecord) -> Path:
 _ProbeResult = LiveProcess | ResponseTooLargeError | None
 
 
+def _read_record(path: Path) -> tuple[LiveRecord, int, Path, int] | None:
+    """A private record and its inode, with its owned socket and that socket's inode."""
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        return None
+    record = _RECORD.validate_json(path.read_bytes())
+    if path.name != f'{record.pid}.json' or record.pid <= 0:
+        return None
+    sock = _record_socket(record)
+    if not _owned_socket(sock):
+        if not sock.exists():
+            _unlink_if_unchanged(path, info.st_ino)
+        return None
+    return record, info.st_ino, sock, sock.lstat().st_ino
+
+
 async def _probe_record(path: Path) -> _ProbeResult:
     try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        found = await to_thread.run_sync(_read_record, path)
+        if found is None:
             return None
-        record = _RECORD.validate_json(path.read_bytes())
-        if path.name != f'{record.pid}.json' or record.pid <= 0:
-            return None
-        sock = _record_socket(record)
-        if not _owned_socket(sock):
-            if not sock.exists():
-                _unlink_if_unchanged(path, info.st_ino)
-            return None
-        inode = sock.lstat().st_ino
+        record, record_inode, sock, inode = found
         try:
             os.kill(record.pid, 0)
         except ProcessLookupError:
             try:
                 await request(sock, HelloRequest())
             except (ConnectionRefusedError, FileNotFoundError):
-                _unlink_if_unchanged(sock, inode)
-                _unlink_if_unchanged(path, info.st_ino)
+                await to_thread.run_sync(_unlink_if_unchanged, sock, inode)
+                await to_thread.run_sync(_unlink_if_unchanged, path, record_inode)
             return None
         except PermissionError:
             return None
         try:
             hello = await request(sock, HelloRequest())
         except ConnectionRefusedError:
-            _unlink_if_unchanged(path, info.st_ino)
+            await to_thread.run_sync(_unlink_if_unchanged, path, record_inode)
             return None
         except ResponseTooLargeError as exc:
             return exc
         except (OSError, ValueError, TimeoutError, ControlProtocolError, asyncio.LimitOverrunError):
             return None
         if hello.instance != record.instance:
-            _unlink_if_unchanged(path, info.st_ino)
+            await to_thread.run_sync(_unlink_if_unchanged, path, record_inode)
             return None
         return LiveProcess(pid=record.pid, instance=record.instance, socket=record.socket, sessions=hello.sessions)
     except ResponseTooLargeError as exc:
@@ -244,13 +252,20 @@ async def _probe_record(path: Path) -> _ProbeResult:
         return None
 
 
+def _record_paths(directory: Path) -> list[Path]:
+    if not directory.exists():
+        return []
+    _private_directory(directory)
+    return list(directory.glob('*.json'))
+
+
 async def listing(*, directory: Path | None = None) -> list[LiveProcess]:
     """Fetch current sessions concurrently, retaining record order and visible oversized-reply errors."""
     directory = directory or state_dir() / 'live'
-    if os.name != 'posix' or not directory.exists():
+    if os.name != 'posix':
         return []
-    _private_directory(directory)
-    results = await _utils.gather(*(_probe_record(path) for path in directory.glob('*.json')))
+    paths = await to_thread.run_sync(_record_paths, directory)
+    results = await _utils.gather(*(_probe_record(path) for path in paths))
     found: list[LiveProcess] = []
     for result in results:
         if isinstance(result, ResponseTooLargeError):
@@ -258,6 +273,55 @@ async def listing(*, directory: Path | None = None) -> list[LiveProcess]:
         if result is not None:
             found.append(result)
     return found
+
+
+def _socket_path(directory: Path, pid: int) -> tuple[Path, int | None]:
+    """The process's socket path, with the inode of an owned socket already there."""
+    _private_directory(directory)
+    path = _socket_directory() / f'{pid}.sock'
+    if len(os.fsencode(path)) >= 104:
+        raise OSError('CLAI control socket path is too long')
+    if not path.exists() and not path.is_symlink():
+        return path, None
+    if not _owned_socket(path):
+        raise PermissionError(f'Unsafe CLAI socket {path}')
+    return path, path.lstat().st_ino
+
+
+def _unlink_abandoned(path: Path, inode: int) -> None:
+    _unlink_if_unchanged(path, inode)
+    if path.exists():
+        raise OSError(f'CLAI socket changed during cleanup at {path}')
+
+
+def _bind(path: Path) -> tuple[socket.socket, int]:
+    """A private listening socket at `path`, with its inode."""
+    listener = socket.socket(socket.AF_UNIX)
+    with ExitStack() as on_failure:
+        on_failure.callback(listener.close)
+        previous_umask = os.umask(0o077)
+        try:
+            listener.bind(str(path))
+            inode = path.lstat().st_ino
+        finally:
+            os.umask(previous_umask)
+        on_failure.callback(_unlink_if_unchanged, path, inode)
+        path.chmod(0o600)
+        listener.listen()
+        listener.setblocking(False)
+        on_failure.pop_all()
+    return listener, inode
+
+
+def _unlink_published(path: Path, socket_inode: int, record_path: Path, instance: str) -> None:
+    _unlink_if_unchanged(path, socket_inode)
+    try:
+        record_info = record_path.lstat()
+        record = _RECORD.validate_json(record_path.read_bytes())
+        if record.instance == instance:
+            _unlink_if_unchanged(record_path, record_info.st_ino)
+    except (FileNotFoundError, ValidationError):
+        pass
 
 
 class LiveRegistry:
@@ -353,45 +417,27 @@ class LiveRegistry:
         """Serve current sessions and track transitions until the context ends; publish discovery metadata once."""
         if os.name != 'posix':
             raise OSError('Live session discovery requires Unix sockets')
-        _private_directory(self.directory)
-        path = _socket_directory() / f'{self.pid}.sock'
-        if len(os.fsencode(path)) >= 104:
-            raise OSError('CLAI control socket path is too long')
-        if path.exists() or path.is_symlink():
-            if not _owned_socket(path):
-                raise PermissionError(f'Unsafe CLAI socket {path}')
-            old_inode = path.lstat().st_ino
+        path, abandoned = await to_thread.run_sync(_socket_path, self.directory, self.pid)
+        if abandoned is not None:
             try:
                 await request(path, HelloRequest())
             except (ConnectionRefusedError, FileNotFoundError):
-                _unlink_if_unchanged(path, old_inode)
-                if path.exists():
-                    raise OSError(f'CLAI socket changed during cleanup at {path}')
+                await to_thread.run_sync(_unlink_abandoned, path, abandoned)
             else:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
-        listener = socket.socket(socket.AF_UNIX)
-        inode: int | None = None
+        listener, socket_inode = await to_thread.run_sync(_bind, path)
         try:
-            previous_umask = os.umask(0o077)
-            try:
-                listener.bind(str(path))
-                inode = path.lstat().st_ino
-            finally:
-                os.umask(previous_umask)
-            path.chmod(0o600)
-            listener.listen()
-            listener.setblocking(False)
             self._server = await asyncio.start_unix_server(self._serve, sock=listener, limit=_MAX_REQUEST + 1)
         except BaseException:
             listener.close()
-            if inode is not None:
-                _unlink_if_unchanged(path, inode)
+            with CancelScope(shield=True):
+                await to_thread.run_sync(_unlink_if_unchanged, path, socket_inode)
             raise
-        socket_inode = path.lstat().st_ino
         record_path = self.directory / f'{self.pid}.json'
         try:
-            write_private(
+            await to_thread.run_sync(
+                write_private,
                 record_path,
                 _RECORD.dump_json(LiveRecord(pid=self.pid, instance=self.instance, socket=str(path))).decode(),
             )
@@ -405,11 +451,4 @@ class LiveRegistry:
             with CancelScope(shield=True):
                 self._server.close()
                 await self._server.wait_closed()
-                _unlink_if_unchanged(path, socket_inode)
-                try:
-                    record_info = record_path.lstat()
-                    record = _RECORD.validate_json(record_path.read_bytes())
-                    if record.instance == self.instance:
-                        _unlink_if_unchanged(record_path, record_info.st_ino)
-                except (FileNotFoundError, ValidationError):
-                    pass
+                await to_thread.run_sync(_unlink_published, path, socket_inode, record_path, self.instance)

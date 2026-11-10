@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from anyio import to_thread
 from pydantic import TypeAdapter
 
 from pydantic_clai2.cli import cli
@@ -46,9 +47,9 @@ def private_runtime(runtime_directory: Path) -> Path:
     return directory
 
 
-def save_record(directory: Path, record: LiveRecord) -> Path:
+async def save_record(directory: Path, record: LiveRecord) -> Path:
     path = directory / f'{record.pid}.json'
-    write_private(path, _RECORD.dump_json(record).decode())
+    await to_thread.run_sync(write_private, path, _RECORD.dump_json(record).decode())
     return path
 
 
@@ -158,7 +159,7 @@ async def test_listing_verifies_nonce_across_environments(
         assert [(process.pid, process.instance, process.sessions) for process in result] == [
             (registry.pid, registry.instance, [])
         ]
-        save_record(private_runtime, replace(record, instance='reused-pid'))
+        await save_record(private_runtime, replace(record, instance='reused-pid'))
         assert await listing(directory=private_runtime) == []
         assert not record_path.exists() and path.exists()
 
@@ -300,9 +301,9 @@ async def test_unverified_records_preserve_live_sockets(
         elif outcome == 'missing':
             path.unlink()
         elif outcome == 'invalid':
-            save_record(private_runtime, replace(record, socket=str(private_runtime / 'unrelated.sock')))
+            await save_record(private_runtime, replace(record, socket=str(private_runtime / 'unrelated.sock')))
         else:
-            write_private(record_path, '{')
+            await to_thread.run_sync(write_private, record_path, '{')
         assert await listing(directory=private_runtime) == []
         assert record_path.exists() == (outcome != 'missing')
         assert path.exists() == (outcome != 'missing')
@@ -318,13 +319,16 @@ async def test_cleanup_preserves_socket_replaced_during_probe(
     with socket.socket(socket.AF_UNIX) as abandoned, socket.socket(socket.AF_UNIX) as replacement:
         abandoned.bind(str(path))
         path.chmod(0o600)
-        record_path = save_record(private_runtime, LiveRecord(pid=pid, instance='old', socket=str(path)))
+        record_path = await save_record(private_runtime, LiveRecord(pid=pid, instance='old', socket=str(path)))
 
-        async def replaced_during_probe(path: Path, frame: HelloRequest) -> Hello:
+        def replace_socket(path: Path) -> None:
             path.rename(path.with_suffix('.old'))
             replacement.bind(str(path))
             path.chmod(0o600)
             replacement.listen()
+
+        async def replaced_during_probe(path: Path, frame: HelloRequest) -> Hello:
+            await to_thread.run_sync(replace_socket, path)
             raise ConnectionRefusedError
 
         monkeypatch.setattr(live_registry, 'request', replaced_during_probe)
@@ -340,7 +344,7 @@ async def test_abandoned_socket_and_dead_pid_are_cleaned(private_runtime: Path, 
     with socket.socket(socket.AF_UNIX) as abandoned:
         abandoned.bind(str(path))
     path.chmod(0o600)
-    record_path = save_record(private_runtime, LiveRecord(pid=pid, instance='dead', socket=str(path)))
+    record_path = await save_record(private_runtime, LiveRecord(pid=pid, instance='dead', socket=str(path)))
     assert await listing(directory=private_runtime) == []
     assert not path.exists() and not record_path.exists()
 
