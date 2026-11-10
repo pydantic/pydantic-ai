@@ -9,7 +9,7 @@ matches no variant, and its `provider_details` stay as they were.
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
@@ -32,7 +32,7 @@ class Case:
     id: str
     speed: Literal['fast'] | None
     stream: bool
-    provider_details: dict[str, Any]
+    provider_details: dict[str, str]
 
 
 CASES = [
