@@ -310,8 +310,8 @@ def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
         and node.func.id == 'TypeAliasType'
         and len(node.args) == 2
     ):
-        aliased = node.args.pop()
-        alias = ast.dump(node)
+        *head, aliased = node.args
+        alias = ast.dump(ast.Call(node.func, head, node.keywords))
         node = aliased
     other_arms: set[str] = set()
     members: set[str] = set()
