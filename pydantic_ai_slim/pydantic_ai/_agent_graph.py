@@ -1369,8 +1369,7 @@ def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage])
         return
     call_ids = {call.tool_call_id for call in messages[-2].tool_calls}
     if not any(
-        isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart) and part.tool_call_id in call_ids
-        for part in messages[-1].parts
+        isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids for part in messages[-1].parts
     ):
         return
     raise exceptions.UserError(
