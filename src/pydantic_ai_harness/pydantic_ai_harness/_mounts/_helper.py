@@ -378,6 +378,28 @@ def mount(wanted: dict[str, Any], owner: os.stat_result) -> None:
     record_expiry(fingerprint, float(wanted['expires_at']))
 
 
+def refresh_or_clear(wanted: dict[str, Any], source: str) -> bool:
+    """Give the mount already at `wanted`'s path fresh keys and return True, or unmount it and return False."""
+    path, fingerprint = str(wanted['path']), str(wanted['fingerprint'])
+    if not source.startswith('pai-'):
+        raise MountFailed('conflict', f'{path} already has something else mounted on it. Mount at another folder.')
+    fs = served().get(path)
+    if fs is not None and source == f'pai-{fingerprint}':
+        # The same bucket: only the keys change, and commands using the mount carry on. The keys go first, since
+        # a mount whose keys expired can't answer the lookup that tells whether it is alive.
+        rc('backend/command', {'command': 'set', 'fs': fs, 'opt': wanted['keys']})
+        if alive(path):
+            record_expiry(fingerprint, float(wanted['expires_at']))
+            return True
+    elif fs is not None and alive(path) and not expired(source.removeprefix('pai-')):
+        raise MountFailed(
+            'conflict',
+            f'{path} already shows another bucket in this sandbox. Mount at another folder, or destroy the sandbox.',
+        )
+    unmount(path)
+    return False
+
+
 def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
     """Mount `wanted` at its path, or give the mount already there fresh keys; returns where stray files went."""
     path, fingerprint = str(wanted['path']), str(wanted['fingerprint'])
@@ -385,23 +407,8 @@ def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
         # A symlink would put the mount, and the moving aside of strays, somewhere else.
         raise MountFailed('conflict', f'{path} leads through a symlink. Mount at a real folder.')
     source = kernel_mounts().get(path)
-    if source is not None:
-        if not source.startswith('pai-'):
-            raise MountFailed('conflict', f'{path} already has something else mounted on it. Mount at another folder.')
-        fs = served().get(path)
-        if fs is not None and source == f'pai-{fingerprint}':
-            # The same bucket: only the keys change, and commands using the mount carry on. The keys go first, since
-            # a mount whose keys expired can't answer the lookup that tells whether it is alive.
-            rc('backend/command', {'command': 'set', 'fs': fs, 'opt': wanted['keys']})
-            if alive(path):
-                record_expiry(fingerprint, float(wanted['expires_at']))
-                return None
-        elif fs is not None and alive(path) and not expired(source.removeprefix('pai-')):
-            raise MountFailed(
-                'conflict',
-                f'{path} already shows another bucket in this sandbox. Mount at another folder, or destroy the sandbox.',
-            )
-        unmount(path)
+    if source is not None and refresh_or_clear(wanted, source):
+        return None
     make_folder(path, owner)
     marked, moved = prepare(path, owner)
     try:
