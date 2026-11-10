@@ -1370,6 +1370,7 @@ class TestS3MediaStoreWithMockTransport:
         assert captured[0].url.raw_path.decode('ascii') == expected_path
 
     async def test_legacy_httpx_client_is_deprecated_but_keeps_signed_path(self) -> None:
+        """Mock transport only: no provider cassette can hold a legacy `httpx` client or its signed raw path."""
         captured: list[httpx.Request] = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
