@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
+    from ._mounts import MountError, S3Mount
     from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
@@ -145,6 +146,7 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'MountError',
     'OpenSandbox',
     'OpenSandboxBackend',
     'Ordinal',
@@ -167,6 +169,7 @@ __all__ = [
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
+    'S3Mount',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
     'Shell',
@@ -247,6 +250,7 @@ _LAZY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'ModalSandboxBackend': 'modal_sandbox',
+    'MountError': '_mounts',
     'OpenSandbox': 'opensandbox_sandbox',
     'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
@@ -269,6 +273,7 @@ _LAZY_EXPORTS = {
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
     'Researcher': 'researcher',
+    'S3Mount': '_mounts',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
