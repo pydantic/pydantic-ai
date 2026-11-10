@@ -15,7 +15,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -199,7 +199,7 @@ Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
 A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
-So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust.
+So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; pass `MCP(..., include_instructions=False)` for a server you don't trust, such as one your end users supply.
 
 ## Define Agents Declaratively with Specs
 
@@ -245,7 +245,7 @@ Examples:
 
 Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
 
-- `gateway/anthropic:claude-fable-5-1`
+- `gateway/anthropic:claude-fable-5-2`
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
@@ -337,7 +337,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent(
     'openai:gpt-6.1-sol',
     name='fallback_agent',
-    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
+    capabilities=[ModelFallback('anthropic:claude-fable-5-2')],
 )
 ```
 

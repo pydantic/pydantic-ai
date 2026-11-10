@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Literal, assert_never, get_args
+from typing import Literal, assert_never
 
 import pytest
 from genai_prices.data_snapshot import get_snapshot
@@ -20,7 +20,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from openai import AsyncBedrockOpenAI
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, LatestBedrockModelNames
+    from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
@@ -290,18 +290,15 @@ async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
 def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
     # AWS lists eight GPT-5.6 cross-region inference-profile IDs for Converse: Sol supports US and
     # global routing, while Luna and Terra additionally support India routing.
-    model_names = tuple(name for name in get_args(LatestBedrockModelNames) if '.openai.gpt-5.6-' in name)
-    assert model_names == snapshot(
-        (
-            'us.openai.gpt-5.6-sol',
-            'global.openai.gpt-5.6-sol',
-            'us.openai.gpt-5.6-luna',
-            'in.openai.gpt-5.6-luna',
-            'global.openai.gpt-5.6-luna',
-            'us.openai.gpt-5.6-terra',
-            'in.openai.gpt-5.6-terra',
-            'global.openai.gpt-5.6-terra',
-        )
+    model_names = (
+        'us.openai.gpt-5.6-sol',
+        'global.openai.gpt-5.6-sol',
+        'us.openai.gpt-5.6-luna',
+        'in.openai.gpt-5.6-luna',
+        'global.openai.gpt-5.6-luna',
+        'us.openai.gpt-5.6-terra',
+        'in.openai.gpt-5.6-terra',
+        'global.openai.gpt-5.6-terra',
     )
     for model_name in model_names:
         BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))

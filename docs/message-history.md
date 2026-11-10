@@ -247,10 +247,18 @@ How it reaches the model depends on the provider:
 
     On these models, two more things keep the tag meaning the same thing throughout the conversation:
 
-    * The standing system prompt gets one fixed sentence, after the leading system prompts and ahead of the instructions, that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
+    * The standing system prompt gets one fixed sentence that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes at the start, ahead of your system prompts and instructions, so your own text keeps the last word. It goes out from the first request whose history has a mid-conversation system prompt, including an instruction change appended with [`on_change='append'`](agent.md#appending-instruction-changes), and on every request after it, even once a [request-scoped](#request-scoped-system-prompts) one that brought it in is no longer sent, so an agent that never sends one pays nothing for it, and one that does changes its cached prefix once, at that request, and keeps it unchanged as the conversation grows, as long as the history keeps that system prompt. A request with no system prompt or instructions doesn't get one.
     * Every `<system>` tag in the text of a user prompt or a tool return is escaped the same way, so that text can neither open nor close the tag. The user's and the tool's text otherwise goes out as written, other tags included.
 
     Without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they follow all three.
+
+The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting picks when that sentence is added. `'when_needed'`, the default, works as described above. `'always'` adds it on every request from the first, so the cached prefix never changes, at the cost of the sentence on conversations that never need it. Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: their frontends don't send mid-conversation system prompts back, so with `'when_needed'` the sentence drops out of the next turn's standing prompt and the cached prefix changes every turn. `'never'` leaves it out, for an application that explains the tag in its own system prompt; models then follow a `<system>`-tagged change less reliably. The escaping of `<system>` tags in user and tool text doesn't depend on it.
+
+```python {title="framing_announcement.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+```
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
@@ -423,6 +431,42 @@ print(closed_out.content)
 
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
+### Special tokens in content
+
+Open-weight models mark their turns with special tokens in a chat template, such as `<|im_start|>`, `<|eot_id|>` or `[INST]`. Many hosts of these models also encode those characters as the real control token when they find them in message content. Text from a tool, a file or a user can then close the current turn and open a new one in any role, and a note beside the text can't help, because it sits in a turn the forged one has already closed. Which hosts do this depends on the host and the model, not only on the model family, and a routing service can pick a different host per request.
+
+So on routes that can reach such a host, Pydantic AI puts a zero-width joiner (U+200D) inside each of these tokens before sending, so `<|im_start|>` goes out as `<\u200d|im_start|>` and reaches the model as ordinary text. This is the exception to sending your content as written, and it's limited to this one character:
+
+- **What goes out with the joiner:** user prompts, tool results, inlined text files, retry feedback, summaries sent as user text, and the model's own text, tool names, tool call arguments and reasoning when they're sent back in later requests, unless the reasoning goes back to the provider that signed it. Text without a special token goes out unchanged.
+- **What doesn't:** the message history you store, system prompts, instructions and tool definitions. A file or URL a provider fetches itself isn't changed either. Tool definitions tokenize on these hosts too, so a tool description from an MCP server you don't trust is not protected by this.
+- **Prompt cache:** the same text always gets the same joiners, so resending a history sends the same bytes.
+
+The flag is [`may_tokenize_special_tokens_in_content`][pydantic_ai.profiles.ModelProfile.may_tokenize_special_tokens_in_content]. It's on for self-hosted servers ([vLLM](models/compatible-apis.md#vllm), [Ollama](models/ollama.md), [Hugging Face](models/huggingface.md)), for most hosts of open-weight models, and for routing services and [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] for every model that isn't only available from its own lab, such as Claude, GPT or Gemini. [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] are treated like routing services, since a custom deployment name or base URL can serve anything: a name that isn't one of those labs' own gets the flag, including a custom Azure deployment of a GPT model. It's off for those labs' own APIs and for hosts that have sent these tokens as text wherever we've checked. To change it for a model, use `profile=`, as below.
+
+The model reads the joiner as part of the text and copies it into what it writes, or writes another invisible character for it, so Pydantic AI removes any zero-width character inside these tokens in each response, on the same routes. Your tools, your output validators, your users and the stored history get `<|im_start|>`, streamed or not, including when a token is split across stream chunks. When that text goes back in a later request, the joiner is put back, so the model gets the bytes it wrote. An agent that reads a chat template and writes it back therefore writes the real tokens.
+
+This has two consequences you can observe:
+
+- **Tool call arguments and response text can differ from the model's raw output in this one way.** That's the only change Pydantic AI makes to them. Reasoning and the provider's own tool calls stay as the model wrote them.
+- **A file that deliberately contains a broken token gets repaired** if the model copies it: `<\u200d|im_start|>` in a file is indistinguishable from a token Pydantic AI broke, so what the tool receives is `<|im_start|>`. A zero-width character anywhere else, such as in an emoji sequence, stays as it is.
+
+Breaking the token only stops the host from creating a turn boundary. A model can still follow text written to look like a turn, and some do, which no change to these characters can prevent: in measurements on routes that tokenize, breaking the token stopped forged turns from being followed on most runs of Qwen 3.8, GLM 5 and DeepSeek V4 Flash, and made no measurable difference on DeepSeek V4 Pro, Qwen3 Next, Llama 3.3 and gpt-oss.
+
+To send these tokens as written, turn the flag off for that model, which also stops the removal from responses:
+
+```python {title="turn_off_special_token_breaking.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+model = OpenRouterModel(
+    'qwen/qwen3.8-27b',
+    profile={'may_tokenize_special_tokens_in_content': False},
+)
+agent = Agent(model)
+```
+
+Only do this when you trust that text, or when you've pinned a host that treats these tokens as text. On a host that tokenizes them, the text can then forge a turn, and the model usually can't copy the tokens at all, since it never sees them as text.
+
 ### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:
@@ -545,19 +589,41 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
-    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] your tool returned is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
-    mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
-    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
-    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
-    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
-    anywhere else. A
-    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
-    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
-    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
-    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    mapping. A tool return records the URL-based and [`UploadedFile`][pydantic_ai.messages.UploadedFile]
+    items it holds when it is serialized, under `content_file_digests` next to `content`, and only those
+    are reconstructed. Keep that key when you transform stored history. A mapping your tool
+    returned stays that mapping, even one that spells out one of our items in full, so a round trip
+    hands back exactly what your tool returned.
+
+    The record identifies each item by its saved form. To change a file item in stored history, such as
+    to refresh a presigned URL, load the history, edit the item and save it again: an item edited in the
+    stored JSON directly no longer matches its record, and loads as a mapping.
+
+    History saved by an earlier version has no such record. In it, a mapping shaped like a URL-based
+    item is reconstructed only as an HTTP(S) URL with `force_download` reset, and only when it carries
+    `media_type`. A mapping shaped like an uploaded file or a non-HTTP URL stays a mapping, and so do
+    the uploaded files and non-HTTP URLs your tools returned before the upgrade. If that history's
+    tool results came only from your own code, not from data a third party wrote, such as a record an
+    MCP server or an external API returned, load it with
+    `ModelMessagesTypeAdapter.validate_json(data, context={'pydantic_ai': {'rebuild_unrecorded_tool_files': True}})`
+    (or `validate_python`) and its files load as they did before. This rebuilds every file-shaped
+    mapping in those tool results as a file, whatever produced it. Save the history again afterwards,
+    and it carries the record and no longer needs the context. Load other history without it; saving that
+    history again keeps only what it loaded as.
+
+    [Durable execution](durable_execution/overview.md) decodes its own journal this way, so a run in
+    flight across an upgrade keeps the files its earlier steps recorded. The harness's step persistence
+    stores and saved conversations load their own snapshots this way too, so a run you continue or fork
+    keeps them as well.
+
+    A URL whose media type Pydantic AI can't infer from the URL is serialized with `media_type: null`,
+    which validates back into the URL part's default (no media type) and dumps `null` again, in a tool
+    return as anywhere else. A [`BinaryContent`][pydantic_ai.messages.BinaryContent] item is recognized
+    by the fields its type requires. A mapping that merely reuses one of our `kind` values stays a plain
+    mapping, and dumping it back never raises. Spelling a `BinaryContent` out in full does reconstruct
+    it, and the keys it doesn't declare are dropped along the way, so keep `kind` off any dictionary you
     want handed back verbatim.
 
     A tool return keyed by something other than a string is the one place that reconstruction
@@ -644,6 +710,15 @@ result = agent.run_sync('Tell me a different joke.', message_history=message_his
 ```
 
 Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts, `model_id` is always reset on responses, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+
+`sanitize_messages` keeps, as sent, the references to state the model provider holds: [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], the `conversation_id` and `container_id` keys of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry these, so history an adapter loads has none, but history you load yourself keeps whatever the client sent. These provider-generated IDs are enough on their own to reach the state they name, and the settings and the resume path below do so with your provider credentials. An ID a client sends is not proof that it owns that state (see the [threat model](https://github.com/pydantic/pydantic-ai/blob/main/THREAT_MODEL.md#persistent-state-and-tenant-identity)), so with client-held history, save the references you need on your server, bound to the user they belong to, and set each of these as follows:
+
+- [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]: pass a concrete ID you saved, not `'auto'`.
+- [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container]: pass a container ID you saved, or `False` for a fresh container, rather than relying on its default reuse of the latest container in the history.
+- [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]: don't use it, as a response ID in the history can take precedence even over a concrete one. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete `openai_conversation_id` instead to turn it off.
+- [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]: set it to `False`. It is on by default for models that support it, and sends the latest response ID in the history to compare the new request against.
+- [`anthropic_cache_diagnostics`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_diagnostics]: leave it off, its default; it does the same with the latest Anthropic response.
+- A history that ends in a response with `state='suspended'`: don't accept one from a client. A run without a new prompt resumes it, fetching the stored response or batch result it names, and no setting turns this off, so resume suspended runs only from server-side history.
 
 ## Persisting sessions
 
@@ -858,6 +933,8 @@ Some providers accept data they can't use: OpenAI ignores encrypted reasoning fr
 
 [`Model.accepts_stateless_artifacts()`][pydantic_ai.models.Model.accepts_stateless_artifacts] tells you whether a model would send a part's data back. A provider subclass that only changes its name, such as one that signs in differently to the same API, keeps its parent's canonical system, except for subclasses of [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], which are assumed to talk to another service. To declare your own, override `canonical_system` or `compatible_systems` on your provider, or pass them to [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
 
+The canonical system names the service a provider speaks to, whose signed data it verifies and whose provider-native features it shares, so a renamed subclass keeps both. Code that decides by service rather than by provider name reads it too, such as the [Pydantic AI Harness `Advisor`](harness/advisor.md), which uses it to tell whether an executor takes Anthropic or OpenRouter advisor model IDs. It doesn't group providers by wire protocol: `azure`, and providers like `deepseek` that speak the OpenAI API, each have their own.
+
 So a response from an `OpenAIProvider` at one `base_url` continued at another (a different gateway, say) gets its text, function calls and encrypted reasoning sent, but not its `previous_response_id` or item IDs, which the other endpoint couldn't look up. The base URLs are compared ignoring the case of the scheme and host, a default port and a trailing `/`. [`Model.accepts_server_state()`][pydantic_ai.models.Model.accepts_server_state] tells you whether a model would send a response's server-side state back; when two URLs reach the same stored state, like a proxy alias, override [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] on your provider. Files you upload yourself aren't judged this way: an [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to the endpoint of whichever model you pass it to, so pass it to one that can read it.
 
 ## Sharing messages between agents
@@ -1056,6 +1133,63 @@ calling its handler skips `before_model_request`, so it also skips that request-
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
 
+### Dequeuing a message or changing its priority
+
+Until it's delivered, a queued message can be changed by its `enqueue_id`.
+[`AgentRun.dequeue`][pydantic_ai.run.AgentRun.dequeue] removes it, and
+[`AgentRun.set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority] gives it a new `priority`, keeping its
+place in the queue and its `enqueue_id`. That's what a chat UI needs for a message the user typed
+while the agent was working: a "send now" button promotes it from `'when_idle'` to `'asap'`, and a
+remove button dequeues it.
+
+```python {title="dequeue_or_send_now.py"}
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent('{{ anthropic:large }}')
+
+
+async def main():
+    async with agent.iter('Refactor the billing module') as agent_run:
+        # Messages the user typed while the agent was working.
+        follow_up = agent_run.enqueue('Then update the changelog.', priority='when_idle')
+        typo = agent_run.enqueue('Also rename `foo`', priority='when_idle')
+        assert follow_up is not None and typo is not None
+
+        clicked = False
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if Agent.is_call_tools_node(node) and not clicked:
+                # The user pressed "send now" on one message and "remove" on the other.
+                # `False` would mean the message was no longer queued, e.g. already delivered.
+                sent_now = agent_run.set_enqueue_priority(follow_up, 'asap')
+                removed = agent_run.dequeue(typo)
+                print(sent_now, removed)
+                #> True True
+                clicked = True
+            node = await agent_run.next(node)
+```
+
+Both return `False` once the message is no longer queued: it was delivered, it was already dequeued,
+or the run has ended. That's not an error, as a click can race with the delivery: the check and the
+change happen under the same lock as delivery, so exactly one of them wins. `False` doesn't say which
+of these happened. To tell the user a message was sent, watch for the
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying its `enqueue_id`. A
+dequeued message gets no such event; one whose priority changed is announced under its original
+`enqueue_id` when it's delivered.
+
+A message enqueued at `'when_idle'` and promoted goes into the next model request as its own
+[`ModelRequest`][pydantic_ai.messages.ModelRequest], after any `'asap'` messages queued before it.
+Content a tool enqueued at `'asap'` and then demoted to `'when_idle'` is delivered like other
+`'when_idle'` content, not next to that tool's result. Tools and capability hooks can do the same with
+[`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue] and
+[`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority], and code driving a realtime
+session with [`RealtimeSession.dequeue`][pydantic_ai.realtime.RealtimeSession.dequeue] and
+[`RealtimeSession.set_enqueue_priority`][pydantic_ai.realtime.RealtimeSession.set_enqueue_priority]. Inside a
+[durable execution](durable_execution/overview.md) unit, both raise
+[`UserError`][pydantic_ai.exceptions.UserError], like `enqueue`, since the change would be lost on
+replay.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
@@ -1078,6 +1212,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     and [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], the ability to short-circuit
     the model call, etc. — hook the event directly via
     `capabilities=[Hooks(before_model_request=fn)]`.
+
+!!! note "Clear the ID when you edit a response's text"
+    If a processor changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content`, set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too, or [OpenAI Responses](models/openai.md#referencing-earlier-responses) ignores the edit.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.

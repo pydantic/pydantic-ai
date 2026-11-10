@@ -1,0 +1,5 @@
+{
+  "against": "v2.66.0",
+  "reason": "`AnthropicModelName` adds an explicit `str` arm because `LatestAnthropicModelNames` no longer carries the SDK `ModelParam` `str` arm; the accepted values are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12817"
+}

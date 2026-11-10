@@ -1120,7 +1120,7 @@ async def main():
     too. Put the side effect in a function tool if it needs to pass this guard, or validate it inside the output
     function or action itself.
 
-The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later. Use the hook when the decision is made in-process, as it is here. Both see validated arguments; only the deferral can outlive the run.
+The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later. Use the hook when the decision is made in-process, as it is here. The hook sees the validated arguments, including any rewrite by a [tool validation hook](../hooks.md#tool-validation-hooks); the handler sees the arguments as the model sent them. Only the deferral can outlive the run.
 
 The call goes to the judge as JSON, so the text it judges reads as structured data, with the tool and its arguments named, rather than as a Python repr. Those arguments go to the decision model's backend before the verdict comes back, so a call is disclosed to a third party even when it is then refused. Send the judge what it needs to decide — the tool name and the fields that bear on safety — rather than the whole argument dict, when those arguments can carry credentials or customer data.
 

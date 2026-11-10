@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
@@ -71,6 +72,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.native_tools import OpenRouterWebSearchToolSettings
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -940,6 +942,92 @@ async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_
     ]
 
 
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_earlier_tool_call_turn_renders_the_same_after_later_reasoning(
+    allow_model_requests: None,
+) -> None:
+    """A tool-call turn sent without `reasoning` doesn't gain `reasoning: ''` once a later response reasons.
+
+    The first step calls a tool without reasoning, the second reasons and calls a tool again. The second
+    request sends the first turn without the field, so the third has to as well, or its messages stop starting
+    with the previous request's. A mock transport stands in for a cassette: whether the model reasons on a given
+    step can't be chosen when recording, and the property spans two request bodies.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        step = len(request_bodies)
+        message: dict[str, Any] = {'role': 'assistant', 'content': None}
+        if step < 3:
+            message['tool_calls'] = [
+                {'id': f'call_{step}', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}
+            ]
+        else:
+            message['content'] = 'Done.'
+        if step == 2:
+            message['reasoning'] = 'One more lookup.'
+            message['reasoning_details'] = [
+                {
+                    'type': 'reasoning.text',
+                    'text': 'One more lookup.',
+                    'signature': 'sig',
+                    'format': 'anthropic-claude-v1',
+                }
+            ]
+        completion = {
+            'id': f'gen-{step}',
+            'object': 'chat.completion',
+            'created': 1704067200,
+            'model': 'anthropic/claude-haiku-4.5',
+            'provider': 'Anthropic',
+            'choices': [{'index': 0, 'finish_reason': 'tool_calls' if step < 3 else 'stop', 'message': message}],
+        }
+        return httpx2.Response(200, json=completion)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(openai_client=client)))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'ok'
+
+        await agent.run('Look it up.')
+
+    second, third = (json.loads(body)['messages'] for body in request_bodies[1:])
+    assert third[: len(second)] == second
+    assert [message for message in third if message['role'] == 'assistant'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+            },
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [{'id': 'call_2', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+                'reasoning_details': [
+                    {
+                        'id': None,
+                        'format': 'anthropic-claude-v1',
+                        'index': None,
+                        'type': 'reasoning.text',
+                        'text': 'One more lookup.',
+                        'signature': 'sig',
+                    }
+                ],
+                'reasoning': '',
+            },
+        ]
+    )
+
+
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
     """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
     from unittest.mock import patch
@@ -961,6 +1049,29 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     assert result.provider_details == snapshot(
         {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
+
+
+async def test_openrouter_unmapped_response_data_omits_fields_openrouter_maps(allow_model_requests: None) -> None:
+    """Fields `OpenRouterModel`'s response type declares, like `provider` and `native_finish_reason`, aren't unmapped."""
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test', 'vendor_note': 'x'},
+        finish_reason='stop',
+        native_finish_reason='stop',
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=OpenRouterProvider(openai_client=mock_client))
+
+    result = await Agent(model).run(
+        'hello', model_settings=OpenAIChatModelSettings(openai_include_unmapped_response_data=True)
+    )
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    assert (response_message.provider_details or {}).get('unmapped') == snapshot({'message': {'vendor_note': 'x'}})
 
 
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -1390,13 +1501,23 @@ async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() 
 @pytest.mark.parametrize(
     ('model_name', 'effort'),
     [
-        # OpenRouter makes GLM-5.3's reasoning mandatory, so it gets the lowest effort.
-        ('z-ai/glm-5.3', 'low'),
+        # OpenRouter makes GLM-5.3's reasoning mandatory, so it gets the lowest effort it accepts.
+        ('z-ai/glm-5.3', 'minimal'),
+        ('minimax/minimax-m2.7', 'minimal'),
+        ('meta/muse-spark-open', 'minimal'),
+        ('recursive/flint-v1.0:free', 'minimal'),
+        ('~openai/gpt-sol-latest', 'minimal'),
+        # Not probed with `minimal`: each call runs a paid research job.
+        ('perplexity/sonar-deep-research', 'low'),
+        # Always reasons by its own profile, not OpenRouter's table, and rejects `minimal`.
+        ('openai/o3', 'low'),
+        # Reasoning-optional, so reasoning is turned off.
         ('z-ai/glm-5.2', 'none'),
     ],
 )
-def test_openrouter_glm_thinking_false(model_name: str, effort: str) -> None:
-    """GLM schema quirks must not change OpenRouter's reasoning translation.
+def test_openrouter_thinking_false_effort(model_name: str, effort: str) -> None:
+    """`thinking=False` turns reasoning off where the route allows it, and otherwise sends the lowest effort the
+    route accepts.
 
     This inspects the prepared payload directly because cassette matching does not pin its body.
     """
@@ -1536,11 +1657,11 @@ def test_openrouter_inline_system_prompts_per_route(model_name: str, inline: boo
         pytest.param(
             'google/gemini-3.5-flash-lite',
             [
-                {'role': 'system', 'content': 'You are helpful.'},
                 {
                     'role': 'system',
                     'content': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
                 },
+                {'role': 'system', 'content': 'You are helpful.'},
                 {'role': 'user', 'content': 'Hello.'},
                 {'role': 'assistant', 'content': 'Hi.'},
                 {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
@@ -1782,9 +1903,8 @@ async def test_openrouter_advisor_tool_request(
     """`AdvisorTool` maps to an `openrouter:advisor` server-tool entry in the request `tools` array.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request
-    body, so a VCR test wouldn't pin the mapped payload. `forward_transcript` remains `False` so
-    OpenRouter uses its default context behavior until provider-specific native tool parameters
-    can expose this choice to users.
+    body, so a VCR test wouldn't pin the mapped payload. `tests/models/test_native_tool_settings_support.py`
+    pins the provider-specific `forward_transcript` option.
     """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel(executor, provider=OpenRouterProvider(openai_client=mock_client))
@@ -1797,11 +1917,14 @@ async def test_openrouter_advisor_tool_request(
     assert kwargs['tools'] == [{'type': 'openrouter:advisor', 'parameters': expected_parameters}]
 
 
-@pytest.mark.parametrize('field_kwargs', [{'caching': '5m'}, {'max_uses': 3}])
+@pytest.mark.parametrize(
+    'field_kwargs',
+    [{'provider_settings': {'anthropic': {'caching': '5m'}}}, {'max_uses': 3}],
+)
 async def test_openrouter_advisor_tool_unsupported_fields(
     allow_model_requests: None, field_kwargs: dict[str, Any]
 ) -> None:
-    """OpenRouter silently ignores the unsupported `caching` and `max_uses` fields.
+    """OpenRouter ignores `max_uses` and the Anthropic `caching` setting.
 
     This mocked-client test pins the request body because the VCR matcher would not detect these
     unsupported fields accidentally being forwarded.
@@ -2057,7 +2180,7 @@ async def test_openrouter_thinking_false_on_claude_sonnet_5_5(
     allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
 ) -> None:
     """Sonnet 5.5 turns thinking off with `between_tools` on the Anthropic API, but OpenRouter makes its reasoning
-    mandatory and rejects `effort='none'`, so `thinking=False` sends `low`."""
+    mandatory and rejects `effort='none'`, so `thinking=False` sends `minimal`."""
     provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
     model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=provider)
 
@@ -2067,7 +2190,7 @@ async def test_openrouter_thinking_false_on_claude_sonnet_5_5(
         model_settings=OpenRouterModelSettings(thinking=False),
     )
     assert response.parts[-1] == TextPart(content='OK')
-    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'minimal'})
 
 
 @pytest.mark.parametrize(
@@ -2086,7 +2209,7 @@ async def test_openrouter_thinking_false_on_mandatory_reasoning_route(
     allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, model_name: str
 ) -> None:
     """OpenRouter makes reasoning mandatory on these routes and rejects `effort='none'`, so `thinking=False` sends
-    `low`."""
+    `minimal`, the lowest effort they accept."""
     provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
     model = OpenRouterModel(model_name, provider=provider)
 
@@ -2096,7 +2219,7 @@ async def test_openrouter_thinking_false_on_mandatory_reasoning_route(
         model_settings=OpenRouterModelSettings(thinking=False),
     )
     assert response.text
-    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'minimal'})
 
 
 async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
@@ -2409,6 +2532,71 @@ AI Agent Framework, the Pydantic way
             'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
             'https://pydantic.dev/docs/ai/overview/',
             'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+        ]
+    )
+
+
+async def test_openrouter_web_search_engine_settings(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """OpenRouter sends the selected search engine and returns its `url_citation` annotations."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    provider_settings={'openrouter': OpenRouterWebSearchToolSettings(engine='exa', max_results=3)},
+                    max_uses=1,
+                )
+            )
+        ],
+    )
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
+
+    assert request_capture.body()['tools'] == snapshot(
+        [
+            {
+                'type': 'openrouter:web_search',
+                'parameters': {
+                    'search_context_size': 'medium',
+                    'max_uses': 1,
+                    'engine': 'exa',
+                    'max_results': 3,
+                },
+            }
+        ]
+    )
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    annotations = response.provider_details['annotations']
+    assert [
+        {
+            'type': annotation['type'],
+            'url': annotation['url_citation']['url'],
+            'has_content': bool(annotation['url_citation']['content']),
+        }
+        for annotation in annotations
+    ] == snapshot(
+        [
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/blob/main/README.md',
+                'has_content': True,
+            },
+            {
+                'type': 'url_citation',
+                'url': 'https://github.com/pydantic/pydantic-ai/tree/v1.84.0',
+                'has_content': True,
+            },
         ]
     )
 

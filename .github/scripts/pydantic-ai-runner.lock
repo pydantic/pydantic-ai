@@ -17,7 +17,6 @@ boxd = "2026-10-27T23:56:00Z"
 boxlite = "2026-10-18T01:35:01Z"
 cassetter = false
 certifi = "2026-10-20T02:25:00Z"
-complexipy = "2026-10-27T05:00:00Z"
 durabletask = "2026-11-02T22:34:00Z"
 durabletask-azuremanaged = "2026-11-02T22:34:00Z"
 genai-prices = false
@@ -35,6 +34,7 @@ pydantic-monty = false
 pydantic-monty-client = false
 pydantic-monty-runtime = false
 pydantic-settings = false
+render = "2026-10-30T01:06:03Z"
 
 [manifest]
 requirements = [
@@ -1138,7 +1138,7 @@ name = "pydantic-ai-harness"
 source = { editable = "../../src/pydantic_ai_harness" }
 dependencies = [
     { name = "genai-prices" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "pydantic-ai-slim" },
 ]
 
@@ -1146,7 +1146,7 @@ dependencies = [
 requires-dist = [
     { name = "absurd-sdk", marker = "extra == 'absurd'", specifier = ">=0.5.0,<1" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
-    { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
+    { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<4" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
     { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.20,<0.3" },
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
@@ -1158,7 +1158,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
     { name = "genai-prices", specifier = ">=0.0.71" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.7" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
@@ -1192,12 +1192,12 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
-    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.4.0,<2" },
-    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.4.0,<2" },
-    { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.5.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.5.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.5.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
-    { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0" },
+    { name = "render", marker = "extra == 'render'", specifier = ">=1.6.0" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
     { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
@@ -1254,8 +1254,8 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "genai-prices", specifier = ">=0.1.13" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0,<3" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0,<3" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },

@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .keenable import KeenableSearch
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
     from .render import RenderWorkflows
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -134,6 +136,7 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KeenableSearch',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -158,6 +161,8 @@ __all__ = [
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
     'RelevanceCompaction',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -234,6 +239,7 @@ _LAZY_EXPORTS = {
     'InputGuardrail': 'guardrails',
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KeenableSearch': 'keenable',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -257,6 +263,8 @@ _LAZY_EXPORTS = {
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'RelevanceCompaction': 'compaction',
+    'RenderSandbox': 'render_sandbox',
+    'RenderSandboxBackend': 'render_sandbox',
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
