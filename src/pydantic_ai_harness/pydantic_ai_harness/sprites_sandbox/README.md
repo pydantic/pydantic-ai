@@ -146,6 +146,35 @@ async def run_in_prepared_sprite() -> str:
 
 The run uses the backend as it is, so `SpritesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the Sprite instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Mount a bucket
+
+To show an S3 or S3-compatible bucket as a folder in the Sprite, pass `mounts=`:
+
+```python {names="defined"}
+import os
+from datetime import UTC, datetime, timedelta
+
+from pydantic_ai_harness import S3Mount
+from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
+
+sandbox = SpritesSandbox(
+    mounts=[
+        S3Mount(
+            path='data',
+            url='s3://acme-data/',
+            access_key_id=os.environ['DATA_ACCESS_KEY_ID'],
+            secret_access_key=os.environ['DATA_SECRET_ACCESS_KEY'],
+            session_token=os.environ['DATA_SESSION_TOKEN'],
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    ],
+)
+```
+
+The run's first command or file operation mounts the bucket at `/home/sprite/data`, as root, through `sudo -n`, which the `sprite` user may run without a password. The keys reach the Sprite on stdin, never on a command line. See [Mounting Cloud Storage](https://pydantic.dev/docs/ai/harness/cloud-storage-mounts/) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
+
+The `sprite` user can already read any file and become root, so every command in the Sprite can read the mounts' keys, including from the rclone daemon that holds them. Pass short-lived keys limited to the bucket or prefix you mount.
+
 ## Clean up
 
 The Sprite keeps its files and installed packages after the run ends. Pydantic AI never deletes it. It sleeps when idle and wakes on the next command: you pay for compute while it is active and for storage until you delete it. Delete it with the ref you stored:
@@ -200,6 +229,7 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `mounts` | Buckets to show as folders in the Sprite, as `S3Mount`s, or a function of the run returning them with fresh keys; see [Mount a bucket](#mount-a-bucket). Default: `()`. Left out of agent specs, since it holds keys. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
