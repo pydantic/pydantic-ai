@@ -149,8 +149,11 @@ anyway. On its own trigger, `UnexpectedModelBehavior`, `ModelAPIError` and `Fall
 leave the history unchanged and discard the attempt's receipts, with `compaction.skipped='summary_failed'`
 and `error.type` on the span. Explicit `compact()`/`compact_now()` calls still raise. Usage limits and
 programming errors propagate on both paths. A failed automatic summary is retried on the next request
-while the trigger stays exceeded. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
-the default `id='summarizing_compaction'` under durable execution.
+while the trigger stays exceeded. Usage (tokens and the request) folds into the run's `ctx.usage`,
+so `UsageLimits` sees it. Keep the default `id='summarizing_compaction'` under durable execution.
+Under Temporal, failed summary operations still propagate as `ActivityError` wrapping an
+`ApplicationError`: capability operations do not yet rebuild the model errors this recovery path
+catches. This exception is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
 
 ### `RelevanceCompaction`
 

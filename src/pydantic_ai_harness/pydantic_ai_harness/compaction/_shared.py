@@ -667,7 +667,7 @@ async def compact_if_smaller(
                 {
                     'compaction.strategy': strategy,
                     'compaction.skipped': 'summary_failed',
-                    'error.type': type(error).__qualname__,
+                    'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
                     'compaction.messages_before': len(messages),
                     'compaction.tokens_before': estimate_token_count(messages, tokenizer),
                 }

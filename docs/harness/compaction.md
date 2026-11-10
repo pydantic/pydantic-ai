@@ -530,7 +530,9 @@ Neither transport works everywhere, which is why this is a choice rather than a 
 
 When `SummarizingCompaction` runs on its own trigger, `UnexpectedModelBehavior` (including exhausted retries, empty or truncated summaries), `ModelAPIError` and `FallbackExceptionGroup` end the compaction attempt, not the parent run. The history stays unchanged, the attempt's receipts are discarded, and a `compact_messages` span records `compaction.skipped='summary_failed'` and `error.type`. `UsageLimitExceeded` and programming errors such as `UserError` still propagate. The summary's usage still counts. While the trigger stays exceeded, the next request tries again.
 
-Inside `FallbackCompaction`, the next strategy runs: its default `fallback_on` includes `UnexpectedModelBehavior` as well as the API errors. Direct `compact()` and `compact_now()` calls still raise summary errors, as does a `TieredCompaction` tier. An explicit fallback chain still honours its `fallback_on` and re-raises the last error if every strategy fails.
+Inside `FallbackCompaction`, the next strategy runs: its default `fallback_on` includes `UnexpectedModelBehavior` as well as the API errors. Direct `compact()` and `compact_now()` calls still raise summary errors, as does a `TieredCompaction` tier. An explicit fallback chain still honors its `fallback_on` and re-raises the last error if every strategy fails. Its trigger does not replace the chain's failure policy: without a successful strategy there is no result to select.
+
+Under Temporal, failed summary operations currently arrive as `ActivityError` wrapping an `ApplicationError`, rather than rebuilt Pydantic AI model errors, so they still propagate instead of taking this recovery path. This durable-execution gap is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
 
 ### A summary that isn't smaller
 
@@ -649,7 +651,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
 | `compaction.skipped` | str | `summary_failed` when an automatic summary failed, or `not_smaller` when its result wasn't smaller than the history; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
-| `error.type` | str | With `compaction.skipped='summary_failed'`: the exception's class name |
+| `error.type` | str | With `compaction.skipped='summary_failed'`: the exception's fully qualified class name |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 

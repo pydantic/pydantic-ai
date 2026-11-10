@@ -149,10 +149,19 @@ class TestSummarizingCompaction:
         assert attributes['compaction.tokens_after'] > attributes['compaction.tokens_before']
 
     @pytest.mark.parametrize('failure', FAILING_SUMMARIZERS)
-    async def test_a_failed_summary_leaves_the_history_unchanged(self, failure: str, capfire: CaptureLogfire) -> None:
+    @pytest.mark.parametrize('preserve_first_user_message', [True, False])
+    async def test_a_failed_summary_leaves_the_history_unchanged(
+        self, failure: str, preserve_first_user_message: bool, capfire: CaptureLogfire
+    ) -> None:
         model, error_type = FAILING_SUMMARIZERS[failure]
         sent: list[list[ModelMessage]] = []
-        compaction = SummarizingCompaction[None](model=model, max_messages=6, keep_messages=2, receipts=True)
+        compaction = SummarizingCompaction[None](
+            model=model,
+            max_messages=6,
+            keep_messages=2,
+            receipts=True,
+            preserve_first_user_message=preserve_first_user_message,
+        )
         history = _history()
 
         result = await _agent(compaction, sent).run('Next?', message_history=history)
@@ -161,7 +170,7 @@ class TestSummarizingCompaction:
         assert sent[0][:-1] == history
         assert not _has_summary(result.all_messages())
         [span] = _compact_spans(capfire)
-        assert span['attributes']['error.type'] == error_type
+        assert span['attributes']['error.type'] == f'pydantic_ai.exceptions.{error_type}'
         assert _compaction_attributes(span) == {
             'compaction.strategy': 'SummarizingCompaction',
             'compaction.skipped': 'summary_failed',
