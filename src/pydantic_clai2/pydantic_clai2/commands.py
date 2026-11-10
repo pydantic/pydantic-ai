@@ -28,7 +28,7 @@ from pydantic_clai2.config import (
     resolve_settings,
 )
 from pydantic_clai2.config.builtins import STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import widens
+from pydantic_clai2.config.project_settings import SAFE_PROJECT_KEYS, widens
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
@@ -322,7 +322,8 @@ def refuse_widening(store: SettingsStore, args: list[str]) -> None:
             value = Settings().model_dump()[SETTING_FIELDS[key]]
         case _:
             return
-    if widens(key, value, saved=store.load()):
+    # Before loading: an invalid saved display setting must stay fixable from the shell.
+    if key not in SAFE_PROJECT_KEYS and widens(key, value, saved=store.load()):
         raise _session_only('config', args)
 
 
