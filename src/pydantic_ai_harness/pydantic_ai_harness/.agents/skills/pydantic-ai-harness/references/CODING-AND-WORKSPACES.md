@@ -585,7 +585,7 @@ files beneath it. See
 for resolution, labels, and backend requirements.
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
-whatever `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
 prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
 applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.

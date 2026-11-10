@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
+from pydantic_ai._model_errors import google_retry_after
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -232,12 +233,14 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-                raise ModelHTTPError(
+                error = ModelHTTPError(
                     status_code=status_code,
                     model_name=self.model_name,
                     body=body,
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
+                )
+                error.retry_after = google_retry_after(error)
+                raise error from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return self._map_response(prompt, response)
