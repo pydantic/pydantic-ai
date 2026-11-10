@@ -28,7 +28,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
@@ -68,9 +68,9 @@ _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
     '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
-    'Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`. Hosts can emit these events by '
-    'importing them from `pydantic_ai_harness.filesystem`. The customized tool-sniffing fallback remains active for '
-    'this configuration.'
+    'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. '
+    'Hosts can emit these events by importing them from `pydantic_ai_harness.filesystem`. '
+    'The customized tool-sniffing fallback remains active for this configuration.'
 )
 
 
@@ -100,17 +100,17 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, on by default): when the model
-       lists a directory or reads a file through a filesystem capability event,
-       surface the instruction file of that directory and of every directory
-       between it and the working directory, shallowest first. The
-       working directory's own files are not repeated when Strategy 1 loaded
-       them. The note is enqueued in the message tail, not added to system
-       instructions, so it does not invalidate the cached prefix.
-       `nested_inject='contents'` (default) inlines the file body; `'pointer'`
-       enqueues a one-line pointer. With it on, the instructions also gain one
-       static sentence on how instruction files relate: each applies to its
-       subtree, the deeper one wins, and the user's direct instructions win over
-       all of them.
+       lists a directory, reads a file in it, or writes or edits a file in it,
+       through a filesystem capability event, surface the instruction file of
+       that directory and of every directory between it and the working
+       directory, shallowest first. The working directory's own files are not
+       repeated when Strategy 1 loaded them. The note is enqueued in the message
+       tail, not added to system instructions, so it does not invalidate the
+       cached prefix. `nested_inject='contents'` (default) inlines the file body;
+       `'pointer'` enqueues a one-line pointer. With it on, the instructions also
+       gain one static sentence on how instruction files relate: each applies to
+       its subtree, the deeper one wins, and the user's direct instructions win
+       over all of them.
 
     ```python
     from pydantic_ai import Agent
@@ -161,7 +161,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     nested_traversal: bool = True
     """Strategy 3: surface the instruction files between the working directory and
-    a directory the model lists or reads a file in, through `FileSystem` events (or the
+    a directory the model lists, or reads, writes or edits a file in, through `FileSystem` events (or the
     same events emitted by another file tool). With it on, the instructions also state
     how instruction files relate."""
 
@@ -387,24 +387,32 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path), confine_target=False)
         return result
 
-    @on_event(FileReadEvent, DirectoryListedEvent)
+    @on_event(FileReadEvent, DirectoryListedEvent, FileWrittenEvent)
     async def _on_file_traversal(
-        self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent
+        self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent | FileWrittenEvent
     ) -> None:
-        """Enqueue nested context after an authorized filesystem traversal."""
+        """Enqueue nested context after an authorized filesystem traversal, write or edit."""
         if not self.nested_traversal:
             return
         working_dir = await self._working_dir(ctx.workspace)
         path = Path(await ctx.workspace.resolve(event.path, base=event.root_dir))
-        directory = path.parent if isinstance(event, FileReadEvent) else path
+        directory = path if isinstance(event, DirectoryListedEvent) else path.parent
+        # Only a full write shows the model a whole file: a read can return a window of it, and an edit changes part.
+        full_write = isinstance(event, FileWrittenEvent) and not isinstance(event, FileEditedEvent)
+        written_file = path if full_write else None
         try:
             directory.relative_to(working_dir)
         except ValueError:
             return
-        await self._enqueue_context(ctx, directory)
+        await self._enqueue_context(ctx, directory, written_file=written_file)
 
     async def _enqueue_context(
-        self, ctx: RunContext[AgentDepsT], directory: Path, *, confine_target: bool = True
+        self,
+        ctx: RunContext[AgentDepsT],
+        directory: Path,
+        *,
+        confine_target: bool = True,
+        written_file: Path | None = None,
     ) -> None:
         """Surface the instruction file of `directory` and of each directory between it and the working directory.
 
@@ -430,7 +438,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                     real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
                 if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
                     continue
-            await self._enqueue_directory(ctx, current, in_history)
+            # Only the target directory can hold the file just written, so the others skip `_same_file`'s `realpath`s.
+            await self._enqueue_directory(
+                ctx, current, in_history, written_file=written_file if current == directory else None
+            )
 
     def _nested_excluded(self, directory: Path, working_dir: Path) -> bool:
         try:
@@ -439,7 +450,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return False
         return any(fnmatchcase(part, pattern) for part in parts for pattern in self.nested_exclude)
 
-    async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str]) -> None:
+    async def _enqueue_directory(
+        self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
+    ) -> None:
         key = str(directory)
         context_file = await find_dir_context_file(ctx.workspace, directory, self.filenames)
         # `_enqueue_context` skipped it if it was already surfaced, but parallel traversals can probe the same
@@ -447,6 +460,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
+        # The model just wrote the instruction file itself, so a note would repeat what it wrote. The directory stays
+        # pending for the rest of this run, or until a compaction summarizes the write away; a later run, which keeps
+        # no pending state and finds no stamped note, may surface it once more.
+        if written_file is not None and await self._same_file(ctx.workspace, written_file, context_file.path):
+            return
         chars = len(context_file.content)
         used = self._window_chars + sum(self._pending_chars.values())
         inline = self.nested_inject == 'contents' and (
@@ -479,6 +497,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         self._pending_dirs -= in_history
         self._pending_chars = {key: chars for key, chars in self._pending_chars.items() if key in self._pending_dirs}
         return in_history
+
+    async def _same_file(self, workspace: Workspace, written_file: Path, context_file: Path) -> bool:
+        if written_file.name not in self.filenames:
+            return False
+        return await workspace.realpath(str(written_file)) == await workspace.realpath(str(context_file))
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)
