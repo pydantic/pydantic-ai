@@ -51,6 +51,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import itertools
 import json
 import pkgutil
 import re
@@ -59,8 +60,9 @@ import types
 import warnings
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import httpx
 import httpx2
@@ -1000,12 +1002,13 @@ def _anthropic_vertex(client: httpx2.AsyncClient) -> Model:
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=vertex))
 
 
-Attempts = int | Literal['several']
-"""A count, or `'several'` for a retry config bounded by elapsed time rather than by count."""
-
-
 def _no_backoff(response: object, retries: int) -> float:
     return 0
+
+
+_mistral_retry_clock = types.SimpleNamespace(time=partial(next, itertools.count(step=0.02)))
+"""Stands in for `time` in Mistral's retry loop: each reading is 20 ms later, so the client's 50 ms budget runs out after
+the same attempts however long an attempt really takes."""
 
 
 @dataclass(frozen=True)
@@ -1015,13 +1018,13 @@ class RetryCase:
     id: str
     names: tuple[str, ...]
     build: Callable[[Any], Model]
-    attempts: tuple[Attempts, Attempts, Attempts]
+    attempts: tuple[int, int, int]
     """Attempts with no setting, with `max_retries=0`, and with `max_retries=1`."""
     legacy_http: bool = False
     decision: bool = False
     status: int = RETRYABLE_STATUS
-    instant_backoff: tuple[tuple[str, object], ...] = ()
-    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts."""
+    sdk_patches: tuple[tuple[str, object], ...] = ()
+    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts, or read a real clock."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
     @property
@@ -1051,8 +1054,8 @@ RETRY_CASES = [
         'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
     ),
     RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
-    # A copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which would send the
-    # retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
+    # Below anthropic 2.6, a copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which
+    # would send the retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
     RetryCase(
         'AnthropicModel[bedrock]',
         ('Anthropic',),
@@ -1076,7 +1079,7 @@ RETRY_CASES = [
         _cohere,
         (3, 1, 2),
         legacy_http=True,
-        instant_backoff=(('cohere.core.http_client._retry_timeout', _no_backoff),),
+        sdk_patches=(('cohere.core.http_client._retry_timeout', _no_backoff),),
         marks=_needs(cohere_available, 'cohere'),
     ),
     # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
@@ -1085,7 +1088,7 @@ RETRY_CASES = [
         ('Google',),
         _google,
         (1, 1, 2),
-        instant_backoff=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
+        sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
         marks=_needs(google_available, 'google'),
     ),
     # The per-request retry options keep the provider's delays and its status codes: 418 is retried at all only
@@ -1104,7 +1107,8 @@ RETRY_CASES = [
         'MistralModel[retry_config]',
         ('Mistral',),
         _mistral_with_client_retries,
-        ('several', 1, 'several'),
+        (3, 1, 3),
+        sdk_patches=(('mistralai.client.utils.retries.time', _mistral_retry_clock),),
         marks=_needs(mistral_available, 'mistral'),
     ),
     RetryCase(
@@ -1127,10 +1131,10 @@ Bedrock and xAI retry inside botocore and a gRPC channel, which no per-request o
 async def test_max_retries_sets_how_many_attempts_the_sdk_makes(
     case: RetryCase, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ):
-    for target, value in case.instant_backoff:
+    for target, value in case.sdk_patches:
         monkeypatch.setattr(target, value)
 
-    attempts: list[Attempts] = []
+    attempts: list[int] = []
     variants: tuple[ModelSettings, ...] = ({}, {'max_retries': 0}, {'max_retries': 1})
     for settings in variants:
         count = await _count_attempts(
@@ -1140,7 +1144,7 @@ async def test_max_retries_sets_how_many_attempts_the_sdk_makes(
             decision=case.decision,
             status=case.status,
         )
-        attempts.append('several' if count > 1 and 'several' in case.attempts else count)
+        attempts.append(count)
 
     assert tuple(attempts) == case.attempts
 
@@ -1155,7 +1159,7 @@ def test_max_retries_supported_by_list_matches_the_attempts():
 async def test_max_retries_keeps_the_bedrock_client_aws_profile(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """`AsyncAnthropicBedrock.with_options()` drops `aws_profile`, so the retrying copy must be handed it back."""
+    """The retrying copy signs with the client's `aws_profile`, which `with_options()` drops below anthropic 2.6."""
     credentials = tmp_path / 'credentials'
     credentials.write_text('[probe-profile]\naws_access_key_id = AKIAPROBEPROFILE\naws_secret_access_key = probe\n')
     monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(credentials))
