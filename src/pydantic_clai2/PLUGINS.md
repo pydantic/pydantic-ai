@@ -3515,7 +3515,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 `/resume ID` does, returning the notice to show: it only restores history, never runs the
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured. A conversation
+conversation saved in another directory or when persistence is not configured.
+`resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
+directory in this one instead, as confirming it in the `/resume` browser does: tools then run
+in this directory, and the saved conversation keeps its original one. A conversation
 still running in another process is not taken over: the newest unarchived copy CLAI made to
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
