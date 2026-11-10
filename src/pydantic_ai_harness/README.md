@@ -203,6 +203,7 @@ Finding and reading things on the open web.
 | [You.com Search](pydantic_ai_harness/youdotcom/) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
 | [You.com Research](pydantic_ai_harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](pydantic_ai_harness/keenable/) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
+| [Spider](pydantic_ai_harness/spider/) | Harness | Bounded site crawling, web search with optional content fetching, and browser-rendered markdown scraping |
 | [Browser Use](pydantic_ai_harness/browser_use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](pydantic_ai_harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 
