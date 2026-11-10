@@ -6401,6 +6401,36 @@ async def test_dbos_recovery_rejects_another_concurrent_runs_steps(
     assert swap_turns.requests == ['A', 'B']
 
 
+shared_response = ModelResponse(parts=[TextPart('shared')])
+
+
+def _return_shared_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return shared_response
+
+
+shared_response_agent = Agent(
+    FunctionModel(_return_shared_response), name='shared_response_agent', capabilities=[DBOSDurability()]
+)
+
+
+@DBOS.workflow()
+async def shared_response_workflow() -> list[str | None]:
+    first = await shared_response_agent.run('First.')
+    second = await shared_response_agent.run('Second.')
+    return [first.all_messages()[-1].run_id, first.run_id, second.all_messages()[-1].run_id, second.run_id]
+
+
+async def test_dbos_runs_sharing_a_response_object_keep_their_own_run_ids(dbos: DBOS) -> None:
+    """A response object a model returns to several runs of one workflow is recorded with each run's own `run_id`.
+
+    The step stamps a copy, so the second run doesn't find the first run's `run_id` on the shared object and
+    fail as if recovery had handed it the first run's step.
+    """
+    first_response_run_id, first_run_id, second_response_run_id, second_run_id = await shared_response_workflow()
+    assert (first_response_run_id, second_response_run_id) == (first_run_id, second_run_id)
+    assert shared_response.run_id is None
+
+
 deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])
 deadline_seen: list[datetime | None] = []
 

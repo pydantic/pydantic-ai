@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
@@ -201,10 +202,11 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         run_context=run_context,
                     )
                     response = await operation.handler(cast(ParamsT, params))
-                    if isinstance(response, ModelResponse):
+                    if isinstance(response, ModelResponse) and response.run_id is None:
                         # The run fills in `run_id` only after the step returns, so DBOS would record none to
-                        # check on recovery.
-                        response.run_id = response.run_id or run_context.run_id
+                        # check on recovery. A copy, so a response object a model returns to several runs
+                        # isn't recorded with the first run's `run_id` for the others.
+                        response = replace(response, run_id=run_context.run_id)
                     return operation.result_codec.dump(response)
 
                 step = model_step
