@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._workspace import backend_workspace
@@ -44,12 +45,12 @@ class CapabilityStorage(AbstractCapability[AgentDepsT]):
     workspace: WorkspaceBackend
     """The backend that holds the files, such as `LocalWorkspaceBackend('/var/lib/myapp/agent-files')`.
 
-    A backend, not a workspace capability like `LocalWorkspace`. Its I/O runs in-process: in this
-    release a durable engine does not route it through its workflow machinery.
+    A backend, not a workspace capability like `LocalWorkspace`. Its I/O runs in-process: a durable
+    engine does not route it through its workflow machinery.
     """
 
     _: KW_ONLY
-    # Two of them are one configuration stated twice: a run keeps its capabilities' files in one place.
+    # A fixed id, so a `CapabilityStorage` passed to a run replaces the agent's.
     id: str | None = 'capability_storage'
 
     _storage: Workspace = field(init=False, repr=False, compare=False)
@@ -60,7 +61,14 @@ class CapabilityStorage(AbstractCapability[AgentDepsT]):
 
 def storage_workspace(ctx: RunContext[Any]) -> Workspace | None:
     """The workspace of the run's `CapabilityStorage`, or `None` when the run has none."""
-    for capability in ctx.capabilities.values():
+    # `root_capability` rather than `capabilities`, which a durable unit's context does not carry.
+    if ctx.root_capability is None:
+        return None
+    storage: Workspace | None = None
+    for capability in leaf_capabilities(ctx.root_capability):
+        # One returned from a `CapabilityFunc` or given `prefix_tools()` is registered as its wrapper.
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
         if isinstance(capability, CapabilityStorage):
-            return capability._storage  # pyright: ignore[reportPrivateUsage]
-    return None
+            storage = capability._storage  # pyright: ignore[reportPrivateUsage]
+    return storage

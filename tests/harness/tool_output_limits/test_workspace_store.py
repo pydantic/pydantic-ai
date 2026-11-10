@@ -89,7 +89,7 @@ def _call_big_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 @dataclasses.dataclass
 class _Ctx:
     workspace: Workspace
-    capabilities: dict[str, Any] = dataclasses.field(default_factory=dict[str, Any])
+    root_capability: None = None
 
 
 class TestDefaultStore:
@@ -227,6 +227,19 @@ class TestDefaultStore:
         ctx = _Ctx(workspace=Workspace(_FailingRead(tmp_path)))
         with pytest.raises(ToolFailed, match='sandbox refused the read'):
             await tool.function(ctx, 'run/call.0')  # type: ignore[attr-defined]
+
+    async def test_spill_inside_a_durable_unit(self, tmp_path: Path):
+        """A durable unit's context does not carry `capabilities`; the spill does not depend on it."""
+        pytest.importorskip('temporalio')
+        from pydantic_ai.durable_exec.temporal import TemporalRunContext
+
+        limits = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspaceBackend(tmp_path)))
+        ctx = TemporalRunContext[None](deps=None, tool_name='big_tool')
+
+        handle = await limits._write_spill(ctx, 'big_tool', 'run/call.0', 'payload', False, 'truncate')  # pyright: ignore[reportPrivateUsage]
+
+        assert handle is not None
+        assert Path(handle).read_text(encoding='utf-8') == 'payload'
 
 
 class TestWorkspaceStore:

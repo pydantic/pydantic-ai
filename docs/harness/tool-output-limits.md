@@ -310,7 +310,7 @@ Spilled files are kept for the life of the workspace; they are not pruned by thi
 ### Reading spills with `FileSystem`
 
 When spills are files in the run's workspace (the default `WorkspaceStore()`, without a
-`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
+`workspace=` of its own or a `CapabilityStorage` on the run) and `FileSystem` is on the agent, `read_tool_result` steps aside for
 `FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind]
 set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
