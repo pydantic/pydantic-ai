@@ -31,7 +31,7 @@ import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import datetime
-from typing import Any
+from typing import Literal
 
 import anyio
 import grpc
@@ -75,12 +75,6 @@ def _missing_live_tier() -> str | None:
     if _current_context() != CONTEXT:
         return f'requires the kind cluster from `cluster/up.sh` as the current context of KUBECONFIG ({CONTEXT})'
     return None
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run every test on asyncio: the SDK and `grpc.aio` run on nothing else."""
-    return 'asyncio'
 
 
 def _skip_or_fail(reason: str) -> None:
@@ -138,9 +132,22 @@ def _claim_of(backend: KubernetesSandboxBackend) -> str:
     return claim_name
 
 
-def _new_backend(**settings: Any) -> KubernetesSandboxBackend:
-    defaults: dict[str, Any] = {'warm_pool': POOL, 'namespace': NAMESPACE, 'sandbox_timeout': LIVE_SANDBOX_TIMEOUT}
-    return KubernetesSandboxBackend(**(defaults | settings))
+Connection = (
+    Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-ip']
+    | SandboxdPodTunnelConnectionConfig
+    | SandboxdInClusterConnectionConfig
+)
+
+
+def _new_backend(
+    *,
+    warm_pool: str = POOL,
+    connection: Connection = 'port-forward',
+    sandbox_timeout: int | None = LIVE_SANDBOX_TIMEOUT,
+) -> KubernetesSandboxBackend:
+    return KubernetesSandboxBackend(
+        warm_pool=warm_pool, namespace=NAMESPACE, connection=connection, sandbox_timeout=sandbox_timeout
+    )
 
 
 async def _destroy(backend: KubernetesSandboxBackend) -> None:
@@ -354,7 +361,7 @@ async def test_a_connection_config_sends_the_sandboxd_auth_token() -> None:
     ],
     ids=['mode', 'config'],
 )
-async def test_an_in_cluster_connection_follows_a_recreated_pod(pool: str, connection: Any) -> None:
+async def test_an_in_cluster_connection_follows_a_recreated_pod(pool: str, connection: Connection) -> None:
     """A recreated pod has a new IP, which the next command resolves again."""
     backend = _new_backend(warm_pool=pool, connection=connection)
     assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
@@ -406,12 +413,8 @@ def test_docs_example(example: CodeExample, monkeypatch: pytest.MonkeyPatch) -> 
     A follow-up run, from the message history or a stored ref, works in the first run's sandbox.
     """
     # The documented default keeps a sandbox for 24 hours, and a killed job skips the cleanup below.
-    init = KubernetesSandboxBackend.__init__
-
-    def bounded_init(self: KubernetesSandboxBackend, **settings: Any) -> None:
-        bounded: dict[str, Any] = {**settings, 'sandbox_timeout': LIVE_SANDBOX_TIMEOUT}
-        init(self, **bounded)
-
+    # No example passes `sandbox_timeout`, so this default applies to every backend they build.
+    bounded_init = functools.partialmethod(KubernetesSandboxBackend.__init__, sandbox_timeout=LIVE_SANDBOX_TIMEOUT)
     monkeypatch.setattr(KubernetesSandboxBackend, '__init__', bounded_init)
     _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'delete_sandbox'))
     assert all(run.used_sandbox for run in runs), runs

@@ -39,8 +39,6 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed')
 
-asyncio_only = pytest.mark.parametrize('anyio_backend', ['asyncio'])
-
 _OWN_CLAIM = f'default/pydantic-ai-{"0" * 32}'
 """A ref `KubernetesSandbox` accepts with its default namespace."""
 
@@ -116,20 +114,21 @@ def test_from_spec_forwards_the_spec_fields() -> None:
     assert KubernetesSandbox[None].from_spec(**spec_fields) == KubernetesSandbox(**spec_fields)
 
 
-@asyncio_only
 async def test_the_sdk_client_matches_the_connection(cluster: FakeCluster) -> None:
     other_ports = SandboxdPodTunnelConnectionConfig(grpc_port=9191, rest_port=8181)
-    for connection in ('port-forward', 'in-cluster-pod-ip', other_ports):
+    for connection in ('port-forward', 'in-cluster-service', 'in-cluster-pod-ip', other_ports):
         backend = KubernetesSandboxBackend(warm_pool='pool', connection=connection)
         await backend.run(['true'])
         await backend.aclose()
-    tunnel, in_cluster, configured = cluster.clients
+    tunnel, service, pod_ip, configured = cluster.clients
     assert isinstance(tunnel.connection_config, SandboxdPodTunnelConnectionConfig)
-    assert isinstance(in_cluster.connection_config, SandboxdInClusterConnectionConfig)
-    assert in_cluster.connection_config.mode == 'in-cluster-pod-ip'
+    assert isinstance(service.connection_config, SandboxdInClusterConnectionConfig)
+    assert service.connection_config.mode == 'in-cluster-service'
+    assert isinstance(pod_ip.connection_config, SandboxdInClusterConnectionConfig)
+    assert pod_ip.connection_config.mode == 'in-cluster-pod-ip'
     assert configured.connection_config is other_ports
     # The SDK would otherwise delete its claims when the interpreter exits.
-    assert not tunnel.cleanup and not in_cluster.cleanup and not configured.cleanup
+    assert not any(client.cleanup for client in cluster.clients)
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
@@ -143,7 +142,6 @@ async def test_trio_is_refused() -> None:
         await KubernetesSandbox(warm_pool='pool').destroy(WorkspaceRef(provider='kubernetes', id=_OWN_CLAIM))
 
 
-@asyncio_only
 async def test_a_claim_uses_the_pool_namespace_and_timeout(
     cluster: FakeCluster, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -161,7 +159,6 @@ async def test_a_claim_uses_the_pool_namespace_and_timeout(
     await backend.aclose()  # Nothing left to close.
 
 
-@asyncio_only
 async def test_env_is_layered(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool', env={'A': 'base', 'B': 'base'})
     assert (await backend.run('printf "$A $B"', shell=True, env={'B': 'call'})).stdout == 'base call'
@@ -170,7 +167,6 @@ async def test_env_is_layered(cluster: FakeCluster) -> None:
     await backend.aclose()
 
 
-@asyncio_only
 @pytest.mark.parametrize('working_dir', [None, '/tmp'])
 async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, working_dir: str | None) -> None:
     """Two 100 KB arguments with quotes in them run as given.
@@ -188,7 +184,6 @@ async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, work
     await backend.aclose()
 
 
-@asyncio_only
 async def test_the_argument_variables_do_not_reach_the_command(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     result = await backend.run(['sh', '-c', 'env | grep -c PYDANTIC_AI_HARNESS_ARG_ || true'])
@@ -196,7 +191,6 @@ async def test_the_argument_variables_do_not_reach_the_command(cluster: FakeClus
     await backend.aclose()
 
 
-@asyncio_only
 async def test_aclose_in_a_cancelled_scope_still_closes(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
@@ -208,7 +202,6 @@ async def test_aclose_in_a_cancelled_scope_still_closes(cluster: FakeCluster) ->
     assert client.closed
 
 
-@asyncio_only
 async def test_commands_start_in_working_dir(cluster: FakeCluster) -> None:
     probe = KubernetesSandboxBackend(warm_pool='pool')
     root = await probe.working_dir()
@@ -226,7 +219,6 @@ async def test_commands_start_in_working_dir(cluster: FakeCluster) -> None:
         await each.aclose()
 
 
-@asyncio_only
 async def test_an_unreadable_working_dir_is_unavailable(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
@@ -236,7 +228,6 @@ async def test_an_unreadable_working_dir_is_unavailable(cluster: FakeCluster) ->
     await backend.aclose()
 
 
-@asyncio_only
 async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(
     cluster: FakeCluster, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -261,7 +252,6 @@ async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(
     await backend.aclose()
 
 
-@asyncio_only
 async def test_a_claim_cancelled_while_it_is_made_is_deleted(cluster: FakeCluster) -> None:
     cluster.create_gate = anyio.Event()
     backend = KubernetesSandboxBackend(warm_pool='pool', namespace='agents')
@@ -280,7 +270,6 @@ async def _wait_for_file(path: Path) -> None:
             await anyio.sleep(0.01)
 
 
-@asyncio_only
 async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None:
     """The last command in flight closes the connection; later operations share a new one until the next `aclose()`."""
     backend = KubernetesSandboxBackend(warm_pool='pool')
@@ -307,7 +296,6 @@ async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None
     assert cluster.clients[1].closed
 
 
-@asyncio_only
 async def test_a_closed_connection_mid_command_is_a_connection_error(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     root = Path(await backend.working_dir())
@@ -332,7 +320,6 @@ async def test_a_closed_connection_mid_command_is_a_connection_error(cluster: Fa
     await backend.aclose()
 
 
-@asyncio_only
 async def test_a_failed_lookup_of_an_existing_claim_propagates(cluster: FakeCluster) -> None:
     probe = KubernetesSandboxBackend(warm_pool='pool')
     await probe.run(['true'])
@@ -344,7 +331,6 @@ async def test_a_failed_lookup_of_an_existing_claim_propagates(cluster: FakeClus
     await probe.aclose()
 
 
-@asyncio_only
 async def test_a_lost_connection_to_a_live_sandbox_propagates(
     cluster: FakeCluster, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -372,7 +358,6 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(
     await backend.aclose()
 
 
-@asyncio_only
 @pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
 async def test_a_signal_exit_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster, negative: bool) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
@@ -382,7 +367,6 @@ async def test_a_signal_exit_in_a_live_sandbox_keeps_its_exit_code(cluster: Fake
     await backend.aclose()
 
 
-@asyncio_only
 @pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
 async def test_a_signal_exit_in_a_deleted_sandbox_is_unavailable(cluster: FakeCluster, negative: bool) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
@@ -399,7 +383,6 @@ async def test_a_signal_exit_in_a_deleted_sandbox_is_unavailable(cluster: FakeCl
     await sandboxd.stop()
 
 
-@asyncio_only
 async def test_a_program_that_cannot_run_exits_126(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     root = await backend.working_dir()
@@ -408,7 +391,6 @@ async def test_a_program_that_cannot_run_exits_126(cluster: FakeCluster) -> None
     await backend.aclose()
 
 
-@asyncio_only
 async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
@@ -418,7 +400,6 @@ async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) 
     await backend.aclose()
 
 
-@asyncio_only
 async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     with pytest.raises(WorkspaceTimeoutError) as info:
@@ -427,7 +408,6 @@ async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
     await backend.aclose()
 
 
-@asyncio_only
 async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
     # A small cap proves the same behavior without streaming 10 MiB through the fake.
     monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._MAX_OUTPUT_BYTES', 4096)
@@ -440,7 +420,6 @@ async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster, mon
     await backend.aclose()
 
 
-@asyncio_only
 async def test_destroy_ignores_a_missing_claim_and_raises_other_failures(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool')
     await capability.destroy(WorkspaceRef(provider='kubernetes', id=_OWN_CLAIM))
@@ -496,7 +475,6 @@ async def test_the_capability_only_reaches_its_own_claims(claim: str) -> None:
     assert KubernetesSandboxBackend(ref=ref).ref == ref
 
 
-@asyncio_only
 async def test_a_run_keeps_its_connection_open_and_closes_it_at_the_end(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool', namespace='agents')
     agent = Agent(TestModel(), capabilities=[capability])
@@ -515,7 +493,6 @@ async def test_a_run_keeps_its_connection_open_and_closes_it_at_the_end(cluster:
     await capability.destroy(ref)
 
 
-@asyncio_only
 async def test_a_cancelled_run_still_closes_its_connection(cluster: FakeCluster) -> None:
     agent = Agent(TestModel(), capabilities=[KubernetesSandbox(warm_pool='pool')])
     used = anyio.Event()
@@ -534,7 +511,6 @@ async def test_a_cancelled_run_still_closes_its_connection(cluster: FakeCluster)
     assert client.closed
 
 
-@asyncio_only
 async def test_a_backend_outside_a_run_closes_after_each_operation(cluster: FakeCluster) -> None:
     ctx = _ctx()
     backend = KubernetesSandbox(warm_pool='pool').get_workspace(ctx, ref=None)
@@ -545,7 +521,6 @@ async def test_a_backend_outside_a_run_closes_after_each_operation(cluster: Fake
     assert [client.closed for client in cluster.clients] == [True, True]
 
 
-@asyncio_only
 async def test_a_subagent_does_not_close_its_parents_workspace(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool')
     child = Agent(TestModel(), capabilities=[capability])
