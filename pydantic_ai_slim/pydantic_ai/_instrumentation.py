@@ -347,6 +347,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # Kind names, so never binary.
+                'kinds': value.kinds,
             }
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]
