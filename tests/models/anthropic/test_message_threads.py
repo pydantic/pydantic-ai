@@ -459,6 +459,34 @@ async def test_new_system_prompt_is_sent_on_continue(allow_model_requests: None)
     assert 'Never repeat the PIN.' in json.dumps(cont['messages'])
 
 
+async def test_leading_cache_point_starts_a_new_thread(allow_model_requests: None):
+    """A `CachePoint` that opens the new messages caches up to the end of the previous response.
+
+    A continue request can't send that response again to mark it, so the request creates a new thread with the full
+    history, and the next one continues that thread.
+    """
+    api = _Api()
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await _run(agent, 'Hi', [], False)
+        second = await _run(agent, [CachePoint(), 'Again'], first, False)
+        await _run(agent, 'Once more', second, False)
+
+    assert [body['thread'] for body in api.bodies] == snapshot(
+        [{'type': 'create'}, {'type': 'create'}, {'type': 'continue', 'previous_message_id': 'msg_2'}]
+    )
+    assert api.bodies[1]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hi', 'type': 'text'}]},
+            {
+                'role': 'assistant',
+                'content': [{'text': 'OK', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+            {'role': 'user', 'content': [{'text': 'Again', 'type': 'text'}]},
+        ]
+    )
+
+
 async def test_history_digest_key(allow_model_requests: None):
     """With `history_digest_key` the digest is an HMAC, and a response recorded under another key isn't continued."""
     api = _Api()

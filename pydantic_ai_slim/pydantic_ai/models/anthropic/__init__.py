@@ -1918,24 +1918,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return await create(*initial)
         params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
         fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
-        if continuation := _thread_continuation(self, messages, fingerprint, self._history_digest_key):
-            previous_message_id, new_messages = continuation
-            # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
-            # once the mapping can say where each history message starts. `continues_thread` keeps their
-            # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
-            # hoisted into `system`, which a continue request doesn't send.
-            new_prepared = await self._prepare_messages_create(
-                new_messages,
-                model_settings,
-                model_request_parameters,
-                continues_thread=True,
-                record_cache_breakpoints_on_send=True,
-            )
-            thread = _Thread(
-                previous_message_id=previous_message_id,
-                messages=new_prepared.anthropic_messages,
-                cache_breakpoints=_continue_cache_breakpoints(new_prepared.cache_breakpoints),
-            )
+        if (
+            thread := await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
+        ) is not None:
             try:
                 response = await create(*initial, thread)
             except APIStatusError as error:
@@ -1955,6 +1940,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thread_record.fingerprint = fingerprint
         thread_record.history = history_hasher(messages, self._history_digest_key)
         return response
+
+    async def _continue_thread(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        fingerprint: str,
+    ) -> _Thread | None:
+        """The continue request of a thread, if the history allows one and its new messages can be sent on their own."""
+        continuation = _thread_continuation(self, messages, fingerprint, self._history_digest_key)
+        if continuation is None:
+            return None
+        previous_message_id, new_messages = continuation
+        # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
+        # once the mapping can say where each history message starts. `continues_thread` keeps their
+        # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
+        # hoisted into `system`, which a continue request doesn't send.
+        try:
+            new_prepared = await self._prepare_messages_create(
+                new_messages,
+                model_settings,
+                model_request_parameters,
+                continues_thread=True,
+                record_cache_breakpoints_on_send=True,
+            )
+        except UserError:
+            # The full history mapped, so the new messages need what came before them: a `CachePoint` with nothing
+            # before it in them marks the end of the previous response, which a continue request can't send again.
+            # A create request with the full history keeps the boundary where it was put.
+            return None
+        return _Thread(
+            previous_message_id=previous_message_id,
+            messages=new_prepared.anthropic_messages,
+            cache_breakpoints=_continue_cache_breakpoints(new_prepared.cache_breakpoints),
+        )
 
     async def _create_message(
         self,
