@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys
-from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.exceptions import ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -60,7 +60,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.anthropic._computer import map_computer_member
+    from pydantic_ai.models.anthropic._computer import COMPUTER_NOT_EXECUTED, map_computer_member
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -405,7 +405,13 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
         ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'path': [{'x': 3, 'y': 4}], 'modifiers': []}),
-        ('left_click', {'coordinate': [5]}, {'type': 'click', 'x': [5], 'button': 'left', 'count': 1, 'modifiers': []}),
+        # A field that is missing though required, or has the wrong type, is refused rather than filled in.
+        ('left_click', {'coordinate': [5]}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
+        ('left_click', {'coordinate': ['1', '2']}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
+        ('triple_click', {'text': 7}, {'type': 'click', 'unsupported_fields': ['text']}),
+        ('key', {'text': 5}, {'type': 'keypress', 'unsupported_fields': ['text']}),
+        ('type', {}, {'type': 'type', 'unsupported_fields': ['text']}),
+        ('mouse_move', {}, {'type': 'move', 'unsupported_fields': ['coordinate']}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
         (
@@ -425,7 +431,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             ],
         ),
         ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 30}),
-        ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'direction': 'up', 'amount': None, 'modifiers': []}),
+        ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'unsupported_fields': ['scroll_amount']}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
         (
@@ -433,7 +439,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'region': [1, 2, 30, 40]},
             {'type': 'zoom', 'region': {'left': 1, 'top': 2, 'right': 30, 'bottom': 40}},
         ),
-        ('zoom', {}, {'type': 'zoom', 'region': None}),
+        ('zoom', {}, {'type': 'zoom', 'unsupported_fields': ['region']}),
         ('cursor_position', {}, {'type': 'cursor_position'}),
         ('teleport', {'coordinate': [1, 2]}, {'type': 'teleport', 'unsupported_fields': ['coordinate']}),
         ('type', {'text': 'hi', 'delay': 5}, {'type': 'type', 'unsupported_fields': ['delay']}),
@@ -596,7 +602,7 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
     )
 
 
-async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_model_requests: None) -> None:
+async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requests: None) -> None:
     events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
     delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"text": "unfinished')
@@ -608,9 +614,9 @@ async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_
         async for _ in stream:
             pass
 
-    # The cut-off text is dropped, so the tool refuses the empty `type` instead of typing part of it.
+    # The tool refuses the call instead of typing part of it.
     (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'type', 'text': ''}]}
+    assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
 
 
 async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
@@ -647,7 +653,7 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             _CLICK_TYPE,
             [1, 1],
             ['Ran 2 actions.', '[Older screenshot removed.]'],
-            None,
+            {'performed': 2},
             [['OK'], ['Ran 2 actions. [Older screenshot removed.]']],
             id='screenshot-dropped',
         ),
@@ -661,8 +667,26 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [[_CHANGED], [_CHANGED, 'image']],
             id='changed-before-it-ran',
         ),
-        # As a UI rebuilds it: the metadata that says which calls ran is gone, the summary still says.
-        pytest.param(_CLICK_TYPE, [1, 1], [_FAILED, _PNG], None, [['OK'], [_FAILED, 'image']], id='no-metadata'),
+        # As a UI rebuilds it: the metadata that says which calls ran is gone, so no call is said to have run.
+        pytest.param(_CLICK_TYPE, [1, 1], [_FAILED, _PNG], None, [[_FAILED], [_FAILED, 'image']], id='no-metadata'),
+        # Nothing ran before the failed call to carry the screen, so it does, saying in its text that it failed.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            ['Action 1 of 2 (click) failed: busy.', _PNG],
+            {'performed': 0, 'error': 'busy'},
+            [['Failed: busy', 'image'], [COMPUTER_NOT_EXECUTED]],
+            id='first-call-failed',
+        ),
+        # Content stored as a JSON string reads as the list it encodes, screenshot and all.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            json.dumps(['Ran 2 actions.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}]),
+            {'performed': 2},
+            [['OK'], ['OK', 'image']],
+            id='json-string-content',
+        ),
         # What a zoom returned answers its own call; the screen goes with the last.
         pytest.param(
             [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0] | {'id': 'toolu_2'}],
@@ -687,7 +711,7 @@ async def test_a_result_answers_each_member_call(
     allow_model_requests: None,
     blocks: list[dict[str, Any]],
     counts: list[int],
-    content: list[Any],
+    content: list[Any] | str,
     metadata: dict[str, Any] | None,
     results: list[list[str]],
 ) -> None:
@@ -816,3 +840,65 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
         b for m in body['messages'] if isinstance(m['content'], list) for b in m['content'] if b['type'] == 'tool_use'
     ]
     assert (call['name'], call['input']) == ('computer', {'actions': [{'type': 'screenshot'}]})
+
+
+async def _streamed(events: list[Any], *function_tools: ToolDefinition) -> ModelResponse:
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER, *function_tools], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
+    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
+        async for _ in stream:
+            pass
+    return stream.get()
+
+
+async def test_a_streamed_member_cut_off_in_an_optional_field_runs_nothing(allow_model_requests: None) -> None:
+    """Keeping what parsed would drop the held key and leave a valid plain click."""
+    events = _stream(_tool_use('toolu_1', 'left_click', {'coordinate': [100, 200], 'text': 'ctrl'}))
+    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"coordinate": [100, 200], "text": "ctrl')
+
+    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {'actions': [{'type': 'click', 'incomplete_input': True}]}
+
+
+async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_requests: None) -> None:
+    """The click arrived whole, but the batch it belongs to didn't, and it runs only as a whole."""
+    events = _stream(
+        _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+        _tool_use('toolu_2', 'type', {'text': 'hello'}),
+    )
+    # The body ends after the second call's input, without its stop or the message's.
+    cut = [index for index, event in enumerate(events) if isinstance(event, BetaRawContentBlockDeltaEvent)][-1]
+    with pytest.raises(UnexpectedModelBehavior, match='ended before Claude finished its computer use calls'):
+        await _streamed(events[: cut + 1])
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
+async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_requests: None, stream: bool) -> None:
+    """Typing would otherwise run in the window the click chose, before the tool between them focused another."""
+    focus = BetaToolUseBlock.model_validate({'id': 'toolu_f', 'type': 'tool_use', 'name': 'focus', 'input': {}})
+    blocks = [
+        _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+        focus,
+        _tool_use('toolu_2', 'type', {'text': 'hi'}),
+    ]
+    focus_tool = ToolDefinition(name='focus', parameters_json_schema={'type': 'object'})
+    if stream:
+        response = await _streamed(_stream(*blocks), focus_tool)
+    else:
+        params = ModelRequestParameters(
+            function_tools=[COMPUTER, focus_tool], native_tools=[COMPUTER_TOOL], allow_text_output=True
+        )
+        model = AnthropicModel(
+            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(_turn(*blocks)))
+        )
+        response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
+
+    calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert [call.tool_name for call in calls] == ['computer', 'focus']
+    assert calls[0].args_as_dict()['actions'][1] == {'type': 'type', 'after_tool_calls': ['focus']}
+    assert isinstance(calls[0], ComputerCallPart) and calls[0].actions is None
