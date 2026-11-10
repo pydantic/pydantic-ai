@@ -41,11 +41,9 @@ and `workspace.read_only` lets a tool provider leave write tools out. To disable
 for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
-A workspace may have a graphical display: `ctx.workspace.has_display` says so without I/O, and
-`display_size()`, `screenshot()` (PNG bytes) and `act(action)` control it, with coordinates in screenshot
-pixels. A backend offers one by implementing `SupportsDisplay`, deciding `has_display` per instance.
-`LocalWorkspace` has no display. Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool
-over it.
+Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool over a workspace whose backend has a
+screen, as its sandbox desktops do. The display protocols it drives live in `pydantic_ai_harness.computer_use`;
+`LocalWorkspace` has none.
 
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink` in the shell otherwise). With neither, it
