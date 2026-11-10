@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
@@ -15,10 +14,11 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 
 from .._judge import (
-    JudgeAnswer as _JudgeAnswer,
+    JudgeAnswer,
     SerializableToolSelector,
+    ask_claimed,
     claim_offset_limits,
-    claim_request,
+    judge_span,
     reported_confidence,
     tool_call_prompt,
 )
@@ -56,7 +56,7 @@ class ToolCallVerdict:
     verdict: Literal['allow', 'block', 'ask']
     """The effective result: let the call run, block it, or hand it to a person to approve."""
 
-    answer: _JudgeAnswer | None
+    answer: JudgeAnswer | None
     """The model's answer to the risk question, or `None` when the model failed."""
 
     confidence: float | None = None
@@ -72,10 +72,9 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     so the judge sees each call's validated arguments and can stop it before the tool function
     runs. A blocked call returns `denial_message` to the model and the tool body never executes.
 
-    `tools` is a
-    [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector):
-    `'all'` (the default), a list of tool names, a metadata match, or a predicate. Calls to tools
-    the selector does not match run unjudged.
+    `tools` is a [`ToolSelector`][pydantic_ai.tools.ToolSelector]: `'all'` (the default), a list
+    of tool names, a metadata match, or a predicate. Calls to tools the selector does not match
+    run unjudged.
 
     By default the judge is shown only the tool name and its validated arguments. Set
     `include_conversation=True` when the question cannot be answered from the call alone. That
@@ -100,7 +99,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         tools=['run_shell', 'delete_file'],
         question='Would running this destroy data, spend money, or leak secrets?',
     )
-    agent = Agent('anthropic:claude-fable-5-1', capabilities=[judge])
+    agent = Agent('anthropic:claude-fable-5-2', capabilities=[judge])
     ```
     """
 
@@ -122,7 +121,8 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     """Token budget for the conversation, when `include_conversation` is set.
 
     The rendered transcript is clamped to its most recent tokens (estimated at ~4 characters
-    per token), so the judge sees the latest turns and per-judgement cost stays bounded.
+    per token), so the judge sees the latest turns. The call's own arguments are always sent in
+    full.
     """
 
     on_uncertain: Literal['block', 'allow', 'ask'] = 'block'
@@ -147,7 +147,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     that writes to an external sink should deduplicate on `tool_call_id`.
     """
 
-    _judge: Agent[None, _JudgeAnswer] = field(init=False, repr=False, compare=False)
+    _judge: Agent[None, JudgeAnswer] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the configuration and construct the typed internal judge agent."""
@@ -164,12 +164,12 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
             ) from error
         if self.conversation_window < 1:
             raise UserError('ToolCallJudge.conversation_window must be at least 1 token.')
-        self._judge = Agent[None, _JudgeAnswer](
+        self._judge = Agent[None, JudgeAnswer](
             self.model,
             name='tool_call_judge',
             deps_type=type(None),
             instructions=_JUDGE_INSTRUCTIONS.format(question=self.question),
-            output_type=Literal['yes', 'no', 'unsure'],
+            output_type=JudgeAnswer,
         )
         # The judge's prompt carries the call's arguments, so it must not inherit global
         # instrumentation that could ignore the host agent's content or opt-out settings.
@@ -259,31 +259,16 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         taken against -- happens here, in orchestration context. Only the prompt crosses into
         `_ask`.
         """
-        attributes: dict[str, str | bool | float] = {
-            'tool_call_judge.tool': call.tool_name,
-            'tool_call_judge.tool_call_id': call.tool_call_id,
-        }
-        if ctx.trace_include_content:
-            attributes['tool_call_judge.arguments'] = json.dumps(args, default=str)
-
-        prompt = self._prompt(ctx, call, args)
-        with ctx.tracer.start_as_current_span('judge tool call', attributes=attributes) as span:
-            try:
-                claim_request(ctx)
-                try:
-                    answer, confidence = await self._ask(ctx, prompt)
-                finally:
-                    ctx.usage.requests -= 1
-            except Exception as error:
-                verdict = self._verdict(ctx, call, answer=None, confidence=None)
-                if span.is_recording():
-                    span.set_attribute('tool_call_judge.model_result', 'error')
-                    span.set_attribute('tool_call_judge.error.type', type(error).__name__)
-            else:
-                verdict = self._verdict(ctx, call, answer=answer, confidence=confidence)
-                if span.is_recording():
-                    span.set_attribute('tool_call_judge.model_result', answer)
-
+        prompt = tool_call_prompt(
+            ctx.messages,
+            call.tool_name,
+            args,
+            include_conversation=self.include_conversation,
+            conversation_window=self.conversation_window,
+        )
+        with judge_span(ctx, 'judge tool call', 'tool_call_judge', call, args) as span:
+            answer, confidence = await ask_claimed(ctx, span, 'tool_call_judge', lambda: self._ask(ctx, prompt))
+            verdict = self._verdict(ctx, call, answer=answer, confidence=confidence)
             if span.is_recording():
                 span.set_attribute('tool_call_judge.verdict', verdict.verdict)
                 if verdict.confidence is not None:
@@ -291,18 +276,11 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
             return verdict
 
     @durable_operation('judge')
-    async def _ask(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[_JudgeAnswer, float | None]:
-        """Ask the judging model, as a durable operation when the run is inside a workflow or flow.
+    async def _ask(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[JudgeAnswer, float | None]:
+        """Ask the judging model, as the durable operation `(id, 'judge')` inside a workflow or flow.
 
-        Checkpointing the judgement is what makes a judged call deterministic under replay: the
-        recorded answer is reused instead of the model being asked, and paid for, again. The
-        operation is addressed by `(id, 'judge')`, so core refuses to bind a judge without an
-        explicit `id` to a durable-capable agent; outside durable execution this is an ordinary
-        call and `id` stays optional.
-
-        The run's limits are raised by the request `_judge_call` claimed: that claim is already
-        counted in the `usage` a worker receives, so the unadjusted limit would count this
-        judgement against itself twice.
+        The run's limits are raised by the request `_judge_call` claimed, which is already counted
+        in the `usage` a worker receives.
         """
         result = await self._judge.run(
             prompt,
@@ -316,7 +294,7 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
         *,
-        answer: _JudgeAnswer | None,
+        answer: JudgeAnswer | None,
         confidence: float | None,
     ) -> ToolCallVerdict:
         """Map an answer, or a model failure, to the effective decision.
@@ -341,14 +319,4 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
             verdict=effective,
             answer=answer,
             confidence=confidence,
-        )
-
-    def _prompt(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]) -> str:
-        """Build the judge's prompt: the call, and the conversation when it was asked for."""
-        return tool_call_prompt(
-            ctx.messages,
-            call.tool_name,
-            args,
-            include_conversation=self.include_conversation,
-            conversation_window=self.conversation_window,
         )

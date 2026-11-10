@@ -16,6 +16,7 @@ from pydantic_ai.messages import AgentStreamEvent, PartDeltaEvent, PartStartEven
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
+from ._parts import RUN_CODE_TOOL_NAME
 from ._streaming import (
     CANCEL_TIMEOUT_SECONDS,
     MAX_SCAN_CHARS,
@@ -81,7 +82,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
             case PartStartEvent(part=ToolCallPart() as part):
                 if self.first_tool_part_index is None:
                     self.first_tool_part_index = event.index
-                if part.tool_name != 'run_code':
+                if part.tool_name != RUN_CODE_TOOL_NAME:
                     return
                 call = self.calls.get(part.tool_call_id)
                 if call is None:
@@ -117,52 +118,64 @@ class EagerCoordinator(Generic[AgentDepsT]):
         Once scanning halts, dict updates can still invalidate work that has already started.
         """
         if call.halted:
-            if isinstance(args, dict):
-                code = args.get('code')
-                invalid_prefix = 'code' in args and (
-                    not isinstance(code, str) or code != call.fed_prefix and not code.startswith(f'{call.fed_prefix}\n')
-                )
-                if (
-                    args.get('restart')
-                    or call.fed_prefix
-                    and (invalid_prefix or replace_dict and not isinstance(code, str))
-                ):
-                    await self.discard(call)
+            if isinstance(args, dict) and self._invalidates_fed_prefix(call, args, replace_dict=replace_dict):
+                await self.discard(call)
             return False
         if isinstance(args, str):
-            if len(args) > MAX_SCAN_CHARS - len(call.args_text):
-                call.halted = True
-                self.drop_queued(call)
-                return False
-            call.args_text += args
-            # A statement can only close on a newline, so deltas without one need no decoding.
-            return '\\n' in args
+            return self._receive_args_text(call, args)
         if isinstance(args, dict):
-            code = args.get('code')
-            if args.get('restart'):
-                call.halted = True
-                await self.discard(call)
-                return False
-            if isinstance(code, str) and len(code) > MAX_SCAN_CHARS:
-                # A dict replacement is the complete code, so unlike the string and cumulative
-                # limits (which fire mid-stream, before the final code is known) we can check
-                # whether the already-run prefix still holds. When it does, the queued-but-
-                # unrun statements are still a valid continuation, so they are kept; a diverged
-                # prefix discards them.
-                call.halted = True
-                if call.fed_prefix and code != call.fed_prefix and not code.startswith(f'{call.fed_prefix}\n'):
-                    await self.discard(call)
-                return False
-            if replace_dict and call.fed_prefix and not isinstance(code, str):
-                call.halted = True
-                await self.discard(call)
-                return False
-            relevant: dict[str, object] = {}
-            if isinstance(code, str):
-                relevant['code'] = code
-            call.args_dict = relevant if replace_dict else {**(call.args_dict or {}), **relevant}
-            return True
+            return await self._receive_args_dict(call, args, replace_dict=replace_dict)
         return False
+
+    @staticmethod
+    def _invalidates_fed_prefix(call: StreamedCodeCall, args: Mapping[str, object], *, replace_dict: bool) -> bool:
+        """Whether a dict update to a halted call invalidates statements already fed or queued."""
+        code = args.get('code')
+        invalid_prefix = 'code' in args and (
+            not isinstance(code, str) or code != call.fed_prefix and not code.startswith(f'{call.fed_prefix}\n')
+        )
+        return bool(
+            args.get('restart') or call.fed_prefix and (invalid_prefix or replace_dict and not isinstance(code, str))
+        )
+
+    def _receive_args_text(self, call: StreamedCodeCall, args: str) -> bool:
+        if len(args) > MAX_SCAN_CHARS - len(call.args_text):
+            call.halted = True
+            self.drop_queued(call)
+            return False
+        previous_char = call.args_text[-1:]
+        call.args_text += args
+        # A statement can only close on a newline, so deltas without one need no decoding. The
+        # previous character joins the check because a provider can split the `\n` escape.
+        return '\\n' in previous_char + args
+
+    async def _receive_args_dict(
+        self, call: StreamedCodeCall, args: Mapping[str, object], *, replace_dict: bool
+    ) -> bool:
+        code = args.get('code')
+        if args.get('restart'):
+            call.halted = True
+            await self.discard(call)
+            return False
+        if isinstance(code, str) and len(code) > MAX_SCAN_CHARS:
+            # A dict replacement is the complete code, so unlike the string and cumulative
+            # limits (which fire mid-stream, before the final code is known) we can check
+            # whether the already-run prefix still holds. When it does, the queued-but-
+            # unrun statements are still a valid continuation, so they are kept; a diverged
+            # prefix discards them.
+            call.halted = True
+            if call.fed_prefix and code != call.fed_prefix and not code.startswith(f'{call.fed_prefix}\n'):
+                await self.discard(call)
+            return False
+        if replace_dict and call.fed_prefix and not isinstance(code, str):
+            call.halted = True
+            await self.discard(call)
+            return False
+        relevant: dict[str, object] = {}
+        if isinstance(code, str):
+            relevant['code'] = code
+        call.args_dict = relevant if replace_dict else {**(call.args_dict or {}), **relevant}
+        return True
 
     @staticmethod
     def drop_queued(call: StreamedCodeCall) -> None:
@@ -196,12 +209,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         """Queue top-level statements that have become stable in the stream."""
         args: Mapping[str, object] | None = call.args_dict
         if args is None:
-            if len(call.args_text) > MAX_SCAN_WORK_CHARS - call.scan_work_chars:
-                call.halted = True
-                self.drop_queued(call)
-                return
-            call.scan_work_chars += len(call.args_text)
-            args = decode_partial_args(call.args_text)
+            args = self._decode_args_text(call)
             if args is None:
                 return
         if args.get('restart'):
@@ -241,6 +249,15 @@ class EagerCoordinator(Generic[AgentDepsT]):
             self.pumps.add(pump)
             pump.add_done_callback(self.pumps.discard)
 
+    def _decode_args_text(self, call: StreamedCodeCall) -> Mapping[str, object] | None:
+        """Decode the streamed argument text, or `None` while it does not decode or once the scan budget is spent."""
+        if len(call.args_text) > MAX_SCAN_WORK_CHARS - call.scan_work_chars:
+            call.halted = True
+            self.drop_queued(call)
+            return None
+        call.scan_work_chars += len(call.args_text)
+        return decode_partial_args(call.args_text)
+
     async def run_pump(
         self,
         call: StreamedCodeCall,
@@ -250,7 +267,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         """Feed a streamed call's queued statements in program order."""
         while call.queue and call.error is None:
             source = call.queue.popleft()
-            feed_ctx = replace(ctx, tool_call_id=call.tool_call_id, tool_name='run_code')
+            feed_ctx = replace(ctx, tool_call_id=call.tool_call_id, tool_name=RUN_CODE_TOOL_NAME)
             try:
                 async with self.feed_lock:
                     await executor.feed_fragment(call, source, feed_ctx)
@@ -333,6 +350,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
         if tool_args.get('restart', False):
             await self.execution.discard(call)
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -342,6 +361,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             await run_state.reset()
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'
@@ -363,6 +384,6 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> None:
         tools = await self.get_tools(ctx)
-        run_code_tool = self._as_run_code_tool(tools['run_code'])
+        run_code_tool = self._as_run_code_tool(tools[RUN_CODE_TOOL_NAME])
         assert run_code_tool is not None, '`get_tools` always builds the `run_code` tool'
         await self._execute_code(source, ctx, run_code_tool, call.execution)

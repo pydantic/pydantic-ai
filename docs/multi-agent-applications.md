@@ -372,19 +372,17 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 
 ## Deep Agents
 
-Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. These patterns can be implemented using Pydantic AI's built-in features and (third-party) toolsets:
+Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. [Pydantic AI Harness](harness/index.md) ships each of these patterns as a capability you can compose with Pydantic AI's built-in features:
 
-- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
-- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers. See [File Operations toolsets](toolsets.md#file-operations).
-- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
-- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents. See [Code Execution toolsets](toolsets.md#code-execution).
-- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history).
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [`Planning`](harness/planning.md).
+- **File system operations** — reading, writing, and editing files in the run's workspace, on the local machine or in a sandboxed container. See [`FileSystem`](harness/filesystem.md) and [`Shell`](harness/shell.md).
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [`SubAgents`](harness/subagents.md) and [Agent Delegation](#agent-delegation) above.
+- **Sandboxed code execution** — running AI-generated code in isolated environments to prevent accidents. See [`Shell`](harness/shell.md) with a sandbox backend such as [`DockerSandbox`](harness/docker-sandbox.md), and [`CodeMode`](harness/code-mode.md).
+- **Context management** — automatic conversation compaction to handle long sessions that would otherwise exceed token limits. See [Compaction](capabilities/compaction.md) and the Harness [compaction strategies](harness/compaction.md).
 - **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 - **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
 
-In addition, the community maintains packages that bring these concepts together in a more opinionated way:
-
-- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
+For a ready-made assembly of these pieces, [`Coder`](harness/coder.md) combines file system, shell, delegation, and context management capabilities into a coding agent you can use whole or take apart.
 
 ## Observing Multi-Agent Systems
 
@@ -392,7 +390,7 @@ Multi-agent systems can be challenging to debug due to their complexity; when mu
 
 ### Tracing Agent Delegation
 
-With [Logfire](logfire.md), you can trace the entire flow across multiple agents:
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project to [set up Logfire](logfire.md#using-logfire) and trace the entire flow across multiple agents. It has your coding agent add this instrumentation:
 
 ```python
 import logfire
@@ -418,7 +416,7 @@ This is essential for understanding and optimizing complex agent workflows. When
 
 If your Pydantic AI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
 
-Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
+Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md#using-logfire) for details.
 
 ## Examples
 

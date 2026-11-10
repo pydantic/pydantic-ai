@@ -220,7 +220,6 @@ _EXCEPTION_BASES: dict[str, type[Exception]] = {
     'AuthError': FakeModalError,
     'ConnectionError': FakeModalError,
     'ExecutionError': FakeModalError,
-    'FilesystemExecutionError': FakeModalError,
     'InternalError': FakeModalError,
     'ImageBuildError': FakeModalError,
     'NotFoundError': FakeModalError,
@@ -491,6 +490,10 @@ class FakeSandbox:
         )
         assert process.stdout is not None and process.stderr is not None
         self._host_processes.add(process)
+        # The command can run before this thread registers it, so a `terminate` that did not see it kills it here.
+        if self.shutting_down:  # pragma: lax no cover
+            with suppress(OSError):
+                os.killpg(process.pid, signal.SIGKILL)
         streams = {process.stdout: bytearray(), process.stderr: bytearray()}
         active = list(streams)
         for stream in streams:
@@ -556,8 +559,8 @@ class FakeSandbox:
             raise self._control.exec_error
         # The command wrapper runs argv through sh; answer for the actual program.
         program = argv[4:] if argv[:4] == ['/bin/sh', '-c', 'exec "$@"', 'sh'] else argv
-        # In-memory fake stores only regular files; its generic responder does not know FIFOs.
-        probing_fifo = program[:2] == ['test', '-p']
+        # The in-memory store holds only regular files, so the read's file-kind probe passes unless a test says otherwise.
+        probing_kind = argv[:2] == ['sh', '-c'] and argv[3:4] == ['modal-probe']
         if program[:2] == ['test', '-L']:
             stdout, stderr, code = '', '', 1
         elif program[:2] == ['/bin/sh', '-c'] and 'links=0; while' in program[2]:
@@ -568,14 +571,16 @@ class FakeSandbox:
             path = posixpath.normpath('/' + rest)
             stdout, stderr, code = f'{len(path.encode())}\n{base64.b64encode(path.encode()).decode()}\n', '', 0
         else:
-            stdout, stderr, code = ('', '', 1) if probing_fifo else self._control.responder(program, timeout)
+            stdout, stderr, code = (
+                ('', '', self._control.kind_probe_exit) if probing_kind else self._control.responder(program, timeout)
+            )
         return _FakeProcess(
             _stream_bytes(stdout),
             _stream_bytes(stderr),
             code,
             self._control.wait_error,
-            self._control.wait_hangs and not probing_fifo,
-            self._control.stdout_hangs and not probing_fifo,
+            self._control.wait_hangs and not probing_kind,
+            self._control.stdout_hangs and not probing_kind,
             self._control.stdout_delay,
             self._control.stdout_error,
         )
@@ -596,6 +601,8 @@ class FakeModal:
         self.sandboxes: list[FakeSandbox] = []
         self.create_kwargs: list[dict[str, object]] = []
         self.app_lookups: list[dict[str, object]] = []
+        self.clients: list[object] = []
+        """The client each `App.lookup`, `Sandbox.create`, `from_id` and `from_name` was given, in order."""
         self.image_tags: list[str] = []
         self.attach_ids: list[str] = []
         self.owned_creates = 0
@@ -610,6 +617,8 @@ class FakeModal:
         self.exec_hangs = False
         # Exit status of the backend's script that stops a command.
         self.stop_exit_code = 0
+        # Exit status of the read's file-kind probe in the in-memory store.
+        self.kind_probe_exit = 0
         self.wait_error: Exception | None = None
         self.wait_hangs = False
         self.stdout_hangs = False
@@ -629,7 +638,8 @@ class FakeModal:
         control = self
         module = types.ModuleType('modal')
 
-        def app_lookup(name: str, *, create_if_missing: bool = False) -> object:
+        def app_lookup(name: str, *, create_if_missing: bool = False, client: object = None) -> object:
+            control.clients.append(client)
             control.app_lookups.append({'name': name, 'create_if_missing': create_if_missing})
             return object()
 
@@ -648,7 +658,9 @@ class FakeModal:
             idle_timeout: int | None = None,
             workdir: str | None = None,
             env: dict[str, str | None] | None = None,
+            client: object = None,
         ) -> FakeSandbox:
+            control.clients.append(client)
             if control.create_error is not None:
                 raise control.create_error
             control.create_kwargs.append(
@@ -671,7 +683,8 @@ class FakeModal:
             control.sandboxes.append(workspace)
             return workspace
 
-        def sandbox_from_id(id: str) -> FakeSandbox:
+        def sandbox_from_id(id: str, client: object = None) -> FakeSandbox:
+            control.clients.append(client)
             control.attach_ids.append(id)
             if control.attach_error is not None:
                 raise control.attach_error
@@ -683,7 +696,8 @@ class FakeModal:
             control.sandboxes.append(sandbox)
             return sandbox
 
-        def workspace_from_name(app_name: str, name: str) -> FakeSandbox:
+        def workspace_from_name(app_name: str, name: str, client: object = None) -> FakeSandbox:
+            control.clients.append(client)
             existing = next((sandbox for sandbox in control.sandboxes if sandbox.name == name), None)
             if existing is None:
                 raise _EXCEPTIONS['NotFoundError']('name not found')

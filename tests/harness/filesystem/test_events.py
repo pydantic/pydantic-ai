@@ -19,7 +19,6 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
-    RetryPromptPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -47,7 +46,7 @@ needs_mode_bits = pytest.mark.skipif(
 
 
 def _has_tool_result(messages: list[ModelMessage]) -> bool:
-    return any(isinstance(part, (RetryPromptPart, ToolReturnPart)) for message in messages for part in message.parts)
+    return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
 
 def _tool_model(tool_name: str, json_args: str) -> FunctionModel:
@@ -101,8 +100,8 @@ def _retry_reason(events: list[AgentStreamEvent]) -> str:
     """What the model was told when its one tool call was rejected."""
     results = [event.part for event in events if isinstance(event, FunctionToolResultEvent)]
     assert len(results) == 1
-    assert isinstance(results[0], RetryPromptPart)
-    return results[0].model_response()
+    assert results[0].outcome == 'retried'
+    return results[0].model_response_str(wrap_if_error=False)
 
 
 @dataclass
@@ -192,6 +191,62 @@ class TestFileSystemEvents:
                 tool_call_id='call_1',
                 tool_name='read_file',
             )
+        ]
+
+    async def test_prefixed_tools_emit_events(self, tmp_path: Path) -> None:
+        """Two `FileSystem`s, each under its own prefix, both emit their events (#9879)."""
+        (tmp_path / 'wiki').mkdir()
+        (tmp_path / 'wiki' / 'page.md').write_text('wiki\n')
+        (tmp_path / 'notes').mkdir()
+        events: list[AgentStreamEvent] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events.append(event)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if not _has_tool_result(messages):
+                yield {
+                    0: DeltaToolCall(name='wiki_read_file', json_args='{"path":"wiki/page.md"}', tool_call_id='call_1'),
+                    1: DeltaToolCall(
+                        name='notes_write_file',
+                        json_args='{"path":"notes/new.md","content":"hi"}',
+                        tool_call_id='call_2',
+                    ),
+                }
+            else:
+                yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            deps_type=type(None),
+            capabilities=[
+                FileSystem[None](id='wiki_files').prefix_tools('wiki'),
+                FileSystem[None](id='notes_files').prefix_tools('notes'),
+            ],
+        )
+        await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+
+        assert (tmp_path / 'notes' / 'new.md').read_text() == 'hi'
+        # The two calls run concurrently, so their events can arrive in either order.
+        emitted = [event for event in events if isinstance(event, (FileReadEvent, FileWrittenEvent))]
+        assert sorted(emitted, key=lambda event: event.tool_call_id or '') == [
+            FileReadEvent(
+                path='wiki/page.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('wiki\n'),
+                capability_id='wiki_files',
+                tool_call_id='call_1',
+                tool_name='read_file',
+            ),
+            FileWrittenEvent(
+                path='notes/new.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('hi'),
+                capability_id='notes_files',
+                tool_call_id='call_2',
+                tool_name='write_file',
+            ),
         ]
 
     async def test_binary_read_emits_raw_content_hash(self, tmp_path: Path) -> None:
@@ -888,6 +943,22 @@ class TestFileChangeRequests:
 
         assert (tmp_path / 'target.txt').read_text() == 'new\n'
         assert any(isinstance(event, FileWrittenEvent) for event in events)
+
+    async def test_invalid_utf8_text_keeps_the_hash_handshake_on_edit(self, tmp_path: Path) -> None:
+        """An edit of valid text next to an invalid byte is guarded by the hash `read_file` reported."""
+        (tmp_path / 'target.txt').write_bytes(b'a\xffb\nold\n')
+        reported = hashlib.sha256(b'a\xffb\nold\n').hexdigest()[:12]
+
+        events = await _run_and_collect(
+            tmp_path,
+            'edit_file',
+            json.dumps({'path': 'target.txt', 'old_text': 'old', 'new_text': 'new', 'expected_hash': reported}),
+        )
+
+        assert (tmp_path / 'target.txt').read_bytes() == b'a\xffb\nnew\n'
+        (edited,) = [event for event in events if isinstance(event, FileEditedEvent)]
+        assert edited.content_hash == hashlib.sha256(b'a\xffb\nnew\n').hexdigest()[:12]
+        assert edited.diff == '--- a/target.txt\n+++ b/target.txt\n@@ -1,2 +1,2 @@\n a\ufffdb\n-old\n+new'
 
     @pytest.mark.parametrize('appeared', ['other\n', ''])
     async def test_file_that_appeared_while_announced_is_refused(self, tmp_path: Path, appeared: str) -> None:

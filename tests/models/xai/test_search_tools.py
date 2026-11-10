@@ -20,6 +20,7 @@ from pydantic_ai import (
     UserPromptPart,
     XSearchTool,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles import ModelProfile
@@ -71,6 +72,8 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         ('grok-4-fast-reasoning', True, False),
         ('grok-4-fast-non-reasoning', True, False),
         ('grok-4-1-fast-non-reasoning', True, False),
+        # `grok-4.7` continues the grok-4.5+ reasoning family, so it shares grok-4.6's always-on unified thinking.
+        ('grok-4.7', True, True),
         # `grok-4.20`'s effort knob controls agent count, not thinking depth, so unified thinking is unsupported.
         ('grok-4.20', False, False),
         ('grok-4.20-multi-agent', False, False),
@@ -79,8 +82,9 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         ('grok-code-fast-1', False, False),
         ('grok-build-0.1', False, False),
         ('grok-3', True, False),
-        ('grok-3-mini', True, True),
-        ('grok-3-mini-fast', True, True),
+        # Grok 3 Mini accepts `'none'` like Grok 4.3 (verified live), so it can turn reasoning off.
+        ('grok-3-mini', True, False),
+        ('grok-3-mini-fast', True, False),
         ('grok-3-fast', False, False),
         ('grok-4-1-reasoning', False, False),
     ],
@@ -91,6 +95,7 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-4-fast-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-4.7',
         'grok-4.20',
         'grok-4.20-multi-agent',
         'grok-4.20-reasoning',
@@ -107,9 +112,17 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, e
     profile = grok_model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_thinking', False) == expected_thinking
-    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini family) are always-on;
-    # Grok 4.3 and its redirect slugs accept `'none'`, so `thinking=False` disables reasoning there.
+    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-4.5+ family) are always-on; Grok 4.3, its
+    # redirect slugs and Grok 3 Mini accept `'none'`, so `thinking=False` disables reasoning there.
     assert profile.get('thinking_always_enabled', False) == expected_always_enabled
+
+
+def test_grok_4_7_profile_reasoning_efforts() -> None:
+    """`grok-4.7` resolves the grok-4.5+ reasoning profile, so it offers grok-4.6's efforts (no `xhigh` yet)."""
+    profile = grok_model_profile('grok-4.7')
+    assert profile is not None
+    assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
+    assert profile.get('grok_default_effort_omitted') is True
 
 
 async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:
@@ -135,7 +148,7 @@ async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_mo
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     custom_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
-    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client), profile=custom_profile)
+    m = XaiModel('grok-custom', provider=XaiProvider(xai_client=mock_client), profile=custom_profile)
     settings: XaiModelSettings = {'thinking': False}
     agent = Agent(m, model_settings=settings)
 
@@ -297,6 +310,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                     cost=Decimal('0.0010534'),
                 ),
                 model_name='grok-4-fast-reasoning',
+                model_id='xai:grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -402,6 +416,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                     cost=Decimal('0.00109245'),
                 ),
                 model_name='grok-4-fast-reasoning',
+                model_id='xai:grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -666,6 +681,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
                 ],
                 usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
+                model_id='xai:grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -891,8 +907,12 @@ async def test_xai_builtin_file_search_tool(
                     FileSearchTool(
                         file_store_ids=[collection.collection_id],
                         max_num_results=1,
-                        instructions='Prioritize exact factual matches from the uploaded research memo.',
-                        retrieval_mode='semantic',
+                        provider_settings={
+                            'xai': {
+                                'instructions': 'Prioritize exact factual matches from the uploaded research memo.',
+                                'retrieval_mode': 'semantic',
+                            }
+                        },
                     )
                 )
             ],
@@ -960,6 +980,7 @@ This is stated directly in the uploaded Zorblax Research Memo (Section 10), whic
                         cost=Decimal('0.0003706'),
                     ),
                     model_name='grok-4-fast-non-reasoning',
+                    model_id='xai:grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                     provider_url='https://api.x.ai/v1',
@@ -1007,8 +1028,9 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                 FileSearchTool(
                     file_store_ids=['col-1', 'col-2'],
                     max_num_results=5,
-                    instructions='Focus on recent documents.',
-                    retrieval_mode='hybrid',
+                    provider_settings={
+                        'xai': {'instructions': 'Focus on recent documents.', 'retrieval_mode': 'hybrid'}
+                    },
                 )
             )
         ],
@@ -1025,6 +1047,33 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                     'limit': 5,
                     'instructions': 'Focus on recent documents.',
                     'hybrid_retrieval': {},
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_file_search_provider_field_deprecation(allow_model_requests: None):
+    """A deprecated field and a different nested option combine in one request."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'field `instructions` is deprecated'):
+        tool = FileSearchTool(
+            file_store_ids=['col-1'],
+            instructions='Legacy instructions.',
+            provider_settings={'xai': {'retrieval_mode': 'semantic'}},
+        )
+
+    await Agent(m, capabilities=[NativeTool(tool)]).run('Search my docs')
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1'],
+                    'instructions': 'Legacy instructions.',
+                    'semantic_retrieval': {},
                 }
             }
         ]

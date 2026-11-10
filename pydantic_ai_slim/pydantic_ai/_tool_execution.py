@@ -5,7 +5,8 @@ import dataclasses
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from contextlib import aclosing
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
@@ -20,7 +21,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
-from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
+from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
@@ -30,10 +31,14 @@ TaskResultT = TypeVar('TaskResultT')
 
 
 async def _iter_completed_or_buffered(
-    pending: set[asyncio.Task[TaskResultT]],
+    tasks: Sequence[asyncio.Task[TaskResultT]],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent | asyncio.Task[TaskResultT]]:
     """Yield tasks as they complete, interleaving run events buffered while waiting.
+
+    Tasks that complete in the same wakeup are yielded in their order in `tasks`, not in the
+    iteration order of `asyncio.wait`'s `done` set, which follows task identity and differs between
+    runs. A durable runtime replaying the run then sees the same order the recording run saw.
 
     Buffered events (e.g. `ctx.emit` from a running tool) are yielded as soon as they land,
     so stream consumers see a progress event while the emitting tool is still running instead of
@@ -43,10 +48,11 @@ async def _iter_completed_or_buffered(
     A buffer that can't signal appends (a plain list revived from graph-state persistence) degrades
     to plain completion-order waiting, with buffered events surfacing at stream position instead.
     """
+    pending = set(tasks)
     if not isinstance(event_stream_buffer, EventStreamBuffer):
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
+            for task in sorted(done, key=tasks.index):
                 yield task
         return
 
@@ -73,7 +79,7 @@ async def _iter_completed_or_buffered(
             pending = {task for task in not_done if task is not signal_wait}
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
-            for task in done:
+            for task in sorted(done, key=tasks.index):
                 yield task
     finally:
         waiters.remove(signal)
@@ -111,6 +117,7 @@ def cancelled_sub_agent_return(
         tool_name=call.tool_name,
         content=f'The sub-agent run was cancelled: {error}',
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -132,6 +139,7 @@ def build_tool_return_part(
                 tool_name=call.tool_name,
                 content=tool_result.message,
                 tool_call_id=call.tool_call_id,
+                tool_kind=tool_kind,
                 outcome='denied',
             ),
             None,
@@ -182,13 +190,24 @@ def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[st
 
 def _emit_output_tool_events(
     call: _messages.ToolCallPart,
-    part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+    part: _messages.ToolReturnPart,
     *,
     args_valid: bool | None = None,
 ) -> Iterator[_messages.HandleResponseEvent]:
     """Yield `OutputToolCallEvent` and `OutputToolResultEvent` for an output tool call."""
     yield _messages.OutputToolCallEvent(call, args_valid=args_valid)
     yield _messages.OutputToolResultEvent(part)
+
+
+def tool_bound_retry_part(error: ToolRetryError) -> _messages.ToolReturnPart:
+    """The part carried by a `ToolRetryError` raised against a tool call.
+
+    Every retry raised while handling a call is built from that call, so it is never the tool-less
+    `RetryFeedbackPart` that `ToolRetryError` also carries for output that had no call to answer.
+    """
+    part = error.tool_retry
+    assert isinstance(part, _messages.ToolReturnPart)
+    return part
 
 
 @dataclasses.dataclass
@@ -204,13 +223,13 @@ class _OutputCallResult(Generic[NodeRunEndT]):
     call: _messages.ToolCallPart
     args_valid: bool | None = None
     final_result: result.FinalResult[NodeRunEndT] | None = None
-    retry_part: _messages.RetryPromptPart | None = None
+    retry_part: _messages.ToolReturnPart | None = None
     raise_exc: BaseException | None = None
 
 
 # The payload `run_one` returns for each tool index under the exhaustive strategy: an output
 # result, a settled function-tool return (part + optional user content), or a deferral signal.
-_FunctionCallParts = list[_messages.ToolReturnPart | _messages.RetryPromptPart | _messages.ToolAvailabilityDeltaPart]
+_FunctionCallParts = list[_messages.ToolReturnPart | _messages.ToolAvailabilityDeltaPart]
 
 _ToolCallPayload = (
     _OutputCallResult[NodeRunEndT]
@@ -314,7 +333,7 @@ async def process_tool_calls(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] | None = None,
-) -> AsyncIterator[_messages.AgentStreamEvent]:
+) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
     """Process a model response's tool calls, honoring the `end_strategy`.
 
     Output and function tools are classified by kind and executed per strategy:
@@ -336,7 +355,7 @@ async def process_tool_calls(
     `parallel_execution_mode('sequential')` turns every tool into its own barrier.
 
     Under `'graceful'`/`'exhaustive'`, the **retry-wins** invariant applies: if any
-    function/unknown tool produces a `RetryPromptPart`, `final_result` is suppressed so the
+    function/unknown tool asks for a retry, `final_result` is suppressed so the
     model addresses the retries on the next round. Output-tool retries don't trigger this
     ("first valid output wins"). Retry-wins doesn't apply when `final_result` was passed in
     by `Agent.run_stream` (the streamed output is already committed) or under `'early'`
@@ -368,8 +387,9 @@ async def process_tool_calls(
         output_parts=output_parts,
         final_result=final_result,
     )
-    async for event in processor.run():
-        yield event
+    async with aclosing(processor.run()) as events:
+        async for event in events:
+            yield event
     if processor.final_result:
         output_final_result.append(processor.final_result)
 
@@ -396,12 +416,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     final_result: result.FinalResult[NodeRunEndT] | None
 
     # Derived from the inputs in `__post_init__`.
-    call_kinds: list[ToolKind | Literal['unknown']] = dataclasses.field(init=False)
-    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
+    call_kinds: list[ToolDefinitionKind | Literal['unknown']] = dataclasses.field(init=False)
+    tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
     calls_to_run_results: dict[str, DeferredToolResult] = dataclasses.field(init=False)
-    executable_function_kinds: tuple[ToolKind | Literal['unknown'], ...] = dataclasses.field(init=False)
+    executable_function_kinds: tuple[ToolDefinitionKind | Literal['unknown'], ...] = dataclasses.field(init=False)
     function_indices: list[int] = dataclasses.field(init=False)
     output_indices: list[int] = dataclasses.field(init=False)
     schema: _output.OutputSchema[NodeRunEndT] = dataclasses.field(init=False)
@@ -410,7 +430,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     #
     # `final_result_was_set_externally`: when `final_result` is passed in pre-set (e.g. from
     # `Agent.run_stream`), the streamed output is already committed and retry-wins can't revoke it.
-    # `retry_wins_triggered`: set when a function/unknown tool produces a `RetryPromptPart`.
+    # `retry_wins_triggered`: set when a function/unknown tool asks for a retry.
     # `output_retries_increment`: accumulates output-retry-budget increments to apply once execution
     # settles, so parallel output tasks don't race the counter.
     # `winning_output_part`: a direct reference to the winning output's 'Final result processed.'
@@ -430,8 +450,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.deferred_metadata = {}
 
         # Classify each call once, preserving emission order for the per-index views below.
-        tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
-        call_kinds: list[ToolKind | Literal['unknown']] = []
+        tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(
+            list
+        )
+        call_kinds: list[ToolDefinitionKind | Literal['unknown']] = []
         for call in self.tool_calls:
             tool_def = self.tool_manager.get_tool_def(call.tool_name)
             kind = tool_def.kind if tool_def else 'unknown'
@@ -492,7 +514,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def is_executable_function(self, index: int) -> bool:
         return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
-    async def run(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def run(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
         # Check tool-call usage limits up front for the full count of function-kind calls.
         if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
@@ -501,15 +523,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             projected_usage.tool_calls += len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 
-        async for event in self._run_strategy():
-            yield event
+        async with aclosing(self._run_strategy()) as events:
+            async for event in events:
+                yield event
 
         self._apply_retry_wins()
-        async for event in self._finalize_deferred():
-            yield event
+        async with aclosing(self._finalize_deferred()) as events:
+            async for event in events:
+                yield event
 
     @abstractmethod
-    def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Execute this strategy's tool calls, building up `final_result` and `output_parts`."""
         raise NotImplementedError
 
@@ -526,7 +550,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _record_output_part(
         self,
         call: _messages.ToolCallPart,
-        part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+        part: _messages.ToolReturnPart,
         *,
         args_valid: bool | None,
     ) -> Iterator[_messages.HandleResponseEvent]:
@@ -564,7 +588,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
+            return _OutputCallResult(
+                call=call, args_valid=False, retry_part=tool_bound_retry_part(validated.validation_error)
+            )
 
         try:
             result_data: Any = await self.tool_manager.execute_output_tool_call(validated, schema=self.schema)
@@ -575,7 +601,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
             self.output_retries_increment += 1
-            return _OutputCallResult(call=call, args_valid=True, retry_part=e.tool_retry)
+            return _OutputCallResult(call=call, args_valid=True, retry_part=tool_bound_retry_part(e))
 
         final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         return _OutputCallResult(call=call, args_valid=True, final_result=final_result)
@@ -702,7 +728,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _run_function_calls(
         self, calls: list[_messages.ToolCallPart]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Validate a batch of function/unknown calls upfront, then execute via `_call_tools`."""
         if not calls:
             return
@@ -711,19 +737,24 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             yield event
 
         before = len(self.output_parts)
-        async for event in self._call_tools(
-            calls,
-            tool_call_results=self.calls_to_run_results,
-            validated_calls=validated_calls,
-            deferred_calls=self.deferred_calls,
-            deferred_metadata=self.deferred_metadata,
-        ):
-            yield event
+        async with aclosing(
+            self._call_tools(
+                calls,
+                tool_call_results=self.calls_to_run_results,
+                validated_calls=validated_calls,
+                deferred_calls=self.deferred_calls,
+                deferred_metadata=self.deferred_metadata,
+            )
+        ) as events:
+            async for event in events:
+                yield event
         # Check the parts this batch just appended for retry-wins triggers, deriving each part's
         # tool kind from its `tool_name` (the parallel exhaustive path keys off `call_kinds` instead,
         # but both funnel through `_is_retry_wins_trigger`).
         for part in self.output_parts[before:]:
-            if isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None:
+            # The outcome is checked here as well as inside the predicate so a batch of successful
+            # returns doesn't pay a tool-def lookup each to be discarded.
+            if isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried':
                 tool_def = self.tool_manager.get_tool_def(part.tool_name)
                 kind = tool_def.kind if tool_def is not None else 'unknown'
                 if self._is_retry_wins_trigger(part, kind=kind):
@@ -756,24 +787,33 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tool_name=call.tool_name,
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
                     outcome='failed',
                 )
                 raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
-                m = _messages.RetryPromptPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
+                raise ToolRetryError(
+                    _output.build_retried_tool_return(
+                        tool_call_result,
+                        tool_name=call.tool_name,
+                        tool_call_id=call.tool_call_id,
+                        tool_kind=call.tool_kind,
+                    )
                 )
-                raise ToolRetryError(m)
-            elif isinstance(tool_call_result, _messages.RetryPromptPart):
-                tool_call_result.tool_name = call.tool_name
-                tool_call_result.tool_call_id = call.tool_call_id
-                raise ToolRetryError(tool_call_result)
+            # TODO(v3): remove `RetryPromptPart`
+            elif isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                raise ToolRetryError(
+                    _output.retried_return_from_legacy(
+                        tool_call_result,
+                        tool_name=call.tool_name,
+                        tool_call_id=call.tool_call_id,
+                        tool_kind=call.tool_kind,
+                    )
+                )
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return [e.tool_retry], None
+            return [tool_bound_retry_part(e)], None
         except ToolFailedError as e:
             return [e.tool_failed], None
         except exceptions.RunCancelled as e:
@@ -819,7 +859,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         validated_calls: dict[str, ValidatedToolCall[DepsT]],
         deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
@@ -834,7 +874,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
             tool_part = tool_parts[0]
-            assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+            assert isinstance(tool_part, _messages.ToolReturnPart)
             return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         async def handle_call_or_result(
@@ -854,6 +894,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_metadata_by_index[index] = e.metadata
             else:
                 return record_result((tool_parts, tool_user_content), index)
+            finally:
+                # A failed task's traceback includes this frame, so retaining the task would form a cycle.
+                del coro_or_task
 
         def record_completed_results(
             tasks_by_index: dict[
@@ -908,7 +951,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # Even a barrier (or sole) call runs as a task, so events it emits
                     # surface to stream consumers while it is still executing.
                     async for item in _iter_completed_or_buffered(
-                        set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
+                        list(tasks_by_index.values()), self.ctx.state.event_stream_buffer
                     ):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
@@ -926,17 +969,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         for index in segment:
                             if event := await handle_call_or_result(tasks_by_index[index], index):
                                 yield event
-                except asyncio.CancelledError as e:
-                    await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                except BaseException as e:
+                    # Cancel any still-running sibling tasks so they don't become orphaned asyncio tasks
+                    # when cancellation or an exception (e.g. RuntimeError) propagates out of handle_call_or_result().
+                    await cancel_and_drain(
+                        *tasks_by_index.values(),
+                        msg=e.args[0] if isinstance(e, asyncio.CancelledError) and len(e.args) != 0 else None,
+                    )
                     record_completed_results(tasks_by_index)
-                    raise
-                except BaseException:
-                    # Cancel any still-running sibling tasks so they don't become
-                    # orphaned asyncio tasks when a non-CancelledError exception
-                    # (e.g. RuntimeError, ConnectionError) propagates out of
-                    # handle_call_or_result().
-                    await cancel_and_drain(*tasks_by_index.values())
-                    record_completed_results(tasks_by_index)
+                    # Drop task owners from the escaping traceback after preserving partial results.
+                    tasks_by_index.clear()
+                    index_by_task.clear()
+                    item = None
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface
@@ -981,16 +1025,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Retry-wins and deferred resolution ---------------------------------
 
-    def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
+    def _is_retry_wins_trigger(
+        self, part: _messages.ModelRequestPart, *, kind: ToolDefinitionKind | Literal['unknown']
+    ) -> bool:
         """Whether a settled tool part triggers retry-wins.
 
-        A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function
-        tool suppresses an otherwise-valid output, so the model addresses the retry next round.
-        Retries from unknown/hallucinated tools don't — they aren't work that needs to complete
-        before the output is valid. This single predicate backs both the emission-order paths
-        (graceful/early) and the parallel exhaustive path so the rule lives in one place.
+        A retry (a `ModelRetry` or arg-validation failure) from an actual function tool suppresses an
+        otherwise-valid output, so the model addresses the retry next round. Retries from
+        unknown/hallucinated tools don't — they aren't work that needs to complete before the output
+        is valid. This single predicate backs both the emission-order paths (graceful/early) and the
+        parallel exhaustive path so the rule lives in one place. The emission-order caller pre-filters
+        on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
+        outcomes that trigger retry-wins means widening that check too.
         """
-        return isinstance(part, _messages.RetryPromptPart) and kind == 'function'
+        return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
@@ -1010,7 +1058,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
         self.final_result = None
 
-    async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _finalize_deferred(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Stub, collect, or inline-resolve deferred (`external`/`unapproved`) tool calls."""
         # Collect deferred calls (unless they were already included in the run because results were provided).
         if self.tool_call_results is None:
@@ -1018,8 +1066,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield event
 
         if not self.final_result and self.deferred_calls:
-            async for event in self._resolve_deferred_calls():
-                yield event
+            async with aclosing(self._resolve_deferred_calls()) as events:
+                async for event in events:
+                    yield event
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
@@ -1045,21 +1094,34 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
-                    if call in self.tool_calls_by_kind['external']:
-                        self.deferred_calls['external'].append(call)
-                    else:
-                        self.deferred_calls['unapproved'].append(call)
+                    self._route_deferred_call(call, validated.deferral)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
                     # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await self.tool_manager.execute_tool_call(validated)
                     except (ToolRetryError, ToolFailedError) as e:
-                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        part = tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
-    async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    def _route_deferred_call(
+        self, call: _messages.ToolCallPart, deferral: exceptions.CallDeferred | exceptions.ApprovalRequired | None
+    ) -> None:
+        """Collect a validated call of a deferred kind, routed by the deferral its validation raised, if any.
+
+        A deferral raised during validation routes the call by its type, as one raised by the tool
+        function would; only a call that validation didn't defer goes by its tool's kind.
+        """
+        if deferral is None:
+            external = call in self.tool_calls_by_kind['external']
+        else:
+            external = isinstance(deferral, exceptions.CallDeferred)
+            if deferral.metadata is not None:
+                self.deferred_metadata[call.tool_call_id] = deferral.metadata
+        self.deferred_calls['external' if external else 'unapproved'].append(call)
+
+    async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
@@ -1116,14 +1178,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 list
             )
             new_deferred_metadata: dict[str, dict[str, Any]] = {}
-            async for event in self._call_tools(
-                resolved_calls,
-                tool_call_results=handler_tool_call_results,
-                validated_calls=handler_validated_calls,
-                deferred_calls=new_deferred_calls,
-                deferred_metadata=new_deferred_metadata,
-            ):
-                yield event
+            async with aclosing(
+                self._call_tools(
+                    resolved_calls,
+                    tool_call_results=handler_tool_call_results,
+                    validated_calls=handler_validated_calls,
+                    deferred_calls=new_deferred_calls,
+                    deferred_metadata=new_deferred_metadata,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
@@ -1152,7 +1217,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'early'`: run all output tools first; run function tools only if every output failed."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         for i in self.output_indices:
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
             async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
@@ -1167,36 +1232,40 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
-            async for event in self._run_function_calls(function_calls):  # pragma: no branch
-                yield event
+            async with aclosing(self._run_function_calls(function_calls)) as events:
+                async for event in events:  # pragma: no branch
+                    yield event
 
 
 @dataclasses.dataclass
 class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'graceful'`: walk in emission order, running pending function-tool batches before each output tool."""
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         pending_functions: list[_messages.ToolCallPart] = []
 
-        async def flush_pending() -> AsyncIterator[_messages.AgentStreamEvent]:
+        async def flush_pending() -> AsyncGenerator[_messages.AgentStreamEvent, None]:
             nonlocal pending_functions
             if pending_functions:
                 batch = pending_functions
                 pending_functions = []
-                async for event in self._run_function_calls(batch):
-                    yield event
+                async with aclosing(self._run_function_calls(batch)) as events:
+                    async for event in events:
+                        yield event
 
         for i, call in enumerate(self.tool_calls):
             if self.is_executable_output(i):
-                async for event in flush_pending():
-                    yield event
+                async with aclosing(flush_pending()) as events:
+                    async for event in events:
+                        yield event
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
                 async for event in self._run_output(call):  # pragma: no branch
                     yield event
             elif self.is_executable_function(i):
                 pending_functions.append(call)
-        async for event in flush_pending():
-            yield event
+        async with aclosing(flush_pending()) as events:
+            async for event in events:
+                yield event
         self.ctx.state.output_retries_used += self.output_retries_increment
 
 
@@ -1211,7 +1280,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
-    async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
         # Upfront-validate function calls in emission order, emitting their call events.
@@ -1272,7 +1341,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
-                    async for item in _iter_completed_or_buffered(set(tasks), self.ctx.state.event_stream_buffer):
+                    async for item in _iter_completed_or_buffered(tasks, self.ctx.state.event_stream_buffer):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
                             # function-tool result events, so this streams live in both modes.
@@ -1293,7 +1362,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 if tool_user_content:
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
                                 tool_part = tool_parts[0]
-                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                                assert isinstance(tool_part, _messages.ToolReturnPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)

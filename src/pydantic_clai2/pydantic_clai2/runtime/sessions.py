@@ -7,6 +7,7 @@ Claude Code and Codex sessions.
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
+from functools import partial
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -17,6 +18,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
+    ConversationOrder,
     ConversationSummary,
     SavedConversation,
     SqliteConversationStore,
@@ -24,9 +26,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
+from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -37,6 +39,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -58,13 +61,16 @@ class Sessions(Generic[DepsT, OutputT]):
         context: CommandContext,
         launched: str | None = None,
         namer: SessionNamer | None = None,
+        tasks: DelegationTasks | None = None,
     ) -> None:
         """Bind services to the active shell and its validated settings.
 
         `namer` is the process's naming worker, shared with its other sessions; without one, it gets its own.
+        `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
         self.store = store
+        self.tasks = tasks
         self.context = context
         self.launched = launched
         """The conversation ID launch options picked, carried across `/reload`."""
@@ -73,7 +79,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
-        self.namer.listeners.append(self.named)
+        self.join()
         self._newest_name: tuple[str, str] | None = None
         """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
@@ -82,6 +88,15 @@ class Sessions(Generic[DepsT, OutputT]):
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
+
+    def join(self) -> None:
+        """Hear the titles `namer` announces; again once a closed session is live again, as after a failed `/reload`."""
+        if self.named not in self.namer.listeners:
+            self.namer.listeners.append(self.named)
+
+    def close(self) -> None:
+        """Stop hearing the titles `namer` announces, so nothing the process shares keeps this session alive."""
+        self.namer.listeners.remove(self.named)
 
     @property
     def follows_workspace(self) -> bool:
@@ -99,14 +114,22 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         if (shown := await self.show_live(conversation_id)) is not None:
             return shown
+        # One another process runs continues in its existing fork, if any, which is then the one to show or hold.
+        continuation = await self.session.continuation(conversation_id)
+        target = continuation.conversation_id
+        if target != conversation_id and (shown := await self.show_live(target)) is not None:
+            return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
-        with self.session.claim(conversation_id):
+        with self.session.claim(target):
             if self.relocate is not None and not allow_other_workspace:
-                workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+                workspace = (await self.store.get(conversation_id=target)).summary.workspace
                 if workspace != self.session.workspace:
                     await self.relocate(workspace)
             notice = await self.session.resume(
-                conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+                conversation_id,
+                allow_other_workspace=allow_other_workspace,
+                unarchive=unarchive,
+                continuation=continuation,
             )
         await self.show_resumed()
         return notice
@@ -197,13 +220,21 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         imported = await run_sync(find_import, source, native_id)
         self.session.check_workspace(imported.summary.workspace)
-        return await save_import(self.store, imported)
+        return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        archived: bool | None = False,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
-        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
-        entries = await self.store.listing(query=query, limit=limit, archived=archived)
+        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming.
+
+        `order_by='created_at'` pages by creation instead of activity, as the web sidebar lists them.
+        """
+        entries = await self.store.listing(query=query, limit=limit, archived=archived, order_by=order_by)
         self.namer.backfill(entries, client=self.naming)
         return entries
 
@@ -245,7 +276,7 @@ class Sessions(Generic[DepsT, OutputT]):
             messages = interrupted_history(messages)
         copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
         if self.session.repl_states is not None:
-            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+            await run_sync(partial(self.session.repl_states.copy, source=saved.summary.id, target=copy.id))
         return copy
 
     async def archive(self, conversation_id: str) -> ConversationSummary:
@@ -291,16 +322,9 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
-        def shown(
-            saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
-        ) -> list[ConversationSummary]:
-            # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-            entries = merge(saved, imported, limit=limit)
-            return entries if archived else [entry for entry in entries if entry.archived_at is None]
-
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return shown(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -314,7 +338,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=shown(entries, imports.listing(), limit=200, archived=False),
+                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -333,7 +357,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if not selected:
             return ''
         if (imported := imports.get(selected)) is not None:
-            selected = await save_import(self.store, imported)
+            selected = await save_import(self.store, imported, delegations=self.tasks)
         # Another session can be shown while this one runs a turn: that turn goes on.
         if (notice := await self.show_live(selected)) is not None:
             return notice
@@ -342,12 +366,21 @@ class Sessions(Generic[DepsT, OutputT]):
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
 
+    @staticmethod
+    def _browser_entries(
+        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+    ) -> list[ConversationSummary]:
+        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+        entries = merge(saved, imported, limit=limit)
+        return entries if archived else [entry for entry in entries if entry.archived_at is None]
+
     async def _delete(self, source: ConversationSummary) -> None:
         """Delete a saved session, then the `run_code` REPL code mode kept for it; one another live session holds is refused."""
         with self.session.claim(source.id):
             await self.store.delete(source=source)
         if self.session.repl_states is not None:
-            self.session.repl_states.delete(source.id)
+            await run_sync(self.session.repl_states.delete, source.id)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:
         try:

@@ -42,7 +42,7 @@ from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -149,7 +149,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
             # Browser sign-in: no tools until `/logfire login`, which applies to the next prompt.
             signed_in = await anyio.to_thread.run_sync(_sign_in(self.settings).signed_in, abandon_on_cancel=True)
             return capability if signed_in else None
-        if capability is None or not callable(capability.auth):
+        if capability is None or not isinstance(capability.auth, SavedKey):
             return capability
         # Resolved here, not by `LogfireMCP`: a run would not set up its per-run toolset nested in this factory's.
         token = await anyio.to_thread.run_sync(capability.auth, ctx, abandon_on_cancel=True)
@@ -170,6 +170,7 @@ def _capability(*, settings: LogfireMCPSettings) -> tuple[LogfireMCP[None], str 
         *, auth: SavedKey | None = None, client: Client[StreamableHttpTransport] | None = None
     ) -> LogfireMCP[None]:
         return LogfireMCP[None](
+            defer_loading=True,
             auth=auth,
             client=client,
             url=LOGFIRE_US_MCP_URL if client else settings.url,

@@ -4,13 +4,16 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
+import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import JsonValue, TypeAdapter
+from typing_extensions import TypeIs
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -20,9 +23,11 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    ModelResponse,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -30,18 +35,32 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
+from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
-from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
+from pydantic_clai2.config import PermissionMode
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.forks import failure_line
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
+from pydantic_clai2.runtime.session import STEERING
+from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost, starts_turn
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -97,6 +116,10 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    images: list[str] = field(default_factory=list[str])
+    """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
+    run_id: str | None = None
+    """The run a prompt started, which Edit and Retry rewind to; `None` for a prompt they cannot rewind to."""
 
 
 @dataclass(kw_only=True)
@@ -118,13 +141,29 @@ class QuestionInfo:
 
 
 @dataclass(kw_only=True)
+class ApprovalInfo:
+    """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
+
+    tool: str
+    action: PermissionAction
+    subject: str
+    """The command, or the path the call writes."""
+    reason: str
+    """Why the session's permission mode asks."""
+    diff: Diff | None = None
+    """The change a file write would make, from its arguments."""
+
+
+@dataclass(kw_only=True)
 class Questions:
-    """An open `ask_user_question` request the browser can answer."""
+    """An open `ask_user_question` request the browser can answer, or a held tool call to approve."""
 
     id: str
     questions: list[QuestionInfo]
     asker: str | None = None
     """Who asks when it is not the conversation itself, such as a delegated task."""
+    approval: ApprovalInfo | None = None
+    """Set when the question asks to approve a held tool call; its one question's labels approve or deny it."""
 
 
 @dataclass(kw_only=True)
@@ -195,6 +234,19 @@ def usage_info(usage: RunUsage) -> Usage:
 
 
 @dataclass(kw_only=True)
+class TurnSummary:
+    """A saved turn's usage line, which follows it in a reloaded transcript as a live turn's end adds one."""
+
+    id: str
+    kind: Literal['turn'] = 'turn'
+    outcome: Literal['completed'] = 'completed'
+    error: None = None
+    usage: Usage
+    seconds: None = None
+    """A saved turn records no duration."""
+
+
+@dataclass(kw_only=True)
 class StatusInfo:
     """The status row's figures, sent every `STATUS_INTERVAL` while a turn streams."""
 
@@ -203,6 +255,7 @@ class StatusInfo:
     context_tokens: int | None = None
     context_window: int | None = None
     cost: str | None = None
+    cost_is_lower_bound: bool = False
     streamed_tokens: int = 0
     """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
     output_tokens: int | None = None
@@ -213,6 +266,8 @@ class StatusInfo:
     """The `run.code_mode` setting; `None` without CLAI's settings."""
     speculation: bool | None = None
     """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
+    permissions: PermissionMode | None = None
+    """The `run.permissions` mode; `None` without CLAI's settings."""
 
 
 @dataclass(kw_only=True)
@@ -247,10 +302,38 @@ class TaskEntry:
     started_at: datetime
     finished_at: datetime | None
     background: bool
+    backgroundable: bool = False
+    """Whether the Background button can let the run that waits for it go on."""
     resumable: bool
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""
     usage: Usage
+
+
+@dataclass(kw_only=True)
+class ForkEntry:
+    """A background `/fork`, like a `/forks` row."""
+
+    id: int
+    model: str
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+def fork_entry(fork: ForkInfo) -> ForkEntry:
+    """A fork's row, as browsers receive it."""
+    return ForkEntry(
+        id=fork.id,
+        model=fork.model,
+        prompt=fork.prompt,
+        status=fork.status,
+        elapsed=fork.elapsed,
+        session_id=fork.session_id,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -265,6 +348,43 @@ class UpdateInfo:
     """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedItem:
+    """An input waiting for the session's running turn or command to end, editable until it runs."""
+
+    id: str
+    text: str
+    kind: InputKind
+    """A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
+
+
+def queued_item(entry: QueuedInput) -> QueuedItem:
+    """A waiting input as the page lists it, with whether it can steer."""
+    return QueuedItem(id=entry.id, text=entry.text, kind=input_kind(entry.text))
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueueChanged:
+    """The session's queued input changed: one joined, ran, was edited, or was removed, here or in the terminal."""
+
+    type: Literal['queue'] = 'queue'
+    queue: list[QueuedItem]
+
+
+def delivered_steering(event: EnqueuedMessagesEvent) -> list[UserPromptPart]:
+    """The user's steering an enqueue delivered into the run, for the transcript to show.
+
+    Input a capability enqueues, such as a context file it found, is the model's to read, not the user's to see.
+    """
+    return [
+        part
+        for message in event.messages
+        if isinstance(message, ModelRequest) and message.metadata and message.metadata.get(STEERING)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
 @dataclass(kw_only=True)
 class Snapshot:
     """Everything a browser needs to show one live session: sent on connect, on `watch`, and on a conversation switch.
@@ -274,7 +394,7 @@ class Snapshot:
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
-    items: list[Item]
+    items: list[Item | TurnSummary]
     running: bool
     status: StatusInfo
     questions: list[Questions]
@@ -284,11 +404,15 @@ class Snapshot:
     """The conversation's delegated tasks, each parent before its children."""
     task_items: dict[str, list[Item]]
     """Each running task's transcript so far, by task ID."""
+    queue: list[QueuedItem] = field(default_factory=list[QueuedItem])
+    """The input waiting for the session's running turn or command, oldest first."""
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
     version: str = ''
     """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
     update: UpdateInfo | None = None
+    replaces: str | None = None
+    """The conversation the session held before, when it switched to this one; its watchers watch this one now."""
 
 
 @dataclass(kw_only=True)
@@ -303,7 +427,7 @@ class ItemAdded:
 class TextDelta:
     """More text for an answer or thinking block."""
 
-    type: Literal['delta'] = 'delta'
+    type: Literal['text_delta'] = 'text_delta'
     id: str
     text: str
 
@@ -330,7 +454,7 @@ class ToolArgs:
 class SubCallAdded:
     """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
 
-    type: Literal['call'] = 'call'
+    type: Literal['sub_call'] = 'sub_call'
     id: str
     call: SubCall
 
@@ -339,7 +463,7 @@ class SubCallAdded:
 class SubCallOutput:
     """More of what a shell command called from a `run_code` cell printed."""
 
-    type: Literal['call_output'] = 'call_output'
+    type: Literal['sub_call_output'] = 'sub_call_output'
     id: str
     call_id: str
     text: str
@@ -349,7 +473,7 @@ class SubCallOutput:
 class SubCallDone:
     """A tool called from a `run_code` cell returned or failed."""
 
-    type: Literal['call_done'] = 'call_done'
+    type: Literal['sub_call_done'] = 'sub_call_done'
     id: str
     call_id: str
     text: str
@@ -397,7 +521,7 @@ class DiffAdded:
 class TurnStarted:
     """A turn started; `item` is its prompt, or `None` for a turn a finished task woke."""
 
-    type: Literal['turn_start'] = 'turn_start'
+    type: Literal['turn_started'] = 'turn_started'
     item: Item | None = None
 
 
@@ -405,7 +529,7 @@ class TurnStarted:
 class TurnEnded:
     """The turn finished, failed, or was cancelled."""
 
-    type: Literal['turn_end'] = 'turn_end'
+    type: Literal['turn_ended'] = 'turn_ended'
     outcome: Literal['completed', 'failed', 'cancelled']
     error: str | None = None
     usage: Usage | None = None
@@ -481,6 +605,7 @@ class UsageReport:
     total: TurnUsage
     unpriced: list[str]
     """The models without price data, whose responses no cost counts."""
+    unmeasured_requests: int = 0
 
 
 def turn_usage(usage: RunUsage) -> TurnUsage:
@@ -498,7 +623,10 @@ def turn_usage(usage: RunUsage) -> TurnUsage:
 def usage_report(usage: SessionUsage) -> UsageReport:
     """The browser's copy of what `/usage` prints."""
     return UsageReport(
-        turns=[turn_usage(turn) for turn in usage.turns], total=turn_usage(usage.total), unpriced=list(usage.unpriced)
+        turns=[turn_usage(turn) for turn in usage.turns],
+        total=turn_usage(usage.total),
+        unpriced=list(usage.unpriced),
+        unmeasured_requests=usage.total.unmeasured_requests,
     )
 
 
@@ -512,6 +640,18 @@ class Notice:
     command: str | None = None
     usage: UsageReport | None = None
     """For `/usage` and `/cost`: the figures their text reports, which the page shows as a card."""
+    forks: list[ForkEntry] | None = None
+    """For `/forks`: the rows of the table its terminal prints, which the page shows as a card."""
+    fork: ForkEntry | None = None
+    """A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled."""
+
+
+def fork_notice(event: ForkEnd) -> Notice:
+    """What the page shows of a fork that ended, as the terminal prints its response or its failure."""
+    fork = fork_entry(event.fork)
+    if event.error is not None:
+        return Notice(text=failure_line(event.error), level='error', fork=fork)
+    return Notice(text=event.output or '', fork=fork)
 
 
 @dataclass(kw_only=True)
@@ -619,7 +759,7 @@ ItemMessage = (
 class TaskItems:
     """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
 
-    type: Literal['task_event'] = 'task_event'
+    type: Literal['task_items'] = 'task_items'
     id: str
     """The task's ID."""
     messages: list[ItemMessage]
@@ -670,6 +810,7 @@ ServerMessage = (
     | SettingsChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
     | UpdateChanged
     | LiveChanged
 )
@@ -684,6 +825,7 @@ SessionMessage = (
     | TitleChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
 )
 """The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
@@ -700,6 +842,48 @@ def dump_session(message: SessionMessage, *, session: str) -> str:
     return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
 
 
+PROTOCOL = 2
+"""The wire version a page names in the WebSocket URL as `protocol`.
+
+A page without it was loaded before the item and turn tags took their class names, and stayed open
+across the `/update` that installed this build; `legacy_tags` translates for it.
+"""
+_LEGACY_TAGS = {
+    'text_delta': 'delta',
+    'sub_call': 'call',
+    'sub_call_output': 'call_output',
+    'sub_call_done': 'call_done',
+    'turn_started': 'turn_start',
+    'turn_ended': 'turn_end',
+    'task_items': 'task_event',
+}
+_JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+
+
+def legacy_tags(text: str) -> str:
+    """A message as a page from before `PROTOCOL` reads it: the same JSON, under the tags it knows."""
+    message = _JSON_OBJECT.validate_json(text)
+    if not _retag(message):
+        return text
+    return json.dumps(message, separators=(',', ':'), ensure_ascii=False)
+
+
+def _retag(message: dict[str, JsonValue]) -> bool:
+    """Rename `message`'s tag and those of the item messages it carries; whether any changed."""
+    tag = message.get('type')
+    if tag == 'orchestrator':
+        inner = message.get('message')
+        return isinstance(inner, dict) and _retag(inner)
+    if not isinstance(tag, str) or tag not in _LEGACY_TAGS:
+        return False
+    message['type'] = _LEGACY_TAGS[tag]
+    if isinstance(items := message.get('messages'), list):
+        for item in items:
+            if isinstance(item, dict):
+                _retag(item)
+    return True
+
+
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']
 
 
@@ -711,13 +895,21 @@ class SessionEntry:
     title: str
     workspace: str
     updated_at: datetime
+    created_at: datetime
+    """When it was first saved, which the sidebar orders by, so activity and renames never move a row."""
     state: SessionState
     """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
+    owner_pid: int | None = None
+    """The process running a `busy` session's turn."""
     messages: int
     model: str | None
     current: bool
     archived: bool
     """Hidden from the sidebar unless it lists archived sessions too."""
+    openable: bool
+    """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
+    source: str | None = None
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -738,7 +930,10 @@ class Project:
     """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
+    folder: str | None
+    """Its main checkout's folder; `None` for Removed folders."""
     name: str
+    """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool
     worktrees: list[Worktree]
 
@@ -752,9 +947,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
+    and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    owner_pid: int | None = None
+    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)
@@ -854,38 +1052,6 @@ class MenuEdited:
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
 
 
-WorkspaceState = Literal['ready', 'running', 'stopped']
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRow:
-    """A workspace as the sidebar lists it; never its token."""
-
-    id: str
-    kind: str
-    repo: str
-    branch: str
-    path: str
-    status: WorkspaceState
-    url: str | None
-    """Its page's address without the token, while its CLAI runs."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspacesInfo:
-    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
-
-    enabled: bool
-    workspaces: list[WorkspaceRow]
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOpened:
-    """A workspace's page, with its token, for this page to open."""
-
-    url: str
-
-
 @dataclass(kw_only=True)
 class CompletionInfo:
     """One Tab suggestion: `text` replaces the `start` characters before the cursor."""
@@ -896,64 +1062,239 @@ class CompletionInfo:
     meta: str | None = None
 
 
-def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
+def tool_result_text(part: ToolReturnPart) -> str:
     """What the model got back from a tool, cut to `RESULT_CHARS` for display."""
-    text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
+    text = part.model_response_str(wrap_if_error=part.outcome != 'retried')
     if len(text) > RESULT_CHARS:
         return text[:RESULT_CHARS] + f'\n… {len(text) - RESULT_CHARS:,} more characters'
     return text
 
 
-def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show.
+def tool_result_state(part: ToolReturnPart) -> ToolState:
+    """A tool that has to be retried shows as an error; any other result as done."""
+    return 'error' if part.outcome == 'retried' else 'done'
+
+
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
+
+
+def _edit_diffs(call: EditFileCallPart | None, result: ToolReturnPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
+    """
+    if call is None or result.outcome != 'success' or (edit := call.typed_args) is None:
+        return []
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
+    return diffs
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
+
+
+def image_id(image: BinaryContent) -> str:
+    """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
+    return hashlib.sha256(image.data).hexdigest()
+
+
+class ImageIds:
+    """The transcript IDs of a live session's images, each hashed once while the session holds the image."""
+
+    def __init__(self) -> None:
+        """Start knowing no image."""
+        self._known: dict[int, tuple[BinaryContent, str]] = {}
+        """By `id()`, which stays unique as the image is kept here with its ID."""
+
+    def __call__(self, image: BinaryContent) -> str:
+        """The ID of `image`."""
+        known = self._known.get(id(image))
+        if known is None:
+            known = self._known[id(image)] = (image, image_id(image))
+        return known[1]
+
+    def find(self, wanted: str) -> BinaryContent | None:
+        """The image whose ID is `wanted`, of those the transcript listed and the session still holds."""
+        return next((image for image, known in self._known.values() if known == wanted), None)
+
+    def keep(self, images: Sequence[BinaryContent]) -> None:
+        """Forget every image but `images`, those the session holds now."""
+        held = {id(image) for image in images}
+        self._known = {key: known for key, known in self._known.items() if key in held}
+
+
+def user_images(part: UserPromptPart) -> list[BinaryContent]:
+    """The images a prompt carries, which the browser shows as thumbnails."""
+    if isinstance(part.content, str):
+        return []
+    return [item for item in part.content if _is_image(item)]
+
+
+def _is_image(item: UserContent) -> TypeIs[BinaryContent]:
+    return isinstance(item, BinaryContent) and item.is_image
+
+
+def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
+    """A prompt's text, naming the attachments the browser does not show: images too, unless as `thumbnails`.
 
     Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
     return '\n'.join(
-        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        item if isinstance(item, str) else '[image]' if _is_image(item) else f'[{type(item).__name__}]'
         for item in part.content
-        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+        # A prompt sent as images alone has an empty text.
+        if not (isinstance(item, str) and (not item or item.startswith(NOTE_PREFIX)))
+        and not (thumbnails and _is_image(item))
     )
 
 
-def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls."""
-    items: list[Item] = []
-    tools: dict[str, Item] = {}
-    for message in messages:
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None, run_id: str | None = None) -> Item:
+    """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
+
+    Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
+    """
+    images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
+    return Item(
+        id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images, run_id=run_id
+    )
+
+
+def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
+    """Every image the prompts of a history carry."""
+    return [
+        image
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for image in user_images(part)
+    ]
+
+
+def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
+    """The transcript items of a saved or finished history, without `history_entries`' usage lines."""
+    return [entry for entry in history_entries(messages, image_ids=image_ids) if isinstance(entry, Item)]
+
+
+def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item | TurnSummary]:
+    """The transcript of a saved or finished history: its items, each turn followed by its usage line.
+
+    Tool results join their calls; turns are grouped as `/usage` groups them. A live session passes its `image_ids`,
+    so prompts list their images; see `user_item`.
+    """
+    history = _HistoryEntriesContext(image_ids=image_ids)
+    rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
-                elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
-                    tool.text = tool_result_text(part)
-                    tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'
+            if starts_turn(message):
+                _end_turn(history)
+                history.usage = RunUsage()
+            _add_request_entries(history, message, run_id=message.run_id if index in rewindable else None)
             continue
-        for part in message.parts:
-            if isinstance(part, TextPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='assistant', text=part.content))
-            elif isinstance(part, ThinkingPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='thinking', text=part.content))
-            elif isinstance(part, ToolCallPart):
-                tool = Item(
-                    id=part.tool_call_id,
-                    kind='tool',
-                    name=part.tool_name,
-                    args=part.args_as_json_str(),
-                    state='interrupted',
+        history.usage.incr(message.usage)
+        history.usage.requests += 1
+        _add_response_entries(history, message)
+    _end_turn(history)
+    return history.entries
+
+
+@dataclass(kw_only=True)
+class _HistoryEntriesContext:
+    """What `history_entries` builds across a history's messages, and what a later message's parts are joined to."""
+
+    image_ids: ImageIds | None
+    entries: list[Item | TurnSummary] = field(default_factory=list[Item | TurnSummary])
+    tools: dict[str, Item] = field(default_factory=dict[str, Item])
+    """Each tool call's item, by its call ID."""
+    edits: dict[str, EditFileCallPart] = field(default_factory=dict[str, EditFileCallPart])
+    """Each `edit_file` call, by its call ID."""
+    usage: RunUsage = field(default_factory=RunUsage)
+    """The usage of the turn so far."""
+
+
+def _end_turn(history: _HistoryEntriesContext) -> None:
+    """Follow the turn with its usage line, when it made a request."""
+    if history.usage.requests:
+        history.entries.append(TurnSummary(id=f'h{len(history.entries)}', usage=usage_info(history.usage)))
+
+
+def _add_request_entries(history: _HistoryEntriesContext, request: ModelRequest, *, run_id: str | None) -> None:
+    """Add `request`'s typed prompts, the first with `run_id`, and join its tool results to their calls."""
+    for part in request.parts:
+        match part:
+            case UserPromptPart() if is_typed_prompt(part):
+                history.entries.append(
+                    user_item(part, id=f'h{len(history.entries)}', image_ids=history.image_ids, run_id=run_id)
                 )
-                tools[part.tool_call_id] = tool
-                items.append(tool)
-    return items
+                run_id = None
+            case ToolReturnPart():
+                _join_tool_result(history, part)
+            case _:
+                pass
 
 
-def questions_info(request: AskUserRequest, *, asker: str | None) -> Questions:
-    """The browser's copy of an `ask_user_question` request."""
+def _join_tool_result(history: _HistoryEntriesContext, part: ToolReturnPart) -> None:
+    """Give `part`'s result to its call's item, when the history holds the call."""
+    if tool := history.tools.get(part.tool_call_id):
+        tool.text = tool_result_text(part)
+        tool.state = tool_result_state(part)
+        tool.diffs = _edit_diffs(history.edits.get(part.tool_call_id), part)
+
+
+def _add_response_entries(history: _HistoryEntriesContext, response: ModelResponse) -> None:
+    """Add `response`'s text, thinking, and tool calls."""
+    for part in response.parts:
+        match part:
+            case TextPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='assistant', text=part.content))
+            case ThinkingPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='thinking', text=part.content))
+            case ToolCallPart():
+                _add_tool_call(history, part)
+            case _:
+                pass
+
+
+def _add_tool_call(history: _HistoryEntriesContext, part: ToolCallPart) -> None:
+    """Add `part`'s tool item, interrupted until its result joins it."""
+    tool = Item(
+        id=part.tool_call_id,
+        kind='tool',
+        name=part.tool_name,
+        args=part.args_as_json_str(),
+        state='interrupted',
+    )
+    history.tools[part.tool_call_id] = tool
+    history.entries.append(tool)
+    if isinstance(part, EditFileCallPart):
+        history.edits[part.tool_call_id] = part
+
+
+def questions_info(request: AskUserRequest, *, asker: str | None, approval: ApprovalInfo | None = None) -> Questions:
+    """The browser's copy of an `ask_user_question` request, or of the question approving a held call."""
     return Questions(
         id=request.id,
         asker=asker,
+        approval=approval,
         questions=[
             QuestionInfo(
                 header=question.header,
@@ -1010,7 +1351,7 @@ class EventTranslator:
         if isinstance(event, SandboxCallFinishedEvent):
             result = event.result
             parent = _parent(result.tool_call_id)
-            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             done = SubCallDone(id=parent or '', call_id=result.tool_call_id, text=tool_result_text(result), state=state)
             return [] if parent is None else [done]
         if isinstance(event, FunctionToolCallEvent):
@@ -1021,7 +1362,7 @@ class EventTranslator:
             return [ItemAdded(item=replace(item, state='running'))]
         if isinstance(event, FunctionToolResultEvent):
             result = event.part
-            state = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             return [ToolDone(id=result.tool_call_id, text=tool_result_text(result), state=state)]
         return self._harness(event)
 
@@ -1101,26 +1442,29 @@ class ItemLog:
         item = self.items.get(message.id)
         if item is None:
             return
-        if isinstance(message, TextDelta):
-            item.text += message.text
-        elif isinstance(message, ArgsDelta):
-            item.args += message.text
-        elif isinstance(message, ToolArgs):
-            item.args = message.args
-        elif isinstance(message, ToolOutput):
-            item.output += message.text
-        elif isinstance(message, ToolDone):
-            item.text, item.state = message.text, message.state
-        elif isinstance(message, ShellDone):
-            item.exit_code = message.exit_code
-        elif isinstance(message, DiffAdded):
-            item.diffs.append(message.diff)
-        elif isinstance(message, SubCallAdded):
-            item.calls.append(replace(message.call))
-        else:
-            for call in item.calls:
-                if call.id == message.call_id:
-                    if isinstance(message, SubCallOutput):
-                        call.output += message.text
-                    else:
-                        call.text, call.state = message.text, message.state
+        match message:
+            case TextDelta():
+                item.text += message.text
+            case ArgsDelta():
+                item.args += message.text
+            case ToolArgs():
+                item.args = message.args
+            case ToolOutput():
+                item.output += message.text
+            case ToolDone():
+                item.text, item.state = message.text, message.state
+            case ShellDone():
+                item.exit_code = message.exit_code
+            case DiffAdded():
+                item.diffs.append(message.diff)
+            case SubCallAdded():
+                item.calls.append(replace(message.call))
+            case SubCallOutput() | SubCallDone():
+                for call in item.calls:
+                    if call.id == message.call_id:
+                        if isinstance(message, SubCallOutput):
+                            call.output += message.text
+                        else:
+                            call.text, call.state = message.text, message.state
+            case _:
+                assert_never(message)

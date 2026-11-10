@@ -1,0 +1,73 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "237"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: magistral-medium-latest
+        messages:
+        - content: What is 2+2? Reply with just the number.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+        reasoning_effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a16480-514e-79f9-ba8c-5a4d44cbd53d
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: aa506d1617004ec1b257d919844e21eb
+        created: 1792687493
+        model: magistral-medium-latest
+        usage:
+          prompt_tokens: 28
+          total_tokens: 30
+          completion_tokens: 2
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content: "4"
+  recorded_at: 2026-10-22T16:44:53.761709+00:00

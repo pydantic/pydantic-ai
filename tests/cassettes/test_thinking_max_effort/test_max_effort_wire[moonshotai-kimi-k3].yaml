@@ -1,0 +1,86 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.moonshot.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "141"
+      content-type:
+      - application/json
+      host:
+      - api.moonshot.ai
+    body:
+      type: json
+      content:
+        model: kimi-k3
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        reasoning_effort: max
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      msh-context-cache-token-boosted-nvme:
+      - "0"
+      msh-gid:
+      - enterprise-tier-2
+      msh-org-id:
+      - org-30b79407c5054f7885f3033c1614921d
+      msh-project-id:
+      - proj-c71799aed1924aa2b7b5779d0f9cbcf2
+      msh-request-id:
+      - a6e269aa-cd7e-11f1-bcf9-b63280981202
+      msh-trace-mode:
+      - "on"
+      msh-uid:
+      - d1sjhbnkgnumadtmapl0
+      msh-usage-cache-write-tokens-1h:
+      - "0"
+      msh-usage-cache-write-tokens-5m:
+      - "0"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-6ad906b9b3cac7e5f9fc5864
+        object: chat.completion
+        created: 1792607929
+        model: kimi-k3
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+            reasoning_content: |-
+              The user is asking a simple math question: 2+2. They want just the number as the reply.
+
+              2+2 = 4
+
+              I should reply with just "4" as requested.
+          finish_reason: stop
+        usage:
+          prompt_tokens: 98
+          completion_tokens: 58
+          total_tokens: 156
+          completion_tokens_details:
+            reasoning_tokens: 42
+          prompt_tokens_details:
+            cache_write_tokens: 0
+  recorded_at: 2026-10-21T18:38:51.380402+00:00

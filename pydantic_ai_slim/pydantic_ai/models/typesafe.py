@@ -5,11 +5,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never, cast
 
+import httpx2
 from pydantic import JsonValue
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
 from .._warnings import PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..profiles.typesafe import (
     _JEV_MAX_CHOICE_OPTIONS,  # pyright: ignore[reportPrivateUsage]
@@ -53,6 +55,7 @@ try:
         TypeSafeAPIConnectionError,
         TypeSafeAPIError,
         TypeSafeAPIResponseValidationError,
+        TypeSafeAPITimeoutError,
         TypeSafeError,
     )
 except ImportError as _import_error:
@@ -235,11 +238,20 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
         except TypeSafeAPIResponseValidationError as e:
             raise UnexpectedModelBehavior(f'Invalid response from TypeSafe: {e}', str(e.body)) from e
         except TypeSafeAPIError as e:
-            raise ModelHTTPError(
-                status_code=e.status, model_name=self._model_name, body=e.body, headers=dict(e.headers)
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(e.status, str(e)),
+                status_code=e.status,
+                model_name=self._model_name,
+                body=e.body,
+                headers=dict(e.headers),
             ) from e
         except TypeSafeAPIConnectionError as e:
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _model_errors.connection_error(
+                self._model_name, str(e), e, timeout=isinstance(e, TypeSafeAPITimeoutError)
+            ) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and the TypeSafe SDK lets it through.
+            raise _model_errors.transport_status_error(self._model_name, e.response) from e
         except TypeSafeError as e:
             # What is left is the SDK refusing to send what it was given, such as an `extra_body` that will
             # not encode as JSON. That is the caller's to fix, not the model's.

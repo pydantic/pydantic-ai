@@ -1,5 +1,8 @@
 // Mirrors pydantic_clai2/builtin_plugins/web/protocol.py.
 
+/** The wire version the page names in the WebSocket URL; a page without it gets the tags from before it. */
+export const PROTOCOL = 2
+
 export type ItemKind = 'user' | 'assistant' | 'thinking' | 'tool'
 export type ToolState = 'running' | 'done' | 'error' | 'interrupted'
 
@@ -32,6 +35,10 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
+  images: string[]
+  /** The run a prompt started, which Edit and Retry rewind to; `null` for a prompt they cannot rewind to. */
+  run_id: string | null
 }
 
 export interface Option {
@@ -75,10 +82,24 @@ export interface Dialog {
   text: string
 }
 
+/** A tool call `/permissions` holds until the user approves it. */
+export interface ApprovalInfo {
+  tool: string
+  action: 'command' | 'write'
+  /** The command, or the path the call writes. */
+  subject: string
+  /** Why the session's permission mode asks. */
+  reason: string
+  /** The change a file write would make. */
+  diff: Diff | null
+}
+
 export interface Questions {
   id: string
   questions: QuestionInfo[]
   asker: string | null
+  /** Set when the question asks to approve a held tool call: answer it with one of its labels, or a reason to deny. */
+  approval: ApprovalInfo | null
 }
 
 export interface SessionInfo {
@@ -93,6 +114,7 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  cost_is_lower_bound: boolean
   /** The turn's output so far, estimated from streamed characters. */
   streamed_tokens: number
   /** The last turn's reported output tokens, once it ends. */
@@ -103,7 +125,11 @@ export interface StatusInfo {
   code_mode: boolean | null
   /** The `run.speculative_code_mode` setting, which turns code mode on for its runs too. */
   speculation: boolean | null
+  /** The `run.permissions` mode; `null` without CLAI's settings. */
+  permissions: PermissionMode | null
 }
+
+export type PermissionMode = 'full' | 'auto' | 'read-only'
 
 export type Switch = 'run.code_mode' | 'run.speculative_code_mode'
 
@@ -111,6 +137,17 @@ export interface Usage {
   input_tokens: number
   output_tokens: number
   requests: number
+}
+
+/** A finished turn's line: a live turn's end adds one, and a snapshot carries each saved turn's. */
+export interface TurnSummary {
+  id: string
+  kind: 'turn'
+  outcome: 'completed' | 'failed' | 'cancelled'
+  error: string | null
+  usage: Usage | null
+  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected or was saved. */
+  seconds: number | null
 }
 
 /** Tokens, requests, and cost of one turn, or of all of them, as a `/usage` row shows them. */
@@ -124,12 +161,25 @@ export interface TurnUsage {
   cost: string | null
 }
 
+/** A background `/fork`, as a `/forks` row lists it. */
+export interface ForkEntry {
+  id: number
+  model: string
+  prompt: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  /** Seconds it has run so far, or ran in all once it ended. */
+  elapsed: number
+  /** The saved conversation `/resume` continues it in, once it has saved one. */
+  session_id: string | null
+}
+
 /** What `/usage` and `/cost` report about the retained history. */
 export interface UsageReport {
   turns: TurnUsage[]
   total: TurnUsage
   /** The models without price data, whose responses no cost counts. */
   unpriced: string[]
+  unmeasured_requests: number
 }
 
 export interface Palette {
@@ -155,7 +205,7 @@ export interface ThemeInfo {
   palette: Palette | null
 }
 
-export type TaskOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
+export type DelegationOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
 
 /** A delegated task, as the sidebar's Workers tree shows it. */
 export interface TaskEntry {
@@ -165,10 +215,12 @@ export interface TaskEntry {
   model: string | null
   prompt: string
   status: 'running' | 'finished'
-  outcome: TaskOutcome | null
+  outcome: DelegationOutcome | null
   started_at: string
   finished_at: string | null
   background: boolean
+  /** Whether the Background button can let the run that waits for it go on. */
+  backgroundable: boolean
   resumable: boolean
   /** Its last action, such as `thinking` or `running: shell`. */
   activity: string
@@ -184,13 +236,13 @@ export interface TaskTranscript {
 /** A message that changes one transcript's items, the session's or a task's. */
 export type ItemMessage =
   | { type: 'item'; item: Item }
-  | { type: 'delta'; id: string; text: string }
+  | { type: 'text_delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
   | { type: 'args_delta'; id: string; text: string }
   | { type: 'tool_args'; id: string; args: string }
-  | { type: 'call'; id: string; call: SubCall }
-  | { type: 'call_output'; id: string; call_id: string; text: string }
-  | { type: 'call_done'; id: string; call_id: string; text: string; state: ToolState }
+  | { type: 'sub_call'; id: string; call: SubCall }
+  | { type: 'sub_call_output'; id: string; call_id: string; text: string }
+  | { type: 'sub_call_done'; id: string; call_id: string; text: string; state: ToolState }
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
@@ -198,8 +250,8 @@ export type ItemMessage =
 /** A transcript's item, turn, and question messages, which the session and the orchestrator chat both get. */
 export type ChatMessage =
   | ItemMessage
-  | { type: 'turn_start'; item: Item | null }
-  | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
+  | { type: 'turn_started'; item: Item | null }
+  | { type: 'turn_ended'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
 
@@ -228,14 +280,33 @@ export interface LiveEntry {
   workspace: string
 }
 
+/** A prompt can steer the running turn; a `/command` or `!` shell line, queued from the terminal, cannot. */
+export type InputKind = 'prompt' | 'command' | 'shell'
+
+/** An input waiting for the session's running turn or command to end, editable until it runs. */
+export interface QueuedItem {
+  id: string
+  text: string
+  kind: InputKind
+}
+
 /** A message about one live session, sent only to the connections watching it. */
 export type SessionMessage = (
   | ChatMessage
+  | { type: 'queue'; queue: QueuedItem[] }
   | { type: 'status'; status: StatusInfo }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | {
+      type: 'notice'
+      text: string
+      level: 'info' | 'error'
+      command: string | null
+      usage: UsageReport | null
+      forks: ForkEntry[] | null
+      fork: ForkEntry | null
+    }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
-  | { type: 'task_event'; id: string; messages: ItemMessage[] }
+  | { type: 'task_items'; id: string; messages: ItemMessage[] }
 ) & {
   /**
    * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
@@ -255,11 +326,16 @@ export interface Opened {
   id: string
 }
 
+/** What `POST /api/worktrees` answers: the new worktree's folder. */
+export interface AddedWorktree {
+  root: string
+}
+
 export type ServerMessage =
   | {
       type: 'snapshot'
       session: SessionInfo
-      items: Item[]
+      items: (Item | TurnSummary)[]
       running: boolean
       status: StatusInfo
       questions: Questions[]
@@ -270,9 +346,13 @@ export type ServerMessage =
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
+      /** The input waiting for the session's running turn or command, oldest first. */
+      queue: QueuedItem[]
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
+      /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
+      replaces?: string | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
@@ -293,13 +373,21 @@ export interface SessionEntry {
   title: string
   workspace: string
   updated_at: string
+  /** When it was first saved, which the sidebar orders by, so activity and renames never move a row. */
+  created_at: string
   /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
+  /** The process running a `busy` session's turn. */
+  owner_pid: number | null
   messages: number
   model: string | null
   current: boolean
   /** Hidden from the sidebar unless it lists archived sessions too. */
   archived: boolean
+  /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
+  openable: boolean
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  source: string | null
 }
 
 export interface Worktree {
@@ -314,6 +402,7 @@ export interface Worktree {
 
 export interface Project {
   key: string
+  folder: string | null
   name: string
   current: boolean
   worktrees: Worktree[]
@@ -327,6 +416,8 @@ export interface Transcript {
   openable: boolean
   /** CLAI would move to its directory, but that directory is gone. */
   missing: boolean
+  /** The process ID of another CLAI running it; opening it then continues in a fork of it. */
+  owner_pid: number | null
 }
 
 export interface CompletionInfo {
@@ -409,24 +500,6 @@ export interface MenuField {
   menu: boolean
 }
 
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
-}
-
 export interface MenuInfo {
   title: string
   fields: MenuField[]
@@ -435,6 +508,11 @@ export interface MenuInfo {
 /** What entering input did: `menu` names the bare command whose menu the page shows instead of running it. */
 export interface Entered {
   menu: string | null
+}
+
+/** What Alt+Enter did: `steered` when the running turn took it, else it was entered as Enter enters it. */
+export interface Steering extends Entered {
+  steered: boolean
 }
 
 export interface MenuEdited {
@@ -459,4 +537,30 @@ export interface Schema {
   default?: JsonValue
   minimum?: number
   maximum?: number
+}
+
+export type ChangeScope = 'turn' | 'session' | 'uncommitted' | 'branch'
+
+/** One changed file in the Changes panel. */
+export interface FileChange {
+  path: string
+  /** Added, modified, or deleted. */
+  status: 'A' | 'M' | 'D'
+  added: number
+  removed: number
+  diff: Diff
+  /** Why the diff is empty, such as a binary file. */
+  note: string | null
+}
+
+/** What a session changed in one scope. */
+export interface Changes {
+  scope: ChangeScope
+  files: FileChange[]
+  /** The branch `branch` compares with. */
+  base: string | null
+  /** Why the scope cannot be shown, such as a workspace outside Git. */
+  note: string | null
+  /** Changed files left out, past the most one answer lists. */
+  omitted: number
 }

@@ -1,0 +1,528 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1101m5wr62r3ekjswhrn4xan76by
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_1101m5wr62r3ekjswhrn4xan76by
+      object: realtime.conversation
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000002
+- kind: message
+  direction: received
+  at: 0.865
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1101m5wr62r3ekjswhrn4xan76by
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000003
+- kind: message
+  direction: sent
+  at: 0.865
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: <system>The caller has been verified as the account holder, Jamie. Address
+          them by name.</system>
+- kind: message
+  direction: sent
+  at: 0.865
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+- kind: message
+  direction: sent
+  at: 0.865
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.913
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: <system>The caller has been verified as the account holder, Jamie. Address
+          them by name.</system>
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000004
+- kind: message
+  direction: received
+  at: 0.913
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: <system>The caller has been verified as the account holder, Jamie. Address
+          them by name.</system>
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000005
+- kind: message
+  direction: received
+  at: 0.913
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000006
+- kind: message
+  direction: received
+  at: 0.913
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000007
+- kind: message
+  direction: received
+  at: 1.248
+  data:
+    type: response.created
+    response:
+      id: resp_2701m5wr63zrfeprbw8j1z06jjac
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_1101m5wr62r3ekjswhrn4xan76by
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000008
+- kind: message
+  direction: received
+  at: 1.248
+  data:
+    type: response.output_item.added
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    output_index: 0
+    item:
+      id: item_7201m5wr63zsev7ty1qc3mfshbwq
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000009
+- kind: message
+  direction: received
+  at: 1.248
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_7201m5wr63zsev7ty1qc3mfshbwq
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000010
+- kind: message
+  direction: received
+  at: 1.248
+  data:
+    type: response.content_part.added
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000011
+- kind: message
+  direction: received
+  at: 1.248
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: Hi Jamie, this is your Acme Telecom account.
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000012
+- kind: message
+  direction: received
+  at: 1.373
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000013
+- kind: message
+  direction: received
+  at: 1.401
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: tQvzCV8EjglvD0wSphJRFacR6hECDl4Nawl1/x8ILgwG
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000014
+- kind: message
+  direction: received
+  at: 1.418
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: dvsJ8obwivL69wH4YvP28U7unOu+5U3gN9xo2grdZN8O
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000015
+- kind: message
+  direction: received
+  at: 1.422
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: 2fT39Br1PPog/JYCJv6V+Ev42vbO+sP7OAAaAYT7/fiY
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000016
+- kind: message
+  direction: received
+  at: 1.465
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: PAiwBaH+Fflu9EH2Y/2/AKH9P/pv9QPwOe8D8xX7BP9e
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000017
+- kind: message
+  direction: received
+  at: 1.473
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: /gBnAcwBGAJ0AqgCHwOEA9cDZATVBLIEJATJA5cDkANF
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000018
+- kind: message
+  direction: received
+  at: 1.657
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: y+lT69Ptge7K7R7rbOnv7Grsnu5N8w7yuvKN7zLwwPIU
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000019
+- kind: message
+  direction: received
+  at: 1.789
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: 5P/kAZgA5P0aBdgJV/x37z/4UASNAST5cu8L7gb+cQ1y
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000020
+- kind: message
+  direction: received
+  at: 1.856
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: NQBKAEwAMgAnADkATgBOADsAOQBEAE4ASgBGAEMAQwBD
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000021
+- kind: message
+  direction: received
+  at: 1.977
+  data:
+    type: response.output_audio.delta
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    delta: xwF3AZkBqgF/AawBgwGQAaMBkgHXAY0BvAGcAcgBoQHg
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000022
+- kind: message
+  direction: received
+  at: 4.644
+  data:
+    type: response.output_audio.done
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000023
+- kind: message
+  direction: received
+  at: 4.644
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    transcript: Hi Jamie, this is your Acme Telecom account.
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000024
+- kind: message
+  direction: received
+  at: 4.645
+  data:
+    type: response.content_part.done
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    item_id: item_7201m5wr63zsev7ty1qc3mfshbwq
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: Hi Jamie, this is your Acme Telecom account.
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000025
+- kind: message
+  direction: received
+  at: 4.645
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_7201m5wr63zsev7ty1qc3mfshbwq
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: Hi Jamie, this is your Acme Telecom account.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000026
+- kind: message
+  direction: received
+  at: 4.645
+  data:
+    type: response.output_item.done
+    response_id: resp_2701m5wr63zrfeprbw8j1z06jjac
+    output_index: 0
+    item:
+      id: item_7201m5wr63zsev7ty1qc3mfshbwq
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: Hi Jamie, this is your Acme Telecom account.
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000027
+- kind: message
+  direction: received
+  at: 4.645
+  data:
+    type: response.done
+    response:
+      id: resp_2701m5wr63zrfeprbw8j1z06jjac
+      object: realtime.response
+      status: completed
+      conversation_id: conv_1101m5wr62r3ekjswhrn4xan76by
+      output:
+      - id: item_7201m5wr63zsev7ty1qc3mfshbwq
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: Hi Jamie, this is your Acme Telecom account.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1101m5wr62r3ekjswhrn4xan76by_000028

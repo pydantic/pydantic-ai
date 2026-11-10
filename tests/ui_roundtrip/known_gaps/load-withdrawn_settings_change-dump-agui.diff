@@ -1,0 +1,34 @@
+--- expected
++++ actual
+@@ -10,7 +9,0 @@
+-    },
+-    {
+-     "kind": "model-settings-delta",
+-     "settings": {
+-      "thinking": "low"
+-     },
+-     "top_level": true
+@@ -37,7 +29,0 @@
+-    },
+-    {
+-     "kind": "model-settings-delta",
+-     "settings": {
+-      "thinking": "high"
+-     },
+-     "top_level": false
+@@ -80,7 +65,0 @@
+-    },
+-    {
+-     "kind": "model-settings-delta",
+-     "settings": {
+-      "thinking": "low"
+-     },
+-     "top_level": true
+@@ -153,7 +131,0 @@
+-    },
+-    {
+-     "kind": "model-settings-delta",
+-     "settings": {
+-      "thinking": "low"
+-     },
+-     "top_level": true

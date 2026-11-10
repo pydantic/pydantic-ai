@@ -10,8 +10,8 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT
 from pydantic_clai2.plugins.process_plugins import ProcessPlugins
-from pydantic_clai2.runtime._session import step_store
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
+from pydantic_clai2.runtime.session import step_store
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.tasks import TaskRouter
 

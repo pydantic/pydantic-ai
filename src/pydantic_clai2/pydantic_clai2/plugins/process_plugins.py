@@ -8,34 +8,47 @@ A plugin with `scope = 'process'` is built once, by the first session that loads
 live session; `on_session_start` and `on_session_end` reach it once. `LiveSessions` lists the sessions.
 """
 
+import hashlib
 import importlib
 import logging
+import os
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from anyio import Lock
 from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.completion import Completion
 
+from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
+from pydantic_clai2.config.hooks import HOOKS_FACTORY, HooksSettings
+from pydantic_clai2.config.settings_store import (
+    SettingsStore,
+    canonical_plugin_declarations,
+    canonical_plugin_id,
+    file_sha256,
+    read_regular_file,
+)
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
+    ForkInfo,
     LiveSession,
     LoadedPlugin,
     PluginHost,
+    QueuedInput,
     SessionCatalog,
     SessionEndReason,
     TaskCatalog,
 )
-from pydantic_clai2.plugins._factories import import_file
+from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -83,6 +96,14 @@ RETIRED_BUILTINS: dict[str, PluginSettings] = {
     'grain': PluginSettings(id='grain', factory='pydantic_ai_harness.grain:Grain', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
+APPROVED_AS_WRITTEN = frozenset({HOOKS_FACTORY})
+"""Factories whose project declaration is itself what runs, so an approval covers that declaration exactly.
+
+A saved approval (same id and factory) that differs from the project's current declaration, or whose
+`project_files` no longer have the contents approved, is stale: the project's, switched off, takes its
+place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
+since their settings are the user's to edit.
+"""
 
 
 def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> bool:
@@ -90,6 +111,24 @@ def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> 
     if shipped is None:
         return False
     return declaration.model_copy(update={'enabled': True}) == shipped.model_copy(update={'enabled': True})
+
+
+class PromptInputs(Protocol):
+    """A session's prompt as `LiveRuntime` reaches it: the inputs waiting for its turn, and the turn to steer."""
+
+    @property
+    def queue(self) -> list[QueuedInput]: ...
+
+    def edit_queued(self, input_id: str, text: str) -> None: ...
+
+    def remove_queued(self, input_id: str) -> None: ...
+
+    def steer(self, text: str) -> bool: ...
+
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        ...
 
 
 class LiveRuntime:
@@ -103,15 +142,22 @@ class LiveRuntime:
         running: Callable[[], bool],
         queued: Callable[[], int] = lambda: 0,
         changed: Callable[[], None] = lambda: None,
+        inputs: Callable[[], PromptInputs | None] = lambda: None,
+        forks: Callable[[], tuple[ForkInfo, ...]] = tuple,
     ) -> None:
-        """`host` carries the session's context; `running` says whether a turn runs in it.
+        """`host` carries the session's context; `running` says whether a turn runs in it, and `forks` lists its forks.
 
-        `queued` says how much input waits, and `changed` tells the process's `LiveSessions` that its state may have changed.
+        `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
+        prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
+        `queued` counts the waiting input when `inputs` returns `None`; otherwise the count is the prompt's own
+        queue length.
         """
         self._id = live_id
         self._host = host
         self._running = running
         self._queued = queued
+        self._inputs = inputs
+        self._forks = forks
         self._changed = changed
         self._watchers = 0
 
@@ -151,9 +197,20 @@ class LiveRuntime:
         return self._host.tasks
 
     @property
+    def forks(self) -> tuple[ForkInfo, ...]:
+        """The session's background `/fork` runs, oldest first."""
+        return self._forks()
+
+    @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         return self._running()
+
+    @property
+    def busy(self) -> bool:
+        """Whether the session handles input now or has input queued."""
+        inputs = self._inputs()
+        return self.running or self.queued > 0 or (inputs is not None and inputs.handling)
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""
@@ -166,7 +223,31 @@ class LiveRuntime:
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
-        return self._queued()
+        inputs = self._inputs()
+        return self._queued() if inputs is None else len(inputs.queue)
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the session's running turn or command to end, oldest first."""
+        inputs = self._inputs()
+        return [] if inputs is None else inputs.queue
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        """Replace a waiting input's text, keeping its place."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.edit_queued(input_id, text)
+
+    def remove_queued(self, input_id: str, /) -> None:
+        """Drop a waiting input."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.remove_queued(input_id)
+
+    def steer(self, text: str, /) -> bool:
+        """Send `text` to the running turn now; `False` when nothing takes it."""
+        inputs = self._inputs()
+        return inputs is not None and inputs.steer(text)
 
     @property
     def watchers(self) -> int:
@@ -192,9 +273,9 @@ class LiveRuntime:
         """Tell the listeners of the process's live sessions that this one's state may have changed."""
         self._changed()
 
-    def send_input(self, text: str, /) -> None:
-        """Enter `text` at the session's prompt."""
-        self._host.send_input(text)
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
+        """Enter `text` at the session's prompt, with `images` attached."""
+        self._host.send_input(text, images=images)
 
     def interrupt(self) -> bool:
         """Cancel the session's running turn or command."""
@@ -311,6 +392,15 @@ class ProcessPlugins(Generic[DepsT]):
         declared.update(self.staged)
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
+        for name, pinned in project.items():
+            # Only an approval of this factory goes stale; a drop-in or the user's own plugin under the id stays.
+            approval = declared.get(name)
+            if approval is None or approval.factory != pinned.factory or pinned.factory not in APPROVED_AS_WRITTEN:
+                continue
+            if name not in self.staged and not (
+                same_plugin(approval, pinned) and self.contents_approved(name, approval)
+            ):
+                declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
                 declared[name] = shipped[name]
@@ -362,8 +452,43 @@ class ProcessPlugins(Generic[DepsT]):
                 found[name] = child / '__init__.py'
         return found
 
+    def project_files(self, name: str, declaration: PluginSettings) -> list[Path]:
+        """The repository files an approval of `declaration` runs, whose contents `/plugins enable` approves.
+
+        The programs a project's `hooks` table names by path, and a file plugin's own file unless it is in
+        the plugins folder or the built-in declaration names it. Modules that file imports are not among them.
+        """
+        if declaration.factory == HOOKS_FACTORY:
+            return HooksSettings.model_validate(declaration.settings).project_programs()
+        shipped = self.builtin.get(name)
+        if declaration.path is None or (shipped is not None and shipped.path == declaration.path):
+            return []
+        path = Path(declaration.path)
+        # `..` collapsed first: a path that only passes through the plugins folder names a file outside it. The
+        # folder counts resolved too, as Git installs are saved there; the path is not, so a symlinked drop-in stays.
+        folders = (self.plugins_dir, self.plugins_dir.resolve())
+        inside = any(Path(os.path.normpath(path)).is_relative_to(os.path.normpath(folder)) for folder in folders)
+        return [] if inside else [path]
+
+    def contents_approved(self, name: str, declaration: PluginSettings) -> bool:
+        """Whether each of the declaration's `project_files` still has the contents `/plugins enable` approved."""
+        files = self.project_files(name, declaration)
+        return all(self.store.approved_sha256(path) == file_sha256(path) for path in files)
+
+    def approve(self, name: str, declaration: PluginSettings) -> None:
+        """Approve the contents the declaration's `project_files` have now; none, if one of them cannot be read."""
+        digests = {path: file_sha256(path) for path in self.project_files(name, declaration)}
+        if unreadable := [str(path) for path, digest in digests.items() if not digest]:
+            raise ValueError(f'Cannot approve {name}: {", ".join(unreadable)} is missing or not a file CLAI can read.')
+        if digests:
+            self.store.approve_files(digests)
+
     def import_module(self, name: str, declaration: PluginSettings, *, fresh: bool) -> ModuleType:
-        """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`."""
+        """The declaration's module: a drop-in file afresh, else the installed module, reloaded when `fresh`.
+
+        A project file runs only with the contents `/plugins enable` approved: its bytes are read once, so the
+        ones checked are the ones run.
+        """
         if declaration.path is not None:
             path = Path(declaration.path)
             if not path.is_absolute():
@@ -373,7 +498,15 @@ class ProcessPlugins(Generic[DepsT]):
                     f'{path} is relative, so it would load from whichever directory CLAI starts in. '
                     f'Use /plugins remove {name} and approve it again, or give it an absolute path.'
                 )
-            return import_file(name, path)
+            if not self.project_files(name, declaration):
+                return import_file(name, path)
+            source = read_regular_file(path)
+            if self.store.approved_sha256(path) != hashlib.sha256(source).hexdigest():
+                raise ValueError(
+                    f'{path} is not as you approved it. Review it, then run /plugins enable {name} '
+                    'to approve it as it is now.'
+                )
+            return import_file(name, path, source)
         module = importlib.import_module(declaration.factory.partition(':')[0])
         return importlib.reload(module) if fresh else module
 

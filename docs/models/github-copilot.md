@@ -22,7 +22,7 @@ Copilot authenticates with a bearer token. An OAuth user token — what `gh auth
 | --- | --- |
 | OAuth user token (`gho_`) | Works. |
 | Copilot API token (`tid=…`) | Works, for plans that issue one. |
-| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested. |
+| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested, under the default `vscode-chat` [integration id](#integration-id). |
 | Classic PAT (`ghp_`) | Not supported by GitHub. |
 
 ## Device login
@@ -128,13 +128,13 @@ Copilot's catalog varies by subscription and changes often, so Pydantic AI ships
 
 ```bash
 curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
-     -H "Copilot-Integration-Id: vscode-chat" \
+     -H "Copilot-Integration-Id: ${GITHUB_COPILOT_INTEGRATION_ID:-vscode-chat}" \
      https://api.githubcopilot.com/models
 ```
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
-The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request, so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
+The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request ([`vscode-chat` by default](#integration-id)), so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
 
 Two `400` responses tell you why an id didn't work:
 
@@ -160,10 +160,11 @@ Which ids surface their reasoning depends on the family. Copilot returns Anthrop
 
 The Claude ids also reason *adaptively*: the effort you set is a ceiling rather than an instruction, so Copilot may answer an easy question with no reasoning at any effort, and a `ThinkingPart` is not guaranteed on every response.
 
-`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Three cases worth knowing:
+`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Four cases worth knowing:
 
 - `thinking=False` becomes `reasoning_effort='none'`, which only some ids offer. The `claude-` and `gemini-` ids list `low` upwards and no `none`, so it `400`s there rather than silently doing nothing.
 - `thinking=True` becomes `reasoning_effort='medium'`, which `kimi-k3` does not list (its levels are `low`, `high`, `max`), so pick an explicit level for that one.
+- `thinking='max'` becomes `reasoning_effort='xhigh'`, which `kimi-k3` does not list either, so set `openai_reasoning_effort='max'` for it.
 - An id whose entry carries no `reasoning_effort` key at all, such as `claude-haiku-4.5`, rejects every value.
 
 ## Custom endpoints
@@ -180,6 +181,26 @@ model = GitHubCopilotModel(
     provider=GitHubCopilotProvider(
         api_key='your-copilot-token',
         base_url='https://copilot.example.com',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+## Integration id
+
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. It can also decide whether a credential is accepted: in our testing through the GitHub Agentic Workflows api-proxy, Copilot rejected a fine-grained PAT under `vscode-chat` with `400 Personal Access Tokens are not supported for this endpoint`, and accepted it under `agentic-workflows`. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the [Copilot CLI reads](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/multi-tenancy#integration-id); the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+
+model = GitHubCopilotModel(
+    'claude-haiku-4.5',
+    provider=GitHubCopilotProvider(
+        api_key='your-copilot-token',
+        integration_id='agentic-workflows',
     ),
 )
 agent = Agent(model)
