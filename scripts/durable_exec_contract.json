@@ -7016,41 +7016,6 @@
       ]
     }
   },
-  "pydantic_ai_slim/pydantic_ai/workspaces/computer.py": {
-    "ComputerAction": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "annotation_only"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
-      ]
-    },
-    "Point": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "annotation_only"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
-      ]
-    },
-    "Region": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "annotation_only"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
-      ]
-    }
-  },
   "pydantic_ai_slim/pydantic_ai/workspaces/protocol.py": {
     "CommandResult": {
       "engines": [
@@ -7256,21 +7221,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
-    },
-    "WorkspaceUnsupportedActionError": {
-      "engines": [
-        "durable_exec",
-        "prefect",
-        "temporal"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
-      ]
     }
   },
   "pydantic_ai_slim/pydantic_ai/workspaces/unavailable.py": {
@@ -7340,18 +7290,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_durable_policies"
       ]
     },
-    "Workspace.act": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.act"
-      ]
-    },
     "Workspace.attached": {
       "engines": [
         "dbos",
@@ -7377,31 +7315,6 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::_restore_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.backend"
-      ]
-    },
-    "Workspace.cursor_position": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.cursor_position"
-      ]
-    },
-    "Workspace.display_size": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.display_size",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
       ]
     },
     "Workspace.durable_policy": {
@@ -7525,30 +7438,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
       ]
     },
-    "Workspace.scaled_screenshot": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.scaled_screenshot"
-      ]
-    },
-    "Workspace.screenshot": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.screenshot"
-      ]
-    },
     "Workspace.stat": {
       "engines": [
         "durable_exec"
@@ -7588,18 +7477,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCall.execute"
       ]
     },
-    "Workspace.zoom": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read",
-        "override"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.zoom"
-      ]
-    },
     "WrapperWorkspace": {
       "engines": [
         "durable_exec"
@@ -7634,9 +7511,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._claim_explicit_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._unit_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.act",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.cursor_position",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.display_size",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.exists",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.list_dir",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.make_dir",
@@ -7645,12 +7519,9 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.ref",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.remove",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.run",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.scaled_screenshot",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.screenshot",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.stat",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.working_dir",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.write_bytes",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.zoom"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace.write_bytes"
       ]
     },
     "workspace_layers": {

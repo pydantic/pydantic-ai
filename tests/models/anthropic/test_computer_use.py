@@ -10,7 +10,7 @@ import pytest
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart, ComputerToolAction
+from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -29,10 +29,10 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click, PressKeys
 
+from ...computer_fakes import FAKE_DISPLAY_SIZE, FakeComputer
 from ...conftest import try_import
-from ...workspace_fakes import FAKE_DISPLAY_SIZE, InMemoryProvider, computer_capability
+from ...workspace_fakes import InMemoryProvider
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -69,8 +69,8 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not 
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
 
-def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
-    return Agent(model, capabilities=[computer_capability(), provider.capability(**settings)])
+def _agent(model: AnthropicModel, computer: FakeComputer, **settings: Any) -> Agent[None, str]:
+    return Agent(model, capabilities=[computer, InMemoryProvider().capability(**settings)])
 
 
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
@@ -84,7 +84,7 @@ def _turn(*blocks: Any) -> Any:
 
 
 async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
+    computer = FakeComputer()
     client = MockAnthropic.create_mock(
         [
             _turn(
@@ -98,7 +98,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    result = await _agent(model, provider).run('Go.')
+    result = await _agent(model, computer).run('Go.')
 
     (call,) = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
     assert call.tool_call_id == 'toolu_1'
@@ -111,7 +111,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
             {'type': 'type', 'text': 'never typed'},
         ]
     }
-    assert provider.actions == [
+    assert computer.actions == [
         Click(x=5, y=6, modifiers=('shift',)),
         PressKeys(keys=('ctrl', 'a')),
         PressKeys(keys=('backspace',)),
@@ -179,7 +179,7 @@ async def test_zoom_and_cursor_position_answer_their_own_member_calls(allow_mode
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, InMemoryProvider()).run('Go.')
+    await _agent(model, FakeComputer()).run('Go.')
 
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
@@ -201,7 +201,7 @@ async def test_zoom_and_cursor_position_answer_their_own_member_calls(allow_mode
 async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     allow_model_requests: None, model_name: str, tool: str, beta: str, zoom: dict[str, Any]
 ) -> None:
-    provider = InMemoryProvider()
+    provider, computer = InMemoryProvider(), FakeComputer(display_size=(1280, 800))
     computer_call = BetaToolUseBlock.model_validate(
         {
             'id': 'toolu_1',
@@ -212,10 +212,10 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     )
     client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
-    agent = Agent(model, capabilities=[computer_capability(display_size=(1280, 800)), provider.capability()])
+    agent = Agent(model, capabilities=[computer, provider.capability()])
     await agent.run('Go.')
 
-    assert provider.actions == [Click(x=5, y=6)]
+    assert computer.actions == [Click(x=5, y=6)]
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [
         {'type': tool, 'name': 'computer', 'display_width_px': 1280, 'display_height_px': 800, **zoom}
@@ -233,7 +233,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
 
 
 async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
+    computer = FakeComputer()
     client = MockAnthropic.create_mock(
         [
             _turn(
@@ -244,9 +244,9 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, provider).run('Go.')
+    await _agent(model, computer).run('Go.')
 
-    assert provider.actions == []
+    assert computer.actions == []
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
@@ -262,10 +262,10 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    provider = InMemoryProvider()
-    result = await _agent(model, provider).run('Go.')
+    computer = FakeComputer()
+    result = await _agent(model, computer).run('Go.')
 
-    assert provider.actions == []
+    assert computer.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
     # Under the tool's own type, so the retry names the field rather than refusing the member.
     assert call.args_as_dict() == {'actions': [{'type': 'mouse_down', 'unsupported_fields': ['coordinate']}]}
@@ -313,7 +313,7 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client), profile=profile)
-    capabilities = [computer_capability(native=native), InMemoryProvider().capability()]
+    capabilities = [FakeComputer(native=native), InMemoryProvider().capability()]
     await Agent(model, capabilities=capabilities).run('Go.')
 
     (request,) = get_mock_chat_completion_kwargs(client)
@@ -329,7 +329,7 @@ async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_
     agent = Agent(
         model,
         capabilities=[
-            computer_capability(native=False),
+            FakeComputer(native=False),
             NativeTool(ComputerTool(display_size=FAKE_DISPLAY_SIZE)),
             InMemoryProvider().capability(),
         ],
@@ -371,7 +371,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ModelRequest(parts=[ToolReturnPart('computer', ['Ran 1 action.'], tool_call_id='call_1')]),
     ]
-    await _agent(model, InMemoryProvider()).run('Go on.', message_history=history)
+    await _agent(model, FakeComputer()).run('Go on.', message_history=history)
 
     (request,) = get_mock_chat_completion_kwargs(client)
     tool_use = request['messages'][1]['content'][0]

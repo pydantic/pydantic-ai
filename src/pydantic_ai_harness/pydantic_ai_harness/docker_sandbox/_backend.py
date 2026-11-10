@@ -39,7 +39,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsCommands,
-    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -48,9 +47,10 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -345,7 +345,6 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'Docker workspace {self._name}',
-                screen_key=lambda: self.ref,
             )
         )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
@@ -531,6 +530,6 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The container's display, when created with `desktop=True`."""
         return self._display
