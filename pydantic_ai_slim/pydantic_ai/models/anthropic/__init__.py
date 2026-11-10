@@ -11,7 +11,6 @@ from functools import cached_property, partial
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
-from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
@@ -27,7 +26,6 @@ from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
-    BaseToolReturnPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -37,7 +35,6 @@ from ...messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
@@ -381,9 +378,6 @@ __all__ = (
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
     'web_search_tool_result_content_ta',
-    'BaseToolReturnPart',
-    'ModelMessagesTypeAdapter',
-    'ModelRequestPart',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
@@ -952,6 +946,11 @@ class _PreparedMessagesCreate:
     mcp_servers: list[BetaRequestMCPServerURLDefinitionParam]
     output_config: BetaOutputConfigParam | None
     auto_cache_control: BetaCacheControlEphemeralParam | None
+    cache_breakpoints: tuple[list[str], list[str]] | None
+    """The cache breakpoints the request asks for and the ones it keeps, for each attempt to record as it's sent.
+
+    `None` when there are none, or when `_prepare_messages_create` recorded them already.
+    """
     max_tokens: int
     stop_sequences: list[str] | Omit
     effective_thinking: dict[str, object] | Omit
@@ -1009,6 +1008,8 @@ class _Thread:
 
     previous_message_id: str | None = None
     messages: list[BetaMessageParam] | None = None
+    cache_breakpoints: tuple[list[str], list[str]] | None = None
+    """The cache breakpoints of the request, which for a continue request are only those of the new messages."""
 
     def apply(self, params: _MessageCreateParams) -> _MessageCreateParams:
         extra_body = params['extra_body']
@@ -1020,6 +1021,33 @@ class _Thread:
             params.update(messages=self.messages, system=OMIT, tools=OMIT)
         params['extra_body'] = {**(extra_body if _is_str_mapping(extra_body) else {}), 'thread': thread}
         return params
+
+
+def _continue_cache_breakpoints(
+    breakpoints: tuple[list[str], list[str]] | None,
+) -> tuple[list[str], list[str]] | None:
+    """The cache breakpoints of a continue request, from those of its new messages prepared on their own.
+
+    A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
+    """
+    requested, applied = (
+        [path for path in paths if not path.startswith(('system[', 'tools['))] for paths in breakpoints or ([], [])
+    )
+    return (requested, applied) if requested else None
+
+
+def _may_use_thread(model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None) -> bool:
+    """Whether `anthropic_thread` applies to a request. A compaction request samples no reply, so it never uses one."""
+    return bool(model_settings.get('anthropic_thread')) and compaction is None
+
+
+def _record_cache_breakpoints(breakpoints: tuple[list[str], list[str]] | None) -> None:
+    """Record a request's requested and applied cache breakpoints on its model-request span, if it has any."""
+    span = current_model_request_span()
+    if span is not None and breakpoints is not None:
+        requested, applied = breakpoints
+        span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
+        span.set_attribute('pydantic_ai.cache.applied_breakpoints', applied)
 
 
 def _with_thread(
@@ -1810,7 +1838,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did.
         """
         prepared = await self._prepare_messages_create(
-            messages, model_settings, model_request_parameters, compaction=compaction
+            messages,
+            model_settings,
+            model_request_parameters,
+            compaction=compaction,
+            cache_breakpoints_on_send=thread_record is not None and _may_use_thread(model_settings, compaction),
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1880,7 +1912,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared.initial_betas,
             prepared.initial_thinking_override,
         )
-        if thread_record is None or not model_settings.get('anthropic_thread') or compaction is not None:
+        if thread_record is None or not _may_use_thread(model_settings, compaction):
             return await create(*initial)
         params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
         fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
@@ -1891,13 +1923,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
             # hoisted into `system`, which a continue request doesn't send.
             new_prepared = await self._prepare_messages_create(
-                new_messages, model_settings, model_request_parameters, continues_thread=True
+                new_messages,
+                model_settings,
+                model_request_parameters,
+                continues_thread=True,
+                cache_breakpoints_on_send=True,
+            )
+            thread = _Thread(
+                previous_message_id=previous_message_id,
+                messages=new_prepared.anthropic_messages,
+                cache_breakpoints=_continue_cache_breakpoints(new_prepared.cache_breakpoints),
             )
             try:
-                response = await create(
-                    *initial,
-                    _Thread(previous_message_id=previous_message_id, messages=new_prepared.anthropic_messages),
-                )
+                response = await create(*initial, thread)
             except APIStatusError as error:
                 if not is_thread_replay_error(error):
                     raise
@@ -1906,7 +1944,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thread_record.history = history_hasher(messages, self._history_digest_key)
                 return response
         try:
-            response = await create(*initial, _Thread())
+            response = await create(*initial, _Thread(cache_breakpoints=prepared.cache_breakpoints))
         except APIStatusError as error:
             if not is_thread_unsupported_error(error):
                 raise
@@ -1932,6 +1970,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Send one attempt of `_messages_create`, with the container, thinking object and thread this attempt uses."""
         max_tokens = prepared.max_tokens
         anthropic_profile = self.profile
+        _record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
         params, betas = _with_thread(
             self._messages_create_params(
                 messages, model_settings, prepared, container_param, thinking, thinking_override
@@ -2020,7 +2059,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         compaction: BetaCompactionConfigParam | None = None,
         continues_thread: bool = False,
+        cache_breakpoints_on_send: bool = False,
     ) -> _PreparedMessagesCreate:
+        """The `messages.create` parameters of a request.
+
+        With `cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record as it's
+        sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
+        """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -2053,13 +2098,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
         auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         # Only the request records its breakpoints: `count_tokens` builds the same request outside its span.
-        self._limit_cache_points(
+        cache_breakpoints = self._limit_cache_points(
             system_prompt,
             anthropic_messages,
             tools,
             automatic_caching=auto_cache_control is not None,
-            span=current_model_request_span(),
+            record_breakpoints=current_model_request_span() is not None,
         )
+        if not cache_breakpoints_on_send:
+            _record_cache_breakpoints(cache_breakpoints)
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
@@ -2098,6 +2145,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             mcp_servers=mcp_servers,
             output_config=output_config,
             auto_cache_control=auto_cache_control,
+            cache_breakpoints=cache_breakpoints if cache_breakpoints_on_send else None,
             max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
             stop_sequences=stop_sequences,
             effective_thinking=effective_thinking,
@@ -3795,8 +3843,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         *,
         automatic_caching: bool = False,
-        span: Span | None = None,
-    ) -> None:
+        record_breakpoints: bool = False,
+    ) -> tuple[list[str], list[str]] | None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
         Tool definition cache points and the first instruction cache point always take priority; excess
@@ -3805,7 +3853,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
-        Given the model-request `span`, records the breakpoints the request asked for and the ones it kept on it.
+        With `record_breakpoints`, returns the breakpoints the request asked for and the ones it kept, if it asked
+        for any.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
@@ -3815,7 +3864,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModel._cache_breakpoints(
                 system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
             )
-            if span is not None
+            if record_breakpoints
             else None
         )
         # Anthropic enforces a maximum of 4 cache points per request.
@@ -3843,14 +3892,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             description='Anthropic request',
         ):
             del block_dict['cache_control']
-        if span is not None and requested:
-            span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
-            span.set_attribute(
-                'pydantic_ai.cache.applied_breakpoints',
-                AnthropicModel._cache_breakpoints(
-                    system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
-                ),
-            )
+        if not requested:
+            return None
+        return requested, AnthropicModel._cache_breakpoints(
+            system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
+        )
 
     @staticmethod
     def _cache_breakpoints(

@@ -17,9 +17,11 @@ from typing import Any
 
 import httpx2
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -28,12 +30,20 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     ToolReturn,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from ...conftest import try_import
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
@@ -131,7 +141,7 @@ def get_weather(city: str) -> str:
 
 
 async def _run(
-    agent: Agent[None, str], prompt: str, history: Sequence[ModelMessage], stream: bool
+    agent: Agent[None, str], prompt: str | Sequence[UserContent], history: Sequence[ModelMessage], stream: bool
 ) -> list[ModelMessage]:
     if not stream:
         return (await agent.run(prompt, message_history=history)).all_messages()
@@ -465,3 +475,78 @@ async def test_history_digest_key(allow_model_requests: None):
     keyed, unkeyed = first[-1], plain[-1]
     assert isinstance(keyed, ModelResponse) and isinstance(unkeyed, ModelResponse)
     assert keyed.history_digest != unkeyed.history_digest
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+@pytest.mark.parametrize('stream', [False, True])
+async def test_cache_breakpoints_recorded_for_the_request_sent(allow_model_requests: None, stream: bool):
+    """Each model-request span lists the cache breakpoints of the request it sent.
+
+    A continue request leaves out `system` and `tools`, so its span lists only the new messages' breakpoints, at
+    their place in that request. A continue that's replayed lists the full history's, which the replay sends.
+    """
+    api = _Api(
+        stream=stream,
+        replies=[
+            {'type': 'text', 'text': 'Hello'},
+            {'type': 'text', 'text': 'Sure'},
+            _thread_error(404, 'thread_not_found'),
+        ],
+    )
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    async with _model(api) as model:
+        agent = Agent(
+            model,
+            instructions='Be brief.',
+            tools=[get_weather],
+            model_settings=AnthropicModelSettings(max_tokens=256, anthropic_thread=True, cache=True),
+            capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
+        )
+        first = await _run(agent, ['Context', CachePoint(), 'Hi'], [], stream)
+        second = await _run(agent, ['More context', CachePoint(), 'Again'], first, stream)
+        await _run(agent, 'Once more', second, stream)
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'continue', 'create']
+    assert [
+        {key: value for key, value in (span.attributes or {}).items() if key.endswith('_breakpoints')}
+        for span in exporter.get_finished_spans()
+        if span.name.startswith('chat ')
+    ] == snapshot(
+        [
+            {
+                'pydantic_ai.cache.requested_breakpoints': (
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'automatic',
+                ),
+                'pydantic_ai.cache.applied_breakpoints': (
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'automatic',
+                ),
+            },
+            {
+                'pydantic_ai.cache.requested_breakpoints': ('messages[0].content[0]', 'automatic'),
+                'pydantic_ai.cache.applied_breakpoints': ('messages[0].content[0]', 'automatic'),
+            },
+            {
+                'pydantic_ai.cache.requested_breakpoints': (
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'messages[2].content[0]',
+                    'automatic',
+                ),
+                'pydantic_ai.cache.applied_breakpoints': (
+                    'system[1]',
+                    'tools[0]',
+                    'messages[2].content[0]',
+                    'automatic',
+                ),
+            },
+        ]
+    )
