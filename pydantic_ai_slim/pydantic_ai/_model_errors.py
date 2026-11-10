@@ -200,6 +200,26 @@ def google_exceeds_daily_quota(body: object) -> bool:
     return False
 
 
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string like `'14s'` or
+    `'0.5s'`, and one that's absent, negative or unparsable says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
+
+
 def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:
     """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`, and the error `body`'s details.
 

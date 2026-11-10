@@ -317,6 +317,47 @@ _ANTHROPIC_MESSAGE_START: tuple[str, dict[str, Any]] = (
     },
 )
 
+_GEMINI_FREE_TIER_RATE_LIMIT: dict[str, Any] = {
+    'error': {
+        'code': 429,
+        'message': 'You exceeded your current quota, please check your plan and billing details. For more information '
+        'on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: '
+        'https://ai.dev/rate-limit. \n* Quota exceeded for metric: '
+        'generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-3.8-flash, '
+        'description: Generate content requests per minute limit exceeded on Free Tier. See '
+        'https://aistudio.google.com/docs/rate-limits.\nPlease retry in 14.306944957s.',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [
+            {
+                '@type': 'type.googleapis.com/google.rpc.Help',
+                'links': [
+                    {
+                        'description': 'Learn more about Gemini API quotas',
+                        'url': 'https://aistudio.google.com/docs/rate-limits',
+                    }
+                ],
+            },
+            {
+                '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                'violations': [
+                    {
+                        'description': 'Generate content requests per minute limit exceeded on Free Tier. See '
+                        'https://aistudio.google.com/docs/rate-limits.',
+                        'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                        'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                        'quotaDimensions': {'model': 'gemini-3.8-flash', 'location': 'global'},
+                        'quotaValue': '5',
+                    }
+                ],
+            },
+            {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+        ],
+    }
+}
+"""Gemini's 429 for the free tier's per-minute request quota, as a real response reported it in
+https://github.com/pydantic/pydantic-ai/issues/12063#issuecomment-6769986854: no `Retry-After` header, and the wait
+only in the body's `google.rpc.RetryInfo`."""
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -786,7 +827,7 @@ CASES = [
             },
         ),
         categories={ModelHTTPError, ModelQuotaExceededError},
-        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 55.0},
     ),
     Case(
         # Only per-minute quotas exceeded: a rate limit, which waiting fixes.
@@ -818,7 +859,50 @@ CASES = [
             },
         ),
         categories={ModelHTTPError, ModelRateLimitError},
-        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 12.0},
+    ),
+    Case(
+        # A real free-tier 429: no `Retry-After` header, the wait only in the body's `google.rpc.RetryInfo`.
+        id='google-retry-info',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 14.0},
+    ),
+    Case(
+        # A response that carries `Retry-After` keeps it, and the body's `RetryInfo` is only the fallback.
+        id='google-retry-info-after-header',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT, headers={'retry-after': '7'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 7.0},
+    ),
+    Case(
+        # An error chunk in a stream arrives with the open 200 stream's own headers, so only the body has the wait.
+        id='google-stream-retry-info',
+        model=_google,
+        handler=_sse_data(_GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'retry_after': 14.0},
+        stream=True,
+    ),
+    Case(
+        # A `RetryInfo` that names no parsable protobuf `Duration` says nothing, and must not fail the mapping.
+        id='google-retry-info-unparsable',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'Resource has been exhausted',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': 'soon'}],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
     ),
     Case(
         # From https://github.com/ChatGPTNextWeb/NextChat/issues/5255.
@@ -1747,6 +1831,14 @@ CASES = [
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503},
         stream=True,
+    ),
+    Case(
+        # The status a retrying transport gave up on still carries Gemini's body, and so its `RetryInfo` wait.
+        id='google-transport-gave-up-retry-info',
+        model=_google,
+        handler=_gave_up(429, content=json.dumps(_GEMINI_FREE_TIER_RATE_LIMIT).encode()),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 14.0},
     ),
     Case(
         id='mistral-transport-gave-up',

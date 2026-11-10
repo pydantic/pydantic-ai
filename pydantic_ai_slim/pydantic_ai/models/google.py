@@ -430,7 +430,9 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.HTTPStatusError):
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        return _model_errors.transport_status_error(model_name, e.response)
+        error = _model_errors.transport_status_error(model_name, e.response)
+        error.retry_after = _model_errors.google_retry_after(error)
+        return error
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -468,7 +470,7 @@ def _http_error(
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.google_status_category(status, message, body)
-    return ModelHTTPError.for_category(
+    error = ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, message),
         status_code=status_code,
         model_name=model_name,
@@ -478,6 +480,8 @@ def _http_error(
         provider_error_code=status,
         in_stream=in_stream,
     )
+    error.retry_after = _model_errors.google_retry_after(error)
+    return error
 
 
 @contextmanager
