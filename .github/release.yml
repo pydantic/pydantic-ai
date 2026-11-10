@@ -7,8 +7,8 @@ changelog:
   # GitHub lists each PR only under the first category it matches, so categories are
   # change types. The release manager lists `compatibility impact` PRs again under
   # Compatibility Notes, and copies those notes into the "Catching up across V2 minor releases"
-  # section of docs/changelog.md under a `###` heading for the release, linking each API name
-  # that has a reference page.
+  # section of docs/changelog.md: a `###` heading for the release at the top (newest first), then
+  # one line per note, keeping its PR link and linking each API name that has a reference page.
   categories:
     - title: 🚀 Features
       labels:
