@@ -36,4 +36,4 @@ class AskUserAnsweredEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='ans
     timed_out: bool = False
     """No answer arrived within `AskUser.timeout`, or the resume token was resolved with a failure; `response` is then a cancelled one."""
     failed: bool = False
-    """The answerer raised, or the token was resolved with something that isn't an `AskUserResponse`; `response` is then a cancelled one, and the error fails the run."""
+    """The answerer raised, or the token was resolved with something that isn't an `AskUserResponse`; `response` is then a cancelled one, and the error fails the run, or a `ModelRetry` asks the model to retry."""

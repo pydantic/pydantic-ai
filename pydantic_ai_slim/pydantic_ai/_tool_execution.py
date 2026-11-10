@@ -190,14 +190,24 @@ _DEFERRED_BUCKETS: tuple[_DeferredBucket, ...] = ('unapproved', 'external', 'que
 
 
 def _deferred_tool_requests(
-    deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]], deferred_metadata: dict[str, dict[str, Any]]
+    deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
+    deferred_metadata: dict[str, dict[str, Any]],
+    *,
+    order: Sequence[_messages.ToolCallPart],
 ) -> DeferredToolRequests:
-    """Build the `DeferredToolRequests` for collected deferred calls, recording which calls are questions."""
+    """Build the `DeferredToolRequests` for collected deferred calls, recording which calls are questions.
+
+    Questions are collected apart from external calls, so they are put back in `order`, the order the model made them.
+    """
+    calls = deferred_calls['external']
+    if questions := deferred_calls['question']:
+        positions = {call.tool_call_id: index for index, call in enumerate(order)}
+        calls = sorted([*calls, *questions], key=lambda call: positions[call.tool_call_id])
     return DeferredToolRequests(
-        calls=[*deferred_calls['external'], *deferred_calls['question']],
+        calls=calls,
         approvals=deferred_calls['unapproved'],
         metadata=deferred_metadata,
-        kinds={call.tool_call_id: 'question' for call in deferred_calls['question']},
+        kinds={call.tool_call_id: 'question' for call in questions},
     )
 
 
@@ -1156,7 +1166,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
 
         deferred_tool_requests: DeferredToolRequests | None = _deferred_tool_requests(
-            self.deferred_calls, self.deferred_metadata
+            self.deferred_calls, self.deferred_metadata, order=self.tool_calls
         )
 
         # Emit the batch of deferred requests so stream consumers can observe the pending
@@ -1220,7 +1230,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 # batch was already announced above, and re-announcing the same tool call IDs
                 # (possibly under a different kind) would be ambiguous for consumers. The final
                 # pending batch still surfaces as the run's `DeferredToolRequests` output below.
-                new_requests = _deferred_tool_requests(new_deferred_calls, new_deferred_metadata)
+                new_requests = _deferred_tool_requests(new_deferred_calls, new_deferred_metadata, order=self.tool_calls)
                 if deferred_tool_requests is None:
                     deferred_tool_requests = new_requests
                 else:

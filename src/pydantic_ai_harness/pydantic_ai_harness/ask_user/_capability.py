@@ -14,7 +14,7 @@ from typing_extensions import TypeIs
 
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
@@ -103,8 +103,8 @@ class AskUser(AbstractCapability[AgentDepsT]):
     """Ask in process inside a durable run whose engine doesn't support waiting for external events, instead of raising a `UserError`.
 
     The wait is then not recorded: when the engine replays the run, the answerer is called again, and
-    when the process restarts, the wait and any answer to it are lost. It doesn't work on Temporal,
-    whose workflow code can't be woken from outside the workflow.
+    when the process restarts, the wait and any answer to it are lost. On Temporal, whose
+    workflow code can't be woken from outside the workflow, it still raises.
     """
 
     id: str | None = 'ask_user'
@@ -196,7 +196,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
 
     async def _answer(
         self, answerer: AnyAnswerer[AgentDepsT], run_ctx: RunContext[AgentDepsT], call: ToolCallPart
-    ) -> AskUserResult:
+    ) -> AskUserResult | ModelRetry:
         request = rebuild_request(call)
         # The context the tool call had, so the answerer and the events see which call asked.
         ctx = replace(run_ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
@@ -220,6 +220,9 @@ class AskUser(AbstractCapability[AgentDepsT]):
             await ctx.emit(
                 AskUserAnsweredEvent(request_id=request.id, response=AskUserResponse(cancelled=True), failed=True)
             )
+            if isinstance(error, ModelRetry):
+                # As when raised from a tool: the model is asked to try again.
+                return error
             if isinstance(error, ValidationError):
                 raise UserError(
                     f'The answer sent for question {request.id!r} is not an `AskUserResponse`: {error}'

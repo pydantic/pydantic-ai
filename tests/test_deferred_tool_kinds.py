@@ -78,6 +78,9 @@ async def test_a_question_is_marked_in_the_requests(end_strategy: Any) -> None:
     requests = result.output
     assert isinstance(requests, DeferredToolRequests)
     assert requests.kinds == {'question': 'question'}
+    assert [call.tool_call_id for call in requests.calls] == ['question', 'external'], (
+        'in the order the model made them'
+    )
     assert {call.tool_call_id: requests.kind(call.tool_call_id) for call in [*requests.calls, *requests.approvals]} == {
         'question': 'question',
         'external': 'external',

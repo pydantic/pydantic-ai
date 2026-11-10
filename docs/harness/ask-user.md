@@ -189,7 +189,7 @@ makes the wait durable on an engine that supports it:
 - On Temporal, DBOS, Prefect and other durable engines without support for waiting, asking raises a
   `UserError`, since a wait in process would not be recorded. `AskUser(..., allow_non_durable_wait=True)`
   asks in process anyway: the wait is then not recorded, so a replay asks the user again and a restart
-  loses the wait, and it doesn't work on Temporal, whose workflow code can't be woken from outside.
+  loses the wait, and on Temporal, whose workflow code can't be woken from outside, it still raises.
 
 An answerer with three required positional parameters, satisfying `TokenAnswerer`, also receives a
 resume token. It can answer right away as the other forms do, or hand the token on, for example in a
@@ -293,7 +293,8 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
 start and end in step with the run. When the answerer raises, or a resume token is resolved with
 something that isn't an `AskUserResponse`, the answered event carries `failed=True` and a cancelled
-response, then the error fails the run. A run
+response, then a `ModelRetry` from the answerer sends the model a retry prompt, and any other error
+fails the run. A run
 cancelled while the answerer waits emits no answered event, so also clear waiting state when the
 run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 

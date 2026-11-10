@@ -224,8 +224,8 @@ async def wait_for_external_event(
             `ask` still running when it elapses is cancelled.
         allow_non_durable_wait: Inside a durable run whose engine doesn't support waiting for external
             events, wait in process instead of raising. The wait is then not recorded: a replay of the
-            run calls `ask` again, and a restart loses the wait. It doesn't work on Temporal, whose
-            workflow code can't be woken from outside the workflow.
+            run calls `ask` again, and a restart loses the wait. On Temporal, whose workflow code
+            can't be woken from outside the workflow, it still raises.
 
     Returns:
         The JSON payload `ask` returned, or the token was resolved with.

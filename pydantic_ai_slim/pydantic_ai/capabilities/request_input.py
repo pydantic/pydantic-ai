@@ -75,8 +75,8 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     """Wait in process inside a durable run whose engine doesn't support waiting for external events, instead of raising a `UserError`.
 
     The wait is then not recorded: when the engine replays the run, `ask` is called again, and when
-    the process restarts, the wait and any answer to it are lost. It doesn't work on Temporal, whose
-    workflow code can't be woken from outside the workflow.
+    the process restarts, the wait and any answer to it are lost. On Temporal, whose workflow code
+    can't be woken from outside the workflow, it still raises.
     """
 
     def __post_init__(self) -> None:

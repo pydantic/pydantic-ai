@@ -37,7 +37,7 @@ from pydantic_ai.durable_exec import (
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.external_events import fail_external_event, resolve_external_event
 from pydantic_ai.messages import (
     AudioUrl,
@@ -725,6 +725,37 @@ class TestResumeToken:
         assert answered.timed_out and answered.response == AskUserResponse(cancelled=True)
 
 
+class TestModelRetry:
+    async def test_an_answerer_raising_model_retry_asks_the_model_to_retry(self) -> None:
+        async def retry(request: AskUserRequest) -> AskUserResponse:
+            raise ModelRetry('Ask one question at a time.')
+
+        observer = Observer()
+        agent = Agent(calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=retry), observer])
+
+        assert 'Ask one question at a time.' in (await agent.run('go')).output
+        (answered,) = observer.answered
+        assert answered.failed
+
+
+class TestRunStream:
+    async def test_run_stream_ends_the_run_with_the_question(self) -> None:
+        """`run_stream()` runs no deferred tool call handlers yet (#12686), so the answerer is not called."""
+        answerer = ScriptedAnswerer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[AskUser(answerer=answerer)],
+        )
+        async with agent.run_stream('go') as result:
+            output = await result.get_output()
+
+        assert isinstance(output, DeferredToolRequests)
+        assert [call.tool_call_id for call in output.calls] == ['c1']
+        assert answerer.requests == []
+
+
 class TestComposition:
     async def test_ask_user_answers_its_questions_before_request_input_is_asked(self) -> None:
         asked: list[DeferredToolRequests] = []
@@ -762,6 +793,46 @@ class TestComposition:
             return 'deleted'
 
         assert (await agent.run('go')).output == 'done'
+
+    async def test_each_ask_user_answers_only_its_own_questions(self) -> None:
+        """Two `AskUser`s under different `id`s, one prefixed, and a question another tool defers, each go to their own answerer."""
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='first'),
+                        ToolCallPart(f'later_{TOOL_NAME}', {'questions': raw_questions()}, tool_call_id='second'),
+                        ToolCallPart('pick_color', {}, tool_call_id='foreign'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        first, second = ScriptedAnswerer(), ScriptedAnswerer()
+        asked: list[list[str]] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            asked.append([call.tool_call_id for call in requests.calls])
+            return requests.build_results(calls={'foreign': 'blue'})
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[
+                AskUser(answerer=first, id=None),
+                PrefixTools(AskUser(answerer=second, id='later_ask_user'), prefix='later'),
+                RequestInput[None](ask),
+            ],
+        )
+
+        @agent.tool_plain
+        def pick_color() -> str:
+            raise CallDeferred(kind='question')
+
+        assert (await agent.run('go')).output == 'done'
+        assert [request.id for request in first.requests] == ['first']
+        assert [request.id for request in second.requests] == ['second']
+        assert asked == [['foreign']]
 
     async def test_without_an_answerer_request_input_gets_the_question(self) -> None:
         """One inbox: `RequestInput` sees the question, marked as one, and answers it like any deferred call."""

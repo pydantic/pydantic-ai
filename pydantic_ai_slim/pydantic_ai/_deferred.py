@@ -216,9 +216,10 @@ class DeferredToolResults:
     answered_by: dict[str, str] = field(default_factory=dict[str, str])
     """Who answered each call, keyed by `tool_call_id`: a person's ID, a bot or a policy name.
 
-    Reported as given, such as in the [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent]
-    of calls resolved during the run. Pydantic AI doesn't check it, so authorize whoever answers before
-    you record who they are.
+    Reported as given in the [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent]
+    of calls a handler resolves during the run; not yet recorded in the message history, so results
+    passed to a new run with `deferred_tool_results` don't report it. Pydantic AI doesn't check it, so
+    authorize whoever answers before you record who they are.
     """
 
     def update(self, other: DeferredToolResults) -> None:

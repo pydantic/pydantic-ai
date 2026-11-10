@@ -197,7 +197,7 @@ Run outside a durable handler, for example in local development, the same agent 
 | [AWS Lambda durable functions](../harness/aws-lambda.md#approvals) | A Lambda callback; resolve it with `SendDurableExecutionCallbackSuccess` |
 | Temporal, DBOS, Prefect, and other durable engines | Not supported yet: a call that needs an answer fails the run with a `UserError`, since a wait in process would not be recorded. End the run with `DeferredToolRequests` output instead, or see below |
 
-On an engine that doesn't support waiting, `RequestInput(..., allow_non_durable_wait=True)` waits in process instead of raising. The wait is then not recorded: when the engine replays the run, for example after a worker restart, `ask` is called again and the person is asked a second time, and when the process restarts, the wait and any answer sent to it are lost. It doesn't work on Temporal, whose workflow code can't be woken from outside the workflow.
+On an engine that doesn't support waiting, `RequestInput(..., allow_non_durable_wait=True)` waits in process instead of raising. The wait is then not recorded: when the engine replays the run, for example after a worker restart, `ask` is called again and the person is asked a second time, and when the process restarts, the wait and any answer sent to it are lost. On Temporal, whose workflow code can't be woken from outside the workflow, it still raises.
 
 Engine authors can add support as [Building a durable execution backend](../durable_execution/backends.md#waiting-for-external-events) describes.
 
