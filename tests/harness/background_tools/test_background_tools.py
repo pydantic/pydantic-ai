@@ -8,7 +8,7 @@ import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -83,16 +83,21 @@ def _ack_seen(messages: list[ModelMessage]) -> bool:
     )
 
 
-def _plain(value: Any) -> Any:
+def _without_mark(metadata: dict[str, object] | None) -> dict[str, object] | None:
+    """`metadata` without the framework's reserved key."""
+    return None if metadata is None else {key: item for key, item in metadata.items() if key != '__pydantic_ai__'}
+
+
+def _plain(value: object) -> object:
     """`value` as the background result's frame was written, without the framework mark."""
     if isinstance(value, TextContent):
-        return TextContent(value.content, metadata=_plain(value.metadata))
-    if isinstance(value, str):
-        return value
+        return TextContent(value.content, metadata=_without_mark(value.metadata))
     if isinstance(value, list):
-        return [_plain(item) for item in cast(list[Any], value)]
+        items: list[object] = value
+        return [_plain(item) for item in items]
     if isinstance(value, dict):
-        return {key: item for key, item in cast(dict[str, Any], value).items() if key != '__pydantic_ai__'}
+        metadata: dict[str, object] = value
+        return _without_mark(metadata)
     return value
 
 

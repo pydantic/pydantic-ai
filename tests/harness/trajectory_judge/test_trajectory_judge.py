@@ -6,7 +6,7 @@ import asyncio
 import re
 import secrets
 from dataclasses import dataclass, is_dataclass
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -114,14 +114,22 @@ def _all_good_model() -> FunctionModel:
     return FunctionModel(fn)
 
 
-def _plain(value: Any) -> Any:
+def _without_mark(metadata: dict[str, object] | None) -> dict[str, object] | None:
+    """`metadata` without the framework's reserved key."""
+    return None if metadata is None else {key: item for key, item in metadata.items() if key != '__pydantic_ai__'}
+
+
+def _plain(value: object) -> object:
     """`value` as the judge's frame was written, without the framework mark."""
     if isinstance(value, TextContent):
-        return TextContent(value.content, metadata=_plain(value.metadata))
+        return TextContent(value.content, metadata=_without_mark(value.metadata))
     if isinstance(value, list):
-        return [_plain(item) for item in cast(list[Any], value)]
+        items: list[object] = value
+        return [_plain(item) for item in items]
     # The rest is a `TextContent`'s metadata.
-    return {key: item for key, item in cast(dict[str, Any], value).items() if key != '__pydantic_ai__'}
+    assert isinstance(value, dict)
+    metadata: dict[str, object] = value
+    return _without_mark(metadata)
 
 
 def _all_user_text(messages: list[ModelMessage]) -> str:
