@@ -54,7 +54,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelRequestPart
+from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelMessagesTypeAdapter, ModelRequestPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -450,6 +450,8 @@ async def test_events():
                     messages_before=3,
                     messages_after=3,
                     kept_from=1,
+                    part_message_index=0,
+                    part_index=0,
                 ),
                 tokens_before=220,
                 summary_tokens=50,
@@ -497,6 +499,8 @@ def test_events_round_trip():
         messages_before=4,
         messages_after=2,
         kept_from=1,
+        part_message_index=0,
+        part_index=0,
         replaced=replaced,
     )
     end = CompactionEndEvent(record=record)
@@ -836,9 +840,16 @@ async def test_resumed_suspended_response_is_not_compacted():
 
 async def test_resumed_request_stays_out_of_new_messages():
     """Compacting a run resumed from history without a prompt keeps that request out of `new_messages()`."""
+
+    def keep_only_the_request(request: CompactionRequest) -> CompactionResult:
+        part = CompactionPart(content='summary')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h', kept_from=1
+        )
+
     agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
-        capabilities=[RequestOnce(), Summarize()],
+        capabilities=[RequestOnce(), Returns(keep_only_the_request)],
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('first')]),
@@ -846,12 +857,13 @@ async def test_resumed_request_stays_out_of_new_messages():
         ModelRequest(parts=[UserPromptPart('second')]),
     ]
     result = await agent.run(message_history=history)
-    assert [type(m).__name__ for m in result.all_messages()] == [
-        'ModelRequest',
-        'ModelResponse',
-        'ModelRequest',
-        'ModelResponse',
-    ]
+    # The compaction removed a message ahead of the resumed request, so its index shifted.
+    [record] = result.compactions
+    assert (record.messages_before, record.messages_after) == (3, 2)
+    summary, resumed, response = result.all_messages()
+    assert summary == ModelRequest(parts=[CompactionPart(content='summary')])
+    assert isinstance(resumed, ModelRequest) and resumed.parts == history[2].parts
+    assert isinstance(response, ModelResponse)
     assert result.new_messages() == [result.all_messages()[-1]]
 
 
@@ -1085,6 +1097,8 @@ async def test_run_result_reports_the_kept_compactions():
             messages_before=3,
             messages_after=3,
             kept_from=1,
+            part_message_index=0,
+            part_index=0,
         )
     )
     # `new_messages()` are this run's messages still in the compacted history.
@@ -1153,6 +1167,51 @@ async def test_records_rebuild_the_full_conversation():
     )
 
 
+def _provider_response_after_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """Shaped like `NativeCompaction`'s result: the standing system prompt, then the provider's compaction response."""
+    opening = request.messages[0]
+    assert isinstance(opening, ModelRequest)
+    part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+    return CompactionResult(
+        messages=[
+            ModelRequest(parts=opening.parts[:1]),
+            ModelResponse(parts=[part], provider_name='openai'),
+            request.messages[-1],
+        ],
+        part=part,
+        handler='native',
+        kept_from=2,
+    )
+
+
+@pytest.mark.parametrize(
+    ('build', 'position', 'holder'),
+    [
+        (_summary_after_the_system_prompt, (0, 1), ModelRequest),
+        (_provider_response_after_the_system_prompt, (1, 0), ModelResponse),
+    ],
+)
+async def test_records_locate_their_part_after_a_round_trip(
+    build: CompactionBuilder, position: tuple[int, int], holder: type[ModelMessage]
+):
+    """A record's part position locates the part in the compacted history, also after both are loaded from JSON."""
+    agent = Agent(seen_by([]), system_prompt='You are a pirate.', capabilities=[RequestOnce(), Returns(build)])
+    result = await agent.run('hi')
+    [record] = result.compactions
+    assert (record.part_message_index, record.part_index) == position
+    message = result.all_messages()[record.part_message_index]
+    assert isinstance(message, holder) and message.parts[record.part_index] is record.part
+
+    adapter = pydantic.TypeAdapter(AgentRunResult[str])
+    loaded = adapter.validate_json(adapter.dump_json(result))
+    [loaded_record] = loaded.compactions
+    assert loaded_record.replaced is None
+    # A store keeping the messages on their own finds the part the same way.
+    messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+    for history in (loaded.all_messages(), messages):
+        assert history[loaded_record.part_message_index].parts[loaded_record.part_index] == loaded_record.part
+
+
 async def test_compactions_serialize_without_what_they_replaced():
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
     result = await agent.run('hi')
@@ -1176,6 +1235,8 @@ async def test_compactions_serialize_without_what_they_replaced():
                 'messages_before': 1,
                 'messages_after': 2,
                 'kept_from': 1,
+                'part_message_index': 0,
+                'part_index': 0,
                 'metadata': None,
             }
         ]

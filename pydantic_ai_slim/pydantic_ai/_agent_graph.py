@@ -831,6 +831,9 @@ class _AttemptCompaction:
         removed = compacted - len(self.committed)
         # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
         history[:] = [*self.committed, *history[compacted:]]
+        # Located again where the part now is in the run's history, so the record can't disagree with it.
+        position = _part_position(history, self.record.part)
+        self.record.part_message_index, self.record.part_index = position
         ctx.state.compactions.append(self.record)
         if ctx.deps.resumed_request_index is not None:
             # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.
@@ -997,6 +1000,20 @@ def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
             break
         parts.extend(message.parts)
     return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
+
+
+class _PartPosition(NamedTuple):
+    message_index: int
+    part_index: int
+
+
+def _part_position(messages: Sequence[_messages.ModelMessage], part: _messages.CompactionPart) -> _PartPosition:
+    """Where `part` is in `messages`, by identity: the checks, the loads step and the commit all keep the object."""
+    for message_index, message in enumerate(messages):
+        for part_index, candidate in enumerate(message.parts):
+            if candidate is part:
+                return _PartPosition(message_index, part_index)
+    raise AssertionError('The compacted history was checked to contain its `CompactionPart`.')  # pragma: no cover
 
 
 def _is_empty_summary(part: _messages.CompactionPart) -> bool:
@@ -3975,6 +3992,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compaction.result = result
         compaction.committed = committed
         compaction.sent = sent
+        # Where the part is in what's committed: the end event reports it before the commit, which writes this history
+        # at the start of the run's, so the position holds after it too.
+        position = _part_position(committed, result.part)
         compaction.record = record = _messages.CompactionRecord(
             part=result.part,
             handler=result.handler,
@@ -3984,6 +4004,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages_before=len(history),
             messages_after=len(committed),
             kept_from=committed_kept_from,
+            part_message_index=position.message_index,
+            part_index=position.part_index,
             replaced=history,
             metadata=result.metadata,
         )

@@ -7727,6 +7727,12 @@ class CompactionRecord(_SerializesItself):
     `kept_from` on are the last messages of the history it replaced, kept as they were. So the messages it
     summarized are the history it replaced without that tail; see
     [`summarized`][pydantic_ai.messages.CompactionRecord.summarized].
+
+    [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] and `summarized` are held in memory only. Every
+    other field is serialized, so a store that recorded the history before the compaction can rebuild what was
+    summarized from a loaded record: the first `messages_before - (messages_after - kept_from)` messages of the
+    history it recorded. [`part_message_index`][pydantic_ai.messages.CompactionRecord.part_message_index] and
+    [`part_index`][pydantic_ai.messages.CompactionRecord.part_index] locate the compaction in the compacted history.
     """
 
     part: CompactionPart
@@ -7757,6 +7763,17 @@ class CompactionRecord(_SerializesItself):
     The compacted history's messages from this index on are the last `messages_after - kept_from` messages of the
     history it replaced.
     """
+
+    part_message_index: int
+    """The index in the compacted history of the message holding [`part`][pydantic_ai.messages.CompactionRecord.part].
+
+    A [`ModelRequest`][pydantic_ai.messages.ModelRequest] for a summary a capability wrote, or the
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] a provider's compaction arrived in, which can come after a
+    request holding the standing system prompt.
+    """
+
+    part_index: int
+    """The index of [`part`][pydantic_ai.messages.CompactionRecord.part] in that message's `parts`."""
 
     replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
         default=None, compare=False

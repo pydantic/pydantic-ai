@@ -4046,6 +4046,8 @@ def test_payload_converter_leaves_out_what_a_compaction_replaced():
         messages_before=1,
         messages_after=1,
         kept_from=1,
+        part_message_index=0,
+        part_index=0,
         replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
     )
     converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()

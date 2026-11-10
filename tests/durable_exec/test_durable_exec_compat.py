@@ -1089,6 +1089,8 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
                 messages_before=4,
                 messages_after=2,
                 kept_from=1,
+                part_message_index=0,
+                part_index=0,
             ),
             usage=RequestUsage(input_tokens=100, output_tokens=10),
         ),
@@ -1247,6 +1249,8 @@ def test_the_json_codec_leaves_out_what_a_compaction_replaced() -> None:
         messages_before=1,
         messages_after=1,
         kept_from=1,
+        part_message_index=0,
+        part_index=0,
         replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
     )
     event = CompactionEndEvent(record=record)
