@@ -15,6 +15,7 @@ sensitive to request bodies, so a VCR test could pass green without pinning the 
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -41,7 +42,7 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
@@ -462,12 +463,12 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
 
 
 async def test_deferred_run_history_not_silently_repaired():
-    """Resuming a deferred run's history without `deferred_tool_results` keeps the pending call open.
+    """Running a deferred run's history without `deferred_tool_results` raises instead of closing the pending call.
 
     A run that ends in `DeferredToolRequests` persists a response with an unanswered call followed
     by a 'complete' request with the executed returns. That call may still receive its result via
-    `deferred_tool_results`, so it must not be closed out at run start; only the copy sent to the
-    model is repaired.
+    `deferred_tool_results`, so neither a new prompt nor a resume without one may send it closed out
+    with a synthesized return: the run would go on past the pause, and the call could no longer be answered.
     """
     received: list[list[ModelMessage]] = []
 
@@ -499,18 +500,26 @@ async def test_deferred_run_history_not_silently_repaired():
     assert isinstance(trailing_request, ModelRequest)
     assert trailing_request.state == 'complete'
 
-    result2 = await agent.run('Never mind.', message_history=message_history)
-    assert result2.output == 'All done.'
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls',
+    ):
+        await agent.run('Never mind.', message_history=message_history)
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Cannot resume the run: the message history contains tool calls without results: ['call_file']."
+        ),
+    ):
+        await agent.run(message_history=message_history)
+    assert len(received) == 1
 
-    # The pending call stays open in the persisted history, so it can still be answered or audited...
-    assert not any(
-        isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
-        for message in result2.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
+    # The pause still stands, so the call can still be answered.
+    result2 = await agent.run(
+        message_history=message_history, deferred_tool_results=DeferredToolResults(approvals={'call_file': False})
     )
-    # ...while the copy sent to the model got a synthesized return so the provider accepts it.
-    assert any(
+    assert result2.output == 'All done.'
+    assert not any(
         isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
         for message in received[1]
         if isinstance(message, ModelRequest)
