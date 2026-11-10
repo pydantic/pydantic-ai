@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests
-from pydantic_ai.capabilities import AbstractCapability, RequestInput, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, RequestInput
 from pydantic_ai.durable_exec import ExternalEventWaiter, external_event_scope
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, UserError
 from pydantic_ai.messages import (

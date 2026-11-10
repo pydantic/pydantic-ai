@@ -352,7 +352,9 @@ class _CallDeferred:
     metadata: dict[str, Any] | None = None
     _: KW_ONLY
     # Left out of the payload unless it is a question, so plain deferrals journal as they did before it existed.
-    call_kind: Annotated[Literal['external', 'question'], Field(exclude_if=lambda kind: kind == 'external')] = 'external'
+    call_kind: Annotated[Literal['external', 'question'], Field(exclude_if=lambda kind: kind == 'external')] = (
+        'external'
+    )
     kind: Literal['call_deferred'] = 'call_deferred'
 
 

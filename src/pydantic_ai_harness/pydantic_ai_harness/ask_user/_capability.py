@@ -15,8 +15,8 @@ from typing_extensions import TypeIs
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context

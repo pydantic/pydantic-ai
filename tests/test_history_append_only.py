@@ -29,7 +29,6 @@ from pydantic_ai import Agent, ModelRetry, RunContext, TextOutput
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
-    RequestInput,
     Capability,
     CombinedCapability,
     DynamicCapability,
@@ -44,6 +43,7 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ProcessHistory,
+    RequestInput,
     ResolveModelId,
     SelectModel,
     Thinking,

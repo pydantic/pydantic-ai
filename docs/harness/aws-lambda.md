@@ -146,15 +146,17 @@ is not covered by durable execution's guarantees, and it can outlive the invocat
 
 ## Approvals
 
-To have a person approve a tool call, add [`AwaitApproval`](../capabilities/await-approval.md) next to `AWSLambdaDurability`.
-When the model calls a tool that needs approval (`requires_approval=True` or `ApprovalRequired`) or
-external execution (`CallDeferred`), the run creates a Lambda callback, calls your `announce` function
-with the callback ID inside a step, and suspends: the invocation returns, and no compute is billed
-while the execution waits. `announce` only delivers the question: it writes the callback ID where an
-approver will see it. The answer comes back through your approval endpoint, which sends the decision
-to the callback. Lambda then invokes the function again, the handler replays from its checkpoints
-without calling the model again, and the run continues with the approved calls executed and the
-denied ones reported to the model.
+To have a person approve a tool call, add [`RequestInput`](../capabilities/request-input.md) next to `AWSLambdaDurability`.
+When the model calls a tool that needs approval (`requires_approval=True` or `ApprovalRequired`),
+external execution (`CallDeferred`) or an answer to a question, the run creates a Lambda callback and
+calls your `ask` function with the callback ID inside a step. `ask` can answer right away, and the
+step records its answer, so the run continues without suspending and a replay reuses the answer. To
+let a person answer, `ask` writes the callback ID where the approver will see it and returns `None`,
+and the run suspends: the invocation returns, and no compute is billed while the execution waits.
+The answer comes back through your approval endpoint, which sends the decision to the callback.
+Lambda then invokes the function again, the handler replays from its checkpoints without calling the
+model or `ask` again, and the run continues with the approved calls executed and the denied ones
+reported to the model.
 
 ```python {title="approvals_handler.py"}
 import json
@@ -165,20 +167,20 @@ import boto3
 from aws_durable_execution_sdk_python import DurableContext, durable_execution
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import AwaitApproval
+from pydantic_ai.capabilities import RequestInput
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
 
 lambda_client = boto3.client('lambda')
 
 
-def announce(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
+def ask(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
     ...  # Write the callback ID and `requests` where the approver will see them.
 
 
 agent = Agent(
     '{{ bedrock:medium }}',
     name='support',
-    capabilities=[AWSLambdaDurability(), AwaitApproval(announce, timeout=timedelta(days=1))],
+    capabilities=[AWSLambdaDurability(), RequestInput(ask, timeout=timedelta(days=1))],
 )
 
 
@@ -213,19 +215,25 @@ aws lambda send-durable-execution-callback-success \
 
 The decision is the JSON form of `DeferredToolResults` keyed by tool call ID: an approval can also
 deny the call with a message for the model, or approve it with different arguments, and
-[The decision](../capabilities/await-approval.md#the-decision) lists every form. `send-durable-execution-callback-failure` ends
+[The answer](../capabilities/request-input.md#the-answer) lists every form. `send-durable-execution-callback-failure` ends
 the wait without a decision, like a timeout: every pending approval is denied and every pending
 external call fails, with a message saying why, and the run continues.
 
-The callback's `timeout` is set from `AwaitApproval(timeout=...)`, rounded up to whole seconds.
-Without one, the execution waits until its `ExecutionTimeout`. The announcement is a step like any
+The callback's `timeout` is set from `RequestInput(timeout=...)`, rounded up to whole seconds, and
+counts from when the callback is created, just before `ask` runs. Without one, the execution waits
+until its `ExecutionTimeout`. When `ask` answers right away, nothing waits on the callback: it stays
+open until its timeout, and resolving it has no effect on the run. The `ask` step is a step like any
 other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
-run it again when it fails, so make it idempotent. A checkpointed tool cannot wait for a decision itself,
-because it runs inside a step; that is rejected with a `UserError`.
+run it again when it fails, so make it idempotent. A checkpointed tool cannot wait for a decision
+itself, because it runs inside a step; that is rejected with a `UserError`.
+
+Questions from Pydantic AI Harness's [`AskUser`](ask-user.md) wait the same way: its answerer runs in the `ask`
+step, and an answerer that takes a resume token can hand the question on and let the answer arrive
+through the callback.
 
 Outside a durable handler, as in local development, the same agent waits in process instead, and
 `resolve_external_event` from `pydantic_ai.external_events` resolves its token: see
-[A round trip in one process](../capabilities/await-approval.md#a-round-trip-in-one-process). A `HandleDeferredToolCalls` handler
+[A round trip in one process](../capabilities/request-input.md#a-round-trip-in-one-process). A `HandleDeferredToolCalls` handler
 that waited for the approver itself would hold the invocation, and its 15-minute timeout, for the
 whole wait, and would ask again on every replay; ending the run with `DeferredToolRequests` output and
 starting a second run with the results also still works.
@@ -250,8 +258,10 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__dynamic_toolset__{id}.validate_args` | validating a dynamic toolset call's arguments |
 | `{name}__dynamic_toolset__{id}.call_tool:{tool}` | a dynamic toolset's tool call |
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
-| `{name}__external_event.deferred_tool_calls` | the callback an [`AwaitApproval`](#approvals) wait suspends on |
-| `{name}__external_event.deferred_tool_calls.announce` | announcing that callback's ID |
+| `{name}__external_event.deferred_tool_calls` | the callback a [`RequestInput`](#approvals) wait suspends on |
+| `{name}__external_event.deferred_tool_calls.ask` | calling `ask` with that callback's ID, and its answer |
+| `{name}__external_event.ask_user_question` | the callback an `AskUser` question waits on |
+| `{name}__external_event.ask_user_question.ask` | calling the `AskUser` answerer, and its answer |
 
 A model operation that does not use the agent's default model records its model id in the step name
 (for example, `{name}__model.request.{model_id}`), so the execution history shows which model each

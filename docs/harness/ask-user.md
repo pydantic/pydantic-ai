@@ -65,11 +65,9 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   offer, several labels on a single-select question, a missing answer) is a bug in the answerer
   and raises `ValueError`, which fails the run. `check_response` is exported so an answerer can
   validate before returning.
-- By default, two `ask_user_question` calls in one model response reach the answerer
-  concurrently, so serialize in the answerer if your UI shows one request at a time. Other tool
-  calls from that response may run while the user decides: an answer shapes the model's next
-  response, not calls it already made. To run a response's calls one at a time, wrap the run in
-  `with Agent.parallel_tool_call_execution_mode('sequential'):`.
+- Two `ask_user_question` calls in one model response reach the answerer one at a time, after
+  the response's other tool calls have finished: an answer shapes the model's next response, not
+  calls it already made.
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
@@ -105,8 +103,8 @@ agent = Agent('{{ anthropic:xlarge }}', deps_type=str, capabilities=[AskUser(ans
 
 In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
 the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
-asked the question, including thinking parts when the model provides them. Treat the history as
-read-only; other tools may still run while the answerer waits.
+asked the question, including thinking parts when the model provides them, and `ctx.tool_call_id`
+is the question's call. Treat the history as read-only.
 
 The context reaches only the answerer; it is not part of the request, its events or deferred
 calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
@@ -161,12 +159,12 @@ Deferred hosts can pass the result directly to `DeferredToolResults.calls`.
 
 ## Bounding the wait
 
-The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to
-bound that wait. When it runs out, the answerer is cancelled, `AskUserAnsweredEvent` fires with
+The run waits for the answer. Set `timeout`, in seconds, to bound that wait. When it runs out,
+or a resume token is resolved with a failure instead of an answer, `AskUserAnsweredEvent` fires with
 `timed_out=True` and a cancelled response, and the model is told the user did not answer in time
 (the `TIMED_OUT` result) and continues.
 
-The timeout cancels the answerer, so the answerer must be cancellable. A thread cannot be
+In process, the timeout cancels an answerer still running, so the answerer must be cancellable. A thread cannot be
 cancelled: run blocking work with `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, or the
 run waits for the thread and then uses its late answer. An abandoned thread keeps running, so a
 terminal answerer should read input with an async prompt library rather than `input()` in a
@@ -175,6 +173,63 @@ thread, which would take the next line the user types.
 ```python {test="skip"}
 AskUser(answerer=pick_first, timeout=300)
 ```
+
+## Answering later, and durable runs
+
+Each question is a [deferred tool call](../deferred-tools.md) marked as a question: the tool raises
+`CallDeferred(kind='question')`, so `DeferredToolRequests.kind()` reports `'question'` for it. `AskUser`
+then answers its own questions in its `handle_deferred_tool_calls` hook, one at a time, by calling the
+answerer through `wait_for_external_event`, the same wait [`RequestInput`](../capabilities/request-input.md) uses. That
+makes the wait durable on an engine that supports it:
+
+- In a plain run, the answerer is called in process.
+- On [AWS Lambda durable functions](aws-lambda.md#approvals), the answerer runs in a step that records its response, so
+  a replay doesn't ask again. Since it runs in a step, it must return quickly: a person who may take a
+  while should answer through a resume token, below.
+- On Temporal, DBOS, Prefect and other durable engines without support for waiting, asking raises a
+  `UserError`, since a wait in process would not be recorded. `AskUser(..., allow_non_durable_wait=True)`
+  asks in process anyway: the wait is then not recorded, so a replay asks the user again and a restart
+  loses the wait, and it doesn't work on Temporal, whose workflow code can't be woken from outside.
+
+An answerer with three required positional parameters, satisfying `TokenAnswerer`, also receives a
+resume token. It can answer right away as the other forms do, or hand the token on, for example in a
+Slack message, and return `None`. The answer then arrives when your code resolves the token with the
+JSON form of an `AskUserResponse`: with `resolve_external_event` from `pydantic_ai.external_events` in
+process, or through the engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+
+```python
+from pydantic import TypeAdapter
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.external_events import resolve_external_event
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+
+pending: dict[str, AskUserRequest] = {}
+
+
+async def hand_on(ctx: RunContext, request: AskUserRequest, token: str) -> AskUserResponse | None:
+    pending[token] = request  # Show the questions where the user will see them.
+    return None
+
+
+def answer(token: str, response: AskUserResponse) -> None:
+    # Runs in the endpoint the user's answer is posted to.
+    pending.pop(token)
+    resolve_external_event(token, TypeAdapter(AskUserResponse).dump_python(response, mode='json'))
+
+
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=hand_on)])
+```
+
+Because the question is a deferred call, it waits until the other tool calls from the same model
+response have finished, and [`run_stream()`](../agent.md#streaming-events-and-final-output), which doesn't run deferred tool call handlers
+yet ([#12686](https://github.com/pydantic/pydantic-ai/issues/12686)), ends the run with it as
+`DeferredToolRequests`. Use `run()`, `iter()` or `run_stream_events()`.
+
+`AskUser` answers its questions before `RequestInput` is asked about what's left, wherever you list them.
+To handle every pending call in one place instead, pass `answerer=None` and answer the question in
+`RequestInput`'s `ask` with `ask_user_result`, as the next section shows for a later run.
 
 ## Pausing the run until the user answers
 
@@ -233,12 +288,12 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 | Event | When | Fields |
 | --- | --- | --- |
 | `AskUserRequestedEvent` | before the answerer is called, or before a deferred call pauses the run | `request` |
-| `AskUserAnsweredEvent` | after it returns, times out, or raises, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out`, `failed` |
+| `AskUserAnsweredEvent` | after it returns, times out, or raises, or its resume token is resolved or failed, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out`, `failed` |
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
-start and end in step with the run. When the answerer raises, the answered event carries
-`failed=True` and a cancelled response, then the error propagates from the tool call: a
-`ModelRetry` sends the model a retry prompt, and any other error fails the run. A run
+start and end in step with the run. When the answerer raises, or a resume token is resolved with
+something that isn't an `AskUserResponse`, the answered event carries `failed=True` and a cancelled
+response, then the error fails the run. A run
 cancelled while the answerer waits emits no answered event, so also clear waiting state when the
 run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
@@ -304,11 +359,9 @@ To serve several UIs, pass one answerer that dispatches to them.
 
 ## Tracing
 
-`AskUser` emits no spans. Core's tool-call span already covers the wait, and the two events
-above carry what was asked and answered. That span records the tool's arguments and result,
-which here are the questions and the user's answers, custom text included. Notes and attachments
-appear in the following model request's user content; inline answers also record them in the tool
-span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
+`AskUser` emits no spans. Core's tool-call span records the questions as the tool's arguments,
+and the two events above carry what was asked and answered. The answers, custom text, notes and
+attachments included, appear in the following model request's tool result and user content. The `include_content` setting applies to notes as well. Set
 [`include_content=False`](../logfire.md#excluding-prompts-and-completions) to leave them out.
 
 ## Specs
@@ -318,7 +371,7 @@ to name.
 
 ## API reference
 
-`check_response`, `ask_user_result`, `AskUserResult`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
+`check_response`, `ask_user_result`, `AskUserResult`, `TokenAnswerer`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
 exported from `pydantic_ai_harness.ask_user`, along with `AskUserToolset`, the toolset `AskUser`
 registers, and `ASK_USER_EVENTS`, the namespace of both events.
 
@@ -327,6 +380,8 @@ registers, and `ASK_USER_EVENTS`, the namespace of both events.
 ::: pydantic_ai_harness.ask_user.Answerer
 
 ::: pydantic_ai_harness.ask_user.ContextAnswerer
+
+::: pydantic_ai_harness.ask_user.TokenAnswerer
 
 ::: pydantic_ai_harness.ask_user.AnyAnswerer
 

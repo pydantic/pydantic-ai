@@ -21,7 +21,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, PrefixTools, RequestInput, on_event
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    HandleDeferredToolCalls,
+    Instrumentation,
+    PrefixTools,
+    RequestInput,
+    on_event,
+)
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -735,6 +742,27 @@ class TestComposition:
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
         assert asked == []
 
+    async def test_calls_that_are_not_its_questions_are_left_to_later_handlers(self) -> None:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('delete', {}, tool_call_id='d1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def approve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(approve_all=True)
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=ScriptedAnswerer()), HandleDeferredToolCalls(approve)],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def delete() -> str:
+            return 'deleted'
+
+        assert (await agent.run('go')).output == 'done'
+
     async def test_without_an_answerer_request_input_gets_the_question(self) -> None:
         """One inbox: `RequestInput` sees the question, marked as one, and answers it like any deferred call."""
         kinds: list[str] = []
@@ -799,12 +827,15 @@ class _AlwaysDurable(BaseDurabilityCapability[None]):
 
 class TestDurableEngineWithoutAWaiter:
     async def test_asking_is_refused_unless_a_wait_that_is_not_recorded_is_allowed(self) -> None:
-        def agent(**kwargs: bool) -> Agent[None, str]:
+        def agent(allow_non_durable_wait: bool = False) -> Agent[None, str]:
             return Agent(
                 calling(raw_questions()),
                 name='asker',
                 deps_type=type(None),
-                capabilities=[AskUser(answerer=ScriptedAnswerer(), **kwargs), _AlwaysDurable()],
+                capabilities=[
+                    AskUser(answerer=ScriptedAnswerer(), allow_non_durable_wait=allow_non_durable_wait),
+                    _AlwaysDurable(),
+                ],
             )
 
         with pytest.raises(UserError, match="This agent's durable engine does not support waiting for external events"):

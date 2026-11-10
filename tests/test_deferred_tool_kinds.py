@@ -148,3 +148,39 @@ def test_a_pickled_question_stays_a_question() -> None:
     assert error.kind == 'question'
     assert error.metadata == {'topic': 'scope'}
     assert pickle.loads(pickle.dumps(CallDeferred())).kind == 'external'
+
+
+async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> None:
+    """A call a handler resolves can defer again when it runs; it joins the calls still pending with its kind."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('look_up', {}, tool_call_id='external'),
+                ToolCallPart('delete', {}, tool_call_id='approval'),
+            ]
+        )
+
+    def approve_delete(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approvals={'approval': True})
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=[str, DeferredToolRequests],
+        deps_type=type(None),
+        capabilities=[HandleDeferredToolCalls(approve_delete)],
+    )
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    @agent.tool_plain(requires_approval=True)
+    def delete() -> str:
+        raise CallDeferred(kind='question')
+
+    result = await agent.run('go')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
+    assert result.output.kinds == {'approval': 'question'}

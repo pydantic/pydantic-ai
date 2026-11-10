@@ -261,14 +261,14 @@ capability authors contribute decorated methods that arrive through the same bac
 ## Waiting for external events
 
 [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event] waits until
-something outside the run resolves a token the run handed out, and returns the JSON payload it was
-resolved with. [`AwaitApproval`](../capabilities/await-approval.md) uses it to wait for a person's
-decision on deferred tool calls without ending the run. Outside a durable run it waits in process,
-and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] ends the wait. In
-a durable run, an in-process wait would not be recorded, so a replay would announce again and a
-restart would lose it: there, the wait goes through your engine. On an engine that doesn't
-implement it, `AwaitApproval`'s wait raises a `UserError` (detected through the run's
-`RunContext.in_durable_context`).
+something outside the run resolves a token the run handed out, unless the `ask` function it hands
+the token to answers right away, and returns the JSON payload. [`RequestInput`](../capabilities/request-input.md)
+uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
+waits in process, and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]
+ends the wait. In a durable run, an in-process wait would not be recorded, so a replay would ask
+again and a restart would lose it: there, the wait goes through your engine. On an engine that
+doesn't implement it, `RequestInput`'s wait raises a `UserError` (detected through the run's
+`RunContext.in_durable_context`), unless the user passes `allow_non_durable_wait=True`.
 
 To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter] and
 install an instance for each durable agent run with
@@ -276,14 +276,15 @@ install an instance for each durable agent run with
 capability's `wrap_run` when it is in the durable context. Both are re-exported from
 `pydantic_ai.durable_exec` with [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError],
 and live in `pydantic_ai.external_events`. The `wait` method receives a stable `name`, an async
-`announce` callback, and an optional `timeout`, and must journal three things so a replay returns
-the recorded payload without side effects:
+`ask` callback, and an optional `timeout`, and must journal three things so a replay returns the
+recorded payload without side effects:
 
 1. Create a resume token: a callback ID, an awakeable ID, or a waitpoint token, depending on the engine.
-2. Call `announce(token)` once, inside a durable unit, so the run can hand the token to whoever
-   resolves it.
-3. Suspend until the token is resolved, then return its JSON payload. Raise `ExternalEventError`
-   when the timeout elapses or the token is resolved with a failure.
+2. Call `ask(token)` once, inside a durable unit that records its result. It returns the payload
+   when it answered right away, and the wait returns that payload without suspending. It returns
+   `None` when it handed the token to whoever resolves it.
+3. Otherwise suspend until the token is resolved, then return its JSON payload. Raise
+   `ExternalEventError` when the timeout elapses or the token is resolved with a failure.
 
 ```python {title="external_event_waiter.py"}
 from collections.abc import Awaitable, Callable
@@ -300,23 +301,24 @@ class ApprovingWaiter(ExternalEventWaiter):
         self,
         name: str,
         *,
-        announce: Callable[[str], Awaitable[None]],
+        ask: Callable[[str], Awaitable[JsonValue]],
         timeout: timedelta | None,
     ) -> JsonValue:
         token = f'{name}-1'  # (1)!
-        await announce(token)  # (2)!
+        if (answer := await ask(token)) is not None:  # (2)!
+            return answer
         return {'approved': True}  # (3)!
 
 
 async def main():
     with external_event_scope(ApprovingWaiter()):  # (4)!
-        payload = await wait_for_external_event('review', announce=lambda token: None)
+        payload = await wait_for_external_event('review', ask=lambda token: None)
     print(payload)
     #> {'approved': True}
 ```
 
 1. A real engine creates a resume token through its API and records it.
-2. Run inside a durable unit the engine records, so a replay does not announce again.
+2. Run inside a durable unit the engine records, so a replay does not ask again and reuses an answer `ask` gave.
 3. A real engine suspends the run here until the token is resolved, then returns the recorded payload.
 4. An engine enters the scope for each durable agent run, such as in its capability's `wrap_run`.
 

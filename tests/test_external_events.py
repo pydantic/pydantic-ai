@@ -22,7 +22,7 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import RequestInput, HandleDeferredToolCalls
+from pydantic_ai.capabilities import HandleDeferredToolCalls, RequestInput
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,

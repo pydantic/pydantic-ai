@@ -1,57 +1,92 @@
 ---
-description: "Wait for a person's approval inside a Pydantic AI agent run with AwaitApproval: in process by default, or suspended and recorded by a durable engine such as AWS Lambda durable functions."
+description: "Ask for approvals, answers and external results inside a Pydantic AI agent run with RequestInput: answered in place, or waited for in process or suspended and recorded by a durable engine such as AWS Lambda durable functions."
 ---
 
-# Await Approval
+# Request Input
 
-[`AwaitApproval`][pydantic_ai.capabilities.AwaitApproval] is a [capability](overview.md) that resolves [deferred tool calls](../deferred-tools.md), the ones that need a person's approval or an external result, inside the agent run. It hands the pending calls and a resume token to your `announce` function, waits until code you write elsewhere resolves the token with the person's decision, and continues the same run: approved calls execute, denied ones are reported to the model, and external results are filled in.
+[`RequestInput`][pydantic_ai.capabilities.RequestInput] is a [capability](overview.md) that resolves [deferred tool calls](../deferred-tools.md), the ones that need a person's approval, an answer to a question or an external result, inside the agent run. It passes the pending calls and a resume token to your `ask` function, which either answers right away or hands the token to whoever will answer, and continues the same run with the answer: approved calls execute, denied ones are reported to the model, and external results and answers are filled in.
 
-It works in any run. Without a durable engine, the wait happens in your process and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] ends it. In a [durable](../durable_execution/overview.md) run on an engine that supports it, the engine records the wait and suspends the run while it lasts, so the person can take days and a replay does not ask them again.
+It works in any run. Without a durable engine, a wait happens in your process and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] ends it. In a [durable](../durable_execution/overview.md) run on an engine that supports it, the engine records the answer and suspends the run while it waits, so the person can take days and a replay does not ask them again.
 
 ## How it relates to `HandleDeferredToolCalls`
 
-`AwaitApproval` is a [`handle_deferred_tool_calls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) capability, like [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. A `HandleDeferredToolCalls` handler can also wait for a person itself, by sending them a message and awaiting their reply, and in a plain process that works. In a durable run it falls short in two ways:
+`RequestInput` is a [`handle_deferred_tool_calls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) capability, like [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. A `HandleDeferredToolCalls` handler can also wait for a person itself, by sending them a message and awaiting their reply, and in a plain process that works. In a durable run it falls short in two ways:
 
 - The handler is not journaled. When the engine replays the run, it runs again and asks the person a second time.
 - The execution stays alive while it waits, holding compute and running into the engine's invocation limits, such as AWS Lambda's 15-minute invocation timeout.
 
-`AwaitApproval` waits through [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which a durable engine can implement: it records the token, the announcement and the decision, and suspends the execution until the decision arrives. Without a durable engine it waits in process, which is what a `HandleDeferredToolCalls` handler would do too.
+`RequestInput` asks through [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which a durable engine can implement: it records the token and the answer, and suspends the execution until the answer arrives. Without a durable engine it waits in process, which is what a `HandleDeferredToolCalls` handler would do too. Use `HandleDeferredToolCalls` for handlers that decide without waiting on anything outside the process, and `RequestInput` for those that do.
 
-Ending the run with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and starting a new run with the decision remains an option, for a run that can't stay open while it waits and has no durable engine to keep it.
+Ending the run with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and starting a new run with the answer remains an option, for a run that can't stay open while it waits and has no durable engine to keep it.
 
-## `announce` and the answer
+## `ask` and the answer
 
-`announce` does not get the answer. It delivers the question and the token to where a person will see it: a Slack message with Approve and Deny buttons, an email with a link, a row in a database table an admin UI lists. The answer comes back separately, through code you write elsewhere, such as the webhook behind the buttons, an admin endpoint or a CLI command, which resolves the token with the decision:
+`ask` is called with the run context, the pending [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and a resume token, and does one of two things:
 
-- Without a durable engine, call [`resolve_external_event(token, decision)`][pydantic_ai.external_events.resolve_external_event] in the process the run is waiting in, or [`fail_external_event(token, reason)`][pydantic_ai.external_events.fail_external_event] to end the wait without a decision.
-- On AWS Lambda durable functions, the token is a callback ID: send the decision with `SendDurableExecutionCallbackSuccess`, or end the wait with `SendDurableExecutionCallbackFailure`. See [Approvals](../harness/aws-lambda.md#approvals).
+- **Answer in place**: return the answer as [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. A terminal prompt, a bot, a judge model or a policy does this.
+- **Hand the token on**: deliver the question and the token to where a person will see it, such as a Slack message with Approve and Deny buttons, an email with a link, or a row in a database table an admin UI lists, and return `None`. The answer comes back separately, through code you write elsewhere, such as the webhook behind the buttons, which resolves the token with it:
+    - Without a durable engine, call [`resolve_external_event(token, answer)`][pydantic_ai.external_events.resolve_external_event] in the process the run is waiting in, or [`fail_external_event(token, reason)`][pydantic_ai.external_events.fail_external_event] to end the wait without an answer.
+    - On AWS Lambda durable functions, the token is a callback ID: send the answer with `SendDurableExecutionCallbackSuccess`, or end the wait with `SendDurableExecutionCallbackFailure`. See [Approvals](../harness/aws-lambda.md#approvals).
 
-`announce` can be sync or async; a sync function runs in a worker thread, like a sync tool. In a durable run it runs once, inside a durable unit that is not run again on replay, but the engine can retry it when it fails, so make it idempotent, for example by keying the message or database row on the token.
+`ask` can be sync or async; a sync function runs in a worker thread, like a sync tool. An answer it returns goes through its JSON form, as a resolved answer does, so the run sees the same value either way. In a durable run, `ask` runs once, inside a durable unit that records its answer and is not run again on replay. The engine can retry it when it fails, so make it return quickly and keep it idempotent, for example by keying the message or database row on the token. Anything that can take a while, such as a person, should answer through the token.
+
+`requests.kind(tool_call_id)` tells you what each pending call waits for: an `'approval'`, an answer to a `'question'` (such as Pydantic AI Harness's [`AskUser`](../harness/ask-user.md) asks), or an `'external'` result.
+
+## Answering in place
+
+This `ask` approves refunds up to $100 itself and denies the rest, recording who answered:
+
+```python {title="request_input_policy.py"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import RequestInput
+
+
+def refund_policy(ctx: RunContext, requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+    return requests.build_results(
+        approvals={call.tool_call_id: call.args_as_dict()['amount'] <= 100 for call in requests.approvals},
+        answered_by={call.tool_call_id: 'refund-policy' for call in requests.approvals},
+    )
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[RequestInput(refund_policy)])
+
+
+@agent.tool_plain(requires_approval=True)
+def issue_refund(order_id: str, amount: int) -> str:
+    return f'Refunded ${amount} for order {order_id}'
+
+
+result = agent.run_sync('Refund order 1234, it arrived broken.')
+print(result.output)
+#> I've refunded $50 for order 1234.
+```
+
+`answered_by` is reported in the run's [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent]. Pydantic AI does not check it.
 
 ## A round trip in one process
 
-This FastAPI app lists the pending approvals and resolves one when the approver posts a decision:
+This FastAPI app hands the token on: it lists the pending approvals and resolves one when the approver posts a decision:
 
-```python {title="await_approval.py"}
+```python {title="request_input.py"}
 import asyncio
 from datetime import timedelta
 
 from fastapi import FastAPI
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import AwaitApproval
+from pydantic_ai.capabilities import RequestInput
 from pydantic_ai.external_events import resolve_external_event
 
 pending: dict[str, DeferredToolRequests] = {}  # (1)!
 
 
-def announce(ctx: RunContext, requests: DeferredToolRequests, token: str) -> None:
+def ask(ctx: RunContext, requests: DeferredToolRequests, token: str) -> None:
     pending[token] = requests  # (2)!
 
 
 agent = Agent(
     '{{ openai:medium }}',
-    capabilities=[AwaitApproval(announce, timeout=timedelta(hours=1))],
+    capabilities=[RequestInput(ask, timeout=timedelta(hours=1))],
 )
 
 
@@ -92,7 +127,7 @@ async def main():
 ```
 
 1. The pending approvals, by token. A real app keeps them in a database, so an admin UI can list them.
-2. Delivers the question and the token; it does not wait for the answer.
+2. Hands the question and the token on, and returns `None`: the answer arrives through the token.
 3. Ends the wait the run is in. The run continues with the decision: the approved refund runs, and the model writes its reply.
 4. Stands in for the approver, who opens the approvals page and clicks Approve, which posts to `/approvals/{token}`.
 
@@ -104,7 +139,7 @@ The wait lives in the process: if the process restarts, the run and its wait are
 
 Under AWS Lambda durable functions, add [`AWSLambdaDurability`](../harness/aws-lambda.md) and run the agent from a durable handler. The token is now a Lambda callback ID, the wait is recorded and suspends the execution, and the approval endpoint resolves the token through the Lambda API instead of `resolve_external_event`:
 
-```python {title="await_approval_lambda.py"}
+```python {title="request_input_lambda.py"}
 import json
 from datetime import timedelta
 from typing import Any
@@ -114,19 +149,19 @@ from aws_durable_execution_sdk_python import DurableContext, durable_execution
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import AwaitApproval
+from pydantic_ai.capabilities import RequestInput
 
 lambda_client = boto3.client('lambda')
 
 
-def announce(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
+def ask(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
     ...  # (1)!
 
 
 agent = Agent(
     '{{ bedrock:medium }}',
     name='support',
-    capabilities=[AWSLambdaDurability(), AwaitApproval(announce, timeout=timedelta(days=1))],
+    capabilities=[AWSLambdaDurability(), RequestInput(ask, timeout=timedelta(days=1))],
 )
 
 
@@ -152,7 +187,7 @@ def decide(callback_id: str, tool_call_ids: list[str], approved: bool) -> None: 
 1. Write the callback ID and `requests` to where the approver will see them, such as a DynamoDB table your admin UI lists, or a Slack message whose buttons carry the callback ID.
 2. Runs in your approval endpoint, which can be another Lambda function or any service with permission to call `lambda:SendDurableExecutionCallbackSuccess`.
 
-Run outside a durable handler, for example in local development, the same agent waits in process, and `resolve_external_event` resolves its token.
+Run outside a durable handler, for example in local development, the same agent waits in process, and `resolve_external_event` resolves its token. An `ask` that answers in place, like the refund policy above, works the same on Lambda: its answer is recorded, and the execution continues without suspending.
 
 ## Engines
 
@@ -160,13 +195,15 @@ Run outside a durable handler, for example in local development, the same agent 
 |---|---|
 | A plain process | In the process; resolve the token with `resolve_external_event` |
 | [AWS Lambda durable functions](../harness/aws-lambda.md#approvals) | A Lambda callback; resolve it with `SendDurableExecutionCallbackSuccess` |
-| Temporal, DBOS, Prefect, and other durable engines | Not supported yet: a call that needs a decision fails the run with a `UserError`, since a wait in process would not be recorded. End the run with `DeferredToolRequests` output instead |
+| Temporal, DBOS, Prefect, and other durable engines | Not supported yet: a call that needs an answer fails the run with a `UserError`, since a wait in process would not be recorded. End the run with `DeferredToolRequests` output instead, or see below |
+
+On an engine that doesn't support waiting, `RequestInput(..., allow_non_durable_wait=True)` waits in process instead of raising. The wait is then not recorded: when the engine replays the run, for example after a worker restart, `ask` is called again and the person is asked a second time, and when the process restarts, the wait and any answer sent to it are lost. It doesn't work on Temporal, whose workflow code can't be woken from outside the workflow.
 
 Engine authors can add support as [Building a durable execution backend](../durable_execution/backends.md#waiting-for-external-events) describes.
 
-## The decision
+## The answer
 
-Resolve the token with the JSON form of [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], keyed by the `tool_call_id`s of the pending calls in the `requests` passed to `announce`. Every key is optional:
+Answer with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], or resolve the token with its JSON form, keyed by the `tool_call_id`s of the pending calls in the `requests` passed to `ask`. Every key is optional:
 
 ```json
 {
@@ -180,19 +217,21 @@ Resolve the token with the JSON form of [`DeferredToolResults`][pydantic_ai.tool
     "call_5": {"status": "shipped"},
     "call_6": {"kind": "tool-failed", "message": "The warehouse API is down."}
   },
-  "metadata": {"call_1": {"approved_by": "alice"}}
+  "metadata": {"call_1": {"ticket": "OPS-12"}},
+  "answered_by": {"call_1": "alice"}
 }
 ```
 
 - An approval is `true`, `false` (denied with the default message), a [`ToolDenied`][pydantic_ai.tools.ToolDenied] with the `message` the model is shown, or a [`ToolApproved`][pydantic_ai.tools.ToolApproved] with `override_args` to run the tool with instead of the model's arguments.
-- An external call's result is any JSON value the model is shown, or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] (`"kind": "tool-failed"`) or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (`"kind": "model-retry"`).
+- An external call's result or a question's answer is any JSON value the model is shown, or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] (`"kind": "tool-failed"`) or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (`"kind": "model-retry"`).
 - `metadata` reaches the tool as [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata].
+- `answered_by` says who answered each call, and is reported in the run's `DeferredToolResultsEvent`.
 
-Whoever can resolve the token decides the calls, including their arguments through `override_args` and the `metadata` tools read, so a tool must not treat that metadata as proof of who approved. Pydantic AI checks only the decision's shape and that it names pending calls. Treat the token as a bearer credential, in process as on an engine, and authorize the approver in the code that resolves it.
+Whoever can resolve the token decides the calls, including their arguments through `override_args`, the `metadata` tools read and the `answered_by` the run reports, so a tool must not treat either as proof of who approved. Pydantic AI checks only the answer's shape and that it names pending calls. Treat the token as a bearer credential, in process as on an engine, and authorize the approver in the code that resolves it.
 
-From Python, build the decision as a `DeferredToolResults` and serialize it:
+From Python, build the answer as a `DeferredToolResults` and serialize it:
 
-```python {title="await_approval_decision.py"}
+```python {title="request_input_decision.py"}
 from pydantic import TypeAdapter
 
 from pydantic_ai import DeferredToolResults, ToolDenied
@@ -200,25 +239,27 @@ from pydantic_ai import DeferredToolResults, ToolDenied
 decision = DeferredToolResults(approvals={'call_1': True, 'call_3': ToolDenied('Refunds over $100 need a manager.')})
 print(TypeAdapter(DeferredToolResults).dump_json(decision).decode())
 """
-{"calls":{},"approvals":{"call_1":true,"call_3":{"message":"Refunds over $100 need a manager.","kind":"tool-denied"}},"metadata":{}}
+{"calls":{},"approvals":{"call_1":true,"call_3":{"message":"Refunds over $100 need a manager.","kind":"tool-denied"}},"metadata":{},"answered_by":{}}
 """
 ```
 
-Calls the decision leaves out stay pending, and the run ends with them as its `DeferredToolRequests` output, so include `DeferredToolRequests` in the agent's `output_type` if a decision may leave calls out. A decision that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]. In a durable run the decision is already recorded, so a replay fails the same way.
+Calls the answer leaves out stay pending, and the run ends with them as its `DeferredToolRequests` output, so include `DeferredToolRequests` in the agent's `output_type` if an answer may leave calls out. An answer that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]. In a durable run the answer is already recorded, so a replay fails the same way.
 
 ## Timeouts
 
-`timeout` bounds the wait. When it elapses, or the token is resolved with a failure instead of a decision, every pending approval is denied and every pending external call fails, with the message `No decision on this tool call arrived: <reason>`. The run then continues, so the model can tell the user what happened. Without a `timeout`, an in-process wait has no limit, and a durable one lasts as long as the engine allows, which on AWS Lambda is the execution timeout.
+`timeout` bounds the wait. When it elapses, or the token is resolved with a failure instead of an answer, every pending approval is denied and every pending external call fails, with the message `No decision on this tool call arrived: <reason>`. The run then continues, so the model can tell the user what happened. In process, the timeout also bounds `ask`: an async `ask` still running when it elapses is cancelled. Without a `timeout`, an in-process wait has no limit, and a durable one lasts as long as the engine allows, which on AWS Lambda is the execution timeout.
 
 ## Composition
 
-`AwaitApproval` orders itself [innermost](custom.md#ordering), so every other deferred tool call handler gets the calls first, and the person is asked only about what they leave pending. A [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] that auto-approves read-only tools, or Pydantic AI Harness's [`ApprovalReviewer`](../harness/approval-reviewer.md) that approves low-risk calls on the person's behalf, still runs before the person is asked, wherever it is listed.
+`RequestInput` orders itself [innermost](custom.md#ordering), so every other deferred tool call handler gets the calls first, and `ask` is only called with what they leave pending. A [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] that auto-approves read-only tools, Pydantic AI Harness's [`ApprovalReviewer`](../harness/approval-reviewer.md) that approves low-risk calls on the person's behalf, or its [`AskUser`](../harness/ask-user.md) that answers its own questions with its answerer, still runs before `ask`, wherever it is listed.
 
-`AwaitApproval` emits no telemetry of its own: the run's [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] and [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] mark the wait in the event stream, and a durable engine's execution history shows it.
+`RequestInput` emits no telemetry of its own: the run's [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] and [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] mark the wait in the event stream, and a durable engine's execution history shows it.
+
+[`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] does not run deferred tool call handlers yet ([#12686](https://github.com/pydantic/pydantic-ai/issues/12686)): use [`run()`][pydantic_ai.agent.AbstractAgent.run], [`iter()`][pydantic_ai.agent.AbstractAgent.iter] or [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
 ## Waiting for other external events
 
-`AwaitApproval` is built on [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which you can call yourself to wait for any JSON payload, in or outside an agent run:
+`RequestInput` is built on [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event], which you can call yourself to wait for any JSON payload, in or outside an agent run:
 
 ```python {title="wait_for_review.py"}
 from datetime import timedelta
@@ -232,14 +273,14 @@ def send_review_request(token: str) -> None:
 
 async def main():
     review = await wait_for_external_event(
-        'editor_review', announce=send_review_request, timeout=timedelta(hours=4)
+        'editor_review', ask=send_review_request, timeout=timedelta(hours=4)
     )
     print(review)
     #> {'verdict': 'publish'}
 ```
 
-1. Resolves the token right away to keep the example short. A real `announce` sends the token to the editor, and your review UI resolves it later.
+1. Resolves the token right away to keep the example short. A real `ask` sends the token to the editor and returns `None`, and your review UI resolves it later. An `ask` that can answer itself returns the payload instead.
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there. `AwaitApproval` also refuses to wait in process on a durable engine that doesn't support it, but a direct call can only tell it is on such an engine while the run's context is current, so call it directly only outside durable runs or on an engine that supports it.
+It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there. `RequestInput` also refuses to wait in process on a durable engine that doesn't support it, unless `allow_non_durable_wait` is set, but a direct call can only tell it is on such an engine while the run's context is current, so call it directly only outside durable runs or on an engine that supports it.
