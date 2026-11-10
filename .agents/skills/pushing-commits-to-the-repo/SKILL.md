@@ -58,7 +58,7 @@ A human approval does not substitute for douwebot.
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until douwebot approves the head.
-A red gate after green CI means douwebot has not approved the head. Trigger douwebot as step 3 of the loop says; do not debug the gate as a CI failure.
+When the gate is red after green CI and its description names no size label, douwebot has not approved the head. Trigger douwebot as step 3 of the loop says; do not debug the gate as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
