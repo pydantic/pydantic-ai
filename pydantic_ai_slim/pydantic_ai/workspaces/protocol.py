@@ -146,6 +146,8 @@ class SupportsCommands(Protocol):
         On timeout or cancellation, stop the foreground process tree on a best-effort basis;
         background jobs may continue if they detach. Return when the direct command exits,
         after at most a short output-drain grace even if a background child keeps stdout open.
+        A process the command detached into its own session keeps running after the command returns,
+        also for a backend that attaches by the same ref later.
 
         Args:
             command: An argv sequence, or a shell string with `shell=True`; a mismatch raises `TypeError`.

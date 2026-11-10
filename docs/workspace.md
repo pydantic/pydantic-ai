@@ -699,6 +699,9 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
   replacement for it.
 - The backend never destroys the environment when a run ends. Whoever holds the ref decides when to
   delete it; see [Cleaning up](#cleaning-up).
+- A process that a command detached into its own session keeps running after the command returns,
+  also for a backend that attaches by the same ref later. [`Shell`](harness/shell.md) background jobs
+  depend on it.
 - A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
   or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
   timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
@@ -745,10 +748,9 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
-- A process detached into its own session outlives the command, backend and run that started it:
-  background jobs, and any terminal session a client attaches to later, depend on it.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
-  reattachment, a destroyed reference, and destruction during a command. These optional rules
+  reattachment, a detached process that a backend attached by ref must find still running, a
+  destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.
 
 A skipped rule is not a passed rule: run pytest with `-rs` to see what went unchecked. Four boolean
