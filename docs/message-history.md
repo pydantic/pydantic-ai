@@ -885,7 +885,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000372'), input_tokens=56, output_tokens=26),
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
         model_name='{{ google:large.name }}',
         model_id='{{ google:large }}',
         timestamp=datetime.datetime(...),
