@@ -575,7 +575,8 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
-        # Temporal and DBOS undo them here, before `prepare` sees the definition, in workflows started before them.
+        # Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its
+        # `sequential` and `defer_loading` to `Tool` instances: drop those, so `prepare` sees what it saw then.
         without_toolset = _without_toolset_sequential_defer_loading.get()
         return ToolDefinition(
             name=self.name,

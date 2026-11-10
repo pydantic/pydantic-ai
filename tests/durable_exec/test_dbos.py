@@ -6921,8 +6921,8 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
 
     Without the patch marker, the workflow lists the tools the way it did before: both calls start at once
     and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose
-    own `prepare` makes it sequential stays sequential. A new workflow gets the toolset's value. Faking `DBOS.patch_async` stands in for the code before the upgrade, which
-    never called it.
+    own `prepare` makes it sequential stays sequential. A new workflow gets the toolset's value. Faking
+    `DBOS.patch_async` stands in for the code before the upgrade, which never called it.
 
     Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
     """
