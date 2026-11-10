@@ -41,7 +41,18 @@ def _list_live_sessions() -> None:
         sessions = [session for record in asyncio.run(listing()) for session in record.sessions]
     except (ControlProtocolError, OSError) as exc:
         raise SystemExit(terminal_text(str(exc), keep='')) from exc
-    identifiers = {session.id for session in sessions}
+    prefixes = _unique_prefixes({session.id for session in sessions})
+    if sessions:
+        print('ID\tName\tStatus\tTitle\tWorkspace')
+        for session in sessions:
+            fields = (prefixes[session.id], session.name, session.status, session.title, session.workspace)
+            print('\t'.join(terminal_text(value, keep='') for value in fields))
+    else:
+        print('No live sessions.')
+
+
+def _unique_prefixes(identifiers: set[str]) -> dict[str, str]:
+    """The shortest prefix of each ID, from eight characters up, that no other ID shares."""
     prefixes: dict[str, str] = {}
     for identifier in identifiers:
         length = min(8, len(identifier))
@@ -50,13 +61,7 @@ def _list_live_sessions() -> None:
         ):
             length += 1
         prefixes[identifier] = identifier[:length]
-    if sessions:
-        print('ID\tName\tStatus\tTitle\tWorkspace')
-        for session in sessions:
-            fields = (prefixes[session.id], session.name, session.status, session.title, session.workspace)
-            print('\t'.join(terminal_text(value, keep='') for value in fields))
-    else:
-        print('No live sessions.')
+    return prefixes
 
 
 def run(*, splash: Splash | None = None) -> None:
@@ -131,6 +136,11 @@ def run(*, splash: Splash | None = None) -> None:
     if args.command == 'sessions':
         _list_live_sessions()
         return
+    _launch(args, parser, splash)
+
+
+def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: Splash | None) -> None:
+    """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
     try:
         from pydantic_ai.usage import UsageLimits
