@@ -500,17 +500,14 @@ async def test_deferred_run_history_not_silently_repaired():
     assert isinstance(trailing_request, ModelRequest)
     assert trailing_request.state == 'complete'
 
-    with pytest.raises(
-        UserError,
-        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls',
-    ):
+    error = re.escape(
+        "Cannot run the agent on this message history: it contains tool calls without results: ['call_file']. "
+        'If they were deferred, pass `deferred_tool_results` with a result for each of them; otherwise call '
+        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+    )
+    with pytest.raises(UserError, match=error):
         await agent.run('Never mind.', message_history=message_history)
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "Cannot resume the run: the message history contains tool calls without results: ['call_file']."
-        ),
-    ):
+    with pytest.raises(UserError, match=error):
         await agent.run(message_history=message_history)
     assert len(received) == 1
 

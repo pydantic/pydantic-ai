@@ -174,6 +174,10 @@ The `message_history` you passed ends with a model response whose tool calls hav
 
 Before v2.38.0, a run cancelled during its first tool call also left a history that raised this error. Upgrade if that is how you got here.
 
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Cannot run the agent on this message history: it contains tool calls without results: ...`
+
+The `message_history` you passed ends with a model response followed by a request that holds the results of only some of its tool calls. A run that [paused for deferred tool calls](deferred-tools.md#pausing-a-conversation) leaves this history when the same step also ran other tools, and the listed calls are the ones still waiting. Pass their results with `deferred_tool_results=...`, with or without a new prompt; or, to abandon them, pass the history through [`repair_messages()`][pydantic_ai.messages.repair_messages] first. See [Making histories provider-valid](message-history.md#making-histories-provider-valid).
+
 ### `Reasoning input is not enabled for this model`
 
 Thinking and reasoning history can contain provider-signed or encrypted data. Another provider, model family, API endpoint or account may reject it. Pydantic AI sends stateless artifacts back only when the new model has the same canonical system or declares it compatible. It otherwise uses that model's fallback, such as rendering thinking as text or omitting a foreign compaction item.

@@ -1128,7 +1128,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
-        _reject_unanswered_calls_before_tail(messages, has_new_prompt=self.user_prompt is not None)
+        _reject_unanswered_calls_before_tail(messages)
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -1190,7 +1190,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 elif last_message.tool_calls:
                     # An interrupted response's calls were already closed out by `_repair_interrupted_tail`.
-                    raise exceptions.UserError(_NEW_PROMPT_ON_UNPROCESSED_CALLS_ERROR)
+                    raise exceptions.UserError(
+                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
+                        'Run the agent with this message history and no new prompt to execute the calls, pass '
+                        '`deferred_tool_results` if they were deferred, or call '
+                        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+                    )
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -1341,15 +1346,7 @@ def _repair_interrupted_tail(
     return messages
 
 
-_NEW_PROMPT_ON_UNPROCESSED_CALLS_ERROR = (
-    'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
-    'Run the agent with this message history and no new prompt to execute the calls, pass '
-    '`deferred_tool_results` if they were deferred, or call '
-    '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
-)
-
-
-def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage], *, has_new_prompt: bool) -> None:
+def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage]) -> None:
     """Raise when the history ends on a request that leaves some of the final response's tool calls unanswered.
 
     A run paused for `DeferredToolRequests` leaves this history when the same step also executed other
@@ -1367,10 +1364,8 @@ def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage],
     unanswered = _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
     if not unanswered:
         return
-    if has_new_prompt:
-        raise exceptions.UserError(_NEW_PROMPT_ON_UNPROCESSED_CALLS_ERROR)
     raise exceptions.UserError(
-        'Cannot resume the run: the message history contains tool calls without results: '
+        'Cannot run the agent on this message history: it contains tool calls without results: '
         f'{[call.tool_call_id for call in unanswered]}. If they were deferred, pass `deferred_tool_results` '
         'with a result for each of them; otherwise call `pydantic_ai.messages.repair_messages()` on the '
         'history first to close them out.'
