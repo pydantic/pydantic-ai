@@ -8,12 +8,14 @@ matches no variant, and its `provider_details` stay as they were.
 
 from __future__ import annotations as _annotations
 
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
 
+from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
 from ..conftest import AnthropicModelFactory
 
@@ -25,24 +27,48 @@ pytestmark = [
 ]
 
 
+@dataclass(frozen=True)
+class Case:
+    id: str
+    speed: Literal['fast'] | None
+    stream: bool
+    provider_details: dict[str, Any]
+
+
+CASES = [
+    Case(
+        id='fast-request',
+        speed='fast',
+        stream=False,
+        provider_details=snapshot({'finish_reason': 'end_turn', 'speed': 'fast'}),
+    ),
+    Case(
+        id='fast-stream',
+        speed='fast',
+        stream=True,
+        provider_details=snapshot({'speed': 'fast', 'finish_reason': 'end_turn'}),
+    ),
+    Case(id='standard-request', speed=None, stream=False, provider_details=snapshot({'finish_reason': 'end_turn'})),
+    Case(id='standard-stream', speed=None, stream=True, provider_details=snapshot({'finish_reason': 'end_turn'})),
+]
+
+
 @pytest.mark.vcr
-@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-@pytest.mark.parametrize('speed', ['fast', None], ids=['fast', 'standard'])
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
 async def test_fast_mode_provider_details(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
-    speed: Literal['fast'] | None,
-    stream: bool,
+    case: Case,
 ):
     """A fast-mode response records `speed: 'fast'`, streamed or not; a standard one records no speed."""
     # An explicit `max_tokens` keeps the non-streaming request from being streamed behind the scenes.
     settings = AnthropicModelSettings(max_tokens=256)
-    if speed is not None:
-        settings['anthropic_speed'] = speed
+    if case.speed is not None:
+        settings['anthropic_speed'] = case.speed
     agent = Agent(anthropic_model('claude-fable-5-2', capture=True), model_settings=settings)
 
-    if stream:
+    if case.stream:
         async with agent.run_stream('Reply with exactly: OK') as streamed:
             await streamed.get_output()
         response = streamed.all_messages()[-1]
@@ -50,7 +76,6 @@ async def test_fast_mode_provider_details(
         result = await agent.run('Reply with exactly: OK')
         response = result.all_messages()[-1]
 
-    assert request_capture.body('/v1/messages').get('speed') == speed
+    assert request_capture.body('/v1/messages').get('speed') == case.speed
     assert isinstance(response, ModelResponse)
-    assert response.provider_details is not None
-    assert response.provider_details.get('speed') == speed
+    assert response.provider_details == case.provider_details
