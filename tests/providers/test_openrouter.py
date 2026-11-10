@@ -467,6 +467,44 @@ def test_openrouter_google_resolves_contains_ref():
         'z-ai/glm-5.3',
         'z-ai/glm-5.3-flash',
         'google/gemini-3.5-flash:batch',
+        'aion-labs/aion-2.0',
+        'aion-labs/aion-3.0-mini',
+        'aion-labs/aion-3.5',
+        'liquid/lfm-2.5-2.6b',
+        'liquid/lfm-2.5-2.6b:free',
+        'liquid/lfm-2.5-24b-a2b',
+        'meta/muse-glimmer-30b',
+        'meta/muse-spark-1.1',
+        'meta/muse-spark-1.2-contributor',
+        'meta/muse-spark-1.3',
+        'meta/muse-spark-open',
+        'meta/muse-wonder',
+        'minimax/minimax-m2.5',
+        'minimax/minimax-m2.7',
+        'minimax/minimax-m3.1-flash',
+        'mistralai/mistral-large-4-0',
+        'openai/gpt-6.1-terra-pro',
+        'perplexity/sonar-deep-research',
+        'perplexity/sonar-pro-search',
+        'perplexity/sonar-reasoning-pro',
+        'recursive/flint-v1.0:free',
+        'reflection/beam-1.0-501b-a23b',
+        'rekaai/reka-flash-3',
+        'sakana/fugu-max',
+        'sakana/fugu-ultra',
+        'sakana/fugu-ultra-v2',
+        'stepfun/step-3.5-flash',
+        'stepfun/step-3.7-flash',
+        'stepfun/step-5-preview',
+        '~anthropic/claude-fable-latest',
+        '~anthropic/claude-opus-latest',
+        '~anthropic/claude-sonnet-latest',
+        '~google/gemini-flash-latest',
+        '~openai/gpt-astra-latest',
+        '~openai/gpt-sol-latest',
+        '~x-ai/grok-latest',
+        '~z-ai/glm-latest',
+        '~z-ai/glm-flash-latest',
     ],
 )
 def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
@@ -474,12 +512,20 @@ def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is True
+    # Every route accepted `minimal` live, except Sonar Deep Research, which wasn't probed.
+    expected_floor = 'low' if model_name == 'perplexity/sonar-deep-research' else 'minimal'
+    assert profile.get('openrouter_lowest_reasoning_effort') == expected_floor
 
 
 @pytest.mark.parametrize(
     'model_name',
     [
         'anthropic/claude-sonnet-5',
+        '~anthropic/claude-haiku-latest',
+        'minimax/minimax-m1',
+        'minimax/minimax-m2-her',
+        'minimax/minimax-m3',
+        '~openai/gpt-luna-latest',
         'google/gemini-3.1-flash-lite',
         'moonshotai/kimi-k3',
         'openai/gpt-5.4',

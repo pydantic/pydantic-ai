@@ -389,6 +389,8 @@ agent = Agent(
 
 A part is clamped only when it is oversized *and* the clamp actually shrinks it, so keep `keep_head_chars + keep_tail_chars` well below your per-part threshold.
 
+A clamped part also loses its item ID (`TextPart.id`, `ToolCallPart.id`): the OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the content sent alongside, so the clamp wouldn't reach the model.
+
 It clamps two kinds of part inside each `ModelResponse`:
 
 - **Response text** (`TextPart`) -- the critical case, a runaway model-response text part.
@@ -426,7 +428,7 @@ agent = Agent(
 )
 ```
 
-Set `clear_tool_inputs=True` to also blank the arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never cleared.
+Set `clear_tool_inputs=True` to also blank the arguments of the cleared calls. A cleared call loses its item ID for the same reason a [clamped part](#clampoversizedmessages-surviving-a-runaway-generation) does. A `load_capability` call keeps its argument, because Pydantic AI reads from it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never cleared.
 
 With `max_messages`, the count starts after the last cleared result, because clearing blanks content but removes no messages. Clearing then happens in batches: after a clear, the next one waits until more than `max_messages` messages follow the last cleared result, so the requests in between extend the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear, about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
 

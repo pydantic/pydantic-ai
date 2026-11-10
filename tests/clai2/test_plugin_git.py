@@ -425,7 +425,8 @@ async def test_interrupted_clone_is_cleaned_up(tmp_path: Path, monkeypatch: pyte
 
     async def interrupted_clone(url: str, destination: Path) -> tuple[int, bytes]:
         assert url == 'https://example.com/plugin.git'
-        (destination / '__init__.py').write_text('raise AssertionError("Not installed yet")')
+        entry = destination / '__init__.py'
+        await anyio.to_thread.run_sync(entry.write_text, 'raise AssertionError("Not installed yet")')
         assert harness.loader.entries() == []
         cloning.set()
         if cancel:
@@ -458,7 +459,7 @@ async def test_plugin_created_while_cloning_is_preserved(
         if origin == 'saved':
             other.save_plugin(existing)
         else:
-            harness.write('demo_plugin')
+            await anyio.to_thread.run_sync(harness.write, 'demo_plugin')
         return result
 
     monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', concurrent_clone)

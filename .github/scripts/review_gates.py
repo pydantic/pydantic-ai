@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
+from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ReviewGate = Literal['douwebot']
@@ -157,6 +158,12 @@ def douwebot_approval(
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
+            if (engine := marker[3]) == 'claude' or engine == 'opencode':
+                suffix = '\n\n' + REVIEW_ENGINES[engine]
+                if body.endswith(suffix):
+                    body = body[: -len(suffix)]
+                else:
+                    verdict.failures.append('Douwebot review engine attribution is missing.')
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
@@ -179,13 +186,16 @@ def douwebot_approval(
         if comment.pull_request_review_id in marked_ids:
             verdict.failures.append('Douwebot has inline findings on this head, including resolved/optional ones.')
         else:
-            # gh-aw gives its reviews a separate receipt despite sharing the account.
+            # gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account.
+            if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+                continue
             receipt = f'{parent.body if parent else ""}\n{comment.body}'
             if any(
                 f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
                 or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
                 for workflow in (
                     'pydantic/pydantic-ai/pydantic-ai-pr-review',
+                    # Retired, but an open PR's head can still carry its comments.
                     'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
                 )
             ):

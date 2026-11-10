@@ -168,8 +168,8 @@ WARNED_SETTINGS = frozenset(
 HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
-FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout'})
-"""Fields Pydantic AI enforces itself for every model, so no model sends them or declares that it ignores them."""
+FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
+"""Fields Pydantic AI enforces or applies itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
@@ -182,6 +182,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'timeout': (987.654,),
     'request_timeout': (876.543,),
     'first_event_timeout': (765.432,),
+    'framing_announcement': ('always', 'never'),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),
@@ -1051,8 +1052,8 @@ RETRY_CASES = [
         'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
     ),
     RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
-    # A copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which would send the
-    # retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
+    # Below anthropic 2.6, a copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which
+    # would send the retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
     RetryCase(
         'AnthropicModel[bedrock]',
         ('Anthropic',),
@@ -1156,7 +1157,7 @@ def test_max_retries_supported_by_list_matches_the_attempts():
 async def test_max_retries_keeps_the_bedrock_client_aws_profile(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """`AsyncAnthropicBedrock.with_options()` drops `aws_profile`, so the retrying copy must be handed it back."""
+    """The retrying copy signs with the client's `aws_profile`, which `with_options()` drops below anthropic 2.6."""
     credentials = tmp_path / 'credentials'
     credentials.write_text('[probe-profile]\naws_access_key_id = AKIAPROBEPROFILE\naws_secret_access_key = probe\n')
     monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(credentials))

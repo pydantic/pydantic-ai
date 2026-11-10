@@ -952,8 +952,12 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
-async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
-    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+async def test_a_refused_update_shows_no_saved_badge(
+    page: Page, web_ui: WebUI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About refuses Update… while CLAI cannot restart; its row must not claim it saved anything."""
+    # The launch session installs for every page, so its refusal is the one About shows.
+    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'CLAI cannot restart now.')
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
@@ -967,7 +971,7 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('CLAI cannot restart now.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
