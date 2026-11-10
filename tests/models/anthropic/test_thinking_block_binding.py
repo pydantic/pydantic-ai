@@ -1287,6 +1287,42 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @_MATCH_BODY
+async def test_anthropic_fable_5_2_retries_a_stale_thinking_block_on_a_legacy_account(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Fable 5.2 runs the prefix check on every account, so the default request is rejected and retried.
+
+    Recorded on the same legacy account on which Claude Fable 5.1 replays the stale block untouched (see
+    `test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_account`): Fable 5.2 answers that request
+    with a 400, and Pydantic AI retries it once with `drop_block`.
+    https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2
+    """
+    m = anthropic_model('claude-fable-5-2', capture=True)
+    history = await stale_thinking_block_history(m)
+
+    second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
+    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+        replayed = await second.run('And times two?', message_history=history)
+
+    response = message(replayed.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+    rejected, retried = request_capture.bodies('/v1/messages')[-2:]
+    assert 'thinking' not in rejected
+    assert retried['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
+
+
+@_STALE_THINKING_BLOCK_PREFIX_CHANGE
+@_MATCH_BODY
 async def test_anthropic_bedrock_messages_api_keeps_dropping_a_stale_thinking_block(
     allow_model_requests: None, request_capture: RequestCapture, request: pytest.FixtureRequest
 ):

@@ -927,11 +927,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     resumable=resumable,
                     working_directory=directory,
                 )
+                # Read before leaving the group yields: a task that never yields, like one replayed from a durable
+                # journal, would otherwise settle first and skip the announcement its original run made.
+                backgrounded = background and owner.records[task_id].status == 'running'
             finally:
                 # The timer only counts while this call waits for the task.
                 group.cancel_scope.cancel()
         record = owner.records[task_id]
-        if background and record.status == 'running':
+        if backgrounded:
             await self._announce(
                 ctx, owner, record, TaskBackgroundedEvent(task_id=task_id, agent_name=agent_name, reason='requested')
             )
