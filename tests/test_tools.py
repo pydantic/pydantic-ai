@@ -5875,7 +5875,44 @@ def test_admonition_sections_reach_tool_description():
         'Blank spend means no data, not zero.\n'
         '\n'
         'Important:\n'
-        'Result rows are capped at 1000.'
+        'Result rows are capped at 1000.\n'
+        '\n'
+        'Trailing prose after the admonition.'
+    )
+
+
+def test_admonition_headers_reach_tool_description_as_written():
+    """A Google admonition header reaches the model as written, including multi-word types and inline titles."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Important note:
+            Timestamps are in UTC.
+
+        Note: Mind the gap
+            Blank spend means no data, not zero.
+
+        Args:
+            account_id: The ad account id.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Important note:\n'
+        'Timestamps are in UTC.\n'
+        '\n'
+        'Note: Mind the gap\n'
+        'Blank spend means no data, not zero.'
     )
 
 
@@ -5910,10 +5947,10 @@ def test_admonition_sections_reach_tool_description_numpy():
     assert descriptions['fetch_ad_rows'] == (
         'Fetch ad rows for an account.\n'
         '\n'
-        'Warning:\n'
+        'Warnings:\n'
         'Blank spend means no data, not zero.\n'
         '\n'
-        'Note:\n'
+        'Notes:\n'
         'Result rows are capped at 1000.'
     )
 
@@ -5970,6 +6007,51 @@ def test_returns_with_colon_whole_text_when_return_annotated():
         '<summary>Fetch ad rows for an account.</summary>\n'
         '<returns>\n'
         '<description>The rows. Example: [{"id": 1}]</description>\n'
+        '</returns>'
+    )
+
+
+@pytest.mark.parametrize(
+    ('returns_text', 'description'),
+    [
+        pytest.param('Rows (in UTC): one per line.', 'Rows (in UTC): one per line.', id='parens-before-colon'),
+        pytest.param('(Optional) rows: one per line.', '(Optional) rows: one per line.', id='leading-paren'),
+        pytest.param(
+            'list[dict[str, str]]: the rows, one per line.',
+            'list[dict[str, str]]: the rows, one per line.',
+            id='type-prefix',
+        ),
+        pytest.param(
+            'Rows: one per line,\n            keyed: by id.', 'Rows: one per line,\n    keyed: by id.', id='multi-line'
+        ),
+    ],
+)
+def test_returns_with_colon_written_text_when_return_annotated(returns_text: str, description: str):
+    """With a Python return annotation, the `Returns:` description is the text as written, parentheses included."""
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    fetch_ad_rows.__doc__ = f"""Returns: the ad rows for an account.
+
+    Args:
+        account_id: The ad account id.
+
+    Returns:
+        {returns_text}
+    """
+    agent.tool_plain(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Returns: the ad rows for an account.</summary>\n'
+        '<returns>\n'
+        f'<description>{description}</description>\n'
         '</returns>'
     )
 

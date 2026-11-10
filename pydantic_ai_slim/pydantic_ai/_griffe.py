@@ -2,14 +2,17 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from inspect import Signature, signature
+from inspect import Signature, cleandoc, signature
+from itertools import dropwhile, takewhile
 from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
     Docstring,
     DocstringSection,
-    DocstringSectionKind,
+    DocstringSectionAdmonition,
     DocstringSectionParameters,
+    DocstringSectionReturns,
+    DocstringSectionText,
     GoogleOptions,
     NumpyOptions,
     SphinxOptions,
@@ -65,53 +68,87 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
-    main_desc = _main_description(sections)
+    main_desc = _main_description(sections, docstring_style)
 
-    if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
-        main_desc = _main_desc_with_returns(return_, docstring_style, func, main_desc)
+    if return_ := next((p for p in sections if isinstance(p, DocstringSectionReturns)), None):
+        main_desc = _main_desc_with_returns(return_, docstring_style, func, doc, main_desc)
 
     return main_desc, params
 
 
-def _main_description(sections: list[DocstringSection]) -> str:
+def _main_description(sections: list[DocstringSection], docstring_style: DocstringStyle) -> str:
     """Build the main description from the docstring's text and admonition sections, in source order.
 
-    The first text section supplies the description; recognized admonition sections (e.g. `Warning:`) are
-    appended where they appear.
+    Text sections and recognized admonition sections (e.g. `Warning:`) are joined where they appear, so prose
+    after an admonition is kept too.
     """
     main_desc_parts: list[str] = []
-    text_seen = False
     for section in sections:
-        if section.kind == DocstringSectionKind.text and not text_seen:
+        if isinstance(section, DocstringSectionText):
             main_desc_parts.append(section.value)
-            text_seen = True
-        elif section.kind == DocstringSectionKind.admonition:
-            # Recognized admonition sections (e.g. `Warning:`) reach the model verbatim, in source order;
-            # other sections keep their current handling.
-            main_desc_parts.append(f'{section.value.kind.capitalize()}:\n{section.value.contents}')
+        elif isinstance(section, DocstringSectionAdmonition):
+            main_desc_parts.append(f'{_admonition_header(section, docstring_style)}\n{section.value.contents}')
     return '\n\n'.join(main_desc_parts)
 
 
+def _admonition_header(section: DocstringSectionAdmonition, docstring_style: DocstringStyle) -> str:
+    """The admonition's header as written, e.g. `Warnings:`, `Important note:` or `Note: Mind the gap`."""
+    title = section.title or ''
+    kind = str(section.value.kind)
+    # A NumPy admonition's title is its header. Griffe's Google parser derives the kind from the written type by
+    # lowercasing it and hyphenating spaces, and uses the type as the title unless the header line gives one
+    # (`Note: Mind the gap`).
+    if docstring_style == 'numpy' or title.lower().replace(' ', '-') == kind:
+        return f'{title}:'
+    return f'{kind.replace("-", " ").capitalize()}: {title}'
+
+
 def _main_desc_with_returns(
-    return_: DocstringSection,
+    return_: DocstringSectionReturns,
     docstring_style: DocstringStyle,
     func: Callable[..., Any],
+    doc: str,
     main_desc: str,
 ) -> str:
     """Format the returns section as the `<returns>` XML the model sees, folding in the main description."""
     return_statement = return_.value[0]
     return_desc = return_statement.description
     return_type = return_statement.annotation
-    if docstring_style == 'google' and return_type and signature(func).return_annotation is not Signature.empty:
+    if docstring_style == 'google' and signature(func).return_annotation is not Signature.empty:
         # The Python return annotation is authoritative: keep the whole docstring text as the return
         # description instead of griffe splitting a type off at the first colon.
-        return_desc = f'{return_type}: {return_desc}'
+        return_desc = _google_returns_text(doc, return_desc)
         return_type = None
     type_tag = f'<type>{return_type}</type>\n' if return_type else ''
     return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
     if main_desc:
         return f'<summary>{main_desc}</summary>\n{return_xml}'
     return return_xml
+
+
+_GOOGLE_RETURNS_HEADER = re.compile(r'^returns:(\s|$)', re.IGNORECASE)
+
+
+def _google_returns_text(doc: str, parsed_description: str) -> str:
+    """The written, dedented text of the Google-style `Returns:` section griffe parsed into `parsed_description`.
+
+    Griffe's parsed entry can't be joined back into the written text: before the first colon, it strips parentheses
+    and normalizes the text as a type expression. Its description is the tail of the written text, which picks out
+    the right section if `Returns:` also starts a line elsewhere, e.g. in a code block.
+    """
+    lines = cleandoc(doc).splitlines()
+    blocks = (_indented_block(lines[i + 1 :]) for i, line in enumerate(lines) if _GOOGLE_RETURNS_HEADER.match(line))
+    return next(block for block in blocks if block.endswith(parsed_description))
+
+
+def _indented_block(lines: list[str]) -> str:
+    """The dedented block of indented lines at the start of `lines`, as griffe's Google parser reads a section."""
+    lines = list(dropwhile(lambda line: not line.strip(), lines))
+    indent = len(lines[0]) - len(lines[0].lstrip()) if lines else 0
+    if not indent:
+        return ''
+    block = takewhile(lambda line: line.startswith(' ' * indent) or not line.strip(), lines)
+    return '\n'.join(line[indent:] for line in block).rstrip('\n')
 
 
 def _parser_options(docstring_style: DocstringStyle) -> GoogleOptions | NumpyOptions | SphinxOptions:
