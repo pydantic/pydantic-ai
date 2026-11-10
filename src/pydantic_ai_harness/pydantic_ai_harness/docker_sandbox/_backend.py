@@ -249,7 +249,7 @@ _START_DESKTOP = (
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
-manager.
+manager. A second start of the display waits for the first, then finds its X server.
 
 A second `fluxbox` exits when one is already running, so starting it every time recovers one that died or never
 started. It then waits up to 10 seconds for the window manager, as `xprop` sees it, so a first click focuses and
@@ -288,7 +288,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
-    image needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    image needs Xvfb, `xdotool`, `xwininfo` (in Debian's `x11-utils`), `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to

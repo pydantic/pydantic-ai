@@ -28,6 +28,26 @@ from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionEr
 
 from .display_fakes import FAKE_SCREENSHOT
 
+INPUT = 'echo $$ > /tmp/.pydantic-ai-input-1; exec "$@"'
+"""How an input command runs: recording its process id, so a cancel can stop it."""
+
+STOP_INPUT_PREFIX = 'p=$(cat /tmp/.pydantic-ai-input-1'
+"""How the script that stops a failed or cancelled input command starts."""
+
+
+def stops_then(*releases: list[str]) -> list[list[str]]:
+    """After a failed or cancelled input, the stop of its command, then each release on its own."""
+    return [['sh', '-c', STOP_INPUT_PREFIX], *releases]
+
+
+def recovery(argvs: list[Any]) -> list[list[str]]:
+    """`argvs` after the input command, with the stop script cut to its start for comparing."""
+    return [
+        ['sh', '-c', STOP_INPUT_PREFIX] if argv[:2] == ['sh', '-c'] and argv[2].startswith(STOP_INPUT_PREFIX) else argv
+        for argv in argvs[1:]
+    ]
+
+
 RELEASE_MODIFIERS = [
     *['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R'],
     'ISO_Level3_Shift',
@@ -125,7 +145,9 @@ class BlockingCommands(ScriptedCommands):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
-    assert commands.calls == [(['xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})]
+    assert commands.calls == [
+        (['sh', '-c', INPUT, 'sh', 'xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})
+    ]
 
 
 @pytest.mark.parametrize(
@@ -163,16 +185,24 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
 @pytest.mark.parametrize(
     'action, releases',
     [
-        (Click(x=1, y=2, modifiers=('ctrl', 'shift')), [['xdotool', 'keyup', 'shift', 'ctrl']]),
-        (Drag(path=(Point(x=1, y=2), Point(x=3, y=4))), [['xdotool', 'mouseup', '1']]),
+        (
+            Click(x=1, y=2, modifiers=('ctrl', 'shift')),
+            stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'shift', 'ctrl']),
+        ),
+        (Drag(path=(Point(x=1, y=2), Point(x=3, y=4))), stops_then(['xdotool', 'mouseup', '1'])),
         (
             Drag(path=(Point(x=1, y=2), Point(x=3, y=4)), modifiers=('alt',)),
-            [['xdotool', 'mouseup', '1', 'keyup', 'alt']],
+            stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt']),
         ),
-        (PressKeys(keys=('ctrl', 's'), repeat=3), [['xdotool', 'keyup', 's', 'ctrl']]),
+        (PressKeys(keys=('ctrl', 's'), repeat=3), stops_then(['xdotool', 'keyup', 's', 'ctrl'])),
         # Typing can stop between a key's press and release; X would then repeat the key without end.
-        (TypeText(text='Yay'), [['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0059', 'U0061', 'U0079']]),
-        (Click(x=1, y=2), []),
+        (
+            TypeText(text='Yay'),
+            stops_then(['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0059', 'U0061', 'U0079']),
+        ),
+        # A click can stop between pressing and releasing its button.
+        (Click(x=1, y=2, button='right'), stops_then(['xdotool', 'mouseup', '3'])),
+        (MoveMouse(x=1, y=2), stops_then()),
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(
@@ -181,7 +211,16 @@ async def test_x11_computer_releases_what_a_failed_action_held(
     commands = ScriptedCommands(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
     with pytest.raises(WorkspaceError, match='BadValue'):
         await X11Computer(commands).act(action)
-    assert commands.argvs[1:] == releases
+    assert recovery(commands.argvs) == releases
+
+
+async def test_x11_computer_tries_every_release_when_one_fails() -> None:
+    failed = CommandResult(exit_code=1, stdout='', stderr='BadValue')
+    # The action fails, then stopping it, then letting go of the button.
+    commands = ScriptedCommands(failed, failed, failed)
+    with pytest.raises(WorkspaceError, match='BadValue'):
+        await X11Computer(commands).act(Click(x=1, y=2, modifiers=('ctrl',)))
+    assert recovery(commands.argvs) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'ctrl'])
 
 
 @pytest.mark.parametrize(
@@ -197,14 +236,16 @@ async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: Comp
         tg.start_soon(X11Computer(commands).act, action)
         await commands.started.wait()
         tg.cancel_scope.cancel()
-    assert commands.argvs[1:] == [release]
+    # The cancelled command is stopped first, so it can't press again what was released.
+    assert recovery(commands.argvs) == stops_then(release)
 
 
 async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_as_arguments() -> None:
     encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
     png = CommandResult(exit_code=0, stdout=encoded, stderr='')
     pointer = CommandResult(exit_code=0, stdout='X=12\nY=34\nSCREEN=0\nWINDOW=65\n', stderr='')
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='1280 800\n', stderr=''), png, png, png, pointer)
+    size = CommandResult(exit_code=0, stdout='  Width: 1280\n  Height: 800\n', stderr='')
+    commands = ScriptedCommands(size, png, png, png, pointer)
     computer = X11Computer(commands)
 
     assert await computer.display_size() == (1280, 800)
