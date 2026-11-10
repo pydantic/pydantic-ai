@@ -358,6 +358,19 @@ _GEMINI_FREE_TIER_RATE_LIMIT: dict[str, Any] = {
 https://github.com/pydantic/pydantic-ai/issues/12063#issuecomment-6769986854: no `Retry-After` header, and the wait
 only in the body's `google.rpc.RetryInfo`."""
 
+
+def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
+    """A Gemini 429 whose only wait is the `RetryInfo` detail's `retryDelay`, which a protobuf `Duration` spells."""
+    return {
+        'error': {
+            'code': 429,
+            'message': 'Resource has been exhausted',
+            'status': 'RESOURCE_EXHAUSTED',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': retry_delay}],
+        }
+    }
+
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -890,19 +903,63 @@ CASES = [
         # A `RetryInfo` that names no parsable protobuf `Duration` says nothing, and must not fail the mapping.
         id='google-retry-info-unparsable',
         model=_google,
-        handler=_json(
-            429,
-            {
-                'error': {
-                    'code': 429,
-                    'message': 'Resource has been exhausted',
-                    'status': 'RESOURCE_EXHAUSTED',
-                    'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': 'soon'}],
-                }
-            },
-        ),
+        handler=_json(429, _google_retry_info_body('soon')),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'retry_after': None},
+    ),
+    Case(
+        # A protobuf `Duration` may carry a fraction of a second.
+        id='google-retry-info-fractional-seconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('0.5s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 0.5},
+    ),
+    Case(
+        # Up to nine fractional digits, as a protobuf `Duration` allows.
+        id='google-retry-info-nanoseconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('1.000340012s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 1.000340012},
+    ),
+    Case(
+        # A negative wait is meaningless, so it's dropped rather than reported.
+        id='google-retry-info-negative',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('-3s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-infinite',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('infs')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A `Duration` always ends in `s`; a bare number is not one.
+        id='google-retry-info-no-second-suffix',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-not-a-string',
+        model=_google,
+        handler=_json(429, _google_retry_info_body(14)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # `retry-after-ms` and `Retry-After` outrank the body: only the fallback reads `RetryInfo`.
+        id='google-retry-info-after-ms-header',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14s'), headers={'retry-after-ms': '7000'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 7.0},
     ),
     Case(
         # From https://github.com/ChatGPTNextWeb/NextChat/issues/5255.

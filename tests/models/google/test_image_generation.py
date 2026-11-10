@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel
-from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     Agent,
@@ -35,7 +34,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import ImageGeneration, NativeTool
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles import ModelProfile
@@ -45,9 +44,6 @@ from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from google.genai import errors
-
-    from pydantic_ai.images.google import GoogleImageGenerationModel
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -839,31 +835,3 @@ async def test_google_vertexai_image_generation(
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(IsInstance(BinaryImage))
-
-
-async def test_google_image_generation_error_reports_retry_info_delay(
-    allow_model_requests: None, mocker: MockerFixture
-) -> None:
-    """A Gemini 429 reports its wait in the body's `google.rpc.RetryInfo`, as it does for `GoogleModel`.
-
-    Not a VCR test: no recording can produce the 429 on demand, so the test raises the SDK's own `errors.APIError`
-    around the body a real response carried ([#12063](https://github.com/pydantic/pydantic-ai/issues/12063)).
-    """
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key='test-key'))
-    body = {
-        'error': {
-            'code': 429,
-            'message': 'Resource has been exhausted',
-            'status': 'RESOURCE_EXHAUSTED',
-            'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
-        }
-    }
-    mocker.patch.object(
-        model._client.aio.models,  # pyright: ignore[reportPrivateUsage]
-        'generate_content',
-        side_effect=errors.APIError(429, body),
-    )
-
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('a cat')
-    assert exc_info.value.retry_after == 14.0

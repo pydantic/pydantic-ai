@@ -206,7 +206,7 @@ agent = Agent(model)
 
 This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
-A 429 from the Gemini API reports the wait in its `google.rpc.RetryInfo` error detail rather than in a `Retry-After` header, including when the error arrives as a chunk inside a stream. [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] reads the delay from there when no `retry-after-ms` or `Retry-After` header carries one, so a backoff built on it waits as long as Gemini asks.
+A 429 from Google reports the wait in its `google.rpc.RetryInfo` error detail rather than in a `Retry-After` header, including when the error arrives as a chunk inside a stream. [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] reads the delay from there when no `retry-after-ms` or `Retry-After` header carries one, so a backoff built on it waits as long as the provider asks.
 
 ## Document, Image, Audio, and Video Input
 
