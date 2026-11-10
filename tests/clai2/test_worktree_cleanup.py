@@ -183,12 +183,12 @@ def test_notice_names_what_exit_does(created: Worktree) -> None:
     assert created.notice == f'{opened} Removed on exit if unchanged, or if clean and pushed.'
     kept = replace(created, remove_if_unchanged=False)
     assert kept.notice == (
-        f'{opened} Kept on exit while it has uncommitted or unpushed work, unless removal is confirmed.'
+        f'{opened} On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
     )
 
 
 def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
+    """An unpushed checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=replace(created, remove_if_unchanged=False))
     assert created.path.exists()
@@ -643,7 +643,7 @@ def test_exit_uses_git_when_removal_setting_cannot_be_read(
     assert f'Removed worktree {checkout}. Branch kept.' in output.out
 
 
-def test_unchanged_hand_made_checkout_is_kept_silently(
+def test_unchanged_unpushed_hand_made_checkout_is_kept_silently(
     checkout: Path, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     worktree = current_worktree()
@@ -736,7 +736,6 @@ def test_clean_pushed_checkout_is_removed_without_asking(
     """Pushed commits are safe on the remote, whether or not `HEAD` moved since launch."""
     git(launched.path, 'push', 'origin', 'feature')
     worktree = launched if moved else current_worktree()
-    assert worktree is not None
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
     offer_worktree_cleanup(worktree=worktree, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
     assert not launched.path.exists()
@@ -777,6 +776,29 @@ def test_saved_keep_choice_outlives_a_push(
     offer_worktree_cleanup(worktree=launched, store=store)
     assert launched.path.exists()
     assert capsys.readouterr() == (f'Worktree kept at {launched.path}.\n', '')
+
+
+@pytest.mark.parametrize('moved', [False, True])
+def test_unreadable_keep_choice_never_removes_without_asking(
+    launched: Worktree,
+    repo: Path,
+    origin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    moved: bool,
+) -> None:
+    """A pushed checkout whose saved choice cannot be read is asked about if it changed, and kept if not."""
+    store = SettingsStore(repo.parent / 'config.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('DROP TABLE kept_worktrees')
+    git(launched.path, 'push', 'origin', 'feature')
+    worktree = launched if moved else current_worktree()
+    picker = AsyncMock(return_value='keep')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=worktree, store=store)
+    assert picker.await_count == moved
+    assert launched.path.exists()
+    assert capsys.readouterr().err.count('Cannot read worktree cleanup preference') == 1
 
 
 def run_cli(

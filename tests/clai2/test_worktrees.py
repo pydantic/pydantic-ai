@@ -86,7 +86,7 @@ def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list
     )
     notice = (
         f'Worktree: {workspace} (branch: clai-{workspace.name}). '
-        'Kept on exit while it has uncommitted or unpushed work, unless removal is confirmed.'
+        'On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
     )
     banner, _, after = result.stdout.partition(notice)
     assert after, result.stdout
@@ -184,7 +184,7 @@ def test_headless_worktree_notice_stays_off_stdout(repository: Path, launch: Lau
     workspace = repository / '.worktrees/headless'
     notice = (
         f'Worktree: {workspace} (branch: clai-headless). '
-        'Kept on exit while it has uncommitted or unpushed work, unless removal is confirmed.'
+        'On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
     )
     assert notice in result.stderr
     assert 'Worktree' not in result.stdout

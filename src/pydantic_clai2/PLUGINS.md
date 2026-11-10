@@ -1109,7 +1109,8 @@ which can retain globals removed from source; initialize plugin state explicitly
 
 `/reload` refreshes CLAI code, not Harness or core. After changing those packages,
 restart with the same launch options and `--resume` to continue the saved session.
-Keep the worktree if asked to remove it.
+Keep the worktree if asked to remove it. Exit removes a clean worktree with no
+unpushed commits without asking; `--worktree NAME` checks it out again on its kept branch.
 
 Plugins are trusted code running as you. Only install what you trust.
 
@@ -1124,9 +1125,11 @@ that directory before reading project settings or activating plugins. Relative p
 and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
-shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
+shutdown and plugin cleanup, CLAI removes a linked worktree that is clean and has
+no unpushed commits, and offers to remove a changed one, defaulting
 to keep. This includes existing linked worktrees. The inline picker also offers
-**No, don't ask again for this worktree**, saved for this checkout only. By default, removal uses Git
+**No, don't ask again for this worktree**, saved for this checkout only, which
+also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved

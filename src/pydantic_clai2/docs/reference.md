@@ -2625,7 +2625,9 @@ CLAI also removes, without asking, any linked worktree that has no uncommitted o
 untracked files and whose commits are all on a remote-tracking branch, even if a
 different commit is checked out than at launch. It keeps the branch and prints the
 removed path. Pushed commits are judged from the local remote-tracking branches;
-CLAI does not fetch. An unchanged worktree with unpushed commits that CLAI
+CLAI does not fetch. Ignored files are deleted with the worktree. To keep a
+worktree anyway, lock it with `git worktree lock`, which makes Git refuse the
+removal. An unchanged worktree with unpushed commits that CLAI
 reopened, or that you launched inside, is kept without asking.
 
 Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
@@ -3396,6 +3398,8 @@ including `pydantic_ai_harness`. `/reload` refreshes CLAI only, not Harness or c
 even when their source has changed in the same checkout. If new CLAI code imports
 a symbol the running dependency does not have, restart with the same launch options
 and `--resume` to continue the saved session. Keep the worktree if asked to remove it.
+Exit removes a clean worktree with no unpushed commits without asking;
+`--worktree NAME` checks it out again on its kept branch.
 `/reload` does not rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
 plugin.
