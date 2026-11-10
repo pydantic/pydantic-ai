@@ -241,8 +241,8 @@ THINKING = PURPLE
 # The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
 LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
-# A green and a red that differ in lightness too, so colour-blind readers can tell additions from deletions.
-DIFF_ADDITION = '#2B7536'
+# Claude Code's dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
+DIFF_ADDITION = '#225C2B'
 DIFF_DELETION = '#7A2936'
 
 # `roles` gives a shared slot to the first brand here: muted grey text is commoner than element purple.

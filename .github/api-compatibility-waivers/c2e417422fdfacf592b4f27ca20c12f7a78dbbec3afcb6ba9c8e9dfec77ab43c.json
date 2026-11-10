@@ -1,5 +1,0 @@
-{
-  "against": "v2.66.0",
-  "reason": "The `clai2` default theme's diff addition background is lighter (#13001), so colour-blind readers can tell it from the deletion background by lightness; the constant's name and type are unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13041"
-}
