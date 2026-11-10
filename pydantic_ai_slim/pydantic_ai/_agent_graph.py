@@ -93,7 +93,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._capability_loads import keep_capability_loads
+from ._capability_loads import keep_loaded_state
 from ._compaction_requests import CompactionRequests, RequestedCompaction
 from ._compaction_view import CompactionView
 from ._context_size import (
@@ -1037,18 +1037,16 @@ def _keep_capability_loads(
     compacted: list[_messages.ModelMessage],
     kept_from: int,
 ) -> tuple[list[_messages.ModelMessage], int]:
-    """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
+    """Record again, after the compaction, the deferred capability loads and tool discoveries it dropped.
 
-    Returns the compacted history with the records, and where its kept messages start now: the records go ahead of
-    them, or, after a provider's compaction response and the requests following it, into them, which ends the kept tail
-    after them.
-
-    TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
+    Whichever capability compacted. Returns the compacted history with the records, and where its kept messages start
+    now: the records go ahead of them, or, after a provider's compaction response and the requests following it, into
+    them, which ends the kept tail after them.
     """
     deferred_ids = {
         capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
     }
-    messages = keep_capability_loads(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    messages = keep_loaded_state(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
     if messages is compacted:
         return compacted, kept_from
     inserted = len(messages) - len(compacted)
@@ -3010,6 +3008,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _max_tokens_getter=lambda: ctx.state.last_max_tokens,
         )
 
     async def _make_request(
@@ -3612,6 +3611,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
+                history=ctx.state.message_history,
                 keep_without_parts={
                     capability_id
                     for capability_id, capability in ctx.deps.capabilities.items()
@@ -3789,8 +3789,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -4715,6 +4716,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
+                _raise_if_cut_off_output(
+                    self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
+                )
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -5050,6 +5054,30 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     ctx.deps.model = model
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
+def _raise_if_cut_off_output(
+    response: _messages.ModelResponse,
+    error: ToolRetryError,
+    *,
+    output_schema: _output.OutputSchema[Any],
+    max_tokens: int | None,
+) -> None:
+    """Raise instead of retrying when the token limit cut off structured text output into incomplete JSON.
+
+    Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
+    text is parsed as JSON: a `TextOutput` function raising `ValidationError` on plain text keeps its retry, and so
+    does JSON that parsed but that the schema or an output validator rejected.
+    """
+    if (
+        response.finish_reason == 'length'
+        and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
+        and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
+        and error.tool_retry.retry.cause == 'validation_error'
+        and _output.is_incomplete_json(error.__cause__)
+    ):
+        # Chained to the `ValidationError`, as in `run_stream()`.
+        raise exceptions.UnexpectedModelBehavior(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

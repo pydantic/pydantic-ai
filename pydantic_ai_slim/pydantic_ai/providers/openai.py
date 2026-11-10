@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
@@ -171,6 +172,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 compaction_instructions='system_prompt',
                 compaction_result_readable=False,
             ),
+            special_token_route_profile('openai', model_name),
         )
 
     @staticmethod

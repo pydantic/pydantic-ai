@@ -61,7 +61,6 @@ from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
-    format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
@@ -175,6 +174,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -223,7 +223,7 @@ try:
         OpenAIError,
         omit,
     )
-    from openai.types import AllModels, chat, responses
+    from openai.types import chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -355,6 +355,9 @@ def _status_error(
     if model_id_namespace == 'zai':
         # Z.ai's numeric codes mean something only from Z.ai, so other OpenAI-compatible APIs don't get this mapping.
         category = _model_errors.zai_code_category(code) or category
+    elif model_id_namespace == 'moonshotai':
+        # Moonshot sends an exhausted balance as a 429 too; only its error type tells it from a rate limit.
+        category = _model_errors.moonshot_type_category(error_type) or category
     if status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
@@ -462,22 +465,25 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
-"""
-Possible OpenAI model names.
+OpenAIModelName = (
+    str
+    | Literal[
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+    ]
+)
+"""Possible OpenAI model names.
 
-Since OpenAI supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The `Literal` lists the models to pick from, for autocomplete: per line, the newest model of the newest
+generation and of the previous one. Any other model id the API accepts works too, as a `str`.
 See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
-Using this more broad type for the model name instead of the ChatModel definition
-allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
-`openai` extra declares; it arrived in `openai` 3.21.0
-(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
-`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
-Drop its bridge once the SDK floor includes the release that adds it.
+This is used for the OpenAI-compatible models of other providers too (ie, Ollama, Deepseek).
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -543,30 +549,79 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
-def _join_text_content_parts(content: object) -> object:
-    """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
+def _split_content_parts(content: object) -> tuple[object, list[object]]:
+    """Split a list of content parts into the string the Chat Completions API specifies, and the parts that aren't text.
 
     Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
-    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Parts other than
-    text, like those references, are dropped. Anything that isn't a list is returned unchanged; a list with no text
-    becomes `None`.
+    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. The text parts are
+    joined; the others, like those references, are returned as they came, for `openai_include_unmapped_response_data`.
+    Anything that isn't a list is returned unchanged; a list with no text becomes `None`.
     """
     if not isinstance(content, list):
-        return content
+        return content, []
     texts: list[str] = []
+    others: list[object] = []
     for part in cast(list[object], content):
         if isinstance(part, str):
             texts.append(part)
         elif _utils.is_str_dict(part) and part.get('type') == 'text' and isinstance(text := part.get('text'), str):
             texts.append(text)
-    return ''.join(texts) or None
+        else:
+            others.append(part)
+    return ''.join(texts) or None, others
+
+
+_MAPPED_MESSAGE_EXTRA_FIELDS = frozenset({'reasoning', 'reasoning_content', 'annotations'})
+"""Vendor fields on a message or delta that the Chat Completions mapping reads, besides the profile's
+`openai_chat_thinking_field`. (`annotations` is declared on a message, but arrives as an extra on a delta.)
+
+Thinking is mapped from the first of the thinking fields with a non-empty string, so the others are read but not
+kept: in practice they carry the same text, as vLLM sends both `reasoning` and `reasoning_content`."""
+
+
+def _unmapped_extra_fields(obj: object, mapped: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """The fields of an OpenAI SDK object that its schema doesn't declare and the mapping doesn't read, as received."""
+    extra: dict[str, Any] = getattr(obj, 'model_extra', None) or {}
+    return {key: value for key, value in extra.items() if key not in mapped}
+
+
+def _raw_non_text_content_parts(response: chat.ChatCompletion) -> list[object]:
+    """The non-text parts of a completion's list `content`, read before validation joins it into its text.
+
+    The SDK doesn't validate the response, so a choice can lack a `message` here; validation reports that later.
+    """
+    message = getattr(response.choices[0], 'message', None) if response.choices else None
+    return _split_content_parts(getattr(message, 'content', None))[1]
+
+
+def _unmapped_choice_data(
+    response: object,
+    choice: object,
+    message: object,
+    content_parts: list[object],
+    *,
+    message_key: str,
+    thinking_field: str | None,
+) -> dict[str, Any]:
+    """The data of one validated completion or chunk that the mapping doesn't read, keyed by where it came from.
+
+    Read from the validated objects, so fields a subclass's response type declares (and maps) aren't extras.
+    """
+    mapped_message_fields = _MAPPED_MESSAGE_EXTRA_FIELDS | frozenset([thinking_field] if thinking_field else [])
+    data = {
+        'response': _unmapped_extra_fields(response),
+        'choice': _unmapped_extra_fields(choice),
+        message_key: _unmapped_extra_fields(message, mapped_message_fields),
+        'content_parts': content_parts,
+    }
+    return {key: value for key, value in data.items() if value}
 
 
 class _ChatCompletionMessage(chat.ChatCompletionMessage):
     @field_validator('content', mode='before')
     @classmethod
     def _join_content_parts(cls, value: object) -> object:
-        return _join_text_content_parts(value)
+        return _split_content_parts(value)[0]
 
 
 class _ChatCompletionChoice(chat_completion.Choice):
@@ -666,23 +721,24 @@ def _resolve_openai_image_generation_size(
 
 
 def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.tool_param.ImageGeneration:
+    provider_settings = (tool.provider_settings or {}).get('openai', {})
     size = _resolve_openai_image_generation_size(tool)
     output_compression = tool.output_compression if tool.output_compression is not None else 100
     image_generation_tool = responses.tool_param.ImageGeneration(
         type='image_generation',
-        action=tool.action,
-        background=tool.background,
-        moderation=tool.moderation,
+        action=provider_settings.get('action', tool.action),
+        background=provider_settings.get('background', tool.background),
+        moderation=provider_settings.get('moderation', tool.moderation),
         output_compression=output_compression,
         output_format=tool.output_format or 'png',
-        partial_images=tool.partial_images,
-        quality=tool.quality,
+        partial_images=provider_settings.get('partial_images', tool.partial_images),
+        quality=provider_settings.get('quality', tool.quality),
         size=size,
     )
-    if tool.model is not None:
-        image_generation_tool['model'] = tool.model
-    if tool.input_fidelity is not None:
-        image_generation_tool['input_fidelity'] = tool.input_fidelity
+    if (model := provider_settings.get('model', tool.model)) is not None:
+        image_generation_tool['model'] = model
+    if (input_fidelity := provider_settings.get('input_fidelity', tool.input_fidelity)) is not None:
+        image_generation_tool['input_fidelity'] = input_fidelity
     return image_generation_tool
 
 
@@ -917,7 +973,7 @@ class _ResponsesCreateParams(TypedDict):
     max_output_tokens: int | Omit
     temperature: float | Omit
     top_p: float | Omit
-    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    service_tier: responses.ServiceTier | Omit
     conversation: str | Omit
     top_logprobs: int | Omit
     store: bool | Omit | None
@@ -1143,11 +1199,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     (as `text.verbosity`). Parameter support can differ depending on the model.
     """
 
-    openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
+    openai_service_tier: responses.ServiceTier
     """The service tier to use for the model request.
 
-    Currently supported values are `auto`, `default`, `flex`, and `priority`.
-    For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    `fast` is OpenAI's newer name for `priority`. OpenAI only accepts `ultrafast` on the Responses API.
+    For more information, see [OpenAI's service tiers documentation](https://developers.openai.com/api/reference/resources/responses/methods/create).
     """
 
     openai_prediction: ChatCompletionPredictionContentParam
@@ -1225,6 +1281,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     Annotations are normalized into `TextPart.citations` unless the text was changed after it arrived, for example by
     removing thinking tags. Enable this when the original annotation payload is also needed.
+    """
+
+    openai_include_unmapped_response_data: bool
+    """Whether to keep Chat Completions response data Pydantic AI doesn't map, in `ModelResponse.provider_details['unmapped']`.
+
+    OpenAI-compatible servers often return vendor fields the Chat Completions API doesn't define, or `content` as a list
+    of parts where only the text parts are mapped (the others, like references, are otherwise dropped). With this on,
+    that data is kept exactly as received, keyed by where it came from: `response`, `choice`, `message` and
+    `content_parts`. A streamed response collects it per chunk, under `chunks`, with `delta` in place of `message`.
+
+    It's response data for reading only: it's stored with the message history but never sent back to a provider.
+    Defaults to `False`, since most users don't read it and it grows stored histories.
     """
 
 
@@ -1319,18 +1387,29 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     - `'auto'`: chain to the most recent usable `provider_response_id` in the message history.
       If the history contains no such response, no `previous_response_id` is sent.
-    - A concrete response ID string: use it as the seed for the first request in the run
-      (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
-      tool-call continuations), the most recent `provider_response_id` from the message
-      history takes precedence so the chain extends correctly without re-sending messages
-      that are already server-side.
+    - A concrete response ID string: use it as the seed while the message history holds no
+      usable response to chain to (e.g. to continue from a prior turn). Once it does, as on
+      subsequent in-run requests (retries, tool-call continuations), the most recent
+      `provider_response_id` from the message history takes precedence so the chain extends
+      correctly without re-sending messages that are already server-side.
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state. A response is only
     chosen while it and those messages are unchanged: each response created with this setting, or with
     `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
-    history processor or compaction has changed either since, the full history is sent instead.
+    history processor or compaction has changed either since, the full history is sent instead. The same goes
+    for a response without a digest, as there's no telling whether it has changed.
+    A history missing its earlier messages counts as changed too, so pass
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] rather than
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages], or the model won't see what
+    was left out.
+
+    Either way, the message history is trusted for the response ID, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so don't use this setting with
+    history from a client. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete
+    `openai_conversation_id` instead to turn it off; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -1358,6 +1437,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
     changes to those messages, by a history processor or compaction for instance, don't reach the
     model: it continues from the conversation as OpenAI stored it.
+
+    `'auto'` trusts the message history for this ID, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a
+    conversation ID you saved on your server instead; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Not compatible with
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
@@ -1431,13 +1515,15 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `{'type': 'comparison_response_not_found'}` or `{'type': 'unavailable'}`.
 
     Diagnostics are free, don't affect caching or latency, and work with `openai_store=False`.
-    Set this to `False` to leave `comparison_response_id` off the request.
+    Set this to `False` to leave `comparison_response_id` off the request. The ID comes from the message history,
+    which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so set this to `False` with
+    history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
 
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
-) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+) -> responses.ServiceTier | Omit:
     """Resolve the value to send as `service_tier` on the OpenAI request.
 
     Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
@@ -1760,6 +1846,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_response = self._process_response(
             response,
             include_raw_annotations=bool(model_settings and model_settings.get('openai_include_raw_annotations')),
+            include_unmapped_response_data=bool(
+                model_settings and model_settings.get('openai_include_unmapped_response_data')
+            ),
         )
         return model_response
 
@@ -1880,8 +1969,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                extra_headers = dict(model_settings.get('extra_headers', {}))
-                extra_headers.setdefault('User-Agent', get_user_agent())
+                extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
@@ -1904,7 +1992,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=_resolve_openai_service_tier(model_settings),
+                    # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
+                    service_tier=cast(Any, _resolve_openai_service_tier(model_settings)),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -1955,8 +2044,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
+    def _unmapped_provider_details(
+        self, response: chat.ChatCompletion, content_parts: list[object], *, include: bool
+    ) -> dict[str, Any]:
+        """`provider_details['unmapped']` for `openai_include_unmapped_response_data`, from the validated response."""
+        if not include:
+            return {}
+        choice = response.choices[0]
+        data = _unmapped_choice_data(
+            response,
+            choice,
+            choice.message,
+            content_parts,
+            message_key='message',
+            thinking_field=self.profile.get('openai_chat_thinking_field', None),
+        )
+        return {'unmapped': data} if data else {}
+
     def _process_response(  # noqa: C901
-        self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
+        self,
+        response: chat.ChatCompletion | str,
+        *,
+        include_raw_annotations: bool = False,
+        include_unmapped_response_data: bool = False,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
@@ -1984,6 +2094,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if choice.finish_reason is None:
                 choice.finish_reason = self._missing_finish_reason(choice)
 
+        content_parts = _raw_non_text_content_parts(response)
+
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
@@ -2002,6 +2114,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
+        provider_details.update(
+            self._unmapped_provider_details(response, content_parts, include=include_unmapped_response_data)
+        )
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -2853,7 +2968,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
             text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
-            text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
+            text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
         )
 
@@ -3897,24 +4012,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
         The server created it from the history the suspended response recorded, so if that, or the suspended response,
-        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
-        matches, so it isn't continued from.
+        has changed since, or it recorded none, none is returned: the merged response keeps the suspended one's digest,
+        if any, which no longer matches, so it isn't continued from.
         """
-        if self._history_changed(suspended, history):
+        if not self._history_known_unchanged(suspended, history):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
-    def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `response`, or `history`, the messages before it, changed since the response was created.
+    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `response`, and `history`, the messages before it, are as they were when the response was created.
 
-        A response with no recorded digest, from before it was recorded or from a request that didn't
-        continue server-side state, is trusted as before.
+        Without a recorded digest there's no telling, so a response that has none doesn't count.
         """
         if response.history_digest is None:
             return False
-        return all(
+        return any(
             response.history_digest
-            != _continuation_digest(
+            == _continuation_digest(
                 _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
             )
             for with_instructions in (False, True)
@@ -4578,8 +4692,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[dict[str, str], _ResponsesTimeout]:
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
 
@@ -5052,11 +5165,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(tool, WebSearchTool):
                 tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
-                file_search_tool = cast(
-                    responses.FileSearchToolParam,
-                    {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-                )
-                tools.append(file_search_tool)
+                tools.append(_map_file_search_tool_param(tool))
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
@@ -5280,7 +5389,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
-                if self._history_changed(m, messages[:index]):
+                if not self._history_known_unchanged(m, messages[:index]):
                     return None, messages, True
                 # A response cached only on another socket, or one that's gone, means replaying the history.
                 if not self._is_response_id_reachable(m, store, websocket_mode=websocket_mode):
@@ -6070,6 +6179,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
     _raw_text_content: str = field(default='', init=False)
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
+    _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -6106,6 +6216,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
                 if chunk_provider_details := self._map_chunk_provider_details(chunk):
                     self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
+                self._record_unmapped_chunk_data(chunk)
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -6143,6 +6254,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
             if self._logprobs:
                 self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
+            self._publish_unmapped_chunks()
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
                 and not self._has_finish_reason
@@ -6287,7 +6399,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
-        content = _join_text_content_parts(choice.delta.content)
+        content, _ = _split_content_parts(choice.delta.content)
         if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
@@ -6357,6 +6469,29 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
         """
         return 'stop'
+
+    def _publish_unmapped_chunks(self) -> None:
+        """Put the collected `_record_unmapped_chunk_data` into `provider_details['unmapped']`, once the stream ends."""
+        if self._unmapped_chunks:
+            self.provider_details = {**(self.provider_details or {}), 'unmapped': {'chunks': self._unmapped_chunks}}
+
+    def _record_unmapped_chunk_data(self, chunk: ChatCompletionChunk) -> None:
+        """Keep the data of `chunk` the mapping doesn't read, when `openai_include_unmapped_response_data` is on."""
+        if not (self._model_settings and self._model_settings.get('openai_include_unmapped_response_data')):
+            return
+        choice = chunk.choices[0] if chunk.choices else None
+        delta = getattr(choice, 'delta', None)
+        _, content_parts = _split_content_parts(getattr(delta, 'content', None))
+        data = _unmapped_choice_data(
+            chunk,
+            choice,
+            delta,
+            content_parts,
+            message_key='delta',
+            thinking_field=self._model_profile.get('openai_chat_thinking_field', None),
+        )
+        if data:
+            self._unmapped_chunks.append(data)
 
     def _map_chunk_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates provider details from a chunk's top-level fields, rather than its choice.
@@ -8038,6 +8173,13 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_file_search_tool_param(tool: FileSearchTool) -> responses.FileSearchToolParam:
+    file_search_tool = responses.FileSearchToolParam(type='file_search', vector_store_ids=list(tool.file_store_ids))
+    if tool.max_num_results is not None:
+        file_search_tool['max_num_results'] = tool.max_num_results
+    return file_search_tool
 
 
 def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:

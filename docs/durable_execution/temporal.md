@@ -1041,6 +1041,8 @@ agent = Agent(
 
 1. On top of the defaults, don't retry a model that's unavailable, for example to let `ModelFallback` move on to the next model straight away.
 
+When a model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), Temporal waits that long before the next attempt of the model request activity, instead of the retry policy's backoff. The wait is capped at the retry policy's `maximum_interval`, which defaults to 100 times its `initial_interval` (100 seconds by default), so a provider asking for hours doesn't park the activity for hours. The retry policy's `maximum_attempts` and the activity's `schedule_to_close_timeout` still apply. To fail or [fall back](../capabilities/model-fallback.md) instead of waiting, list [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] in `non_retryable_model_errors`.
+
 ## Observability with Logfire
 
 Temporal generates telemetry events and metrics for each workflow and activity execution, and Pydantic AI generates events for each agent run, model request and tool call. These can be sent to [Pydantic Logfire](../logfire.md) to get a complete picture of what's happening in your application.
@@ -1064,7 +1066,9 @@ By default, the `LogfirePlugin` will instrument Temporal (including metrics) and
 
 If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). The plugin still makes the instance it returns replay-safe, and calls your function only once so that a `logfire.configure()` inside it doesn't reset Logfire on every client and worker. Your function controls Pydantic AI instrumentation, so the plugin doesn't instrument Pydantic AI for you.
 
-Replay-safe tracing relies on Temporal's replay-safe tracer provider, which Temporal still marks experimental. If it causes problems in your setup, pass `replay_safe=False` to the `LogfirePlugin` constructor to trace through Logfire's regular tracer provider instead; replays then emit duplicate spans again, and a `setup_logfire` function is called on every client connect.
+Replay-safe tracing relies on Temporal's replay-safe tracer provider, which Temporal still marks experimental. If it causes problems in your setup, pass `replay_safe=False` to the `LogfirePlugin` constructor to trace through Logfire's regular tracer provider instead; replays then emit duplicate agent run and Temporal spans again, and a `setup_logfire` function is called on every client connect.
+
+Independently of the plugin, Pydantic AI records a model request's or tool call's span, and a model request's token and cost metrics, only when the activity runs: replaying workflow history doesn't record them again, with Logfire or any other OpenTelemetry backend.
 
 A [decision model](../models/decision.md)'s [`decide` spans](../logfire.md#decision-model-spans) are recorded inside the model activity only when the worker can see the agent's own instrumentation: `Agent.instrument_all()` (which the `LogfirePlugin` sets up), `agent.instrument`, or an `Instrumentation` capability on the agent. A run instrumented only through `agent.run(..., capabilities=[Instrumentation(...)])` gets no `decide` spans.
 
