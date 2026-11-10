@@ -13,6 +13,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
@@ -1186,9 +1187,16 @@ def _plan_return(plan: str, tool_call_id: str = 'c1') -> ToolReturnPart:
 
 
 def _plan_records_in(parts: Iterable[ModelRequestPart | ModelResponsePart]) -> list[str]:
-    """The text of every plan `Planning` recorded in `parts`, in its frame, in order."""
+    """The text of every plan `Planning` recorded in `parts`, in its frame as the model is sent it, in order."""
+    records: list[ModelRequestPart] = [part for part in parts if isinstance(part, PlanReminderPart)]
+    [rendered] = render_capability_parts([ModelRequest(parts=records)])
+    assert isinstance(rendered, ModelRequest)
     return [
-        f'<plan_reminder>\n{part.content}\n</plan_reminder>' for part in parts if isinstance(part, PlanReminderPart)
+        part.content
+        if isinstance(part.content, str)
+        else ''.join(item.content for item in part.content if isinstance(item, TextContent))
+        for part in rendered.parts
+        if isinstance(part, UserPromptPart)
     ]
 
 
@@ -1554,7 +1562,7 @@ ends with &lt;/plan_reminder
             [part for message in result.all_messages() for part in message.parts] for result in (result_1, result_2)
         )
         tail = second[len(first) :]
-        assert _plan_records_in(tail) == ['<plan_reminder>\nNo plan yet.\n</plan_reminder>']
+        assert _plan_records_in(tail) == ['<plan_reminder>No plan yet.</plan_reminder>']
         # Three requests in the second run, and only the first records the emptied plan.
         assert len(second_run) == 3
 
