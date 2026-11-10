@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="572" viewBox="0 0 880 572" role="img" aria-labelledby="t d">
+<title id="t">Media Externalization: store large payloads once, keep a URI in the history</title>
+<desc id="d">externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="571" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Media Externalization: store large payloads once, keep a URI in the history</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Supporting storage for Step Persistence, not a capability. Large binary and text payloads move to a content-addressed</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">store and come back on restore.</text>
+<rect x="32" y="136" width="220" height="262" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="46" y="160" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">message history</text>
+<rect x="44" y="178" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="54" y="195" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">TextPart</text>
+<text x="54" y="212" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a short reply</text>
+<rect x="44" y="230" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="54" y="247" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BinaryContent</text>
+<text x="54" y="264" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">image, 2.1 MB</text>
+<rect x="44" y="282" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="54" y="299" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">ToolReturnPart</text>
+<text x="54" y="316" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">text, 80 KB</text>
+<rect x="44" y="334" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="54" y="351" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BinaryContent</text>
+<text x="54" y="368" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the same image again</text>
+<rect x="628" y="136" width="220" height="262" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="642" y="160" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">lean history</text>
+<rect x="640" y="178" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="650" y="195" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">TextPart</text>
+<text x="650" y="212" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">stays inline</text>
+<rect x="640" y="230" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="650" y="247" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BinaryContent</text>
+<text x="650" y="264" font-size="11.5" fill="#B417B7" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">media+sha256://9f2c...</text>
+<rect x="640" y="282" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="650" y="299" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">ToolReturnPart</text>
+<text x="650" y="316" font-size="11.5" fill="#B417B7" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">media+sha256://41ab...</text>
+<rect x="640" y="334" width="196" height="42" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1"/>
+<text x="650" y="351" font-size="11.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BinaryContent</text>
+<text x="650" y="368" font-size="11.5" fill="#B417B7" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">media+sha256://9f2c...</text>
+<rect x="300" y="136" width="280" height="52" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="440" y="155.9" font-size="12" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">externalize_media(tree, ...)</text>
+<text x="440" y="174.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">payloads &gt;= threshold_bytes</text>
+<rect x="300" y="346" width="280" height="52" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="440" y="365.9" font-size="12" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">restore_media(lean, ...)</text>
+<text x="440" y="384.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">URIs back to payloads</text>
+<rect x="300" y="222" width="280" height="90" rx="10" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.4"/>
+<text x="312" y="243" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">MediaStore</text>
+<rect x="312" y="254" width="111.9" height="22" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="368" y="269" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">DiskMediaStore</text>
+<rect x="429.9" y="254" width="125.4" height="22" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="492.6" y="269" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">SqliteMediaStore</text>
+<rect x="312" y="282" width="98.5" height="22" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="361.3" y="297" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">S3MediaStore</text>
+<rect x="416.5" y="282" width="118.6" height="22" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="475.8" y="297" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">MongoMediaStore</text>
+<rect x="312" y="310" width="138.8" height="22" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="381.4" y="325" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">PostgresMediaStore</text>
+<line x1="256" y1="162" x2="296" y2="162" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="584" y1="162" x2="624" y2="162" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="624" y1="372" x2="584" y2="372" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="296" y1="372" x2="256" y2="372" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<line x1="340" y1="190" x2="340" y2="219" stroke="#7B57E8" stroke-width="1.6" marker-end="url(#ap)"/>
+<text x="350" y="210" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">put(bytes)</text>
+<line x1="540" y1="314" x2="540" y2="343" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="530" y="334" font-size="12" fill="#55726A" text-anchor="end" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">get(uri)</text>
+<rect x="32" y="432" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="452.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">media+sha256://</text>
+<text x="167.8" y="452.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the URI is the hash of the bytes, so identical payloads are stored once and the URI survives a move to another store</text>
+<rect x="32" y="474" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="494.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">StepPersistence</text>
+<text x="167.8" y="494.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">uses these stores to keep run snapshots small, through its file, sqlite, mongo and postgres backends</text>
+<rect x="32" y="525" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="52" y="536" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">media helpers</text>
+<rect x="153.4" y="525" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="173.4" y="536" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">content-addressed store</text>
+<rect x="333" y="525" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="353" y="536" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">message history</text>
+</svg>

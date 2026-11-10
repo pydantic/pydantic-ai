@@ -156,7 +156,9 @@ class ModelProfile(TypedDict, total=False):
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and when there are any, or instructions, they're followed
+    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
+    so that text can't open or close the tag.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -187,6 +189,18 @@ class ModelProfile(TypedDict, total=False):
     Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
     renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
     request-scoped part render as a lasting system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -267,7 +281,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 
@@ -282,10 +296,10 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1,
-    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
-    resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
-    ones where the API can't restrict the choice. An explicit forcing
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool
+    choice that Pydantic AI resolved itself (such as an output tool's) falls back to `'auto'`, with the tools
+    filtered to the requested ones where the API can't restrict the choice. An explicit forcing
     [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
     """
 
@@ -310,6 +324,20 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    may_tokenize_special_tokens_in_content: bool
+    """Whether this route may encode chat-template special tokens found in message content as real control tokens. Default: `False`.
+
+    Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
+    names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
+
+    The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    """
+
     mimics_assistant_message_formatting: bool
     """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
 
@@ -324,9 +352,10 @@ class ModelProfile(TypedDict, total=False):
     is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
     source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an
@@ -488,6 +517,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'may_tokenize_special_tokens_in_content': False,
     'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,

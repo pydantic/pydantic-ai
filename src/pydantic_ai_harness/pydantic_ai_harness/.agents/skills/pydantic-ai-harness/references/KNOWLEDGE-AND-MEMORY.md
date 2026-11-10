@@ -4,7 +4,7 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). Only `Skills` needs an extra.
+demand). `Skills` and the optional Pixeltable integration require extras.
 
 | Need | Use |
 |---|---|
@@ -19,10 +19,18 @@ Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=No
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
 relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
-(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
-`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part, attached to the request
-that holds the latest user prompt (not after tool results), or to the last request when there is none.
+(`unless_tool_kind=READ_FILE_KIND`, fixed for the run) and an instruction block named `directory`
+(`on_change='append'`, present and empty from the first request until a file reader is on the run; its text
+counts against `max_tokens`) gives the scope's directory, e.g. `.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
+of other files is recorded in message history as a delimited user-role `<memory>` part, with the
+user's prompt on a run's first request, and only when memory changed since the latest snapshot in
+history (after the latest compaction boundary). History stays append-only: earlier snapshots are kept,
+a later one for the same memory supersedes them, and a
+change made during a run (including `write_memory`) reaches the model with the next user prompt,
+not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
+it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
+loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
+`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
@@ -44,6 +52,7 @@ only).
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
+| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11 to 3.14; creates the table on first use |
 
 ```python
 from pydantic_ai import Agent
@@ -80,6 +89,16 @@ Gotchas:
   implement `MemoryStore` mutations atomically.
 - `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
+
+### Pixeltable catalog
+
+`Pixeltable(tables=['app.documents'])` gives an agent read-only tools to list and describe allowed
+tables, query rows, and search an embedding index. The `tables` allowlist is required, and two
+instances with different allowlists raise instead of merging. `PixeltableMemoryStore` is a separate store for
+`Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11 to 3.14.
+Projections omit media, array, binary, unstored computed columns, and unstored iterator outputs by
+default and reject them when explicitly requested.
+See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)
 
@@ -127,8 +146,8 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
-  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+  `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
 
@@ -137,7 +156,7 @@ with the model's writes.
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
   search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
-- `inject_memory=False` keeps the prompt cache-stable; the tools remain. Also use it when
+- `inject_memory=False` keeps memory out of the conversation; the tools remain. Also use it when
   less-trusted actors can write to the store (memory is untrusted, model-written content).
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
 - `search_memory` is literal, bounded text search: `max_search_results=10`,
@@ -149,8 +168,8 @@ with the model's writes.
 
 ### Several memories on one agent
 
-Give each instance a distinct `agent_name` or `namespace` (otherwise their injections replace each
-other), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
+Give each instance a distinct `agent_name` or `namespace` (the storage scope: instances with the same
+scope and store share one notebook, though each still tracks its own snapshots by `id`), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
 `UserError` at `Agent` construction), and wrap all but one with `.prefix_tools(...)` so tool
 names do not collide:
 

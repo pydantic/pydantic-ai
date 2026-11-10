@@ -6,12 +6,18 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -23,11 +29,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class TogetherProvider(_OpenAICompatibleProvider):
+class TogetherProvider(_OpenAISDKProvider):
     """Provider for Together AI API."""
 
     @property
@@ -50,9 +56,12 @@ class TogetherProvider(_OpenAICompatibleProvider):
             'qwen': qwen_model_profile,
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
+            'zai-org': _glm_5_3_schema_profile,
+            'openai': _gpt_oss_schema_profile,
         }
 
         profile = None
+        route_profile = special_token_route_profile('together', model_name)
 
         model_name = model_name.lower()
         if '/' in model_name:
@@ -68,7 +77,9 @@ class TogetherProvider(_OpenAICompatibleProvider):
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile, route_profile
+        )
 
     @overload
     def __init__(self) -> None: ...

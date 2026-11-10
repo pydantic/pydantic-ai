@@ -10,6 +10,8 @@ It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](../img/harness/researcher.svg)
+
 ## Usage
 
 Install the local search and fetch fallbacks (DuckDuckGo search, page-to-Markdown fetching):
@@ -42,7 +44,7 @@ uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researc
 
 ## What's inside
 
-It is literally these capabilities combined, in this order:
+It combines these capabilities, in order:
 
 - Concise default research instructions: see [Instructions](#instructions) below
 - Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/): the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
@@ -58,10 +60,10 @@ Oversized tool results are stored in the run's [workspace](https://pydantic.dev/
 
 `Researcher` comes with short default research instructions (`DEFAULT_RESEARCHER_INSTRUCTIONS`, written out in full in the [blown-out equivalent](#blown-out-equivalent) below). Pass `instructions='...'` to replace them with your own, or `instructions=None` to get only the abilities, with no default instructions at all.
 
-### Making it more powerful
+### Extending it
 
 - **Research in a specific format**: give the agent a typed [`output_type`](https://pydantic.dev/docs/ai/output/): a Pydantic model of findings, each with its source link, and the researcher returns structured data instead of prose.
-- **Higher-quality search**: swap in [`Exa Search`](exa-search.md) as the search backend.
+- **Exa search**: swap in [`Exa Search`](exa-search.md) as the search backend.
 - **Fan out**: add [`Dynamic Workflow`](dynamic-workflow.md) so the agent can spawn typed researcher sub-agents in parallel and combine their structured results.
 
 ## Blown-out equivalent

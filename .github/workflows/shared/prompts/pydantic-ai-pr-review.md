@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter, the sixth to every PR that changes a core definition a durable engine depends on:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -94,14 +94,40 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   renders to the same bytes. For tags: lowercase `snake_case` names, an
   existing tag before a new one, an escape that neutralizes every opening and
   closing spelling of every registered framing tag inside a data frame (only
-  `system` inside a `<system>` body) through `_framing.wrap()`, never a
-  hand-rolled escaper,
+  `system` inside a `<system>` body) through `_framing.wrap()` in core or the
+  public `pydantic_ai.framing.wrap()` elsewhere, Pydantic AI Harness included,
+  with a tag defined outside core registered once at module level with
+  `pydantic_ai.framing.register_tag()` so core's own data frames neutralize it
+  too, never a hand-rolled escaper,
   with tests for the variants and a cross-tag case, attributes limited to identity and
   outcome, no unframed framework preamble before a frame on a user turn, no
   "the tag that follows" references, and a live probe for new framing. Code that
   re-renders history for another model must render framework data parts as
   labeled untrusted data, never as user turns. Calibration is Example 6 in
   `.review-context/review-instructions.md`.
+- **Provider adapters.** When the diff changes a model adapter's request
+  mapping, its response or stream parsing, a capability check in an adapter,
+  or a profile flag an adapter reads, check the code the diff adds against
+  `agent_docs/provider-adapters.md`, plus the "Adapter structure" section and
+  the "Narrow a capability by client class" bullet of
+  `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`. Apply the rules that govern
+  what the diff changes. Do not flag existing code that the diff only touches:
+  aligning it is its own PR. A PR that is that alignment must meet the guide's
+  scope rules. Rate a violation **HIGH** when it has a concrete trigger that
+  changes a request or a replayed history, or that the user's `profile=` can't
+  override. Rate a violation of code shape alone **MEDIUM**. Calibration is
+  Example 7 in `.review-context/review-instructions.md`.
+- **Durable-exec contract.** When `.review-context/durable-exec-contract.md`
+  exists, the diff changes core definitions a durable engine depends on. The
+  file lists each touched entry with its engines and engine sites. For each
+  entry, open its sites and check they still hold against the change: serialized
+  field lists and allowlists, overridden signatures, projection fields, and
+  activity, step or task names. When the change moves runtime behavior at the
+  durable boundary, ask for a workflow-level test, as "Core changes that engines
+  depend on" in `pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md` (in
+  `agents-md.txt`) asks. Without the file, skip this check. Rate a broken site
+  with a concrete trigger **HIGH**; otherwise **MEDIUM**. Calibration is
+  Example 8 in `.review-context/review-instructions.md`.
 
 ## Review process
 
@@ -159,7 +185,8 @@ For each sub-agent, include in its prompt:
 3. The **assigned file list** from that sub-agent's
    `.review-context/file-orderings/delegate-<N>.txt` and instructions
    to:
-   - Read each `.review-context/diff/<path>.diff` for changes.
+   - Read each file's diff, named in the third column of
+     `.review-context/changed-files.txt`, for changes.
    - Read the **full file** from the workspace for surrounding context
      (full files are checked out — use `Read`).
    - Check `.review-context/review-comments.txt` for existing
@@ -210,9 +237,9 @@ Before posting **any** inline comment:
    matches a "what NOT to flag" pattern, drop it.
 4. **Check existing threads** for the same `path:line` and apply the
    thread-handling rules above.
-5. **Confirm the line is commentable** — open
-   `.review-context/diff/<file>.diff` and check the target line
-   has an `NL:<n>` prefix. If not, move the finding into the review body.
+5. **Confirm the line is commentable** — open the file's diff (third
+   column of `changed-files.txt`) and check the target line has an
+   `NL:<n>` prefix. If not, move the finding into the review body.
 
 Once the time budget is nearly spent, only the safe-output tools remain. Do
 not post an unverified finding as an inline comment: name it in the review
@@ -246,6 +273,8 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
 **No inline comments:** submit the review anyway. This workflow runs only on a
 head it has not reviewed yet. No earlier review or comment, from this bot or
 another, covers that head.
+
+`noop` is not available in this workflow; when in doubt, submit a COMMENT review.
 
 **Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a
 bot reviewing another bot's PR. If the PR author is a bot, submit a

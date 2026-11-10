@@ -474,7 +474,13 @@ class ToolManager(Generic[AgentDepsT]):
         # the one the step's instructions are rendered with, and `ctx` is a copy from the second step on.
         ctx.tool_manager = new_tm
         caller_ctx.tool_manager = new_tm
+        self._release_context()
         return new_tm
+
+    def _release_context(self) -> None:
+        if self.ctx is not None and self.ctx.tool_manager is self:
+            # Keep contexts retained by tools or hooks intact while breaking the manager's cycle.
+            self.ctx = replace(self.ctx, tool_manager=None)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -584,6 +590,7 @@ class ToolManager(Generic[AgentDepsT]):
             # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
             tool_manager=self,
             tool_name=call.tool_name,
+            _dispatched_tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
             max_retries=tool.max_retries,
@@ -937,6 +944,8 @@ class ToolManager(Generic[AgentDepsT]):
         to be valid, which the caller is shown. That means the tool's `args_validator`,
         `after_tool_validate`, or `wrap_tool_validate` after its handler has returned; the same
         exception raised before validation has run raises a `UserError` naming the alternatives.
+        An external tool's call is executed outside the run, so `ApprovalRequired` for one raises a
+        `UserError` too.
 
         A permitted deferral is control flow rather than a validation failure: the returned
         `ValidatedToolCall` has `args_valid=True` and carries the exception on
@@ -975,6 +984,15 @@ class ToolManager(Generic[AgentDepsT]):
             return self._make_validation_success(call, tool, ctx, e.validated_args)
         except _ValidationDeferral as e:
             assert tool is not None
+            if isinstance(e.deferral, ApprovalRequired) and tool.tool_def.kind == 'external':
+                # Filing this call with the other external calls would hand it to their executor
+                # unapproved, and an approved external call can't be resumed (`execute_tool_call`).
+                raise UserError(
+                    f'`ApprovalRequired` was raised while validating a call to external tool {call.tool_name!r}, '
+                    'but an external tool call is executed outside the agent run, so the run cannot approve it. '
+                    'Raise `CallDeferred` instead to pass `metadata` to the code that executes the call, '
+                    'and approve it there.'
+                ) from e.deferral
             # The `args_validator` requested approval or deferred the call. The arguments passed
             # validation, so this is not a failure: the call is reported valid (no retry budget
             # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for

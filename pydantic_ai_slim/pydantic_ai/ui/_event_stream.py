@@ -7,13 +7,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+from opentelemetry.trace import get_current_span
+
 from pydantic_ai import _utils
 
+from .._instrumentation import record_exception
 from ..exceptions import RunCancelled
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -23,6 +27,7 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -267,7 +272,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
 
                     if on_complete is not None:
-                        async for e in self._dispatch_callback(on_complete, result):
+                        async for e in self._dispatch_on_complete(on_complete, result):
                             yield e
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
@@ -379,6 +384,20 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.after_stream():
             yield e
 
+    async def _dispatch_on_complete(
+        self, on_complete: OnCompleteFunc[EventT], result: AgentRunResult[Any]
+    ) -> AsyncIterator[EventT]:
+        try:
+            async for event in self._dispatch_callback(on_complete, result):
+                yield event
+        except Exception as complete_error:
+            # The agent run's span has already ended, so record the failure on the span that's current now (the HTTP
+            # request's on an instrumented server), as `on_error` only tells the client. The stream doesn't know the
+            # run's `include_content` setting, and the message can quote the run's output, so only the exception's
+            # type is recorded.
+            record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
+            raise
+
     async def _dispatch_callback(
         self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
     ) -> AsyncIterator[EventT]:
@@ -436,6 +455,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
+        - [`CapabilityLoadDeltaEvent`][pydantic_ai.messages.CapabilityLoadDeltaEvent] -> `handle_capability_load_delta`
+        - [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] -> `handle_model_settings_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
@@ -471,6 +492,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case ToolAvailabilityDeltaEvent():
                 async for e in self.handle_tool_availability_delta(event):
+                    yield e
+            case CapabilityLoadDeltaEvent():
+                async for e in self.handle_capability_load_delta(event):
+                    yield e
+            case ModelSettingsDeltaEvent():
+                async for e in self.handle_model_settings_delta(event):
                     yield e
             case OutputToolCallEvent():
                 async for e in self.handle_output_tool_call(event):
@@ -820,7 +847,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The file part.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[EventT]:
@@ -867,6 +894,30 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `CapabilityLoadDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded load to a frontend that
+        rebuilds history from the event stream, so a capability loaded from code stays loaded on the next request.
+
+        Args:
+            event: The capability load delta event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelSettingsDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded change to a frontend
+        that rebuilds history from the event stream, so the next request keeps the prompt cache.
+
+        Args:
+            event: The model settings delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

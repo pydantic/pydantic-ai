@@ -37,7 +37,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
@@ -248,7 +248,7 @@ class CodexAuth:
                 return f'{who} sign-in cancelled.'
             await source.save_login(credentials)
             self._providers.pop(name, None)
-            return self._connected(name, profile)
+            return await anyio.to_thread.run_sync(self._connected, name, profile)
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
         )
@@ -273,7 +273,7 @@ class CodexAuth:
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)
-        return self._connected(name, profile)
+        return await anyio.to_thread.run_sync(self._connected, name, profile)
 
     @staticmethod
     def _connected(name: str, profile: str | None) -> str:

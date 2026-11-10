@@ -6,21 +6,23 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. E2BSandbox's get_workspace hook gives the run an E2B cloud sandbox as ctx.workspace, so each command and file operation goes over the E2B API, authenticated with E2B_API_KEY, and runs in the sandbox as the user account; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) kills it. When sandbox_timeout runs out, 1 hour by default, E2B pauses the sandbox with its files, and the next run with the ref resumes it.](https://pydantic.dev/docs/ai/img/harness/e2b-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -122,11 +124,50 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
 ```
 
-The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY` too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
+The ref holds no credentials, so the process that reattaches needs them too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
 `template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
 
 Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+
+## Use different credentials for each user
+
+`E2BSandbox(client=E2B(api_key=...))` sets one client for the capability, in place of `E2B_API_KEY` and the rest of the environment. The environment holds one key for the whole process, so it can't serve several users at once. When each user has their own E2B account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
+
+```python {names="defined"}
+from dataclasses import dataclass
+
+from e2b import E2B
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
+
+
+@dataclass
+class User:
+    e2b_api_key: str
+
+
+@dataclass
+class UsersE2B(AbstractCapability[User]):
+    def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None and ref.provider != 'e2b':
+            return None
+        if not ctx.deps.e2b_api_key:  # E2B would fall back to `E2B_API_KEY`
+            raise ValueError('This user has no E2B API key.')
+        return E2BSandboxBackend(client=E2B(api_key=ctx.deps.e2b_api_key), ref=ref)
+
+
+agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2B(), Coder()])
+```
+
+E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If that variable is set where your app runs, a user with no key would run on that account, so check for a key before building the client, as above.
+
+Under Temporal, `deps` are serialized for every activity, which puts a key on them in the workflow's history. Put a user ID there instead, and have `get_workspace` look that user's key up on the worker. A client itself can't be on `deps` there at all.
+
+Destroy a user's sandbox with that user's key, as in `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. A client for another account may not find the sandbox, and a sandbox that isn't found returns quietly, so it would keep running and billing with no error.
 
 ## Prepare a sandbox before the run
 
@@ -182,12 +223,14 @@ async def kill_sandbox(ref: WorkspaceRef) -> None:
     await E2BSandbox().destroy(ref)
 ```
 
-`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID with the instance's `client`, without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
 ```python
 from typing import Any
+
+import anyio
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
@@ -201,7 +244,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await E2BSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -212,6 +258,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 
 | Option | What it does |
 | --- | --- |
+| `client` | An `e2b.E2B`, for its API key and other connection settings. Default: `None`, `E2B_API_KEY` and the rest of the environment. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
@@ -227,13 +274,13 @@ Install the `temporal` extra too:
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic,temporal]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.

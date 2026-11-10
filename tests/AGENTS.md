@@ -20,6 +20,8 @@ Recorded cassettes also double as a suite-wide prompt-cache prefix regression ne
 
 `tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; if it can't be built with its defaults, give it a `FIXTURES` entry (or an `EXEMPT` entry saying why it can't run offline), and, in the Harness file, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
 
+Tests without a cassette get the same check from `fail_function_model_prefix_violations` in `tests/conftest.py`: every request a `FunctionModel` or `TestModel` receives is rendered offline as the body `AnthropicModel` would send, and compared with the previous request of its run, or, for a run's first request, with the latest shorter request that starts with the same message. A test whose conversation moves the prefix on purpose (it changes the tools or instructions between steps, compacts or rewrites history, drops a request-scoped prompt, rewinds a fallback continuation) uses `@pytest.mark.moves_cache_prefix(reason=...)`, preferably with one of the shared reasons in `tests/function_model_prefix.py`. A move the framework shouldn't make is a bug, the counterpart of a `KNOWN` entry above: fix it rather than mark the test, or, when the fix belongs in its own PR, mark it with a reason that links the issue tracking the fix.
+
 ## Test File Structure
 
 ```python
@@ -143,6 +145,8 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+Every cassette must be recorded by its own test. A cassette at `tests/<dir>/cassettes/<file_stem>/<test>.yaml` comes from a `--record-mode=rewrite` run of `<test>` in `tests/<dir>/<file_stem>.py`. Never copy a cassette from another test, and never edit its requests or responses by hand: replay would then test the code against an exchange no provider produced. To replay one recording in several tests, name it with `@pytest.mark.vcr('<name>.yaml')` and say why in the docstring.
+
 ### Realtime WebSocket cassettes
 
 Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
@@ -173,10 +177,13 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_clai2`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
+- `pydantic_clai2` keeps its own state in small local files and SQLite databases through synchronous functions. List a module that is only such a store in `BLOCKBUSTER_LOCAL_STORES`, and other such synchronous functions in `BLOCKBUSTER_LOCAL_FILES`, with a reason. Every file and database call beneath a listed function is exempt, including in code it calls, so never list an async function. In `BLOCKBUSTER_LOCAL_FILES`, also never list a function an async function calls on the event loop: offload that call instead. The deliberate exceptions, which async code still calls on the loop, are the store modules, `pydantic_clai2`'s shell construction and plugin loading, since making them async is a separate redesign, and the status row's read of `spinners.json` on each repaint.
+- A test that calls a synchronous API production code runs in a thread should do the same, with `anyio.to_thread.run_sync`, rather than add an exemption.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
@@ -239,7 +246,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 ## Assertion Helpers
 
 ### From `conftest.py`
-- `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now
+- `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now, plus however long the running test has taken so far
 - `IsStr()` - any string, supports `regex=r'...'`
 - `IsDatetime()` - any datetime
 - `IsBytes()` - any bytes
@@ -247,6 +254,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - `IsFloat()` - any float
 - `IsList()` - any list
 - `IsInstance(SomeClass)` - instance of class
+- `no_leaked_tasks()` - context manager that fails if a task started inside the block is still running at its end
 
 ### Additional helpers
 - `IsSameStr()` - asserts same string value across multiple uses in one assertion
@@ -270,7 +278,7 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - Test MCP against real `tests.mcp_server` instance, not mocks — extend test server with helper tools to expose runtime context (instructions, client info, session state)
 - Remove stale test docstrings, comments, and historical provider bug notes when behavior changes
 - Prefer `instructions=` over `system_prompt=` when the test doesn't specifically need the system-prompt code path — `instructions=` is the canonical entry point for non-system-prompt-specific behavior (cacheable prefix, persona priming, format guidance), and reserving `system_prompt=` for tests that exercise the system-prompt machinery keeps intent legible
-- Test async behavior directly, following [Async & Concurrency](../agent_docs/concurrency.md) — assert the cancellation, the ordering, or the cleanup itself rather than the output it happens to produce, order steps with `Event`s instead of sleeps, and diff `asyncio.all_tasks()` to prove nothing leaked
+- Test async behavior directly, following [Async & Concurrency](../agent_docs/concurrency.md) — assert the cancellation, the ordering, or the cleanup itself rather than the output it happens to produce, order steps with `Event`s instead of sleeps, and prove nothing leaked by asserting the tasks the code under test owns are done
 - Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 - When testing prompt caching, assert prefix stability, not just a cache hit — `cache_read_tokens > 0` only proves that some prefix was reused, not that the prefix you intended stayed stable as history grows; pin it by asserting the cacheable region (serialized leading blocks up to the breakpoint) is byte-identical across consecutive requests and/or that the cache read covers the full prior prefix, since a per-request injection or serialization that moves with history length silently busts the cache with no error
 - When you deprecate a public symbol (add `@deprecated`), add a test asserting the warning fires — a `pytest.warns(PydanticAIDeprecationWarning, match=...)` block whose `match` pins both the symbol name and the migration guidance — so the deprecation is protected against accidental removal or a message rewrite, and any executable docstring/doc example that constructs the symbol is marked `{test="skip"}` (it would otherwise fail under `filterwarnings=["error"]`)
@@ -294,7 +302,45 @@ The suite runs on every push across a matrix of Python versions and install shap
 - A test that launches a Python interpreter (`sys.executable`, `python*`, a console script, `uv run python`, `multiprocessing` with `spawn`/`forkserver`) fails unless it is marked `@pytest.mark.subprocess(reason='...')`. The marker is right only when the claim depends on the process boundary: what a fresh interpreter imports, behavior without an installed dependency, signals and process trees, a real stdio peer. Launching one while setting up a fixture shared beyond one test needs no marker, and other programs are not guarded. A marker on a module, class or function that no longer covers any launch fails the session with "remove the stale marker"; it is only judged on runs that select every test it covers, and `conditional=True` opts out a test that launches Python only on some platforms or installs
 - When `PYTEST_TEST_BUDGET_SECONDS` is set (one CI leg sets it; it is off locally), a test whose setup and call together take longer fails unless it is marked `@pytest.mark.slow(reason='...')`. Setup of `module`, `class`, `package` and `session`-scoped fixtures is not counted, so sharing an expensive fixture is never penalized. Reach for the marker only when the duration is inherent to what the test proves; otherwise make the test cheaper with the patterns above
 
-When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
+When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget. `tests/cost_guards.py` imports the dependencies in its `SHARED_DEPENDENCIES` before collection, so no module is charged for being the first to import one. When a module is over the budget only because it is the first to import a dependency that other test modules also import at module level, add that dependency there rather than moving the import, which only moves the charge to the next module.
+
+## Garbage from earlier tests
+
+`tests/gc_isolation.py` freezes every existing object before each test, so a test's collections, including explicit `gc.collect()` calls, only reach objects created since. Garbage in a reference cycle from an earlier test therefore can't be finalized by this test's collections, or land in its `pytest.warns` record or raise under its `simplefilter('error')`. Don't add per-test `gc.freeze()` calls or filter `ResourceWarning`s out of a record to work around that kind of failure.
+
+- A test still collects its own garbage, so `del obj; gc.collect()` followed by a `weakref` check keeps working for objects the test created. For anything older, including a module-level object, `gc.collect()` does nothing, and only dropping the last reference frees it.
+- `gc.get_referrers()` and `gc.get_objects()` don't see frozen objects, so a test that needs them to find something created before it must create that object itself, or run them in a subprocess.
+- A leak the suite's `filterwarnings` doesn't ignore fails the test that caused it, in teardown, because each test's own garbage is collected there. Close the resource where it's created.
+- A leak can still be blamed on the wrong test, or on none:
+  - An object in no cycle is freed as soon as it's dropped, so its warning lands in whichever test drops it.
+  - A background thread that outlives its test creates garbage in the next one.
+  - A higher-scoped parametrized fixture finishes its old value in the next test's setup, so that test is blamed for it if the value is in no cycle. One in a cycle is reported as described next.
+  - An object in a cycle that's still referenced when its test ends, such as one a module-scoped fixture holds, is collected after the last test if it's dropped later. It's reported on stderr as `Leaked by a test, and dropped after it ended`, without failing anything or naming a test. Until then it keeps whatever it holds, so close resources explicitly in higher-scoped fixtures.
+  - A leak finalized in an `xfail` test's teardown is reported as `xfail`, not as an error.
+
+## Property tests
+
+`tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
+
+- Commit a falsifier with every checker code: a hand-built input that triggers exactly that code. A property that no committed input fails checks nothing.
+- When a property fails on main for an input in the drawn domain, record it as a known finding: add a `KNOWN_FINDINGS` entry in `tests/test_history_properties.py` that names the `Damage` drawing the input, a hand-built reproducer for each provider it fails on, and, in `tracked_by`, the URL of the GitHub issue tracking it. Open the issue first. The entry leaves the damage out of that property on those providers and pins each reproducer as a strict expected failure. If no `Damage` draws the input alone, add one that does.
+- Never mark a property test as an expected failure: it would then stop checking every other input.
+- Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
+- Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
+
+## Proving a refactor keeps stream events and requests
+
+A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__aiter__`, or what feeds them) must leave the events consumers receive unchanged, and a refactor of how a model builds its request must leave the request it sends unchanged. `tests/refactor_capture.py` records the streams each selected test iterates and the requests it sends, once on a base commit and once on the working tree, and lists the tests whose records differ:
+
+```bash
+uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
+```
+
+Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method; a call on `FunctionModel` or `TestModel` counts as a request, recorded with the messages, model settings and model request parameters the model is handed. The module docstring says what it records and normalizes.
+
+## Dependency floors
+
+Never raise a dependency's minimum version in a `pyproject.toml` without a reason. Give the reason in a comment next to the requirement: what the code now needs from that version. The `test-lowest-versions` CI job installs the declared minimums, so each one is the oldest version the suite tests. A raised minimum moves every user onto the newer version, and without a recorded reason no later change can tell whether it can come down again.
 
 ## Directory Structure
 
@@ -313,5 +359,6 @@ tests/
 │   └── test_*.py
 ├── providers/
 │   └── test_*.py            # provider initialization tests (unit)
+├── ui_roundtrip/            # UI adapter round trips through the real JS clients (needs `npm ci --ignore-scripts`)
 └── test_*.py                # feature tests (prefer VCR + parametrize)
 ```

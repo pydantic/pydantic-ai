@@ -1,0 +1,12 @@
+--- expected
++++ actual
+@@ -40,2 +40,2 @@
+-   "role": "system",
+-   "content": "Please return text."
++   "role": "user",
++   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+@@ -65,2 +65,2 @@
+-   "role": "system",
+-   "content": "Please return text."
++   "role": "user",
++   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"

@@ -4,16 +4,16 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from anyio import CancelScope, create_task_group, get_cancelled_exc_class
+from anyio import CancelScope, create_task_group, get_cancelled_exc_class, to_thread
 from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
+from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
 from pydantic_clai2.plugins.loader import SessionPlugins
@@ -60,10 +60,12 @@ async def run_web(
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
-    launched_in, launch_project = Path.cwd().resolve(), project
+    launched_in, launch_project = await to_thread.run_sync(lambda: Path.cwd().resolve()), project
     workspace = None
     if resume and resume_from is None and (saved := await _start_in(store=store, conversation_id=resume)):
         workspace, project = saved
+    if project.pending_notice is not None:
+        console.print(project.pending_notice, markup=False)
     shell = _web_session(
         settings_for=settings_for,
         project=project,
@@ -75,7 +77,9 @@ async def run_web(
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
             settings_for=settings_for,
-            project=launch_project if directory in (None, launched_in) else load_project_settings(directory),
+            project=with_current_approvals(launch_project, store=store)
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=store),
             console=Console(file=sink, force_terminal=False),
             workspace=directory or launched_in,
             process=shell.process,
@@ -119,6 +123,7 @@ def _web_session(
         process=process,
         # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
         signals=process is None,
+        settings_for=settings_for,
     )
     SessionWorkspace(
         session=shell.session,
@@ -224,12 +229,12 @@ async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path
         workspace = (await conversations.get(conversation_id=conversation_id)).summary.workspace
     except LookupError:
         return None  # Restoring it reports the unknown ID.
-    if workspace == str(Path.cwd().resolve()):
+    if workspace == str(await to_thread.run_sync(lambda: Path.cwd().resolve())):
         return None
     try:
-        directory = workspace_directory(workspace)
+        directory = await to_thread.run_sync(workspace_directory, workspace)
     except ValueError as exc:
         raise ValueError(
             f'{exc} Session {conversation_id} was saved there; start without --resume to read it in the sidebar.'
         ) from exc
-    return directory, load_project_settings(directory)
+    return directory, await to_thread.run_sync(lambda: load_project_settings(directory, store=store))

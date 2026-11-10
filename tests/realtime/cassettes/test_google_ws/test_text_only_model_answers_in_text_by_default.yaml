@@ -1,0 +1,70 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-robotics-er-2-streaming-preview
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.09
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.097
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.449
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.796
+  data:
+    sessionResumptionUpdate:
+      newHandle: 7de8b3a6-5482-4532-8755-f0c19427f16f
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.947
+  data:
+    serverContent:
+      outputTranscription:
+        text: The capital of France is Paris.
+- kind: message
+  direction: received
+  at: 0.947
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 0.963
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 484
+      totalTokenCount: 484
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 461
+      thoughtsTokenCount: 120

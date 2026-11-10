@@ -71,11 +71,7 @@ def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
     """
     while index < len(pattern):
         if pattern.startswith('(?#', index):
-            # The comment runs to the first unescaped `)`; the pattern compiled, so there is one.
-            index += 3
-            while pattern[index] != ')':
-                index += 2 if pattern[index] == '\\' else 1
-            index += 1
+            index = _inline_comment_end(pattern, index)
         elif verbose and pattern[index].isspace():
             index += 1
         elif verbose and pattern[index] == '#':
@@ -84,6 +80,15 @@ def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
         else:
             break
     return index
+
+
+def _inline_comment_end(pattern: str, index: int) -> int:
+    """The index after the `(?#...)` comment that opens at `index`."""
+    # The comment runs to the first unescaped `)`; the pattern compiled, so there is one.
+    index += 3
+    while pattern[index] != ')':
+        index += 2 if pattern[index] == '\\' else 1
+    return index + 1
 
 
 def has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
@@ -114,37 +119,21 @@ def has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             index += 2
             continue
         if char == '[':
-            # Skip the character class; a `]` first in it (after any `^`) is literal.
-            index += 1
-            index += pattern.startswith('^', index)
-            index += pattern.startswith(']', index)
-            while index < len(pattern) and pattern[index] != ']':
-                index += 2 if pattern[index] == '\\' else 1
+            index = _class_end(pattern, index)
         elif char == '(':
             enclosing.append((varies, paths, verbose))
             varies, paths = False, 1.0
-            if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
-                if 'x' in flags['on']:
-                    verbose = True
-                elif 'x' in (flags['off'] or ''):
-                    verbose = False
+            verbose = _scoped_verbose(pattern, index, verbose)
             index += pattern.startswith('?', index + 1)  # `(?:`, `(?P<name>`, ...: not a quantifier
         elif char == '|':
             paths = math.inf  # Alternatives can overlap, which this does not track.
         elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
             outer_varies, outer_paths, verbose = enclosing.pop()
-            # The quantifier after `)` is read in the enclosing group's verbose mode.
-            quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
-            if quantifier is not None:
-                low, high, index = quantifier
-                index -= 1
-                if varies and high > 1:
-                    # Groups one after another multiply, so they share one budget.
-                    allowed *= _power(paths, high) * (high - low + 1)
-                    if allowed > _MAX_BOUNDED_PATHS:
-                        return True
-                varies = varies or high > 1 or high > low
-                paths = _power(paths, high) * (high - low + 1)
+            index, varies, paths, counted = _close_group(pattern, index, verbose, varies, paths)
+            # Groups one after another multiply, so they share one budget.
+            allowed *= counted
+            if allowed > _MAX_BOUNDED_PATHS:
+                return True
             varies, paths = outer_varies or varies, outer_paths * paths
         elif (quantifier := _quantifier_at(pattern, index)) is not None:
             low, high, index = quantifier
@@ -153,6 +142,44 @@ def has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             paths *= high - low + 1
         index += 1
     return False
+
+
+def _class_end(pattern: str, index: int) -> int:
+    """The index of the `]` that closes the character class opening at `index`, or the pattern's length."""
+    # A `]` first in the class (after any `^`) is literal.
+    index += 1
+    index += pattern.startswith('^', index)
+    index += pattern.startswith(']', index)
+    while index < len(pattern) and pattern[index] != ']':
+        index += 2 if pattern[index] == '\\' else 1
+    return index
+
+
+def _scoped_verbose(pattern: str, index: int, verbose: bool) -> bool:
+    """The verbose mode inside the group opening at `index`, which scoped inline flags such as `(?x:` can set."""
+    if (flags := _SCOPED_FLAGS.match(pattern, index)) is None:
+        return verbose
+    if 'x' in flags['on']:
+        return True
+    if 'x' in (flags['off'] or ''):
+        return False
+    return verbose
+
+
+def _close_group(pattern: str, index: int, verbose: bool, varies: bool, paths: float) -> tuple[int, bool, float, float]:
+    """Repeat the group that the `)` at `index` closes by the quantifier after it, if there is one.
+
+    Returns the index of the quantifier's last character (`index` without one), the group's `varies` and
+    `paths` once repeated, and the ways it counts against `_MAX_BOUNDED_PATHS`: 1 unless the group
+    varies and repeats.
+    """
+    # The quantifier after `)` is read in the enclosing group's verbose mode.
+    quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
+    if quantifier is None:
+        return index, varies, paths, 1.0
+    low, high, end = quantifier
+    repeated = _power(paths, high) * (high - low + 1)
+    return end - 1, varies or high > 1 or high > low, repeated, repeated if varies and high > 1 else 1.0
 
 
 def glob_parts(pattern: str) -> tuple[list[str], bool]:

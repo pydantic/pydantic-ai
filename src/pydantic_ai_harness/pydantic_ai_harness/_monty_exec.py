@@ -22,6 +22,7 @@ import sys
 from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, TypeVar
 
 import anyio
@@ -35,8 +36,8 @@ try:
         AsyncFunctionSnapshot,
         AsyncFutureSnapshot,
         AsyncMonty,
+        AsyncMontyRemote,
         AsyncMontySession,
-        AsyncMontyWebsocket,
         AsyncNameLookupSnapshot,
         AsyncSnapshot,
         CollectString,
@@ -45,6 +46,7 @@ try:
         ExternalReturnValue,
         ExternalSettledResult,
         MontyComplete,
+        MontyRefusedError,
         OsFunction,
         OsHandler,
         OSPolicy,
@@ -56,9 +58,8 @@ except ImportError as _import_error:  # pragma: no cover
         'pip install "pydantic-ai-harness[code-mode]" or "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-# Dispatch callback: given the sandbox function name and keyword arguments,
-# perform the host-side work (tool call or sub-agent run) and return the result.
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
+"""Given a sandbox function name and its keyword arguments, do the host-side work (a tool call or sub-agent run)."""
 
 _T = TypeVar('_T')
 _Args = TypeVarTuple('_Args')
@@ -114,7 +115,7 @@ async def _release_monty(stack: AsyncExitStack) -> None:
         await stack.aclose()
 
 
-# Extra time the WebSocket transport allows on top of `max_feed_duration_secs`, so the sandbox's own
+# Extra time the remote transport allows on top of `max_feed_duration_secs`, so the sandbox's own
 # limit fires first and the model sees a time-limit error rather than a dropped connection.
 _REMOTE_TURN_SLACK_SECS = 10.0
 
@@ -124,18 +125,26 @@ _REMOTE_TURN_SLACK_SECS = 10.0
 _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
 
 
+def _remote_turn_timeout(limits: ResourceLimits) -> float | None:
+    """The WebSocket transport's per-turn deadline: no deadline when the feed duration is unlimited."""
+    max_feed_duration_secs = limits.get('max_feed_duration_secs')
+    return None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
+
+
 @dataclass
 class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyWebsocket` when `monty_sandbox_url` is set. Inside a Temporal workflow every Monty
-    call goes through `portal`, opened with the pool and closed after it.
+    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
+    every Monty call goes through `portal`, opened with the pool and closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
-    pool: AsyncMonty | AsyncMontyWebsocket | None = None
+    pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
+    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
+    pool: AsyncMonty | AsyncMontyRemote | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
     has_executed_feed: bool = False
@@ -150,29 +159,47 @@ class MontyRunState:
         limits: ResourceLimits,
         in_temporal_workflow: bool = False,
     ) -> AsyncMontySession:
-        """Return the live REPL session, spawning or dialing the pool on first use."""
+        """Return the live REPL session, spawning or dialing the pool on first use.
+
+        Retry a capacity refusal once after a short backoff. Other setup errors propagate unchanged.
+        """
         if self.pool is None:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                if self.monty_sandbox_url is None:
+                if self.pool_factory is not None:
+                    pool = self.pool_factory()
+                    if inspect.isawaitable(pool):
+                        pool = await pool
+                elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:
-                    max_feed_duration_secs = limits.get('max_feed_duration_secs')
-                    timeout = (
-                        None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
-                    )
-                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=timeout)
+                    pool = AsyncMontyRemote(self.monty_sandbox_url, request_timeout=_remote_turn_timeout(limits))
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
                 raise
         if self.session is None:
-            checkout = self.pool.checkout(
-                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+            checkout = partial(
+                self.pool.checkout,
+                limits=limits,
+                type_check=type_check,
+                type_check_stubs=type_check_stubs,
+                os_policy=_OS_POLICY,
             )
-            self.session = await _enter_monty(self._session_stack, checkout, self.portal)
+            self.session = await self._checkout_with_retry(checkout)
         return self.session
+
+    async def _checkout_with_retry(
+        self, checkout: Callable[[], AbstractAsyncContextManager[AsyncMontySession]]
+    ) -> AsyncMontySession:
+        try:
+            return await _enter_monty(self._session_stack, checkout(), self.portal)
+        except MontyRefusedError as error:
+            if error.cause not in ('caller_cap', 'capacity', 'worker_unavailable'):
+                raise
+            await call_monty(self.portal, anyio.sleep, 0.1)
+            return await _enter_monty(self._session_stack, checkout(), self.portal)
 
     async def reset(self) -> None:
         """Return the current worker and make the next call start a fresh REPL."""
@@ -311,20 +338,18 @@ class MontyExecutor:
 
     async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
         """Dispatch (or defer) a single external function call."""
-        if snapshot.is_os_function and snapshot.function_name in ('time.sleep', 'asyncio.sleep'):
-            return await self._sleep(snapshot)
         if snapshot.is_os_function:
-            if self.portal is not None and self.os_handler is not None:
-                match snapshot.function_name:
-                    case (
-                        'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
-                    ):
-                        return await self._answer_os_call(snapshot, self.os_handler, name)
-                    case _:  # file calls: Monty answers them from the mounts first
-                        pass
-            # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
-            # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
-            return await call_monty(self.portal, snapshot.resume_auto)
+            match snapshot.function_name:
+                case 'time.sleep' | 'asyncio.sleep':
+                    return await self._sleep(snapshot)
+                case (
+                    'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
+                ) if self.portal is not None and self.os_handler is not None:
+                    return await self._answer_os_call(snapshot, self.os_handler, name)
+                case _:  # file calls: Monty answers them from the mounts first
+                    # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
+                    # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
+                    return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
         if name not in self.valid_names:

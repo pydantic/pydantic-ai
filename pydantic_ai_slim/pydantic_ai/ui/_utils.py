@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Final
 
 from pydantic_ai._mcp_apps import MCPAppToolResult
@@ -39,6 +40,22 @@ def get_ui_message_id(message: ModelMessage) -> str | None:
     namespace = (message.metadata or {}).get(INTERNAL_METADATA_KEY)
     ui_message_id = namespace.get(_UI_MESSAGE_ID_KEY) if is_str_dict(namespace) else None
     return ui_message_id if isinstance(ui_message_id, str) else None
+
+
+def without_ui_message_id(message: ModelMessage) -> ModelMessage:
+    """Return a copy of `message` without the UI message id kept by `set_ui_message_id`.
+
+    Leaves out the reserved namespace, and then `metadata` itself, if nothing else is left in them.
+    """
+    metadata = message.metadata
+    namespace = (metadata or {}).get(INTERNAL_METADATA_KEY)
+    if metadata is None or not is_str_dict(namespace) or _UI_MESSAGE_ID_KEY not in namespace:
+        return message
+    rest = {key: value for key, value in namespace.items() if key != _UI_MESSAGE_ID_KEY}
+    new_metadata = {key: value for key, value in metadata.items() if key != INTERNAL_METADATA_KEY}
+    if rest:
+        new_metadata[INTERNAL_METADATA_KEY] = rest
+    return replace(message, metadata=new_metadata or None)
 
 
 def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:

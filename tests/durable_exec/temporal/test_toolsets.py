@@ -13,6 +13,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -61,6 +62,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN, TOOLS_CHANGE_MID_RUN
 
 from ..._inline_snapshot import snapshot
 from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
@@ -189,7 +191,7 @@ pytestmark = [
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
-async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
+async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
@@ -712,6 +714,7 @@ class MultiStepInstructionsAgentWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
     allow_model_requests: None, client: Client
 ):
@@ -776,6 +779,7 @@ class DynamicInstructionsReplayWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
     """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
 
@@ -1043,7 +1047,12 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot('Be a helpful assistant.')
+        assert output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
@@ -1103,7 +1112,7 @@ async def test_oversized_tool_return_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133494)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133520)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedToolReturnWorkflow.run,
@@ -1185,6 +1194,75 @@ async def test_tool_metadata_crosses_activity_boundary_as_json():
         await pydantic_data_converter.encode([binary_params])
 
 
+class Job(BaseModel):
+    data: Any = None
+    dry_run: bool = False
+
+
+_received_jobs: list[Job] = []
+"""The arguments `run_job` ran with, recorded in the activity."""
+
+
+def run_job(data: Job) -> str:
+    """Run a job."""
+    _received_jobs.append(data)
+    return 'Job finished.'
+
+
+def _run_job_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'data': {'path': '/reports'}, 'dry_run': True}
+        return ModelResponse(parts=[ToolCallPart('run_job', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_run_job_durable_agent = Agent(
+    FunctionModel(_run_job_model),
+    name='tool_args_durable',
+    tools=[run_job],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_run_job_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_run_job_model), name='tool_args_wrapped', tools=[run_job]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class RunJobWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent
+        result = await agent.run('Run the reports job as a dry run.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_single_model_arg_named_like_its_field_keeps_its_arguments(client: Client, path: str):
+    """A tool's validated arguments reach the activity as JSON and are validated again there.
+
+    For `run_job(data: Job)` they're `{'data': Job(...)}`, transported as `{'data': {...fields}}`. Since `Job` also
+    has a field `data` that accepts a dict, that envelope reads like `Job`'s own input; the tool must still run
+    with the arguments the workflow validated, not with `Job`'s defaults.
+    """
+    _received_jobs.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunJobWorkflow],
+        plugins=[AgentPlugin(_run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunJobWorkflow.run,
+            args=[path],
+            id=f'{RunJobWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_jobs == [Job(data={'path': '/reports'}, dry_run=True)]
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -1248,6 +1326,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[ToolCallPart(tool_name='analyze_data', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1271,6 +1350,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=57, output_tokens=3),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2033,6 +2113,7 @@ class WrappedToolRetriesWorkflow:
         pytest.param(['dynamic_renamed_retries', 'factory_gate_retries'], id='dynamic'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prepare_sees_retry_under_wrapper_in_workflow(client: Client, names: list[str]):
     """A `prepare` that hides its tool after a failure sees the failure under each wrapper, as outside a workflow.
 
@@ -2102,6 +2183,7 @@ class TracedDynamicRetriesWorkflow:
         return (await _traced_dynamic_retries_agent.run('Try the tool.')).output
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_wrapped_dynamic_toolset_activities_agree_on_retry(client: Client):
     """Discovery, argument validation and the call each list the toolset again, and all read the same count.
 

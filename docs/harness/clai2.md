@@ -65,13 +65,6 @@ not encrypted. Delete this file while CLAI is closed to clear saved input.
 input recall, and clears the screen back to the startup banner.
 Model responses and tool results are not saved to this file.
 
-## CI coverage
-
-The `CLAI coverage` check combines branch coverage from Python 3.11 and 3.14
-and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
-passing CLAI test jobs alone does not mean either coverage gate has passed.
-Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
-
 ## Start chatting
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
@@ -139,11 +132,24 @@ a relative `--database` path still refers to the directory you launched from.
 CLAI prints the path and branch. A directory at that path that is not a Git
 worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
-names the retained branch or checkout for recovery. The worktree and branch
-remain after exit, including startup
-errors after creation, so CLAI does not delete your work. Enter that directory
-and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+names the retained branch or checkout for recovery.
+
+On interactive exit, CLAI removes an unchanged worktree this launch created and
+tries to delete its newly created branch with `git branch -d`. Other unchanged
+worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+Default Git removal keeps the branch and refuses dirty or locked checkouts.
+
+You can register a user-only `worktrees.remove_commands` entry for a repository.
+After confirmation, that command runs instead of Git and may delete the branch
+and uncommitted files. Automatic removal of unchanged worktrees and
+`/workspaces destroy` continue to use Git. See
+[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for configuration and shell-function examples.
+
+Headless runs, piped input, and startup errors keep the checkout without asking.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
+continue a saved session. `--worktree` cannot be combined with `--resume`,
+`--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -243,7 +249,10 @@ covers what Copilot does with it.
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
 `~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
 A repository can add its own layer with a `.clai/settings.json` file, found by
-walking up from the launch directory to the git root. Conversation messages and CLAI's
+walking up from the launch directory to the git root. Its display settings apply
+at once, as does a `permissions` value no wider than your own; any other key, such as
+`model`, a wider `permissions`, or `instructions`, waits until you approve it for that
+repository with `/project approve`. Conversation messages and CLAI's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
 JSON stored in plaintext in this database, including secrets if you put them there.
 Pass secret references or use plugin-owned credential storage instead of embedding keys.
@@ -364,8 +373,8 @@ Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
-within this process. Ctrl-D exits. Ctrl-C at input clears the line; during a run it
-exits and unwinds the agent. No cancelled run is automatically retried.
+(see [Input history](#input-history)). Ctrl-D exits. For Ctrl-C, see
+[Interrupting a turn](#interrupting-a-turn). No cancelled run is automatically retried.
 
 ## Reload CLAI during development
 
@@ -412,15 +421,18 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
-supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
-resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
-`clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no
-`/model settings`, and no `chain:` fallback chains. `plugin_settings` changes a built-in's
-settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
-`capabilities` adds your own capabilities, bound beside the built-ins so delegated
-tasks carry them too. Plugins close when the `async with` block exits.
+The agent has the `coder`, `repo_context`, and `compaction` built-ins,
+configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task
+tools and background delegation. The file and shell tools work in `workspace`,
+unless a capability you pass supplies a workspace, and `AGENTS.md` or
+`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
+per-model defaults. Nothing else you saved for `clai2` applies: no saved,
+drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
+no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
+merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
+`capabilities` adds your own capabilities, bound beside the built-ins so
+delegated tasks carry them too. Plugins close when the `async with` block exits.
 
 To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
 then works in `workspace`. To follow the folder each client session opens instead,
@@ -605,7 +617,7 @@ not cumulative conversation billing or a context-window percentage; `?` means
 unavailable. During a request it may reflect the previous response.
 
 While running, the footer reserves the terminal's bottom row using ANSI scrolling
-regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and a
+regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and
 a 16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
 disabled for redirected output and restores normal scrolling on cancellation or
 failure. The cursor is hidden during runs and restored on completion, failure,

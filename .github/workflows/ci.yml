@@ -47,6 +47,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  warm-douwebot-tools:
+    name: warm douwebot fallback tools
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-douwebot-tools
+        with:
+          save-cache: 'true'
+
   classify:
     name: classify changes
     runs-on: ubuntu-latest
@@ -58,6 +71,7 @@ jobs:
       docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
+      clai2_web_changed: ${{ steps.classify.outputs.clai2_web_changed }}
       harness_only: ${{ steps.classify.outputs.harness_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
@@ -73,6 +87,7 @@ jobs:
             echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'clai2_web_changed=true' >> "$GITHUB_OUTPUT"
             echo 'harness_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
@@ -171,6 +186,15 @@ jobs:
             is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
           }
 
+          # The Linux web job follows its reusable workflow, the action that builds the web UI, and the
+          # Python environment it syncs.
+          is_clai2_web_input() {
+            is_clai2_input "$1" || case "$1" in
+              .github/workflows/clai2-web.yml|.github/actions/build-clai2-web-ui/*|pyproject.toml|uv.lock) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
           is_pyright_input() {
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
@@ -184,6 +208,7 @@ jobs:
           docs_changed=false
           clai2_only=true
           clai2_changed=false
+          clai2_web_changed=false
           harness_tier=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
@@ -204,6 +229,10 @@ jobs:
               { [ -n "$previous_filename" ] && is_clai2_input "$previous_filename"; }; then
               clai2_changed=true
             fi
+            if is_clai2_web_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_clai2_web_input "$previous_filename"; }; then
+              clai2_web_changed=true
+            fi
             if ! is_harness_tier "$filename" || \
               { [ -n "$previous_filename" ] && ! is_harness_tier "$previous_filename"; }; then
               harness_tier=false
@@ -217,6 +246,7 @@ jobs:
           echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
+          echo "clai2_web_changed=$clai2_web_changed" >> "$GITHUB_OUTPUT"
           # The narrower tiers take precedence, so at most one of the three `*_only` outputs is true.
           harness_only=false
           if [ "$harness_tier" = true ] && [ "$content_only" = false ] && [ "$clai2_only" = false ]; then
@@ -237,11 +267,11 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
@@ -260,25 +290,41 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_workflow_agent.py
+          .github/scripts/test_review_lifecycle.py
           .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
-          .github/scripts/test_semantic_owner_router.py
+          .github/scripts/test_latest_versions_canary_report.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_weekly_ce_audit.py
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_guard.py
+          .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
+          .github/scripts/test_douwebot_usage_limit.py
+          .github/scripts/test_douwebot_opencode_run.py
+          .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_pr_review_checks.py
+          .github/scripts/test_run_pr_review_check.py
+          .github/scripts/test_publish_pr_review_checks.py
+          .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
+          .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
+
+      - name: Test threat detector telemetry
+        run: node --test .github/scripts/test_detector_telemetry.cjs .github/scripts/test_workflow_telemetry.cjs
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -288,6 +334,12 @@ jobs:
         env:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
+
+      # The `complexity` job runs this script with only the `lint` group installed, so its tests run here.
+      - name: Test the cognitive complexity check
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_check_complexity.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -366,7 +418,8 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch
+          # `complexity` checks only staged changes, and a checkout stages none; the `complexity` job runs it.
+          SKIP: no-commit-to-branch,complexity
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -380,8 +433,14 @@ jobs:
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
-          # CI opts back in.
-          PYRIGHT_THREADS: auto
+          # CI opts back in. Each worker is its own Node process holding most of the project's
+          # types, and empties its whole type cache whenever its heap passes 90% of Node's default
+          # limit (about 4 GB here), then re-evaluates everything it still needs. Four workers at
+          # that limit emptied it 7 to 33 times a run by 2026-10-28; three workers with a 6 GB heap
+          # never do and still fit in the runner's 16 GB, which took 9 to 14% (18 to 32 s) off
+          # every one of six paired runs on the same runner (see #8182).
+          PYRIGHT_THREADS: "3"
+          NODE_OPTIONS: --max-old-space-size=6144
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
           # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
@@ -395,7 +454,17 @@ jobs:
           # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
           # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
           # still fails a regression like #8077's.
-          PYRIGHT_TIME_BUDGET: "260"
+          # Only pull requests enforce it: that is where a slowdown has to fail, and by 2026-10-26 runner
+          # variance alone spread 18 merge-queue and `main` runs over 149 to 279 s, so enforcing it there
+          # bounced queued PRs and reddened `main` without catching anything their PR had not.
+          # On 2026-10-27 the step ran 127 to 292 s over 375 pull request runs (median 236 s, p90 259 s),
+          # and 23 of them failed only on the budget, with zero type errors, on diffs as small as a
+          # docstring; 320 is about 1.1x that maximum and still fails a regression like #8077's.
+          # After #11806 set the worker count and heap above, 181 passing runs from 2026-10-29 to 30
+          # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
+          # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
+          # exceeded it.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '280' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -407,10 +476,12 @@ jobs:
         run: |
           # Exclude the tag being built: once its GitHub release exists, `gh release view`
           # would otherwise compare the release to itself and make this gate a no-op.
+          # Take the highest version, not the newest: a V1 maintenance release can be published last.
           release_tag=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
             --exclude-drafts --exclude-pre-releases --json tagName \
             | jq -r --arg current "$GITHUB_REF_NAME" \
-              'map(select(.tagName != $current))[0].tagName // empty')
+              'map(select(.tagName != $current and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))))
+               | max_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)).tagName // empty')
           if [ -z "$release_tag" ]; then
             echo '::error::Could not find a prior stable release for the API compatibility baseline.'
             exit 1
@@ -428,6 +499,28 @@ jobs:
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
 
+  # Fails when a change makes a function's cognitive complexity exceed the limit, or grow while above it.
+  complexity:
+    name: cognitive complexity
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          # The base is `HEAD^1`: on a pull request, the base branch tip its merge commit was made on;
+          # on a push or a merge group, the commit before it on the branch.
+          fetch-depth: 2
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-suffix: complexity
+
+      - name: Check cognitive complexity against the base
+        run: uv run --only-group lint scripts/check_complexity.py --base HEAD^1 --format github
+
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
@@ -437,11 +530,11 @@ jobs:
       && needs.classify.outputs.harness_only != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-suffix: mypy
@@ -458,11 +551,11 @@ jobs:
     if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-suffix: docs-assets
@@ -470,11 +563,25 @@ jobs:
       # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
+      # The pinned action's curl download reads this config; keep retries scoped to setup.
+      - name: Configure Lychee download retries
+        run: |
+          mkdir -p "$RUNNER_TEMP/lychee-curl"
+          cat > "$RUNNER_TEMP/lychee-curl/.curlrc" <<'EOF'
+          show-error
+          retry = 3
+          retry-max-time = 120
+          connect-timeout = 10
+          max-time = 60
+          EOF
+
       # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
       # `--offline` so only local files are checked: external hosts are swept weekly by
       # link-check.yml instead, where being down doesn't block a PR.
       - name: Check doc links and heading anchors
-        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        env:
+          CURL_HOME: ${{ runner.temp }}/lychee-curl
         with:
           args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
           fail: true
@@ -497,11 +604,11 @@ jobs:
       # detection noisy, while the dedicated 3.13 non-all-extras cells still cover it.
       BLOCKBUSTER_ENABLED: false
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
@@ -537,7 +644,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -545,7 +652,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
@@ -644,11 +751,11 @@ jobs:
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -667,14 +774,25 @@ jobs:
           uv run --no-sync python -c "
           import importlib.util
           assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
+          assert importlib.util.find_spec('json_repair') is None, 'json-repair belongs to the coder and repair-tool-arguments extras'
           import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
+          import pydantic_ai_harness.filesystem, pydantic_ai_harness.shell
+          try:
+              import pydantic_ai_harness.coder
+          except ImportError as error:
+              assert 'pydantic-ai-harness[coder]' in str(error), error
+          else:
+              raise AssertionError('Coder imported without the coder extra')
           "
 
       - run: uv sync --only-dev
 
+      # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
       - name: install harness and CLAI 2 test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
-        run: uv sync ${{ matrix.install.sync_command }}
+        run: |
+          uv sync ${{ matrix.install.sync_command }}
+          uv sync --inexact --only-group gh-aw-tracing
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
@@ -722,7 +840,7 @@ jobs:
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
           path: .coverage
@@ -747,7 +865,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: .github/scripts
@@ -813,7 +931,7 @@ jobs:
           path: test-durations
           key: ${{ steps.key.outputs.key }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-durations-baseline
           path: test-durations
@@ -869,10 +987,10 @@ jobs:
       # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
-      # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
-      # dependency many modules share (`anthropic`, `openai`, `hypothesis`) is charged for it, up to 5s on these cells;
-      # 8s sits above that with headroom for runner jitter, and well below the 11-16s a module paid for importing
-      # `torch` at collection.
+      # Per-module collection budget, also enforced by `tests/cost_guards.py`. With it set, the guard imports the
+      # dependencies in its `SHARED_DEPENDENCIES` before collection, so each module is charged only for its own
+      # imports, not for being the first in its shard to import a shared one. 8s leaves headroom for runner jitter,
+      # and sits well below the 11-16s a module paid for importing `torch` at collection.
       PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
@@ -881,7 +999,7 @@ jobs:
       PGTASK_REQUIRE_LIVE: "1"
       PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -922,7 +1040,7 @@ jobs:
             exit 1
           fi
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -984,7 +1102,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: test-durations-baseline
           path: ${{ runner.temp }}/test-durations-baseline
@@ -1032,7 +1150,7 @@ jobs:
       # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
         if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
           path: ${{ runner.temp }}/test-durations.json
@@ -1069,7 +1187,7 @@ jobs:
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
           path: .coverage
@@ -1101,7 +1219,8 @@ jobs:
         # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
         # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
         # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python.
+        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
+        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
@@ -1131,6 +1250,10 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
       RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
+      # change (see the run tests step). On the full path, every leg runs it within
+      # `tests/durable_exec`.
+      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1141,11 +1264,11 @@ jobs:
       # test that unsets this variable runs workflow code on that thread.
       TEMPORAL_DEBUG: '1'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1169,7 +1292,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1177,6 +1300,10 @@ jobs:
       # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
       # behaves identically and coverage combination stays complete. The lowest leg was
       # synced above, so `--no-sync` there keeps its resolution.
+      # `sentence-transformers` is the exception: it brings torch and the CUDA wheels, about
+      # 2.6 GB of a 3.2 GB install, and no test here imports it. A slow download of them has
+      # run this job past `timeout-minutes` (#12625). Keep every `uv` call in this job on the
+      # same extras, so none of them syncs it back in.
       - name: run tests
         shell: bash
         run: |
@@ -1187,13 +1314,23 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
+          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
+          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
+          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
+          # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
+              "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1212,7 +1349,7 @@ jobs:
           mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
           chmod +x "$RUNNER_TEMP/render-cli/render"
           export PATH="$RUNNER_TEMP/render-cli:$PATH"
-          uv run --all-packages --all-extras --no-extra mcp-tasks \
+          uv run --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers \
             pytest --durations=5 tests/harness/render/test_local_runtime_live.py
         env:
           RENDER_CLI_VERSION: 2.28.0
@@ -1223,14 +1360,14 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
           path: .coverage
@@ -1279,11 +1416,11 @@ jobs:
       SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
       TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1332,7 +1469,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: test-durations-baseline
           path: ${{ runner.temp }}/test-durations-baseline
@@ -1365,7 +1502,7 @@ jobs:
       # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
         if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.DURATIONS_PREFIX }}${{ matrix.shard }}
           path: ${{ runner.temp }}/test-durations.json
@@ -1381,7 +1518,7 @@ jobs:
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
           path: .coverage
@@ -1397,11 +1534,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.11"
           enable-cache: true
@@ -1441,11 +1578,11 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1465,17 +1602,15 @@ jobs:
     timeout-minutes: 10
     env:
       CI: true
-      # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
-      BLOCKBUSTER_ENABLED: "false"
       # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
       COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.harness-browser-use
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
@@ -1496,7 +1631,7 @@ jobs:
         run: uv run --no-sync coverage combine
 
       - name: store coverage files
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-harness-browser-use
           path: .coverage
@@ -1529,11 +1664,11 @@ jobs:
       GIT_CONFIG_KEY_0: ""
       GIT_CONFIG_VALUE_0: ""
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
@@ -1554,6 +1689,17 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
+  test-clai2-web:
+    name: test clai2 web UI
+    needs: classify
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_web_changed == 'true'
+    uses: ./.github/workflows/clai2-web.yml
+    with:
+      # `release-build` ships the bundle this builds on a tag.
+      npm-cache: ${{ github.ref_type == 'tag' && 'false' || 'true' }}
+
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
@@ -1567,11 +1713,11 @@ jobs:
       CI: true
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
           enable-cache: true
@@ -1614,7 +1760,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
 
       - name: store coverage files
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-fastmcp-4
           path: .coverage
@@ -1632,8 +1778,9 @@ jobs:
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
+      azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1664,9 +1811,11 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
-            "$H/integration_tests/postgres"
+            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
+            "$H/integration_tests/azure_durable_task"
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1688,11 +1837,11 @@ jobs:
       LOCALSTACK_AWS_CLI: aws
       LOCALSTACK_IMAGE: localstack/localstack
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1735,11 +1884,11 @@ jobs:
       MONGODB_REQUIRE_LIVE: "1"
       MONGODB_TEST_URL: mongodb://127.0.0.1:27017
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1774,11 +1923,11 @@ jobs:
       POSTGRES_REQUIRE_LIVE: "1"
       POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1808,24 +1957,70 @@ jobs:
     env:
       REDIS_REQUIRE_LIVE: "1"
       REDIS_TEST_URL: redis://127.0.0.1:6379
+      REDIS_CLUSTER_TEST_URL: redis://127.0.0.1:6380
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
           enable-cache: true
           cache-suffix: harness-redis
 
+      # One node in cluster mode that owns every slot: enough for the server to refuse a script
+      # whose keys span slots with `CROSSSLOT`, which the standalone service above never does. A
+      # step rather than a service because a service cannot pass `redis-server` its arguments or
+      # assign the slots once it is up.
+      - name: Start a single-node Redis Cluster
+        timeout-minutes: 2
+        run: |
+          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+          until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
+          docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
+          until docker exec redis-cluster redis-cli -p 6380 cluster info | grep -q cluster_state:ok; do sleep 1; done
+
       - run: make integration-redis
 
-  # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
-  # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
-  # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
-  # skips, which `check` allows below. It runs alongside the test matrix rather than after it,
-  # so it lands well before `coverage` and adds nothing to the critical path.
+  harness-azure-durable-task-integration:
+    name: harness Azure Durable Task integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.azure_durable_task == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      dts-emulator:
+        # Pinned by digest: newer emulator builds have changed name validation before.
+        image: mcr.microsoft.com/dts/dts-emulator:v0.0.9@sha256:e883ec67fa5adec9400f7389d44c851ad5353b686b69a66139770b1f908c0f35
+        ports:
+          - 8080:8080
+    env:
+      AZURE_DURABLE_TASK_REQUIRE_LIVE: "1"
+      AZURE_DURABLE_TASK_TEST_ENDPOINT: 127.0.0.1:8080
+      AZURE_DURABLE_TASK_TEST_TASKHUB: default
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-azure-durable-task
+
+      - run: make integration-azure-durable-task
+
+  # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
+  # run the suite there, so a release shows whether its own dependency ranges already admit an
+  # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
+  # only — on every other event the job skips, which `check` also allows. It runs alongside the
+  # test matrix rather than after it, so it lands well before `coverage` and adds nothing to the
+  # critical path.
   latest-versions-canary:
     name: latest versions canary
     if: startsWith(github.ref, 'refs/tags/')
@@ -1835,21 +2030,27 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: get coverage files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-*
           merge-multiple: true
           path: .coverage
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-suffix: dev
@@ -1883,6 +2084,7 @@ jobs:
     needs:
       - classify
       - quality
+      - complexity
       - mypy
       - docs-assets
       - docs-only
@@ -1896,18 +2098,20 @@ jobs:
       - test-fastmcp-4
       - test-harness-browser-use
       - test-clai2-clipboard
+      - test-clai2-web
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
       - harness-postgres-integration
       - harness-redis-integration
+      - harness-azure-durable-task-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
 
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
@@ -1916,27 +2120,28 @@ jobs:
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
-          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags. A
-          # `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
+          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
+          # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
+          # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
@@ -1949,7 +2154,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
           client-id: ${{ vars.DOCS_CLIENT_ID }}
@@ -1981,13 +2186,24 @@ jobs:
       harness-version: ${{ steps.inspect_package.outputs.harness-version }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: false
+
+      # The committed bundle lags a web UI change until `clai2-web-bundle.yml` lands its rebuild, so
+      # ship the bundle `test-clai2-web` built and tested from this commit. Building it here would run
+      # the web UI's npm dependencies in the job that builds every wheel. Replaced rather than
+      # overlaid, so a file the build no longer writes goes too.
+      - run: rm -rf src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: clai2-web-static
+          path: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
 
       - run: uv build --all-packages --no-sources
 
@@ -2000,6 +2216,7 @@ jobs:
           "$smoke_dir/bin/pai" --help
           "$smoke_dir/bin/clai" --help
           "$smoke_dir/bin/clai2" --help
+          "$smoke_dir/bin/python" -I src/pydantic_clai2/scripts/check_web_assets.py src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
 
       - name: Inspect package version
         id: inspect_package
@@ -2011,7 +2228,7 @@ jobs:
           echo "harness-version=$harness_version" >> "$GITHUB_OUTPUT"
 
       - name: Upload distribution artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dist
           path: dist/
@@ -2034,13 +2251,13 @@ jobs:
 
     steps:
       - name: Download distribution artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-dist
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           skip-existing: true
 
@@ -2063,12 +2280,12 @@ jobs:
       GIT_CONFIG_VALUE_0: ''
     steps:
       # Consumers compile the definition from the default branch, which may have moved past the tag.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: false
 
@@ -2111,7 +2328,7 @@ jobs:
 
       - name: Generate app token
         if: steps.guard.outputs.bump == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
           client-id: ${{ vars.DOCS_CLIENT_ID }}

@@ -3,7 +3,7 @@
 import io
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,13 +24,19 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.cli.self_update import Updates
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
+from .test_live_runtimes import until
+from .test_self_update import _updates  # pyright: ignore[reportPrivateUsage]
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -134,7 +140,9 @@ class Fleet:
         return self.client.get(path, headers={HEADER: TOKEN})
 
     def socket(self) -> WebSocketTestSession:
-        return self.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'})
+        return self.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        )
 
     def exit(self) -> None:
         """End the launch session, and with it the process's others and the web UI."""
@@ -192,9 +200,9 @@ def snapshot_of(conversation_id: str) -> Callable[[dict[str, JsonValue]], bool]:
 
 
 def connected(socket: WebSocketTestSession) -> dict[str, JsonValue]:
-    """The default session's snapshot, after reading the orchestrator's state and `live`, as the page gets them."""
+    """The default session's snapshot, after reading `live` and the orchestrator's state, as the page gets them."""
     snapshot = json.loads(socket.receive_text())
-    assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['orchestrator', 'live']
+    assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['live', 'orchestrator']
     return snapshot
 
 
@@ -265,11 +273,11 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         }
         assert (sidebar[a], sidebar[b]) == ('running', 'running'), 'live turns are running, never busy elsewhere'
         fleet.portal.call(gates['home'].release.set)
-        first = messages(one, until=kind('turn_end', session=a))
+        first = messages(one, until=kind('turn_ended', session=a))
         fleet.portal.call(gates['b'].release.set)
         # The queued input runs as a second turn once the first ends.
-        second = messages(two, until=kind('turn_end', session=b))
-        second += messages(two, until=kind('turn_end', session=b))
+        second = messages(two, until=kind('turn_ended', session=b))
+        second += messages(two, until=kind('turn_ended', session=b))
         assert gates['b'].calls == 2
     for received, mine, answer in ((first, a, 'home answered'), (second, b, 'b answered')):
         scoped = [message for message in received if message['type'] not in GLOBAL]
@@ -309,6 +317,21 @@ def test_watching_switches_sessions_and_keeps_them_open(make_fleet: MakeFleet) -
     assert session_b.watchers == 0, 'a browser that leaves stops watching'
 
 
+def test_watching_the_session_a_browser_connected_to_sends_no_second_snapshot(make_fleet: MakeFleet) -> None:
+    """A reloaded page watches the default session it got on connect: that snapshot is not sent again (#11304)."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    session_a = fleet.service.session(a).session
+    with fleet.socket() as socket:
+        assert at(connected(socket), 'session', 'id') == a
+        watch(socket, a)
+        fleet.portal.call(anyio.wait_all_tasks_blocked)  # The server has handled `watch`.
+        fleet.post(f'/api/sessions/{a}/input', {'text': '/cost'})
+        received = messages(socket, until=kind('notice'))
+        assert [message['type'] for message in received if message['type'] == 'snapshot'] == []
+        assert received[-1]['session'] == a and session_a.watchers == 1
+
+
 def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: MakeFleet) -> None:
     """`/new` typed in a live session sends its watchers the new conversation's snapshot, and `live` names it."""
     fleet = make_fleet()
@@ -321,6 +344,7 @@ def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: Mak
         renamed = at(snapshot, 'session', 'id')
         assert isinstance(renamed, str)
         assert renamed != b and snapshot['items'] == []
+        assert snapshot['replaces'] == b, 'it names the conversation it replaces, for a browser keeping several'
         assert renamed in live_states(
             messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1]
         )
@@ -368,7 +392,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         fleet.portal.call(gate[0].started.wait)
         assert fleet.post(f'/api/sessions/{a}/interrupt').json() == {'interrupted': False}
         assert fleet.post(f'/api/sessions/{b}/interrupt').json() == {'interrupted': True}
-        ended = messages(socket, until=kind('turn_end', session=b))[-1]
+        ended = messages(socket, until=kind('turn_ended', session=b))[-1]
         assert ended['outcome'] == 'cancelled'
 
         q = fleet.new('q')
@@ -389,7 +413,103 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         assert fleet.post(f'/api/sessions/{a}/questions/{request}', answers).status_code == 404, "another session's"
         assert fleet.post(f'/api/sessions/{q}/questions/{request}', answers).status_code == 204
         assert messages(socket, until=kind('question_closed', session=q))[-1]['id'] == request
-        messages(socket, until=kind('turn_end', session=q))
+        messages(socket, until=kind('turn_ended', session=q))
+
+
+def test_archiving_closes_an_idle_session_no_browser_shows(make_fleet: MakeFleet) -> None:
+    """An idle session opened earlier closes as it is archived; one a browser shows, or one running, is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'c'))
+        return {'c': gate[0].agent()}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    c = fleet.new('c')
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        messages(socket, until=snapshot_of(b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        # `turn_ended` is sent as the run returns; b handles the turn's end a while longer, so it is not idle yet.
+        fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
+        refused = fleet.post('/api/sessions/archive', {'ids': [b]})
+        assert (refused.status_code, 'is open in another live session' in refused.json()['detail']) == (400, True)
+        refused = fleet.post('/api/sessions/archive', {'ids': [a]})
+        assert (refused.status_code, 'current session cannot be archived' in refused.json()['detail']) == (400, True)
+        fleet.post(f'/api/sessions/{c}/input', {'text': 'go'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 204
+        assert b not in [session.conversation.conversation_id for session in fleet.service.live.listing()]
+        saved = fleet.portal.call(lambda: fleet.launch.process.conversations.get(conversation_id=b))
+        assert saved.summary.archived_at is not None
+        assert fleet.post('/api/sessions/archive', {'ids': [c]}).status_code == 400, 'a running session stays'
+        fleet.portal.call(gate[0].release.set)
+
+
+def test_archiving_keeps_a_session_whose_background_fork_runs(make_fleet: MakeFleet) -> None:
+    """An unshown session with no turn running stays live while its `/fork` runs, so archiving it is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'b'))
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if any(isinstance(part, UserPromptPart) and part.content == 'slow' for part in messages[-1].parts):
+                gate[0].started.set()
+                await gate[0].release.wait()
+            yield 'ok'
+
+        return {'b': Agent(FunctionModel(stream_function=stream), deps_type=type(None))}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/fork slow'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 400
+        assert session_b in fleet.service.live.listing()
+        assert [fork.status for fork in session_b.forks] == ['running']
+        fleet.portal.call(gate[0].release.set)
+
+
+def test_archiving_keeps_a_session_whose_command_runs(make_fleet: MakeFleet) -> None:
+    """An unshown session running a slow command, with no turn, stays live, so archiving it is refused."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    started, release = fleet.portal.call(anyio.Event), fleet.portal.call(anyio.Event)
+
+    async def slow(args: list[str]) -> str:
+        started.set()
+        await release.wait()
+        return 'done'
+
+    fleet.runtimes['b'].commands.register(Command(name='slow', description='Wait to be released', handler=slow))
+    with fleet.socket() as socket:
+        connected(socket)
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/slow'})
+        fleet.portal.call(started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert (session_b.running, session_b.watchers) == (False, 0)
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 400
+        assert session_b in fleet.service.live.listing()
+        fleet.portal.call(release.set)
 
 
 def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
@@ -426,8 +546,8 @@ def test_a_conversation_watched_before_a_session_resumes_it_gets_one_snapshot(ma
         connected(socket)
         connected(other)
         watch(socket, saved.id)
-        watch(other, a)
-        messages(other, until=snapshot_of(a))
+        watch(other, a)  # Followed since it connected, so no second snapshot comes.
+        fleet.portal.call(anyio.wait_all_tasks_blocked)
         fleet.post(f'/api/sessions/{a}/input', {'text': f'/resume {saved.id}'})
         messages(other, until=snapshot_of(saved.id))
         fleet.post(f'/api/sessions/{saved.id}/input', {'text': '/cost'})
@@ -477,6 +597,122 @@ def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> No
     assert (session_a.model, session_b.model) == (None, 'test')
 
 
+def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About's Update, in a session the browser opened, asks in its page and installs where CLAI restarts."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
+    descriptions = {command.name: command.description for command in fleet.runtimes['b'].commands}
+    assert (descriptions['update'], descriptions['reload']) == (
+        'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
+        'Reload CLAI2 code without restarting',
+    )
+    installed: list[list[str]] = []
+    done = fleet.portal.call(anyio.Event)
+
+    async def update(args: list[str]) -> str:
+        installed.append(args)
+        done.set()
+        return 'Updated.'
+
+    monkeypatch.setattr(fleet.launch.updates, 'command', update)
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, b)
+        action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
+        [*_, opened] = messages(socket, until=kind('dialog'))
+        dialog = at(opened, 'dialog')
+        assert at(dialog, 'title') == 'Update CLAI?'
+        assert fleet.post(f'/api/sessions/{b}/dialogs/{at(dialog, "id")}', {'value': 'yes'}).status_code == 204
+        response = action.result(timeout=10)
+    assert response.status_code == 200, response.text
+    assert response.json()['messages'] == ['Running /update now on the stable channel.']
+    fleet.portal.call(done.wait)
+    assert installed == [['now']]
+    assert fleet.runtimes['b'].restarter() is fleet.launch
+
+
+def test_about_shows_how_an_install_in_the_launch_session_ended(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page whose About asked hears uv's output and the result of the `/update now` it entered, and only that.
+
+    C's Update waits behind the launch session's turn. B's cancelled Update, and the `/update now` B types
+    meanwhile, which B refuses itself, leave C the page that hears; the launch session's own later
+    `/update now` tells C nothing.
+    """
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['home'] = Gate(portal, 'home')
+        return {'home': gates['home'].agent()}
+
+    def failing(*, channel: object) -> Updates:
+        return _updates(['stable'], codes=[1, 1], lines=['Resolving'])[0]
+
+    monkeypatch.setattr(session_runtime, 'Updates', failing)
+    fleet = make_fleet(agents)
+    fleet.launch.updates.capture = lambda: True
+    a, b, c = fleet.launch.session.conversation_id, fleet.new('b'), fleet.new('c')
+    assert fleet.post(f'/api/sessions/{a}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['home'].started.wait)
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, a, b, c)
+        for page, answer in ((c, 'yes'), (b, 'no')):
+            action = pool.submit(fleet.post, f'/api/sessions/{page}/commands/update/fields/version/action')
+            [*_, opened] = messages(socket, until=kind('dialog'))
+            dialog_id = at(opened, 'dialog', 'id')
+            assert fleet.post(f'/api/sessions/{page}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
+            assert action.result(timeout=10).status_code == 200
+        assert fleet.post(f'/api/sessions/{b}/input', {'text': '/update now'}).status_code == 200
+        refused = messages(socket, until=kind('notice', session=b, command='/update now'))
+        assert not [message for message in refused if kind('notice', session=c)(message)]
+        fleet.portal.call(gates['home'].release.set)
+        uv = messages(socket, until=kind('notice', session=c, command='uv'))
+        assert (uv[-1]['text'], uv[-1]['level']) == ('Resolving', 'error')
+        result = messages(socket, until=kind('notice', session=c, command='/update now'))[-1]
+        assert result['text'] == 'uv exited with status 1; see its output above.'
+        assert fleet.post(f'/api/sessions/{a}/input', {'text': '/update now'}).status_code == 200
+        own = messages(socket, until=kind('notice', session=a, command='/update now'))
+        assert [message['session'] for message in own if message['type'] == 'notice'] == [a, a], 'uv, then the result'
+
+
+def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:
+    """The launch session refuses while another runs a turn: the asking page's own turn counts, as the restart ends it."""
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['b'] = Gate(portal, 'b')
+        return {'b': gates['b'].agent()}
+
+    fleet = make_fleet(agents)
+    b = fleet.new('b')
+    assert fleet.post(f'/api/sessions/{b}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['b'].started.wait)
+    response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == '1 other session is running a turn; try again when it finishes.'
+    fleet.portal.call(gates['b'].release.set)
+    fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
+
+
+def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: MakeFleet) -> None:
+    """While the terminal shows a session not live here, no session restarts CLAI, so About's Update says where."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    fleet.launch.process.live.focused = 'shown-elsewhere'
+    assert fleet.runtimes['b'].restarter() is fleet.runtimes['b']
+    response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == (
+        '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
+        'or with no terminal, in the session CLAI started with.'
+    )
+
+
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
     """Not one session's choice: the saved `model` setting, else the agent's own."""
     fleet = make_fleet()
@@ -507,7 +743,13 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     unwatch()
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
-    assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
+    assert (session.running, session.busy, session.queued, session.watchers, session.interrupt()) == (
+        False,
+        False,
+        0,
+        0,
+        False,
+    )
     assert (session.queue, session.steer('hi')) == ([], False), 'a bare host queues nothing and steers nothing'
     for change in (lambda: session.edit_queued('q1', 'x'), lambda: session.remove_queued('q1')):
         with pytest.raises(LookupError, match='no longer queued'):
@@ -534,7 +776,8 @@ def test_closing_a_watched_session_or_the_web_ui_stops_counting_its_browsers(mak
         assert at(connected(legacy), 'session', 'id') == b, 'the newest session is the default'
         connected(socket)
         watch(socket, a, b)
-        assert {str(at(messages(socket, until=kind('snapshot'))[-1], 'session', 'id')) for _ in range(2)} == {a, b}
+        snapshot = messages(socket, until=kind('snapshot'))[-1]
+        assert at(snapshot, 'session', 'id') == a, 'b, the default, has shown since it connected'
         assert (session_a.watchers, session_b.watchers) == (1, 2)
         fleet.portal.call(fleet.launch.process.live.close, session_b.id)
         assert b not in live_states(
@@ -568,11 +811,13 @@ async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(mon
 
 
 def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """As while CLAI exits: no snapshot, only the orchestrator and an empty `live`."""
+    """As while CLAI exits: no snapshot, only an empty `live` and the orchestrator."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     service = WebService(host=host)
     monkeypatch.setattr(service.live, 'listing', list)
     client = TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
-    with client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
-        assert json.loads(socket.receive_text())['type'] == 'orchestrator'
+    with client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert json.loads(socket.receive_text()) == {'type': 'live', 'sessions': []}
+        assert json.loads(socket.receive_text())['type'] == 'orchestrator'

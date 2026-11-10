@@ -1,12 +1,10 @@
 """The `search_conversation_history` toolset with dependency-free BM25 ranking.
 
 The ranking and rendering core is ported from VStorm's `pydantic-deepagents`
-(`pydantic_deep/features/history_archive/toolset.py`). BM25 tuning is dependency-free
-(`math` + `re`) and takes its parameters from the owning capability instead of module
-constants, so a caller can tune ranking without editing the port. The corpus comes
-from a `HistorySource` (one document per persisted message, across the runs selected
-by the configured scope); ranking is global within that scope, while context windows
-around a match stay within the match's run.
+(`pydantic_deep/features/history_archive/toolset.py`), with BM25 parameters taken from
+the owning capability. The corpus comes from a `HistorySource` (one document per
+persisted message, across the runs selected by the configured scope); ranking is global
+within that scope, while context windows around a match stay within the match's run.
 """
 
 from __future__ import annotations
@@ -24,11 +22,14 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
@@ -203,55 +204,64 @@ def _retry_text(content: list[ErrorDetails] | str) -> str:
 
 def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None) -> str | None:
     """Render one request part to a searchable line, or `None` for non-content parts."""
-    if isinstance(part, UserPromptPart):
-        return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, SystemPromptPart):
-        # Defensive for sources that do not filter compaction artifacts;
-        # `SnapshotHistorySource` already excludes them from the corpus.
-        if part.content.startswith(SUMMARY_PREFIX):
-            return '[Compaction summary]'
-        return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
-    if isinstance(part, InstructionDeltaPart):
-        return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
-    if isinstance(part, ToolReturnPart):
-        if part.outcome == 'retried':
-            # A retried call reads as a retry rather than a return: why a run changed course is what
-            # makes it worth recalling. `model_response_str` renders a validation failure's serialized
-            # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
-            # is a wire detail; `str(part.content)` would put a Python repr in the index.
-            retry = part.model_response_str(wrap_if_error=False)
-            return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
-        # `tool_return_text` names each file instead of spelling out its bytes.
-        return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, RetryFeedbackPart):
-        # The same feedback for a response that answered no particular call. No tool name: it is
-        # never bound to a call.
-        return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
-    # TODO(v3): remove RetryPromptPart
-    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # The part the two above replaced. A stored history loads as one of them, but code that
-        # builds one by hand and passes it as `message_history` still puts an instance here, and
-        # this reads the history before the model translates it.
-        return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, SpeechPart):
-        # A realtime user turn: index the spoken transcript so speech is searchable, not the
-        # raw audio. `transcript` is optional, so an audio-only part contributes no text.
-        if not part.transcript:
+    match part:
+        case UserPromptPart():
+            return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
+        case SystemPromptPart():
+            # Defensive for sources that do not filter compaction artifacts;
+            # `SnapshotHistorySource` already excludes them from the corpus.
+            if part.content.startswith(SUMMARY_PREFIX):
+                return '[Compaction summary]'
+            return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
+        case InstructionDeltaPart():
+            return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
+        case ToolReturnPart():
+            if part.outcome == 'retried':
+                # A retried call reads as a retry rather than a return: why a run changed course is what
+                # makes it worth recalling. `model_response_str` renders a validation failure's serialized
+                # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
+                # is a wire detail; `str(part.content)` would put a Python repr in the index.
+                retry = part.model_response_str(wrap_if_error=False)
+                return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
+            # `tool_return_text` names each file instead of spelling out its bytes.
+            return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
+        case RetryFeedbackPart():
+            # The same feedback for a response that answered no particular call. No tool name: it is
+            # never bound to a call.
+            return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            # The part the two above replaced. A stored history loads as one of them, but code that
+            # builds one by hand and passes it as `message_history` still puts an instance here, and
+            # this reads the history before the model translates it.
+            return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+        case CompactionPart():
+            # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
+            if not part.content:
+                return None
+            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
+        case SpeechPart():
+            # A realtime user turn: index the spoken transcript so speech is searchable, not the
+            # raw audio. `transcript` is optional, so an audio-only part contributes no text.
+            if not part.transcript:
+                return None
+            return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
+        # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
+        # fallback below stays a real runtime branch.
+        case (
+            ToolAvailabilityDeltaPart()
+            | CapabilityLoadDeltaPart()
+            | InstructionBaselinePart()
+            | ModelSettingsDeltaPart()
+        ):
             return None
-        return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list and instruction bookkeeping rather than conversation, so there is no line to contribute.
-    # Redundant against the union as it stands today, but kept explicit so the fallthrough
-    # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart)):
-        return None
-    # A part pydantic-ai added after this was written. Indexing it would mean guessing which
-    # of its fields read as conversation, and a search index is not worth failing a run over,
-    # so it contributes nothing. `assert_never` under `TYPE_CHECKING` keeps the chain
-    # exhaustive at type-check time -- a new upstream part fails `make typecheck` -- without
-    # crashing a user who upgrades pydantic-ai ahead of us.
-    if TYPE_CHECKING:
-        assert_never(part)
-    return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+        # Reachable only on a pydantic-ai release newer than this one: a part type newer than this code contributes
+        # nothing. `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright without crashing at
+        # runtime on a newer pydantic-ai.
+        case _:  # pragma: no cover
+            if TYPE_CHECKING:
+                assert_never(part)
+            return None
 
 
 def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:
@@ -315,6 +325,18 @@ def _adds_instruction_change(message: ModelMessage, earlier: ModelMessage) -> bo
     return isinstance(message, ModelRequest) and any(
         isinstance(part, InstructionDeltaPart) and part not in earlier.parts for part in message.parts
     )
+
+
+def _inherited_prefix(messages: list[ModelMessage], hashes: list[str], seen: dict[str, ModelMessage]) -> int:
+    """How many leading `messages` are in `seen` without an instruction change the copy there lacks."""
+    inherited = 0
+    while (
+        inherited < len(hashes)
+        and hashes[inherited] in seen
+        and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
+    ):
+        inherited += 1
+    return inherited
 
 
 def _construction_stacklevel() -> int:
@@ -405,6 +427,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
+        return await self._search(ctx, query, run_id)
+
+    async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
         if self._scope == 'conversation':
             # Fail closed. Filtering on `conversation_id is None` would match every
@@ -442,6 +467,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 'on a shared store).'
             )
 
+        return self._render_matches(query, sections, total_messages)
+
+    def _render_matches(self, query: str, sections: list[_RunSection], total_messages: int) -> str:
         # Rank on the untruncated rendering so terms past the display cutoff stay
         # findable, then show excerpts clipped around the query terms. Documents are
         # index-aligned across the flattened sections; context windows stay within one section.
@@ -497,13 +525,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)
             hashes = [message_hash(message) for message in messages]
-            inherited = 0
-            while (
-                inherited < len(hashes)
-                and hashes[inherited] in seen
-                and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
-            ):
-                inherited += 1
+            inherited = _inherited_prefix(messages, hashes, seen)
             seen.update(zip(hashes, messages))
             messages = messages[inherited:]
             if not messages:

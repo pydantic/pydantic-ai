@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from typing import IO, Annotated, Any, Self
 
@@ -24,13 +25,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import (
+    HEALTH_PATH,
     LocalStackContainer,
     endpoint_port,
     managed_endpoint_url,
     validate_host_address,
 )
 
-_HEALTH_PATH = '/_localstack/health'
 _UTF8_MAX_BYTES_PER_CHAR = 4
 _AWS_GLOBAL_OPTIONS_WITH_VALUE = {
     '--ca-bundle',
@@ -418,7 +419,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         rather than only at dispatch, so a durable record of the command is
         bounded too.
         """
-        with tempfile.TemporaryDirectory(prefix='harness_aws_') as work_dir:
+        work_dir = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, prefix='harness_aws_'))
+        try:
             with (
                 Path(work_dir, 'stdout').open('w+b') as stdout_file,
                 Path(work_dir, 'stderr').open('w+b') as stderr_file,
@@ -455,6 +457,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                         _read_tail(stderr_file, self._max_output_chars),
                     )
                 )
+        finally:
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(shutil.rmtree, work_dir)
 
         parts: list[str] = []
         if stdout:
@@ -479,7 +484,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return await self._operations.localstack_health(self._endpoint_url)
-        url = self._endpoint_url.rstrip('/') + _HEALTH_PATH
+        url = self._endpoint_url.rstrip('/') + HEALTH_PATH
         try:
             async with httpx2.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)

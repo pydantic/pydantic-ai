@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin,
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -26,6 +26,7 @@ from .output import (
     OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
+    PendingModelResponse,
     PromptedOutput,
     TextOutput,
     TextOutputFunc,
@@ -120,6 +121,23 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
     except TypeError:
         origin = get_origin(type_)
         return origin is not None and isinstance(value, origin)
+
+
+def is_incomplete_json(error: BaseException | None) -> bool:
+    """Whether `error` is the `ValidationError` for JSON that ends before it's complete, as cut-off output does.
+
+    A schema or an output validator rejecting JSON that parsed raises a different error, which keeps its retry.
+    """
+    return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
+
+
+def truncated_output_message(max_tokens: int | None) -> str:
+    """The error message for structured text output that the token limit cut off into incomplete JSON."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating structured output, '
+        'resulting in incomplete JSON. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
 
 
 def build_retried_tool_return(
@@ -539,6 +557,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
+    allows_pending_model_response: bool = False
 
     @property
     def mode(self) -> OutputMode:
@@ -549,7 +568,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         return self.text_processor is not None
 
     @classmethod
-    def build(  # noqa: C901
+    def build(
         cls,
         output_spec: OutputSpec[OutputDataT],
         *,
@@ -559,7 +578,25 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
+        # A pending response isn't something the model outputs, so it doesn't shape the output mode or schema.
+        allows_pending_model_response = PendingModelResponse in outputs
+        if allows_pending_model_response:
+            outputs = [output for output in outputs if output is not PendingModelResponse]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `PendingModelResponse`.')
+        schema = cls._build(outputs, name=name, description=description, strict=strict)
+        schema.allows_pending_model_response = allows_pending_model_response
+        return schema
 
+    @classmethod
+    def _build(  # noqa: C901
+        cls,
+        outputs: Sequence[_OutputSpecItem[OutputDataT]],
+        *,
+        name: str | None,
+        description: str | None,
+        strict: bool | None,
+    ) -> OutputSchema[OutputDataT]:
         # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
         # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
         none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
@@ -589,6 +626,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`NativeOutput` cannot contain `PendingModelResponse`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), PendingModelResponse]`'
+                )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
@@ -615,6 +656,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
+                )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`PromptedOutput` cannot contain `PendingModelResponse`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), PendingModelResponse]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(
@@ -1005,7 +1050,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             validation_type_adapter: TypeAdapter[Any]
             unwrapped_output = _utils.unwrap_annotated(output)
             if _utils.is_model_like(unwrapped_output):
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+                # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
+                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
             else:
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
@@ -1247,9 +1293,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
         # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
         # provider) instead of slipping through to the `_processors` lookup in `validate()`.
-        constrained_result = create_model(
-            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
-        )
+        kind_type: TypeForm[str] = Literal[tuple(self._processors)]  # pyright: ignore[reportAssignmentType]
+        constrained_result = create_model(UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(kind_type, ...))
         union_model = create_model(
             UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
         )
@@ -1762,14 +1807,14 @@ def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
     return [str]
 
 
-def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[TypeForm[object]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
-    outputs_flat: list[T | type[str]] = []
+    outputs_flat: list[TypeForm[object]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
@@ -1787,8 +1832,9 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.
-            outputs_flat.append(cast(T, choices.keys_type))
+            outputs_flat.append(choices.keys_type)
         else:
-            outputs_flat.append(cast(T, output))
+            # Function/method detection does not narrow the remaining output specs to type expressions.
+            outputs_flat.append(output)  # pyright: ignore[reportArgumentType]
 
     return outputs_flat

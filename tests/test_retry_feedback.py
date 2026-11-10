@@ -939,7 +939,7 @@ def _error_channel_model(
     """The three models with a native tool-result error channel, built here rather than taken from
     the shared `model` fixture, whose Google entry pins a model id the API has since retired."""
     if provider == 'anthropic':
-        return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     elif provider == 'google':
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     else:
@@ -1395,7 +1395,7 @@ answer with the number spelled out as a word, nothing else
             snapshot(
                 [
                     ('user', [{'text': 'How many continents are there? Answer with just the number.', 'type': 'text'}]),
-                    ('assistant', [{'text': '7', 'type': 'text'}]),
+                    ('assistant', [{'text': IsStr(), 'type': 'text'}]),
                     (
                         'user',
                         [
@@ -1429,7 +1429,7 @@ async def test_retry_feedback_reaches_the_provider(
     answers it.
 
     A `ModelRetry` message commonly quotes the output it rejects, so it goes out in the user voice on
-    every profile: `o3-mini` takes mid-conversation system messages and `claude-sonnet-4-5` doesn't,
+    every profile: `o3-mini` takes mid-conversation system messages and `claude-sonnet-5` doesn't,
     and both get the same attributed `<retry_feedback>` turn.
 
     The turns below are read off the request as it went out, through `request_capture`: the cassette
@@ -1442,7 +1442,7 @@ async def test_retry_feedback_reaches_the_provider(
         )
     else:
         model = AnthropicModel(
-            'claude-sonnet-4-5',
+            'claude-sonnet-5',
             provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
         )
     rejected = False

@@ -8,7 +8,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.builtin_plugins.web.protocol import Notice, SessionsChanged, TurnEnded
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, Notice, SessionsChanged, TurnEnded
 from tests.clai2.test_web import TOKEN, MakeWeb, make_web as make_web, receive_until
 
 
@@ -25,7 +25,9 @@ def test_browser_preserves_omitted_usage_in_status_and_reports(make_web: MakeWeb
     web = make_web(
         Agent(TestModel(call_tools=[], custom_output_text='answer'), deps_type=type(None), capabilities=[SetUsage()])
     )
-    with web.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web.run()
         web.post('/api/input', {'text': 'hello'})

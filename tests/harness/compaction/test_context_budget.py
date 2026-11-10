@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from dirty_equals import IsStr
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
 import pydantic_ai_harness
@@ -16,12 +17,15 @@ import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    CompactionPart,
+    InstructionDeltaPart,
+    InstructionId,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SpeechPart,
-    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -54,6 +58,7 @@ from pydantic_ai_harness.compaction import (
     resolve_context_window,
 )
 from pydantic_ai_harness.compaction._shared import resolve_token_trigger
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY
 
 try:
     from logfire.testing import CaptureLogfire
@@ -788,6 +793,20 @@ class TestTriggerBoundary:
         )
 
         assert len(request_context.messages) < 6
+
+
+def test_an_instruction_change_before_a_summary_in_its_request_is_not_estimated():
+    """A merged request can hold an earlier window's instruction change ahead of the summary that opened the
+    current one; core doesn't render it, so it isn't counted, while the change after the summary is."""
+    state = InstructionId(AgentInstructionSource(), name='state')
+    old = InstructionDeltaPart(id=state, content='superseded ' * 500)
+    new = InstructionDeltaPart(id=state, content='current')
+    summary = CompactionPart(content='Summary.')
+
+    with_old = estimate_token_count([ModelRequest(parts=[old, summary, new])])
+
+    assert with_old == estimate_token_count([ModelRequest(parts=[summary, new])])
+    assert with_old > estimate_token_count([ModelRequest(parts=[summary])])
 
 
 def test_tool_availability_delta_adds_nothing_to_the_estimate():
@@ -1745,7 +1764,11 @@ class TestSummarizerMustWriteText:
         assert result.output is True
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
-        assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
+        assert first.parts == [
+            CompactionPart(
+                content='Summary.', metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: IsStr()}
+            )
+        ]
 
 
 pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')]

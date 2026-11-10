@@ -10,20 +10,23 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
-from pydantic_ai._instructions import instruction_window_start
+from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    LoadCapabilityCallPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -36,11 +39,14 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -48,6 +54,7 @@ from pydantic_ai_harness.compaction._receipts import (
     drain_receipts,
     is_receipt_part,
     open_receipt_scope,
+    record_receipt,
     reset_receipt_scope,
 )
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -59,9 +66,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Token estimation
 # ---------------------------------------------------------------------------
-
-CHARS_PER_TOKEN = 4
-"""Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
@@ -92,21 +96,35 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits the changes from before the current instruction window.
+    # Core omits the changes from before the current instruction window, down to the part that opened it,
+    # except a loaded capability's statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
+    loads_start = _post_compaction_window_start(messages)
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
-        segments: list[str] = []
         if isinstance(msg, ModelRequest):
-            for request_part in msg.parts:
-                if isinstance(request_part, InstructionDeltaPart) and index < baseline_index:
-                    continue
-                segments.extend(_request_part_text(request_part))
+            per_message.append(_request_segments(msg, index, baseline_index, loads_start))
         else:
+            segments: list[str] = []
             for response_part in msg.parts:
                 segments.extend(_response_part_text(response_part))
-        per_message.append(segments)
+            per_message.append(segments)
     return per_message
+
+
+def _request_segments(msg: ModelRequest, index: int, baseline_index: int, loads_start: tuple[int, int]) -> list[str]:
+    """The text segments of the request at *index*, without the instruction changes core omits."""
+    opened_at = window_boundary_index(msg) if index == baseline_index else -1
+    segments: list[str] = []
+    for part_index, request_part in enumerate(msg.parts):
+        if (
+            isinstance(request_part, InstructionDeltaPart)
+            and (index < baseline_index or part_index <= opened_at)
+            and not (is_loaded_block(request_part.id) and (index, part_index) >= loads_start)
+        ):
+            continue
+        segments.extend(_request_part_text(request_part))
+    return segments
 
 
 def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -145,33 +163,23 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available, and
-    # the schemas themselves travel in the request's tool definitions. Those schemas are not free
-    # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
-    # context it does not see (tracked separately); skipping the part is not a claim that the
-    # reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart):
+    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
+    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
+    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
+    # skipping the part is not a claim that the reveal was free.
+    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
         return []
+    elif isinstance(part, CompactionPart):
+        # A summary the application wrote, sent as text.
+        return [part.content or '']
     elif isinstance(part, SpeechPart):
-        # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
-        # words the provider bills against the window -- not the binary audio, which has no
-        # character-count meaning (as with `FilePart`).
-        #
-        # `SpeechPart` is the last member of the union today, so pyright sees this `isinstance` as
-        # redundant, but it is kept explicit so the `else` stays a real branch at runtime rather
-        # than dead code -- see the `else` comment.
+        # Count the transcript the provider bills against the window, not the binary audio.
+        # The explicit `isinstance` keeps the `else` a real runtime branch.
         return [part.transcript or '']
     else:
-        # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
-        # this runs on every request to decide whether to compact, so an unrecognised part must
-        # not take the run down -- which is exactly what the old `str(part.content)` fallback did
-        # once a part without `content` existed (#577).
-        #
-        # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on purpose. It
-        # still makes the chain exhaustive at type-check time, so a new upstream part fails
-        # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
-        # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
-        # change exists to remove.
+        # A part type newer than this code: skip it, since this runs on every request.
+        # `assert_never` under `TYPE_CHECKING` keeps the chain exhaustive for pyright
+        # without crashing at runtime on a newer pydantic-ai.
         if TYPE_CHECKING:
             assert_never(part)
         return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
@@ -324,7 +332,7 @@ def estimate_message_tokens(
     """
     counts = [
         max(
-            _estimate_segments(segments, tokenizer),
+            _count_segments(segments, tokenizer),
             message.usage.output_tokens if isinstance(message, ModelResponse) else 0,
         )
         for message, segments in zip(messages, _message_segments(messages))
@@ -339,12 +347,6 @@ def estimate_message_tokens(
         shares[0] += span - sum(shares)
         counts[start:end] = shares
     return counts
-
-
-def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    if tokenizer is not None:
-        return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
@@ -557,6 +559,9 @@ def resolve_token_trigger(
 # Tracing
 # ---------------------------------------------------------------------------
 
+BackgroundOutcome: TypeAlias = Literal['used', 'stale', 'failed']
+"""What became of a background compaction when the chain was due: recorded on the `compact_messages` span."""
+
 _SPAN_NAME = 'compact_messages'
 """Static, low-cardinality span name emitted whenever a strategy compacts. The strategy name
 goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
@@ -580,6 +585,8 @@ async def compact_with_span(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
+    model_requested: bool = False,
+    background: BackgroundOutcome | None = None,
 ) -> list[ModelMessage]:
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 
@@ -595,6 +602,10 @@ async def compact_with_span(
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
             uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+        model_requested: Whether the model asked for this compaction, recorded as
+            `compaction.model_requested` (set only when `True`).
+        background: What became of a background compaction, recorded as `compaction.background`
+            when there was one.
     """
     token = open_receipt_scope()
     try:
@@ -617,6 +628,10 @@ async def compact_with_span(
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
                 }
             )
+            if model_requested:
+                span.set_attribute('compaction.model_requested', True)
+            if background is not None:
+                span.set_attribute('compaction.background', background)
             for receipt in receipts:
                 attributes = {
                     'compaction.receipt.strategy': receipt.strategy,
@@ -627,6 +642,48 @@ async def compact_with_span(
                 if receipt.handle is not None:
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
+    return compacted
+
+
+async def compact_if_smaller(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    messages: list[ModelMessage],
+    compact: Callable[[], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[ModelMessage] | None:
+    """Run *compact*, and return `None` when its result is not estimated smaller than *messages*.
+
+    Automatic compaction runs to make the request smaller, so a result that isn't is rejected: the
+    receipts the attempt recorded are discarded with it, and a `compact_messages` span with
+    `compaction.skipped='not_smaller'` records the attempt's estimated size. A result that is smaller,
+    or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
+    """
+    token = open_receipt_scope()
+    try:
+        compacted = await compact()
+        receipts = drain_receipts()
+    finally:
+        reset_receipt_scope(token)
+    if _history_changed(messages, compacted):
+        tokens_before = estimate_token_count(messages, tokenizer)
+        tokens_after = estimate_token_count(compacted, tokenizer)
+        if tokens_after >= tokens_before:
+            with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+                span.set_attributes(
+                    {
+                        'compaction.strategy': strategy,
+                        'compaction.skipped': 'not_smaller',
+                        'compaction.messages_before': len(messages),
+                        'compaction.messages_after': len(compacted),
+                        'compaction.tokens_before': tokens_before,
+                        'compaction.tokens_after': tokens_after,
+                    }
+                )
+            return None
+    for receipt in receipts:
+        record_receipt(receipt)
     return compacted
 
 
@@ -704,30 +761,25 @@ def _is_safe_cutoff(
     end = min(len(messages), cutoff + search_range)
 
     for i in range(start, end):
-        msg = messages[i]
-        if not isinstance(msg, ModelResponse):
-            continue
-
-        call_ids: set[str] = set()
-        for part in msg.parts:
-            if isinstance(part, ToolCallPart) and part.tool_call_id:
-                call_ids.add(part.tool_call_id)
-
+        # Empty for a request, whose parts are never calls.
+        call_ids = {
+            part.tool_call_id for part in messages[i].parts if isinstance(part, ToolCallPart) and part.tool_call_id
+        }
         if not call_ids:
             continue
 
         for j in range(i + 1, len(messages)):
-            later = messages[j]
-            if not isinstance(later, ModelRequest):
-                continue
-            for rpart in later.parts:
-                if _is_tool_reply(rpart) and rpart.tool_call_id in call_ids:
-                    call_before = i < cutoff
-                    return_before = j < cutoff
-                    if call_before != return_before:
-                        return False
+            if _replies_to(messages[j], call_ids) and (i < cutoff) != (j < cutoff):
+                return False
 
     return True
+
+
+def _replies_to(message: ModelMessage, call_ids: set[str]) -> bool:
+    """Whether *message* is a request holding a reply to one of *call_ids*."""
+    return isinstance(message, ModelRequest) and any(
+        _is_tool_reply(part) and part.tool_call_id in call_ids for part in message.parts
+    )
 
 
 def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
@@ -752,17 +804,20 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
     calls: dict[str, int] = {}
     dependencies: list[int] = []
     for index, message in enumerate(messages):
-        earliest = index
         if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, ToolCallPart) and part.tool_call_id:
-                    # Providers can reuse an ID in later turns; match the nearest prior call.
-                    calls[part.tool_call_id] = index
+            # Providers can reuse an ID in later turns; match the nearest prior call.
+            calls.update(
+                {
+                    part.tool_call_id: index
+                    for part in message.parts
+                    if isinstance(part, ToolCallPart) and part.tool_call_id
+                }
+            )
+            dependencies.append(index)
         else:
-            for part in message.parts:
-                if _is_tool_reply(part):
-                    earliest = min(earliest, calls.get(part.tool_call_id, index))
-        dependencies.append(earliest)
+            dependencies.append(
+                min([index, *(calls.get(part.tool_call_id, index) for part in message.parts if _is_tool_reply(part))])
+            )
 
     # Dependencies only point backward, so one reverse pass also covers transitive pairs.
     for index in range(len(messages) - 1, -1, -1):
@@ -807,7 +862,11 @@ def find_token_cutoff(
             else:
                 hi = mid
         return _include_tool_dependencies(messages, max(0, lo - 1))
+    return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
 
+
+def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_tokens: Callable[[int], int]) -> int:
+    """The cutoff `find_token_cutoff` returns for a target of 0 or less, walked back to a safe point."""
     if not messages or tail_tokens(0) <= target_tokens:
         return 0
 
@@ -837,13 +896,8 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback and `SubAgents` task reports. `Memory` marks its
-# snapshot with a bare string instead, so it isn't recognized yet: a known gap. The rule is temporary: once
-# core provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
+_LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
+"""The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
 
 
 def harness_data_origin(part: UserPromptPart) -> str | None:
@@ -855,14 +909,61 @@ def harness_data_origin(part: UserPromptPart) -> str | None:
     """
     # TODO: switch to the core provenance field once it exists.
     match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(HARNESS_ORIGIN_PREFIX)
-        ):
+        case [TextContent(metadata=metadata), *_] if (origin := harness_origin(metadata)) is not None:
             return origin
+        case [item, *_] if _is_legacy_memory(item):
+            return _LEGACY_MEMORY_MARKER
         case _:
             return None
+
+
+def _is_legacy_memory(item: UserContent) -> bool:
+    return isinstance(item, TextContent) and (
+        item.metadata == _LEGACY_MEMORY_MARKER
+        or (isinstance(item.metadata, str) and item.metadata.startswith(f'{_LEGACY_MEMORY_MARKER}:'))
+    )
+
+
+def split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Give each legacy `Memory` snapshot that shares a user prompt part with other content a part of its own.
+
+    Older `Memory` releases could add their snapshot to the user's own prompt part, so it sits next to what the
+    user wrote, in either order. Split apart, the snapshot is summarized as harness data and the user's text
+    stays a user turn. The message count is unchanged: only parts inside a message are split.
+    """
+    out: list[ModelMessage] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and len(part.content) > 1
+            and any(_is_legacy_memory(item) for item in part.content)
+            for part in message.parts
+        ):
+            out.append(message)
+            continue
+        out.append(replace(message, parts=[split for part in message.parts for split in _split_legacy_part(part)]))
+    return out
+
+
+def _split_legacy_part(part: ModelRequestPart) -> list[ModelRequestPart]:
+    """The parts `split_legacy_memory` turns *part* into: itself, unless it is a user prompt part of several items."""
+    if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or len(part.content) < 2:
+        return [part]
+    # In order: each snapshot its own part, and the user's items between them kept together.
+    parts: list[ModelRequestPart] = []
+    group: list[UserContent] = []
+    for item in part.content:
+        if not _is_legacy_memory(item):
+            group.append(item)
+            continue
+        if group:
+            parts.append(replace(part, content=group))
+            group = []
+        parts.append(replace(part, content=[item]))
+    if group:
+        parts.append(replace(part, content=group))
+    return parts
 
 
 def is_harness_data(part: ModelRequestPart) -> bool:
@@ -937,23 +1038,24 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     is left out, so it is never cleared before the model sees the correction, doesn't count toward
     `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
     """
-    calls: dict[str, ToolCallPart] = {}
-    for msg in messages:
-        if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart) and part.tool_call_id:
-                    calls[part.tool_call_id] = part
-
-    pairs: list[_ToolPair] = []
-    order = 0
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls:
-                    call = calls[part.tool_call_id]
-                    pairs.append(_ToolPair(part.tool_call_id, call.tool_name, call, order))
-                    order += 1
-    return pairs
+    calls = {
+        part.tool_call_id: part
+        for msg in messages
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart) and part.tool_call_id
+    }
+    returns = [
+        part
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
+    ]
+    return [
+        _ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
+        for order, part in enumerate(returns)
+    ]
 
 
 CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
@@ -1015,39 +1117,52 @@ def rebuild_with_cleared(
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
-    so tool-call pairing is never broken.  Already-blanked parts are left untouched.
+    so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
+    `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
-    out: list[ModelMessage] = []
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            request_parts: list[ModelRequestPart] = []
-            changed = False
-            for part in msg.parts:
-                cleared = (
-                    cleared_return(part, placeholder)
-                    if isinstance(part, ToolReturnPart)
-                    and part.tool_call_id in clear_return_ids
-                    and str(part.content) != placeholder
-                    else None
-                )
-                if cleared is not None:
-                    request_parts.append(cleared)
-                    changed = True
-                else:
-                    request_parts.append(part)
-            out.append(replace(msg, parts=request_parts) if changed else msg)
+    return [
+        _clear_returns(msg, clear_return_ids, placeholder)
+        if isinstance(msg, ModelRequest)
+        else _clear_inputs(msg, clear_input_ids)
+        for msg in messages
+    ]
+
+
+def _clear_returns(msg: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
+    """*msg* with the returns in *clear_return_ids* blanked, or *msg* itself when none changes."""
+    request_parts: list[ModelRequestPart] = []
+    changed = False
+    for part in msg.parts:
+        cleared = (
+            cleared_return(part, placeholder)
+            if isinstance(part, ToolReturnPart)
+            and part.tool_call_id in clear_return_ids
+            and str(part.content) != placeholder
+            else None
+        )
+        if cleared is not None:
+            request_parts.append(cleared)
+            changed = True
         else:
-            response_parts: list[ModelResponsePart] = []
-            changed = False
-            for part in msg.parts:
-                if (
-                    isinstance(part, ToolCallPart)
-                    and part.tool_call_id in clear_input_ids
-                    and part.args != _CLEARED_TOOL_ARGS
-                ):
-                    response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS))
-                    changed = True
-                else:
-                    response_parts.append(part)
-            out.append(replace(msg, parts=response_parts) if changed else msg)
-    return out
+            request_parts.append(part)
+    return replace(msg, parts=request_parts) if changed else msg
+
+
+def _clear_inputs(msg: ModelResponse, clear_input_ids: set[str]) -> ModelResponse:
+    """*msg* with the call arguments in *clear_input_ids* blanked, or *msg* itself when none changes."""
+    response_parts: list[ModelResponsePart] = []
+    changed = False
+    for part in msg.parts:
+        if (
+            isinstance(part, ToolCallPart)
+            and not isinstance(part, LoadCapabilityCallPart)
+            and part.tool_call_id in clear_input_ids
+            and part.args != _CLEARED_TOOL_ARGS
+        ):
+            # The OpenAI Responses API resolves an item ID to its stored copy and ignores the
+            # args sent with it, so a cleared call can't keep its ID.
+            response_parts.append(replace(part, args=_CLEARED_TOOL_ARGS, id=None))
+            changed = True
+        else:
+            response_parts.append(part)
+    return replace(msg, parts=response_parts) if changed else msg
