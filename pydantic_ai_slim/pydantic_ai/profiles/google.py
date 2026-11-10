@@ -225,6 +225,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
     # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
     ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Not probed live. Both thinking tables list `low`, `medium` and `high` for Gemini 4 Carbon:
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 

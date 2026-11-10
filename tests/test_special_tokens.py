@@ -13,6 +13,7 @@ from functools import cached_property
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -63,11 +64,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, known_model_names
 from pydantic_ai.models.batch import BatchRequest, BatchResult
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 
 from .conftest import try_import
 
@@ -905,6 +908,55 @@ async def test_held_text_is_sent_before_the_next_part_starts():
     )
     end = next(i for i, event in enumerate(events) if isinstance(event, PartEndEvent))
     assert held < end
+
+
+@pytest.mark.parametrize('args', [f'{{"query": "<{Z}', '{"query": "a\\'], ids=['joiner', 'escape'])
+async def test_held_tool_args_sent_at_the_end_keep_the_tool_call_id(args: str):
+    """Arguments cut off while a joiner or an escape is held, as at `finish_reason='length'`, end in a delta UI adapters accept."""
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='look_up', json_args=args, tool_call_id='call_a')}
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=respond, profile={FLAG: True}))
+
+    @agent.tool_plain
+    def look_up(query: str) -> str:
+        raise NotImplementedError
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Go')])])
+    adapter = VercelAIAdapter(agent, request)
+    chunks = [
+        json.loads(chunk.removeprefix('data: '))
+        async for chunk in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in chunk
+    ]
+    assert [chunk for chunk in chunks if chunk['type'] == 'tool-input-delta'] == [
+        {'type': 'tool-input-delta', 'toolCallId': 'call_a', 'inputTextDelta': args[:-1]},
+        {'type': 'tool-input-delta', 'toolCallId': 'call_a', 'inputTextDelta': args[-1]},
+    ]
+    # The invalid arguments go back to the model, which answers, as on a route without the flag.
+    assert [chunk['type'] for chunk in chunks] == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'message-metadata',
+            'finish-step',
+            'finish',
+        ]
+    )
 
 
 async def test_streamed_reasoning_stays_as_the_model_wrote_it():

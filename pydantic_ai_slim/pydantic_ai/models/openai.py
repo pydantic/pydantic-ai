@@ -1383,11 +1383,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     - `'auto'`: chain to the most recent usable `provider_response_id` in the message history.
       If the history contains no such response, no `previous_response_id` is sent.
-    - A concrete response ID string: use it as the seed for the first request in the run
-      (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
-      tool-call continuations), the most recent `provider_response_id` from the message
-      history takes precedence so the chain extends correctly without re-sending messages
-      that are already server-side.
+    - A concrete response ID string: use it as the seed while the message history holds no
+      usable response to chain to (e.g. to continue from a prior turn). Once it does, as on
+      subsequent in-run requests (retries, tool-call continuations), the most recent
+      `provider_response_id` from the message history takes precedence so the chain extends
+      correctly without re-sending messages that are already server-side.
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state. A response is only
@@ -1396,8 +1396,16 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead. The same goes
     for a response without a digest, as there's no telling whether it has changed.
-    A history missing its earlier messages counts as changed too, so pass `all_messages()` rather than
-    `new_messages()`, or the model won't see what was left out.
+    A history missing its earlier messages counts as changed too, so pass
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] rather than
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages], or the model won't see what
+    was left out.
+
+    Either way, the message history is trusted for the response ID, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so don't use this setting with
+    history from a client. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete
+    `openai_conversation_id` instead to turn it off; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -1425,6 +1433,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
     changes to those messages, by a history processor or compaction for instance, don't reach the
     model: it continues from the conversation as OpenAI stored it.
+
+    `'auto'` trusts the message history for this ID, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a
+    conversation ID you saved on your server instead; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
     Not compatible with
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
@@ -1498,7 +1511,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `{'type': 'comparison_response_not_found'}` or `{'type': 'unavailable'}`.
 
     Diagnostics are free, don't affect caching or latency, and work with `openai_store=False`.
-    Set this to `False` to leave `comparison_response_id` off the request.
+    Set this to `False` to leave `comparison_response_id` off the request. The ID comes from the message history,
+    which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so set this to `False` with
+    history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
 

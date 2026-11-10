@@ -19,7 +19,7 @@ REPO = 'pydantic/pydantic-ai'
 PULL = f'repos/{REPO}/pulls/123'
 HEAD = '1' * 40
 RUN_URL = f'https://github.com/{REPO}/actions/runs/456'
-WORKFLOWS: list[str] = ['pydantic-ai-pr-review', 'pydantic-ai-ui-security-review']
+WORKFLOWS: list[str] = ['pydantic-ai-pr-review']
 
 
 class Step(TypedDict, total=False):
@@ -275,22 +275,17 @@ def test_compiled_publication_job_binds_each_workflow(workflow: str):
     step = next(step for step in steps if 'FAILED' in step.get('env', {}))
     env = step.get('env')
     assert env is not None
-    is_ci = workflow == 'pydantic-ai-pr-review'
-    pr_number = '${{ needs.eligibility.outputs.pr_number }}' if is_ci else '${{ github.event.pull_request.number }}'
-    head_sha = '${{ needs.eligibility.outputs.head_sha }}' if is_ci else '${{ github.event.pull_request.head.sha }}'
+    pr_number = '${{ needs.eligibility.outputs.pr_number }}'
+    head_sha = '${{ needs.eligibility.outputs.head_sha }}'
     assert env['PR'] == 'repos/${{ github.repository }}/pulls/' + pr_number
     assert env['LABELS'] == 'repos/${{ github.repository }}/issues/' + pr_number + '/labels'
     assert env['SHA'] == head_sha
     assert env['WORKFLOW_CALL_ID'] == '${{ github.repository }}/' + workflow
-    assert env['FAILURE_LABEL'] == ('ci-review-failed' if is_ci else 'ui-security-review-failed')
+    assert env['FAILURE_LABEL'] == 'ci-review-failed'
     assert env['GH_TOKEN'] == '${{ github.token }}'
     assert env['RUN_URL'] == '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-    expected_needs: list[str] = (
-        ['agent', 'detection', 'eligibility', 'safe_outputs'] if is_ci else ['agent', 'detection', 'safe_outputs']
-    )
-    assert job['needs'] == expected_needs
-    condition = "(!cancelled()) && needs.agent.result != 'skipped'"
-    assert job['if'] == condition + ('' if is_ci else ' && github.event.pull_request.number')
+    assert job['needs'] == ['agent', 'detection', 'eligibility', 'safe_outputs']
+    assert job['if'] == "(!cancelled()) && needs.agent.result != 'skipped'"
     assert job['permissions'] == {'pull-requests': 'write'}
     assert job['runs-on'] == 'ubuntu-slim'
     assert job['timeout-minutes'] == 5
@@ -537,5 +532,3 @@ def test_review_receipt_metadata_is_retained(workflow: str):
     assert safe_outputs is not None
     review = TypeAdapter(dict[str, object]).validate_python(safe_outputs['submit-pull-request-review'])
     assert review['footer'] == 'always'
-    if workflow == 'pydantic-ai-ui-security-review':
-        assert review['allowed-events'] == ['COMMENT']

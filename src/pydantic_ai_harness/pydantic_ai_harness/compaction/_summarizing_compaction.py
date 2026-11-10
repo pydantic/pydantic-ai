@@ -356,13 +356,13 @@ def _message_element(
     *core_framed* content was framed by core, which escaped the framing tags in its body, so its own frame
     stays as written and only the transcript's tags are escaped.
     """
-    attrs = ''.join(
+    attributes = ''.join(
         f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
     )
     body = _TRANSCRIPT_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
-    return f'<message role="{role}"{attrs}>\n{body}\n</message>'
+    return f'<message role="{role}"{attributes}>\n{body}\n</message>'
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:

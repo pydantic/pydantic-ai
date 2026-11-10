@@ -84,7 +84,9 @@ left out because it ignores the role: see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
     'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-mythos-5-1',
+    'claude-mythos-5-2',
     'claude-opus-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -92,7 +94,7 @@ _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
 """Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
 
 The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
-Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+Google Cloud: Claude Fable 5.1 and 5.2, Mythos 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
 (5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
 `AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
 """

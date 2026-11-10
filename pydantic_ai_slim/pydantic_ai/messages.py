@@ -5953,6 +5953,16 @@ def sanitize_messages(
       The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
       server-side `message_history` with client-submitted messages.
 
+    It keeps, as sent, the references to state the model provider holds:
+    [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], and the
+    `conversation_id` and `container_id` keys of
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], along with
+    [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry
+    these, so history an adapter loads has none. Several model settings, and resuming a suspended response, act
+    on them with your provider credentials;
+    [Loading untrusted history](../message-history.md#loading-untrusted-history) lists them and what to do when
+    the history comes from a client.
+
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip

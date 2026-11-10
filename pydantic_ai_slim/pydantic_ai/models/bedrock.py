@@ -484,7 +484,7 @@ _ALL_TOOL_RESULT_COLOCATABLE_CONTENT: frozenset[Literal['text', 'image', 'docume
 
 LatestBedrockModelNames = Literal[
     # Anthropic
-    'global.anthropic.claude-fable-5-1',
+    'global.anthropic.claude-fable-5-2',
     'global.anthropic.claude-opus-5-5',
     'global.anthropic.claude-sonnet-5-5',
     'global.anthropic.claude-haiku-5-5',
