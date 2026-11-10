@@ -399,7 +399,7 @@ Tool calls that can still receive a real result are left alone: when the history
 
 The repair leaves two cases to you, because the unanswered tool calls in them can still be answered:
 
-- A history whose final response, not marked `state='interrupted'`, still has unanswered tool calls. A new user prompt on top of it raises. Resuming without a new prompt runs those calls instead, which pauses again for any that are [deferred](deferred-tools.md).
+- A history whose final response, not marked `state='interrupted'`, still has unanswered tool calls. A new user prompt on top of it raises, unless you also pass `deferred_tool_results` for those calls. Resuming without a new prompt runs those calls instead, which pauses again for any that are [deferred](deferred-tools.md).
 - A history whose final response is followed by a 'complete' request holding the results of only some of its calls, which is how a run that [paused for deferred tool calls](deferred-tools.md#pausing-a-conversation) leaves it when the same step also ran other calls. Running it without `deferred_tool_results` raises, with or without a new user prompt, since the waiting calls can only be answered with those results.
 
 When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
