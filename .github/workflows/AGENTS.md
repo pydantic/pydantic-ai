@@ -304,7 +304,8 @@ Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback lab
   image's PostgreSQL 16, and several harness integration jobs start Docker containers.
 - GitHub passes no configuration variables to a run for a pull request from a fork. Those runs
   use the fallback labels.
-- The macOS and Windows legs of `test-clai2-clipboard` stay on GitHub's runners.
+- The Linux leg of `test-clai2-clipboard` reads the variable. Its macOS and Windows legs stay on
+  GitHub's runners.
 
 The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
 starts none of them.

@@ -1648,7 +1648,7 @@ jobs:
       github.ref_type != 'tag'
       && needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_changed == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_LINUX_RUNNER || matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
