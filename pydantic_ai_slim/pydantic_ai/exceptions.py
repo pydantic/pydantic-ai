@@ -656,7 +656,8 @@ class ModelAPIError(AgentRunError):
     retry_after: float | None
     """Seconds the provider asked you to wait before retrying, if it said.
 
-    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header.
+    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header, or, for Google, from the
+    `google.rpc.RetryInfo` in the error body when no such header carries it.
     """
 
     def __init__(
