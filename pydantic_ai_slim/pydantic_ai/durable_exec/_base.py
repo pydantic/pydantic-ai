@@ -860,12 +860,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
-        """Reject capabilities added per-run inside a durable workflow or flow."""
+        """Reject per-run capabilities that contribute toolsets needing durable wrapping."""
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend
         ):
             return
-        unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+
+        def contributes_executing_toolset(capability: AbstractCapability[AgentDepsT]) -> bool:
+            toolset = capability.get_toolset()
+            if toolset is None:
+                return False
+            if callable(toolset):
+                # A dynamic toolset's contents are not known until runtime.
+                return True
+            try:
+                self._reject_runtime_toolsets(toolset)
+            except UserError:
+                return True
+            return False
+
+        unsafe_capabilities = [
+            capability
+            for capability in capabilities
+            if not capability._safe_at_runtime and contributes_executing_toolset(capability)
+        ]
         if not unsafe_capabilities:
             return
         names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))

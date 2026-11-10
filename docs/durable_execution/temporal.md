@@ -763,6 +763,8 @@ Model-name strings themselves never need registering. The agent's own model, set
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
+For test models, construct one stable instance and register it in the `models` dict passed to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then use that same instance with `agent.override(model=test_model)`. The registered key is the identity carried through workflow replay and model activity resolution.
+
 Here's an example showing how to pre-register and use multiple models:
 
 ```python {title="multi_model_temporal.py" test="skip"}
@@ -825,6 +827,10 @@ class MultiModelWorkflow(PydanticAIWorkflow):
             result = await agent.run(prompt, model='{{ openai:small }}')
         return result.output
 ```
+
+### Capabilities at Runtime
+
+A per-run capability that contributes no executing toolsets is allowed inside a workflow. Capabilities that contribute executing toolsets must still be attached at agent construction so Temporal can register their activities. This exemption applies to capabilities, not raw per-run `toolsets=` entries; their existing restrictions are unchanged.
 
 ### Toolsets at Runtime
 

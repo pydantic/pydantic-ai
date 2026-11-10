@@ -5384,14 +5384,8 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()
 
 
-async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
-    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
-
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so it would run un-checkpointed inside the workflow. A
-    `DynamicToolset` with a module-level factory keeps the workflow input serializable.
-    """
+async def test_per_run_capability_contributing_executing_toolset_still_rejected_inside_workflow(dbos: DBOS) -> None:
+    """A per-run capability that contributes an executing toolset remains unsupported."""
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
@@ -5410,11 +5404,36 @@ async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
     ):
         await run_with_toolset_capability()
 
-    @DBOS.workflow()
-    async def run_with_instrumentation() -> str:
-        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
 
-    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+async def test_per_run_hooks_only_capability_allowed_inside_workflow(dbos: DBOS) -> None:
+    class _HooksOnlyInstrumentation(Instrumentation):
+        _safe_at_runtime = False
+
+    agent = Agent(_durability_fn_model, name='durability_per_run_hooks_only', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_with_hooks_only() -> str:
+        return (await agent.run('Hello', capabilities=[_HooksOnlyInstrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_hooks_only() == snapshot('Echo: Hello')
+
+
+async def test_override_model_instance_round_trips_inside_workflow(dbos: DBOS) -> None:
+    from pydantic_ai.models.test import TestModel
+
+    test_model = TestModel()
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_model_instance',
+        capabilities=[DBOSDurability(models={'test-model': test_model})],
+    )
+
+    @DBOS.workflow()
+    async def run_with_override() -> str:
+        with agent.override(model=test_model):
+            return (await agent.run('Hello')).output
+
+    assert await run_with_override() == 'success (no tool calls)'
 
 
 async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:

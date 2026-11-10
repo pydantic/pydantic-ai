@@ -2861,8 +2861,8 @@ async def test_durability_unregistered_model_instance_errors(client: Client):
 # --- Runtime capability validation ---
 
 
-async def test_durability_validates_only_resolved_runtime_capability_layers():
-    """Temporal accepts resolved and safe per-run layers but rejects per-run dynamic layers."""
+async def test_per_run_hooks_only_capability_allowed_inside_workflow():
+    """Temporal permits hooks-only per-run capabilities but rejects executing toolsets."""
 
     @dataclass
     class _BaseOne(AbstractCapability[None]):
@@ -2878,7 +2878,8 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
 
     @dataclass
     class _ExtraTwo(AbstractCapability[None]):
-        pass
+        def get_toolset(self) -> FunctionToolset[None]:
+            return FunctionToolset()
 
     @dataclass
     class _SkipRequest(AbstractCapability[None]):
@@ -2900,7 +2901,6 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    # Only `in_workflow` is faked, so keep the default-ID hook and replay telemetry off the real workflow APIs.
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
@@ -2909,11 +2909,26 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
             return_value=False,
         ),
     ):
-        result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
+        result = await agent.run('hello', capabilities=[_ExtraOne()])
         assert result.output == 'skipped'
 
         with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
             await agent.run('hello', capabilities=[extra_factory])
+
+
+async def test_override_model_instance_round_trips_inside_workflow():
+    """A registered model instance remains selectable through `agent.override` for Temporal agents."""
+    from pydantic_ai.models.test import TestModel
+
+    test_model = TestModel()
+    agent = Agent(
+        TestModel(),
+        name='durability_override_model_instance',
+        capabilities=[TemporalDurability(models={'test-model': test_model})],
+    )
+    with agent.override(model=test_model):
+        result = await agent.run('hello')
+    assert result.output == 'success (no tool calls)'
 
 
 # --- get_serialization_name returns None ---
