@@ -2243,8 +2243,9 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
     )
 
 
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
 @pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
-async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
+async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str, priority: PendingMessagePriority):
     """Queued content never turns a deferred-tool pause into another model request (#7537).
 
     After a step whose calls all deferred, a queued request is recorded after the paused response. A queued
@@ -2270,9 +2271,11 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
             response: ModelResponse,
         ) -> ModelResponse:
             if case == 'queued_response':
-                ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+                ctx.enqueue(
+                    ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content', priority=priority
+                )
             else:
-                ctx.enqueue('late content')
+                ctx.enqueue('late content', priority=priority)
             return response
 
     agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
@@ -2309,7 +2312,8 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
         assert run.pending_messages == []
 
 
-async def test_enqueue_at_pending_model_response_pause_keeps_the_pause():
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
+async def test_enqueue_at_pending_model_response_pause_keeps_the_pause(priority: PendingMessagePriority):
     """Queued content never turns a `PendingModelResponse` pause into another model request (#7537).
 
     Continuing would abandon the provider's job; the content stays queued and readable instead.
@@ -2334,7 +2338,7 @@ async def test_enqueue_at_pending_model_response_pause_keeps_the_pause():
             request_context: ModelRequestContext,
             response: ModelResponse,
         ) -> ModelResponse:
-            ctx.enqueue('late content')
+            ctx.enqueue('late content', priority=priority)
             return response
 
     agent = Agent(
