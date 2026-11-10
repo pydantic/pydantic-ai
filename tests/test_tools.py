@@ -5836,7 +5836,10 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
 
 
 def test_admonition_sections_reach_tool_description():
-    """Recognized admonition sections reach the model instead of being dropped."""
+    """Recognized admonition sections reach the model instead of being dropped.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -5882,7 +5885,10 @@ def test_admonition_sections_reach_tool_description():
 
 
 def test_admonition_headers_reach_tool_description_as_written():
-    """A Google admonition header reaches the model as written, including multi-word types and inline titles."""
+    """A Google admonition header reaches the model as written, including multi-word types and inline titles.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -5917,7 +5923,10 @@ def test_admonition_headers_reach_tool_description_as_written():
 
 
 def test_admonition_sections_reach_tool_description_numpy():
-    """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model."""
+    """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -5956,7 +5965,10 @@ def test_admonition_sections_reach_tool_description_numpy():
 
 
 def test_raises_and_examples_sections_still_dropped():
-    """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description."""
+    """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -5983,7 +5995,10 @@ def test_raises_and_examples_sections_still_dropped():
 
 
 def test_returns_with_colon_whole_text_when_return_annotated():
-    """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon."""
+    """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -6028,7 +6043,10 @@ def test_returns_with_colon_whole_text_when_return_annotated():
     ],
 )
 def test_returns_with_colon_written_text_when_return_annotated(returns_text: str, description: str):
-    """With a Python return annotation, the `Returns:` description is the text as written, parentheses included."""
+    """With a Python return annotation, the `Returns:` description is the text as written, parentheses included.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
@@ -6058,7 +6076,10 @@ def test_returns_with_colon_written_text_when_return_annotated(returns_text: str
 
 
 def test_returns_written_text_skips_fenced_returns_example():
-    """A `Returns:` line inside a code fence is example text, not the function's returns section."""
+    """A `Returns:` line inside a code fence is example text, not the function's returns section.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
 
     def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
         return []
@@ -6095,7 +6116,10 @@ Returns:
 
 
 def test_returns_written_text_falls_back_to_parsed_text():
-    """If the written `Returns:` section can't be located, the parsed type and description are joined instead."""
+    """If the written `Returns:` section can't be located, the parsed type and description are joined instead.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
 
     def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
         return []
@@ -6124,7 +6148,10 @@ def test_returns_written_text_falls_back_to_parsed_text():
 
 
 def test_returns_with_colon_still_split_when_not_annotated():
-    """Without a Python return annotation, a `Returns:` type prefix keeps its current handling."""
+    """Without a Python return annotation, a `Returns:` type prefix keeps its current handling.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
     test_model = TestModel()
     agent = Agent(test_model)
 
