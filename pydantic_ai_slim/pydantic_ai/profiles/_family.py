@@ -12,7 +12,7 @@ from .deepseek import deepseek_model_profile
 from .google import google_model_profile
 from .grok import grok_model_profile
 from .harmony import harmony_model_profile
-from .meta import meta_model_profile, muse_model_profile
+from .meta import meta_model_profile
 from .mistral import mistral_model_profile
 from .moonshotai import moonshotai_model_profile
 from .openai import openai_model_profile
@@ -29,12 +29,6 @@ def _openai_family_profile(model_name: str) -> ModelProfile | None:
     return openai_model_profile(model_name)
 
 
-def _meta_family_profile(model_name: str) -> ModelProfile | None:
-    if model_name.startswith('muse-'):
-        return muse_model_profile(model_name)
-    return meta_model_profile(model_name)
-
-
 _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
     'alibaba': qwen_model_profile,
     'amazon': amazon_model_profile,
@@ -43,9 +37,11 @@ _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
     'deepseek': deepseek_model_profile,
     'deepseek-ai': deepseek_model_profile,
     'google': google_model_profile,
-    'meta': _meta_family_profile,
-    'meta-llama': _meta_family_profile,
-    'meta-models': _meta_family_profile,
+    # Not `muse_model_profile` for Muse ids: it describes Meta's own API (reasoning efforts, web search, phase),
+    # which gateways may not accept.
+    'meta': meta_model_profile,
+    'meta-llama': meta_model_profile,
+    'meta-models': meta_model_profile,
     'mistral': mistral_model_profile,
     'mistralai': mistral_model_profile,
     'moonshotai': moonshotai_model_profile,

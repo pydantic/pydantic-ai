@@ -2773,18 +2773,7 @@ def test_together_qwen():
             'meta-models/muse-spark-open',
             snapshot(
                 {
-                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
-                    'supports_thinking': True,
-                    'thinking_always_enabled': True,
-                    'thinking_enabled_by_default': True,
-                    'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'minimal', 'xhigh'}),
-                    'openai_supports_encrypted_reasoning_content': True,
-                    'openai_supports_phase': True,
-                    'supports_json_schema_output': True,
-                    'supports_json_object_output': True,
-                    'openai_chat_supports_web_search': True,
-                    'supported_native_tools': frozenset({WebSearchTool}),
-                    'context_window': 1048576,
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -2877,18 +2866,7 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
             'meta-models/Muse-Spark-Open',
             snapshot(
                 {
-                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
-                    'supports_thinking': True,
-                    'thinking_always_enabled': True,
-                    'thinking_enabled_by_default': True,
-                    'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'minimal', 'xhigh'}),
-                    'openai_supports_encrypted_reasoning_content': True,
-                    'openai_supports_phase': True,
-                    'supports_json_schema_output': True,
-                    'supports_json_object_output': True,
-                    'openai_chat_supports_web_search': True,
-                    'supported_native_tools': frozenset({WebSearchTool}),
-                    'context_window': 1048576,
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
                     'may_tokenize_special_tokens_in_content': True,
                 }
             ),
