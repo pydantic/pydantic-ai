@@ -183,3 +183,89 @@ async def test_a_computer_call_with_safety_checks_waits_for_approval_whichever_t
     )
     assert resumed.output == 'ok'
     assert ran == [[{'type': 'click', 'x': 1, 'y': 2}]]
+
+
+@pytest.mark.parametrize('route', ['skipped', 'recovered'])
+async def test_a_computer_call_with_safety_checks_waits_for_approval_however_its_arguments_are_accepted(
+    route: str,
+) -> None:
+    from dataclasses import dataclass
+    from typing import Any
+
+    from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool
+    from pydantic_ai.capabilities import AbstractCapability
+    from pydantic_ai.exceptions import SkipToolValidation
+
+    click = {'actions': [{'type': 'click', 'x': 1, 'y': 2}]}
+    ran: list[object] = []
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        ran.append(actions)  # pragma: no cover
+        return ['Done.', SCREEN]  # pragma: no cover
+
+    @dataclass
+    class AcceptArgs(AbstractCapability[Any]):
+        async def before_tool_validate(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+        ) -> str | dict[str, Any]:
+            if route == 'skipped':
+                raise SkipToolValidation(click)
+            return args
+
+        async def on_tool_validate_error(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            return click
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        args = {'wrong': 1} if route == 'recovered' else click
+        checks = [{'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'Check it.'}]
+        return ModelResponse(
+            parts=[ToolCallPart('computer', args, tool_call_id='call_1', provider_details={'safety_checks': checks})]
+        )
+
+    agent = Agent(
+        FunctionModel(respond),
+        tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
+        capabilities=[AcceptArgs()],
+        output_type=[str, DeferredToolRequests],
+    )
+    paused = await agent.run('Click.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in paused.output.approvals] == ['call_1']
+    assert ran == []
+
+
+async def test_a_computer_call_with_safety_checks_refuses_an_external_executor() -> None:
+    from pydantic_ai import Agent, DeferredToolRequests
+    from pydantic_ai.toolsets import ExternalToolset
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        checks = [{'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'Check it.'}]
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'computer',
+                    {'actions': [{'type': 'click', 'x': 1, 'y': 2}]},
+                    tool_call_id='call_1',
+                    provider_details={'safety_checks': checks},
+                )
+            ]
+        )
+
+    external = ExternalToolset(
+        [
+            ToolDefinition(
+                name='computer',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'actions': {'type': 'array'}},
+                    'required': ['actions'],
+                },
+                tool_kind=COMPUTER_KIND.id,
+            )
+        ]
+    )
+    agent = Agent(FunctionModel(respond), toolsets=[external], output_type=[str, DeferredToolRequests])
+    with pytest.raises(UserError, match='approval cannot reach'):
+        await agent.run('Click.')
