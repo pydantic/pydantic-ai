@@ -49,6 +49,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
+    _with_framing_announcement,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._continuation import cancel_suspended_job, mark_suspended_job_cancelled
@@ -246,6 +247,8 @@ class FallbackModel(Model):
         response handler, the messages are rewound (stripping the suspended response and
         trailing continuation request) and the normal fallback chain is tried.
         """
+        # Each candidate prepares the messages itself, with the request's `framing_announcement`.
+        model_request_parameters = _with_framing_announcement(model_request_parameters, model_settings)
         chain = self._chain()
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
@@ -370,6 +373,7 @@ class FallbackModel(Model):
         Response handlers are not applied: the response has already been streamed by the time
         it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
         """
+        model_request_parameters = _with_framing_announcement(model_request_parameters, model_settings)
         chain = self._chain()
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False

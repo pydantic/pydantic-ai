@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -217,0 +218,22 @@
+@@ -213,0 +214,22 @@
 +    },
 +    {
 +     "text": "<system><context id=\"capability:refunds\">\nQuote the refund policy.\n</context></system>",
@@ -23,7 +23,7 @@
 +    {
 +     "text": "Question 2",
 +     "type": "text"
-@@ -249,22 +270,0 @@
+@@ -245,22 +266,0 @@
 -    },
 -    {
 -     "text": "<system><context id=\"capability:refunds\">\nQuote the refund policy.\n</context></system>",
@@ -46,7 +46,7 @@
 -    {
 -     "text": "Question 2",
 -     "type": "text"
-@@ -305,161 +304,0 @@
+@@ -301,161 +300,0 @@
 -{
 - "system": [
 -  {
