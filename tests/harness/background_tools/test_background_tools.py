@@ -1388,7 +1388,8 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
-            return 'approved'  # pragma: no cover -- never approved in this test
+            # Never approved in this test.
+            return 'approved'  # pragma: no cover
 
         with pytest.raises(RuntimeError, match='background failure'):
             await asyncio.wait_for(agent.run('go'), timeout=5)

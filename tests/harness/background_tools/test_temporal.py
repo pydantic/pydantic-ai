@@ -102,7 +102,8 @@ def _pausing_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo
 
 
 def gated() -> str:
-    return 'approved'  # pragma: no cover -- never approved in this test
+    # Never approved in this test.
+    return 'approved'  # pragma: no cover
 
 
 _pausing_agent = Agent(
