@@ -14,11 +14,19 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    OperatorSource,
+    OperatorText,
+    TextContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 _RECEIPT_MARKER = '[History before this point'
-"""Prefix identifying a receipt part, for detection and de-accumulation across compactions."""
+"""How a receipt's text opens."""
 
 RECEIPT_EVENT_NAME = 'compaction.receipt'
 """Name of the OTel span event emitted alongside the `compact_messages` span."""
@@ -87,21 +95,27 @@ def format_receipt(
 
 
 _RECEIPT_METADATA = 'pydantic-ai-harness.compaction.receipt.v1'
-"""Model-invisible metadata identifying a receipt content item."""
+"""The metadata on the `TextContent` of the user-text receipt an earlier version left, which still counts as one."""
 
 
-def make_receipt_part(text: str) -> UserPromptPart:
-    """Wrap receipt *text* in a `UserPromptPart` for placement in the surviving history.
+@dataclass(kw_only=True)
+class CompactionReceiptPart(InstructionCapabilityPart, namespace='compaction', name='receipt'):
+    """The receipt a compaction strategy with `receipts=True` leaves where it summarized or dropped history.
 
-    The text remains user-role context while its metadata lets compaction distinguish it from a
-    user turn.
+    In the application's voice, it tells the model that its memory of what came before is secondhand. Find receipts
+    in history by this type.
     """
-    return UserPromptPart(content=[TextContent(text, metadata=_RECEIPT_METADATA)])
+
+
+def make_receipt_part(text: str) -> CompactionReceiptPart:
+    """Wrap receipt *text*, from `format_receipt`, in a `CompactionReceiptPart` for the surviving history."""
+    # The capability's own wording, with only counts, the strategy's name and a run handle filled in.
+    return CompactionReceiptPart(content=OperatorText(text), source=OperatorSource())
 
 
 def is_receipt_part(part: object) -> bool:
-    """Return True if *part* carries the receipt metadata marker."""
-    return (
+    """Return True if *part* is a receipt: a `CompactionReceiptPart`, or the user text an earlier version left."""
+    return isinstance(part, CompactionReceiptPart) or (
         isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
         and any(isinstance(item, TextContent) and item.metadata == _RECEIPT_METADATA for item in part.content)

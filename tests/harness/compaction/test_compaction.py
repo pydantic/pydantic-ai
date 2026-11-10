@@ -86,6 +86,7 @@ from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
+    CompactionReceiptPart,
     DeduplicateFileReads,
     FallbackCompaction,
     LimitWarningPart,
@@ -4023,13 +4024,16 @@ def _part_text(part: UserPromptPart) -> str:
 
 
 def _receipt_parts(messages: list[ModelMessage]) -> list[str]:
+    """The text of each receipt in *messages*: a `CompactionReceiptPart` in history, or its rendering a model was sent."""
     receipts: list[str] = []
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
         for part in message.parts:
-            if isinstance(part, UserPromptPart):
-                text = _part_text(part)
+            if isinstance(part, CompactionReceiptPart):
+                receipts.append(part.content)
+            elif isinstance(part, SystemPromptPart | UserPromptPart):
+                text = part.content if isinstance(part, SystemPromptPart) else _part_text(part)
                 if 'messages, ~' in text and 'was ' in text:
                     receipts.append(text)
     return receipts
@@ -4167,6 +4171,27 @@ class TestReceipts:
         assert len(_receipt_parts(result)) == 1
         assert decoy_system in result
         assert decoy_sequence in result
+
+    async def test_a_receipt_an_earlier_version_left_is_replaced(self):
+        # An earlier version left the receipt as user text marked by its metadata, which a stored history may still hold.
+        sw = SlidingWindowCompaction(max_messages=4, keep_messages=4, receipts=True)
+        legacy = ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        TextContent(
+                            '[History before this point (1 messages, ~5 tokens) was dropped by the harness.]',
+                            metadata='pydantic-ai-harness.compaction.receipt.v1',
+                        )
+                    ]
+                )
+            ]
+        )
+        messages: list[ModelMessage] = [legacy, _user('a'), _assistant('b'), _user('c')]
+        result = await sw.compact(messages, _make_ctx())
+        assert legacy not in result
+        [receipt] = _receipt_parts(result)
+        assert receipt.startswith('[History before this point')
 
 
 class _CtxWith:
@@ -4324,9 +4349,10 @@ class TestSlidingWindowCompactionReceipts:
         first = result.messages[0]
         assert isinstance(first, ModelRequest)
         receipt = first.parts[0]
-        assert isinstance(receipt, UserPromptPart)
-        assert _part_text(receipt).startswith('[History before this point')
-        assert 'was dropped by the harness' in _part_text(receipt)
+        assert isinstance(receipt, CompactionReceiptPart)
+        assert receipt.source == OperatorSource()
+        assert receipt.content.startswith('[History before this point')
+        assert 'was dropped by the harness' in receipt.content
 
     async def test_receipt_reserves_a_message_slot(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=3, receipts=True, preserve_first_user_message=False)

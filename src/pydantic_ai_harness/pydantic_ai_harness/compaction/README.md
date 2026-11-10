@@ -811,9 +811,9 @@ it is the same `summarizing_compaction` agent run.
 Compaction is a memory wipe the model cannot veto and often cannot detect, which invites
 *resumption drift* -- the model confabulates continuity with history it no longer has. A
 receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
-append a short, deterministic note recording how much was compacted, warning that what
-survives is secondhand, and -- when a handle provider is attached -- an identifier for persisted
-run history.
+append a short, deterministic note in the application's voice, a `CompactionReceiptPart`, recording
+how much was compacted, warning that what survives is secondhand, and -- when a handle provider is
+attached -- an identifier for persisted run history.
 
 ```python
 SummarizingCompaction(max_messages=60, keep_messages=20, receipts=True)
@@ -883,10 +883,9 @@ ask, records every load, and the next run ignores a load of a capability it does
 
 Set `preserve_loaded_capabilities=False` on the strategy to let them unload instead. The strategy then
 leaves a note in the same place naming the capabilities that are no longer loaded, so the model can load
-the ones it still needs rather than finding out from a refused tool call. The note is user-channel content
-whose `TextContent.metadata` is
-`{'origin': 'pydantic-ai-harness.compaction.unloaded-capabilities.v1', 'capabilities': [...]}`, so a later
-summary treats it as data rather than as the user's words.
+the ones it still needs rather than finding out from a refused tool call. The note is an
+`UnloadedCapabilitiesPart` in the application's voice, whose `capabilities` names them; find notes in the
+message history by that type.
 
 `ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
 load records as they are, so loads survive them unchanged. Provider-native

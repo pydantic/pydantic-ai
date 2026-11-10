@@ -25,6 +25,7 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
+    InstructionCapabilityPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -32,6 +33,8 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    OperatorSource,
+    OperatorText,
     TextContent,
     ToolAvailabilityDeltaPart,
     UserPromptPart,
@@ -41,7 +44,18 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._tool_search import discovered_tool_names_in_order, parse_discovered_tools
 
 UNLOADED_CAPABILITIES_ORIGIN = 'pydantic-ai-harness.compaction.unloaded-capabilities.v1'
-"""The `origin` of the note `preserve_loaded_capabilities=False` leaves, naming the capabilities a compaction unloaded."""
+"""The `origin` of the user-text note an earlier version left with `preserve_loaded_capabilities=False`, which still counts."""
+
+
+@dataclass(kw_only=True)
+class UnloadedCapabilitiesPart(InstructionCapabilityPart, namespace='compaction', name='unloaded_capabilities'):
+    """The note `preserve_loaded_capabilities=False` leaves after a compaction that unloaded deferred capabilities.
+
+    In the application's voice, it tells the model to load any it still needs. Find notes in history by this type.
+    """
+
+    capabilities: tuple[str, ...] = ()
+    """The ids of the capabilities the compaction unloaded. Never sent to the model."""
 
 
 @dataclass(frozen=True)
@@ -149,31 +163,47 @@ def _recorded_loads(loads: Sequence[_Load]) -> ModelRequest:
 
 
 def _unloaded_note(capability_ids: Sequence[str]) -> ModelRequest:
-    """The note naming the capabilities a compaction unloaded, as harness data on the user channel."""
+    """The note naming the capabilities a compaction unloaded, in the application's voice."""
     names = ', '.join(repr(capability_id) for capability_id in capability_ids)
-    text = (
-        f'Compacting the conversation unloaded these capabilities: {names}. Their instructions and tools are '
-        'no longer available. Call `load_capability` for any you still need before using its tools.'
+    note = UnloadedCapabilitiesPart(
+        # The capability's own wording, naming capabilities by the ids the operator registered them under.
+        content=OperatorText(
+            f'Compacting the conversation unloaded these capabilities: {names}. Their instructions and tools are '
+            'no longer available. Call `load_capability` for any you still need before using its tools.'
+        ),
+        source=OperatorSource(),
+        capabilities=tuple(capability_ids),
     )
-    metadata = {'origin': UNLOADED_CAPABILITIES_ORIGIN, 'capabilities': list(capability_ids)}
-    return ModelRequest(parts=[UserPromptPart(content=[TextContent(text, metadata=metadata)])])
+    return ModelRequest(parts=[note])
 
 
 def _noted_unloaded(messages: Sequence[ModelMessage]) -> set[str]:
     """The capabilities an unloaded-capabilities note in the post-compaction window of *messages* names."""
-    noted: set[str] = set()
-    for message in post_compaction_window(messages):
-        for part in message.parts:
-            if (
-                isinstance(part, UserPromptPart)
-                and not isinstance(part.content, str)
-                and part.content
-                and isinstance(note := part.content[0], TextContent)
-                and is_str_dict(note.metadata)
-                and note.metadata.get('origin') == UNLOADED_CAPABILITIES_ORIGIN
-            ):
-                noted.update(_unloaded_note_ids(note.metadata.get('capabilities')))
-    return noted
+    return {
+        capability_id
+        for message in post_compaction_window(messages)
+        for part in message.parts
+        for capability_id in _unloaded_note_capabilities(part)
+    }
+
+
+def _unloaded_note_capabilities(part: ModelRequestPart | ModelResponsePart) -> Sequence[str]:
+    """The capabilities *part* names, if it's an unloaded-capabilities note.
+
+    That's an `UnloadedCapabilitiesPart`, or the user text an earlier version left, marked by its metadata.
+    """
+    if isinstance(part, UnloadedCapabilitiesPart):
+        return part.capabilities
+    if (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and part.content
+        and isinstance(note := part.content[0], TextContent)
+        and is_str_dict(note.metadata)
+        and note.metadata.get('origin') == UNLOADED_CAPABILITIES_ORIGIN
+    ):
+        return _unloaded_note_ids(note.metadata.get('capabilities'))
+    return ()
 
 
 def _unloaded_note_ids(value: object) -> list[str]:

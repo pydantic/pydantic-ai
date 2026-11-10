@@ -37,6 +37,7 @@ from pydantic_ai_harness.compaction import (
     RelevanceCompaction,
     SlidingWindowCompaction,
     SummarizingCompaction,
+    UnloadedCapabilitiesPart,
     compact_now,
 )
 from pydantic_ai_harness.compaction._capability_loads import keep_capability_loads
@@ -180,6 +181,8 @@ def _shape(messages: Sequence[ModelMessage]) -> list[str]:
                 return f'{part.tool_name} return'
             case UserPromptPart():
                 return f'user {" ".join(_user_texts([ModelRequest(parts=[part])]))!r}'
+            case UnloadedCapabilitiesPart():
+                return f'unloaded {list(part.capabilities)}'
             case TextPart():
                 return f'text {part.content!r}'
             case CompactionPart():
@@ -318,7 +321,7 @@ OPT_OUT_SHAPES = snapshot(
         'summarizing': [
             "request: user 'Weather in Athens?', baseline",
             'request: compaction',
-            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: unloaded ['weather']",
             "request: user 'And in Oslo?', baseline",
             "response: get_forecast({'city': 'Oslo'})",
             'request: get_forecast return',
@@ -326,7 +329,7 @@ OPT_OUT_SHAPES = snapshot(
         ],
         'sliding': [
             "request: user 'Weather in Athens?', baseline",
-            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: unloaded ['weather']",
             "request: user 'And in Oslo?'",
             "response: get_forecast({'city': 'Oslo'})",
             'request: get_forecast return',
@@ -334,7 +337,7 @@ OPT_OUT_SHAPES = snapshot(
         ],
         'relevance-dropping': [
             "request: user 'Weather in Athens?', baseline",
-            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: unloaded ['weather']",
             "response: text 'Sunny in Athens.'",
             "request: user 'And in Oslo?'",
             "response: get_forecast({'city': 'Oslo'})",
@@ -343,7 +346,7 @@ OPT_OUT_SHAPES = snapshot(
         ],
         'relevance-summarizing': [
             "request: user 'Weather in Athens?', baseline",
-            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: unloaded ['weather']",
             'request: compaction',
             "response: get_forecast({'city': 'Oslo'})",
             'request: get_forecast return, baseline',
@@ -390,7 +393,8 @@ class TestCapabilityLoadsAcrossCompaction:
 
         assert second_turn.tools[0] == ['load_capability']
         assert STATED_INSTRUCTIONS not in _user_texts(second_turn.requests[0])
-        assert UNLOADED_NOTE in _user_texts(second_turn.requests[0])
+        # In the application's voice: this model has no mid-conversation system role, so it's a `<system>` block.
+        assert f'<system>{UNLOADED_NOTE}</system>' in _user_texts(second_turn.requests[0])
         assert _shape(messages) == OPT_OUT_SHAPES[name]
 
     @pytest.mark.parametrize(
@@ -472,7 +476,7 @@ class TestCapabilityLoadsAcrossCompaction:
 
         messages = result.all_messages()
         assert not any(isinstance(part, LoadCapabilityCallPart) for message in messages for part in message.parts)
-        assert UNLOADED_NOTE not in _user_texts(messages)
+        assert not any(isinstance(part, UnloadedCapabilitiesPart) for message in messages for part in message.parts)
 
     async def test_only_a_loads_own_reveal_is_recorded_with_it(self) -> None:
         # Tools revealed by a search or a tool's `ToolReturn(tools=...)` aren't the load's: they're kept, or not, apart.
@@ -644,9 +648,39 @@ class TestCapabilityLoadsAcrossCompaction:
             model=FunctionModel(_summarize),
         )
         # The compaction recorded the load, or noted it was unloaded, itself.
-        assert any("load ['weather']" in line or 'unloaded these capabilities' in line for line in _shape(compacted))
+        assert any("load ['weather']" in line or "unloaded ['weather']" in line for line in _shape(compacted))
 
         again = keep_capability_loads(
             original, compacted, kept_from=len(compacted) - 1, deferred_ids={'weather'}, preserve=preserve
         )
         assert again == compacted
+
+    async def test_a_note_an_earlier_version_left_still_counts(self) -> None:
+        # An earlier version left the note as user text marked by its metadata, which a stored history may still hold.
+        original = [*await _first_turn_history(), ModelRequest(parts=[UserPromptPart('And in Oslo?')])]
+        compacted = await compact_now(
+            SummarizingCompaction[None](max_messages=1, keep_messages=1, preserve_loaded_capabilities=False),
+            original,
+            model=FunctionModel(_summarize),
+        )
+        legacy_note = UserPromptPart(
+            [
+                TextContent(
+                    UNLOADED_NOTE,
+                    metadata={
+                        'origin': 'pydantic-ai-harness.compaction.unloaded-capabilities.v1',
+                        'capabilities': ['weather'],
+                    },
+                )
+            ]
+        )
+        legacy = [
+            ModelRequest(parts=[legacy_note]) if any(isinstance(p, UnloadedCapabilitiesPart) for p in m.parts) else m
+            for m in compacted
+        ]
+        assert legacy != compacted
+
+        again = keep_capability_loads(
+            original, legacy, kept_from=len(legacy) - 1, deferred_ids={'weather'}, preserve=False
+        )
+        assert again == legacy
