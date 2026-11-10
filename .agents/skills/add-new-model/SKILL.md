@@ -237,6 +237,12 @@ check. Keep the model-specific evidence concise:
 - **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** The Gateway refuses the id until the entry lands, so a user who picks it from autocomplete gets an error. Add the `gateway/` id to `UNSUPPORTED_GATEWAY_MODEL_NAMES` with a comment naming the missing price data, keep the direct-provider id, and follow Step 3b to report the gap. Remove the exclusion once the Gateway serves the id.
 - **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
+OpenAI image-model landmines:
+
+- **Probe `quality` with a valid `size`.** The Images API validates `size` before `quality`. An unknown `quality` returns the same `low, medium, high, auto` list for every model, so it tells you nothing. Only a request that passes size validation shows the per-model rejection: `The model 'gpt-image-2' does not support quality 'xhigh'.`
+- **Probe geometry with out-of-bounds sizes.** The API rejects a size before it generates anything. When the new model rejects each boundary size with the same message as a known family, add its ids to that family's tuple in `images/_openai_geometry.py`.
+- **A model page's "Responses: Not supported" means the top-level `model`.** GPT Image 2.6 pages say it, yet the Responses `image_generation` tool accepts both 2.6 ids. Probe the tool with `tool_choice={'type': 'image_generation'}` before deciding `ImageGenerationModelName`.
+
 ### Anthropic
 
 - **TWO literal lists, not one.** Add the id to BOTH:
