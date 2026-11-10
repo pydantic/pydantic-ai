@@ -184,6 +184,9 @@ Files belong to the owner of the working directory. Writes are cached on the san
 | Sandbox | What it needs |
 | --- | --- |
 | [Docker Sandbox](docker-sandbox.md) | The FUSE device, added when the container is created: `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`. A container without it is refused with `MountError` naming these flags. The container must reach the store, so leave `allow_internet_access` on; to limit where it connects, pass a `--network` of your own in `docker_args`. |
+| [E2B Sandbox](e2b-sandbox.md) | Internet access, on by default, to reach the store and install FUSE and rclone. The helper runs through E2B's `user='root'`, not `sudo`. |
+| [Modal Sandbox](modal-sandbox.md) | Modal's VM runtime: `ModalSandbox(runtime='vm')`. A sandbox on gVisor is refused with `MountError`, as gVisor can't mount FUSE file systems. |
+| [Sprites Sandbox](sprites-sandbox.md) | Nothing beyond a network path to the store: a Sprite has the FUSE device, and its `sprite` user runs the helper through passwordless `sudo`. |
 
 The other sandboxes don't support `mounts=` yet.
 
@@ -192,6 +195,8 @@ The other sandboxes don't support `mounts=` yet.
 Code in the sandbox can read the keys, so pass only short-lived keys limited to that bucket, or to the prefix you mount, as in the STS example above. `S3Mount` keeps the keys out of its `repr` and out of the sandbox's durable policy, and `MountError` messages leave them out.
 
 The keys keep working after the run, through the mount and for anything else code in the sandbox does with them, until they expire. `read_only=True` only refuses writes through the folder.
+
+In a Sprite, the `sprite` user that runs every command can read any file and become root, so it can also ask the rclone daemon for the keys of every mount there.
 
 In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in the container more access to the kernel it shares with your machine, which makes it a weaker boundary, so add these flags only to containers that use mounts.
 
