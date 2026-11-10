@@ -723,7 +723,7 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
         ),
     ],
 )
-async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_the_request_betas(
+async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_no_tool_addition_beta(
     allow_model_requests: None, native_tools: list[AbstractNativeTool], request_betas: list[str]
 ):
     """`count_tokens` declares the newcomer plainly too, so it sends no beta for a `tool_addition` the request lacks.
