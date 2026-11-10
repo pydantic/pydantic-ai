@@ -664,8 +664,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         A settled result is for handing the run to code that outlives the stream, which is exactly
         when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
         """
-        self._completion_failed = False
-        """Whether finishing the run raised after the stream was received in full.
+        self._completion_raised = False
+        """Whether finishing the run raised or was cancelled after the stream was received in full.
 
         `is_complete` is already `True` by then, and the output can't tell either: a validated output
         can be `None`, and a tool call can fail after the output was validated.
@@ -683,7 +683,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
         Raises:
             UserError: If the stream hasn't finished, was cancelled before producing an output, or the run
-                failed before it finished, so the run has no settled output to settle on.
+                stopped before it finished, so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
@@ -696,10 +696,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
-            elif self._completion_failed:
+            elif self._completion_raised:
                 raise exceptions.UserError(
-                    'The run failed before it finished, so this run has no settled result. The messages recorded '
-                    'up to the failure are still available from `all_messages()`.'
+                    'The run stopped before it finished, so this run has no settled result. The messages recorded '
+                    'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
             result = AgentRunResult(
@@ -989,8 +989,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._on_complete is not None:
             try:
                 await self._on_complete()
-            except Exception:
-                self._completion_failed = True
+            # `BaseException`, as a run cancelled while it finishes didn't finish either.
+            except BaseException:
+                self._completion_raised = True
                 raise
 
     async def cancel(self) -> None:

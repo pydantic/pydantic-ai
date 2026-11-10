@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RequestUsage,
+    RunCancelled,
     RunContext,
     RunUsage,
     ToolCallPart,
@@ -332,21 +333,23 @@ async def test_settling_a_run_whose_final_output_failed_validation_is_refused(
                 pass
 
         assert streamed.is_complete
-        with pytest.raises(UserError, match='failed before it finished'):
+        with pytest.raises(UserError, match='stopped before it finished'):
             streamed.result
 
         assert isinstance(streamed.all_messages()[-1], ModelResponse)
 
 
+async def stream_text_then_a_tool_call(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'The answer'
+    yield {0: DeltaToolCall(name='record_answer', json_args='{}', tool_call_id='call_1')}
+
+
 async def test_settling_a_run_whose_tool_call_failed_after_the_output_is_refused() -> None:
     """With `end_strategy='exhaustive'`, tool calls next to the output run as the stream finishes, after validation."""
-
-    async def text_then_tool_call(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        yield 'The answer'
-        yield {0: DeltaToolCall(name='record_answer', json_args='{}', tool_call_id='call_1')}
-
     agent = Agent(
-        FunctionModel(stream_function=text_then_tool_call), instructions='Be helpful.', end_strategy='exhaustive'
+        FunctionModel(stream_function=stream_text_then_a_tool_call),
+        instructions='Be helpful.',
+        end_strategy='exhaustive',
     )
 
     @agent.tool_plain
@@ -358,8 +361,33 @@ async def test_settling_a_run_whose_tool_call_failed_after_the_output_is_refused
             await streamed.get_output()
 
         assert streamed.is_complete
-        with pytest.raises(UserError, match='failed before it finished'):
+        with pytest.raises(UserError, match='stopped before it finished'):
             streamed.result
+
+
+async def test_settling_a_run_cancelled_while_it_finishes_is_refused() -> None:
+    """A run cancelled while the tool calls next to its output run never finished, though its output was validated."""
+    agent = Agent(
+        FunctionModel(stream_function=stream_text_then_a_tool_call),
+        instructions='Be helpful.',
+        end_strategy='exhaustive',
+    )
+
+    @agent.tool
+    async def record_answer(ctx: RunContext) -> str:
+        ctx.cancel()
+        return 'recorded'
+
+    streams: list[StreamedRunResult[object, str]] = []
+    with pytest.raises(RunCancelled):
+        async with agent.run_stream('Answer') as streamed:
+            streams.append(streamed)
+            await streamed.get_output()
+
+    [streamed] = streams
+    assert streamed.is_complete
+    with pytest.raises(UserError, match='stopped before it finished'):
+        streamed.result
 
 
 def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
