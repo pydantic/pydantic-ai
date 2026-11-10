@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._mounts import S3Mount
+from pydantic_ai_harness._workspace_provider import (
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+    with_mounts,
+)
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
     DockerSandboxBackend,
@@ -61,12 +68,49 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
+    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
+    """Buckets to show as folders in the container, or a function of the run returning them with fresh keys.
+
+    The container needs FUSE: give it `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN',
+    '--security-opt', 'apparmor:unconfined']`.
+    """
+
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         reject_defer_loading('DockerSandbox', self.defer_loading)
         check_working_dir(self.working_dir)
         self._executable_path = resolve_executable(self.executable)
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        image: str | None = None,
+        working_dir: str | None = '/workspace',
+        env: Mapping[str, str] | None = None,
+        allow_internet_access: bool = True,
+        docker_args: Sequence[str] = (),
+        executable: str = 'docker',
+        **kwargs: Any,
+    ) -> DockerSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. `mounts` is left out: a spec can't hold keys.
+        """
+        return cls(
+            id=id,
+            description=description,
+            image=image,
+            working_dir=working_dir,
+            env=env,
+            allow_internet_access=allow_internet_access,
+            docker_args=docker_args,
+            executable=executable,
+            **kwargs,
+        )
 
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
@@ -81,16 +125,19 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
-        del ctx
         if ref is not None:
-            return self.backend(ref) if ref.provider == PROVIDER else None
-        if self.image is None:
+            if ref.provider != PROVIDER:
+                return None
+            backend = self.backend(ref)
+        elif self.image is None:
             return None
-        return DockerSandboxBackend(
-            image=self.image,
-            working_dir=self.working_dir,
-            env=self.env,
-            allow_internet_access=self.allow_internet_access,
-            docker_args=self.docker_args,
-            executable=self._executable_path,
-        )
+        else:
+            backend = DockerSandboxBackend(
+                image=self.image,
+                working_dir=self.working_dir,
+                env=self.env,
+                allow_internet_access=self.allow_internet_access,
+                docker_args=self.docker_args,
+                executable=self._executable_path,
+            )
+        return with_mounts(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]
