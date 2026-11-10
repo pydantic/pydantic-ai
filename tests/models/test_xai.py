@@ -6756,13 +6756,26 @@ def test_xai_finish_reason_proto_map_covers_all_enum_members():
 
 @dataclass
 class CountingMockXai(MockXai):
-    """A MockXai that records document uploads so tests can assert upload reuse."""
+    """A MockXai that records document uploads and gives each one a distinct file ID (`file-1`, `file-2`, ...)."""
 
     upload_calls: list[tuple[bytes, str]] = field(default_factory=list[tuple[bytes, str]])
 
     async def files_upload(self, data: bytes, filename: str) -> Any:
         self.upload_calls.append((data, filename))
-        return await super().files_upload(data, filename)
+        return type('UploadedFile', (), {'id': f'file-{len(self.upload_calls)}'})()
+
+
+def _sent_file_ids(client: AsyncClient) -> list[list[str]]:
+    """The file IDs each chat request referenced, in message order."""
+    return [
+        [
+            content['file']['file_id']
+            for message in kwargs['messages']
+            for content in message['content']
+            if 'file' in content
+        ]
+        for kwargs in get_mock_chat_create_kwargs(client)
+    ]
 
 
 async def test_binary_content_document_uploaded_once_per_instance(allow_model_requests: None):
@@ -6782,6 +6795,7 @@ async def test_binary_content_document_uploaded_once_per_instance(allow_model_re
         result = await agent.run(prompt, message_history=result.all_messages())
         assert result.output == 'ok'
     assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
+    assert _sent_file_ids(mock_client) == [['file-1'], ['file-1'], ['file-1']]
 
 
 @pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
@@ -6816,6 +6830,7 @@ async def test_document_url_uploaded_once_per_instance(allow_model_requests: Non
         assert result.output == 'ok'
     assert counting_client.upload_calls == [(b'%PDF-1.4\ndownloaded content', f'{document_url.identifier}.pdf')]
     assert download_calls == ['https://93.184.215.14/report.pdf'] * 3
+    assert _sent_file_ids(mock_client) == [['file-1'], ['file-1'], ['file-1']]
 
 
 @pytest.mark.vcr(ignore_hosts=['127.0.0.1'])
@@ -6843,6 +6858,7 @@ async def test_document_url_cache_does_not_bypass_download_permissions(
     with pytest.raises(ValueError, match=r'Access to private/internal IP address \(127\.0\.0\.1\) is blocked'):
         await agent.run(['What is in this document?', DocumentUrl(url='http://127.0.0.1/private.pdf')])
     assert counting_client.upload_calls == [(b'%PDF-1.4\ninternal content', 'private.pdf')]
+    assert _sent_file_ids(mock_client) == [['file-1']]
 
 
 async def test_uploaded_file_passthrough_never_uploads(allow_model_requests: None):
@@ -6878,6 +6894,7 @@ async def test_distinct_documents_upload_separately(allow_model_requests: None):
         (document_a.data, document_a.identifier),
         (document_b.data, document_b.identifier),
     ]
+    assert _sent_file_ids(mock_client) == [['file-1'], ['file-1', 'file-2']]
 
 
 # End of tests
