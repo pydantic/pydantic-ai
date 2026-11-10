@@ -14043,3 +14043,68 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_sse_keepalive_comment_emitted_during_silent_tool_call():
+    """Keepalive comments are emitted at the ASGI boundary while a tool call runs silently."""
+
+    async def slow_tool() -> str:
+        await asyncio.sleep(0.3)
+        return 'done'
+
+    agent = Agent(model=TestModel(), tools=[slow_tool])
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Call the slow tool')],
+            ),
+        ],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await VercelAIAdapter.dispatch_request(starlette_request, agent=agent, keepalive_interval=0.1)
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        chunks.append(cast(bytes, data.get('body', b'')).decode('utf-8'))
+
+    await response.stream_response(send)
+
+    keepalive = ': keepalive\n\n'
+    assert keepalive in chunks
+
+    def parse(chunk: str) -> dict[str, Any]:
+        return json.loads(chunk.strip().removeprefix('data: '))
+
+    def is_frame(chunk: str) -> bool:
+        return bool(chunk) and chunk != keepalive and chunk.strip() != 'data: [DONE]'
+
+    event_types = [parse(chunk)['type'] for chunk in chunks if is_frame(chunk)]
+    assert event_types[0] == 'start'
+    assert event_types[-1] == 'finish'
+
+    # the keepalive comment landed between the tool input and its output, i.e. during the silent tool execution
+    keepalive_index = chunks.index(keepalive)
+    types_before_keepalive = [parse(chunk)['type'] for chunk in chunks[:keepalive_index] if is_frame(chunk)]
+    types_from_keepalive = [parse(chunk)['type'] for chunk in chunks[keepalive_index:] if is_frame(chunk)]
+    assert 'tool-input-available' in types_before_keepalive
+    assert 'tool-output-available' in types_from_keepalive

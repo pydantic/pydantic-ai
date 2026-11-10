@@ -62,7 +62,14 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
-from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._event_stream import (
+    DEFAULT_KEEPALIVE_INTERVAL,
+    NativeEvent,
+    OnCancelFunc,
+    OnCompleteFunc,
+    UIEventStream,
+    _validate_keepalive_interval,
+)
 from ._messages_builder import MessagesBuilder
 from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
@@ -1093,21 +1100,29 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
 
-    def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
-        """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
+    def encode_stream(
+        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL
+    ) -> AsyncIterator[str]:
+        """Encode the run's protocol-specific events as strings according to the `Accept` header value.
 
         Args:
             stream: The stream of protocol-specific events to encode.
+            keepalive_interval: Interval in seconds between SSE comment keepalives (`: keepalive`) emitted
+                while no event has been sent; `None` disables them. Defaults to 15 seconds.
         """
-        return self.build_event_stream().encode_stream(stream)
+        return self.build_event_stream().encode_stream(stream, keepalive_interval=keepalive_interval)
 
-    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
-        """Generate a streaming response from a stream of protocol-specific events.
+    def streaming_response(
+        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL
+    ) -> StreamingResponse:
+        """Create a streaming response for the event stream.
 
         Args:
             stream: The stream of protocol-specific events to encode.
+            keepalive_interval: Interval in seconds between SSE comment keepalives (`: keepalive`) emitted
+                while no event has been sent; `None` disables them. Defaults to 15 seconds.
         """
-        return self.build_event_stream().streaming_response(stream)
+        return self.build_event_stream().streaming_response(stream, keepalive_interval=keepalive_interval)
 
     def run_stream_native(
         self,
@@ -1359,6 +1374,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allow_uploaded_files: bool = False,
         strip_workspace_refs: bool = True,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -1412,6 +1428,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs].
             allowed_content_types: Request media types to accept, as a CSRF control. See
                 [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
+            keepalive_interval: Interval in seconds between SSE comment keepalives (`: keepalive`) emitted
+                while no event has been sent; `None` disables them. Defaults to 15 seconds.
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -1424,6 +1442,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 'Please install the `starlette` package to use `dispatch_request()` method, '
                 'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
             ) from e
+
+        _validate_keepalive_interval(keepalive_interval)
 
         try:
             # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
@@ -1468,4 +1488,5 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 on_complete=on_complete,
                 on_cancel=on_cancel,
             ),
+            keepalive_interval=keepalive_interval,
         )
