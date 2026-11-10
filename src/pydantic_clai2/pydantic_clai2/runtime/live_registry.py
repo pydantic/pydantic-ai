@@ -408,24 +408,25 @@ class LiveRegistry:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
         listener = socket.socket(socket.AF_UNIX)
-        socket_inode: int | None = None
+        # On the loop: the umask is process-wide, and no cancellation may land before the inode is known.
+        previous_umask = os.umask(0o077)
         try:
-            # The umask is process-wide, so it only changes while no other task can run.
-            previous_umask = os.umask(0o077)
-            try:
-                listener.bind(str(path))
-            finally:
-                os.umask(previous_umask)
-            socket_inode = (await to_thread.run_sync(path.lstat)).st_ino
+            listener.bind(str(path))
+            socket_inode = path.lstat().st_ino
+        except BaseException:
+            listener.close()
+            raise
+        finally:
+            os.umask(previous_umask)
+        try:
             await to_thread.run_sync(path.chmod, 0o600)
             listener.listen()
             listener.setblocking(False)
             self._server = await asyncio.start_unix_server(self._serve, sock=listener, limit=_MAX_REQUEST + 1)
         except BaseException:
             listener.close()
-            if socket_inode is not None:
-                with CancelScope(shield=True):
-                    await to_thread.run_sync(_unlink_if_unchanged, path, socket_inode)
+            with CancelScope(shield=True):
+                await to_thread.run_sync(_unlink_if_unchanged, path, socket_inode)
             raise
         record_path = self.directory / f'{self.pid}.json'
         try:
