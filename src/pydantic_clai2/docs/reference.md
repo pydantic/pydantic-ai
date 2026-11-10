@@ -952,7 +952,7 @@ and connections and plugins' sign-ins are run as `/login NAME` in the terminal. 
 only in the terminal. `/login NAME` typed in the page opens in the terminal that runs CLAI;
 when there is none, `/login openai-codex` waits in the page too, and a plugin's sign-in asks
 in a dialog for what it would have you paste. The link a plugin prints is not shown in the
-page: finish in the browser it opens where CLAI runs.
+page: finish in the browser the plugin opens where CLAI runs, or run `/login NAME` in a terminal.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
@@ -2788,7 +2788,7 @@ many sessions run at once.
   there is none, as for `clai2 --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
   equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
-  and a plugin's `read_line` ask in the page instead.
+  and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
