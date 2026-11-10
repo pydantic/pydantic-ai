@@ -273,6 +273,12 @@ def test_an_at_most_once_step_raises_a_shorter_configured_timeout_and_keeps_a_lo
     assert applied.get('start_to_close_timeout') == timedelta(seconds=expected)
 
 
+def test_an_at_most_once_step_raises_an_overall_deadline_shorter_than_its_floor() -> None:
+    config = ActivityConfig(schedule_to_close_timeout=timedelta(seconds=60))
+    applied = _apply_policy(config, StepPolicy(repeatable=False, timeout=180))
+    assert applied.get('schedule_to_close_timeout') == timedelta(seconds=180)
+
+
 def test_a_repeatable_step_without_a_timeout_keeps_its_config() -> None:
     config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
     assert _apply_policy(config, StepPolicy()) == config
