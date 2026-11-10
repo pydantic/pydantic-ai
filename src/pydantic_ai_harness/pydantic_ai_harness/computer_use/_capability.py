@@ -404,6 +404,9 @@ async def _perform(
     held: list[MouseButton] = []
     try:
         for action in actions:
+            if isinstance(action, MouseDown):
+                # Counted as pressed before it runs: a press can take effect and still fail to report back.
+                held.append(action.button)
             try:
                 match action:
                     case Wait(seconds=seconds):
@@ -428,9 +431,7 @@ async def _perform(
             except WorkspaceError as e:
                 error = str(e) or type(e).__name__
                 break
-            if isinstance(action, MouseDown):
-                held.append(action.button)
-            elif isinstance(action, MouseUp):
+            if isinstance(action, MouseUp):
                 held.remove(action.button)
             performed += 1
     finally:
@@ -596,7 +597,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
             # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-            metadata={'temporal': False, 'prefect': False, 'render_workflows': False},
+            metadata={'temporal': False, 'prefect': False, 'render_workflows': False, 'aws_lambda': False},
         )
         self._toolset = FunctionToolset([tool], id=self.id)
 
