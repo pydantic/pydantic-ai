@@ -54,7 +54,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
     WorkspaceBackend,
@@ -65,7 +64,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -76,6 +75,7 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
 )
 from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine
@@ -442,7 +442,6 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             self,
             self._desktop_size,
             lambda: f'boxd machine {self._ref.id if self._ref else "(not created)"}',
-            screen_key=lambda: self._ref,
         )
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
@@ -470,7 +469,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         return self._ref
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The machine's desktop, when created with `desktop=True`."""
         return self._display
 
