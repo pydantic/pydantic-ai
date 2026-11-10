@@ -3507,6 +3507,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     signature=IsStr(),
                     provider_name='bedrock',
                 ),
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=0,
@@ -3517,6 +3518,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=1,
@@ -3527,6 +3529,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=1,
@@ -3537,6 +3540,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=2,
@@ -3985,6 +3989,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),

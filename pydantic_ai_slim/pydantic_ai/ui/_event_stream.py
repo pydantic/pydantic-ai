@@ -173,11 +173,27 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
+    _canonical_system: tuple[str, str] | None = None
+    """The current response's `provider_name` and `canonical_system`, from the part events that carry it.
+
+    Kept until the next response, so the metadata a subclass emits for a part after its end event, such as a tool
+    call's, carries it too, as `dump_messages` writes it.
+    """
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
         self.message_id = str(uuid4())
         return self.message_id
+
+    def _record_canonical_system(self, event: PartStartEvent | PartEndEvent) -> None:
+        if event.canonical_system is not None and event.part.provider_name is not None:
+            self._canonical_system = (event.part.provider_name, event.canonical_system)
+
+    def _canonical_system_for(self, provider_name: str | None) -> str | None:
+        """The current response's `canonical_system` to emit beside a part from `provider_name`, if it applies."""
+        if self._canonical_system is not None and provider_name == self._canonical_system[0]:
+            return self._canonical_system[1]
+        return None
 
     def _record_part_delta(self, event: PartDeltaEvent) -> None:
         if event.index != self._open_part_index:
@@ -272,7 +288,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
+                    self._record_canonical_system(event)
                 elif isinstance(event, PartEndEvent):
+                    self._record_canonical_system(event)
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
@@ -436,6 +454,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 yield e
 
         self._turn = to_turn
+        if to_turn == 'response':
+            self._canonical_system = None
 
         if to_turn == 'request':
             async for e in self.before_request():

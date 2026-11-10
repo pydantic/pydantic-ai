@@ -535,7 +535,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=COMPACTION_ACTIVITY_TYPE,
-            content=compaction_payload(part),
+            content=compaction_payload(part, canonical_system=self._canonical_system_for(part.provider_name)),
         )
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
