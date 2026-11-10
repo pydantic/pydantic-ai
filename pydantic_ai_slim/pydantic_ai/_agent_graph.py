@@ -122,6 +122,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
@@ -1357,21 +1358,22 @@ def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage],
     history keeps them open, so a later run could no longer answer them with `deferred_tool_results`.
     Calls of an interrupted request were already closed out by `_repair_interrupted_tail`.
     """
-    if len(messages) < 2:
+    if not (
+        len(messages) >= 2
+        and isinstance(messages[-2], _messages.ModelResponse)
+        and isinstance(messages[-1], _messages.ModelRequest)
+    ):
         return
-    response, request = messages[-2], messages[-1]
-    if not (isinstance(response, _messages.ModelResponse) and isinstance(request, _messages.ModelRequest)):
-        return
-    answered = {part.tool_call_id for part in request.parts if _is_tool_result_part(part)}
-    unanswered = [call.tool_call_id for call in response.tool_calls if call.tool_call_id not in answered]
+    unanswered = _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
     if not unanswered:
         return
     if has_new_prompt:
         raise exceptions.UserError(_NEW_PROMPT_ON_UNPROCESSED_CALLS_ERROR)
     raise exceptions.UserError(
-        f'Cannot resume the run: the message history contains tool calls without results: {unanswered}. '
-        'Pass `deferred_tool_results` with a result for each of them, or call '
-        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+        'Cannot resume the run: the message history contains tool calls without results: '
+        f'{[call.tool_call_id for call in unanswered]}. If they were deferred, pass `deferred_tool_results` '
+        'with a result for each of them; otherwise call `pydantic_ai.messages.repair_messages()` on the '
+        'history first to close them out.'
     )
 
 
