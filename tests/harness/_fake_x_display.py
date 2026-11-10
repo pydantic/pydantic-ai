@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import base64
 
+from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo
+
 from .display_fakes import FAKE_SCREENSHOT
 
 STARTED = 'pydantic-ai-display-started'
@@ -43,3 +47,17 @@ class FakeDisplay:
                 return '', 'the viewer did not start:\nno display', 1
             return 'Pass1234', '', 0
         return '', '', 0
+
+
+def look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A model that takes a screenshot, clicks at (3, 4) on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
+
+
+def computer_returns(messages: list[ModelMessage]) -> list[ComputerReturnPart]:
+    """The `computer` results in `messages`, in order."""
+    return [part for message in messages for part in message.parts if isinstance(part, ComputerReturnPart)]
