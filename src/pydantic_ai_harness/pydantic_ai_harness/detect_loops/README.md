@@ -114,22 +114,29 @@ except LoopDetectedError as error:
 
 ### A handler
 
-Pass a sync or async function to decide yourself. It's called with the run context and a `DetectedLoop`: raise from it to stop the run, or call `ctx.enqueue(...)` to steer the model your own way.
+Pass a sync or async function to decide yourself. It's called with the run context and a `DetectedLoop`: raise from it to stop the run, or call `ctx.enqueue(...)` to steer the model your own way. Enqueue your own wording as a `LoopNudgePart`, as the built-in nudge does, so it's in the application's voice and found in history by type.
 
 ```python
 import logging
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.messages import OperatorSource
 from pydantic_ai_harness import DetectLoops
-from pydantic_ai_harness.detect_loops import DetectedLoop
+from pydantic_ai_harness.detect_loops import DetectedLoop, LoopNudgePart
 
 logger = logging.getLogger(__name__)
 
 
 async def on_loop(ctx: RunContext[object], loop: DetectedLoop) -> None:
     logger.warning('Agent loop: %s %s', loop.pattern, loop.tool_names)
-    ctx.enqueue(SystemPromptPart('You are repeating yourself. Summarize what you know and stop.'))
+    ctx.enqueue(
+        LoopNudgePart(
+            content='You are repeating yourself. Summarize what you know and stop.',
+            source=OperatorSource(),
+            pattern=loop.pattern,
+            tool_names=loop.tool_names,
+        )
+    )
 
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[DetectLoops(action=on_loop)])
