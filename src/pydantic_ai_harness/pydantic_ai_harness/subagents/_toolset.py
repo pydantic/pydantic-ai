@@ -1327,7 +1327,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                             output=str(exc),
                             truncated=False,
                             usage=child_usage,
-                            duration_seconds=time.perf_counter() - started,
+                            duration_ms=(time.perf_counter() - started) * 1000,
                         )
                     )
             raise
@@ -1346,7 +1346,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     output=text,
                     truncated=truncated,
                     usage=child_usage,
-                    duration_seconds=time.perf_counter() - started,
+                    duration_ms=(time.perf_counter() - started) * 1000,
                 )
             )
         return ended

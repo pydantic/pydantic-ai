@@ -278,7 +278,7 @@ class ToolOutput:
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
         if preview.pending and preview.completed_lines < self.shell_lines:
             self._shell_line(preview)
-        omitted = max(0, event.total_lines - preview.shown) if event.total_lines is not None else 0
+        omitted = max(0, event.line_count - preview.shown) if event.line_count is not None else 0
         if omitted:
             self.console.print(f'Truncated {omitted} lines', style=theme.color(theme.MUTED))
         state = f'exit {event.exit_code}' if event.exit_code is not None else 'running in background'

@@ -148,7 +148,7 @@ async def announce(ctx, event):
 
 The family contains
 `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`, and
-`PlanDeletedEvent`; each carries the affected `item` and, for updates, `previous_state`.
+`PlanDeletedEvent`; each carries the affected `item` and, for updates, `previous_item`.
 
 Run events come from planning tool paths, including `write_plan`. Direct application mutations on a
 `PlanStore` have no run context and do not produce run events. `PlanEventEmitter`, `EventCallback`,

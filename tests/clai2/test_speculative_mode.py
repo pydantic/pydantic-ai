@@ -674,7 +674,9 @@ class TestSpeculativeExecution:
         for event in (
             claimed(ready=True, elapsed_ms=250),
             claimed(ready=False, elapsed_ms=900),
-            SpeculativeCallMissedEvent(sandbox_function='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'),
+            SpeculativeCallMissedEvent(
+                sandbox_function_name='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'
+            ),
             SpeculativeCallEvictedEvent(launch_id='l2', wrapped_tool_name='grep', state='ready'),
             EagerExecutionCompletedEvent(saved_ms=1_000),
             PartStartEvent(index=0, part=TextPart('ignored')),

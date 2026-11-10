@@ -113,7 +113,7 @@ class TestDelegationEvents:
         assert end.output == 'W'
         assert end.truncated is False
         assert end.usage is None  # shared with the parent, so not separable
-        assert end.duration_seconds >= 0
+        assert end.duration_ms >= 0
         assert end.tool_call_id == start.tool_call_id
 
     async def test_inherits_tools_and_menu_key_are_reported(self) -> None:

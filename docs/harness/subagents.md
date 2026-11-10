@@ -217,7 +217,7 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 | Event | Dispatch | When | Payload |
 |---|---|---|---|
 | `DelegationStartEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
-| `DelegationEndEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_seconds` |
+| `DelegationEndEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_ms` |
 
 Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel.
 
@@ -236,7 +236,7 @@ from pydantic_ai_harness.subagents import DelegationEndEvent, SubAgent, SubAgent
 class ReportDelegations(AbstractCapability):
     @on_event(DelegationEndEvent)
     async def on_delegation_end(self, ctx, event: DelegationEndEvent) -> None:
-        print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
+        print(f'{event.agent_name}: {event.outcome} in {event.duration_ms / 1000:.1f}s')
 
 
 researcher = Agent('{{ anthropic:large }}', name='researcher')

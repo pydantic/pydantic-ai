@@ -145,7 +145,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         return question_row(event)
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
-            f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
+            f'  └ {event.outcome} · {event.duration_ms / 1000:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None

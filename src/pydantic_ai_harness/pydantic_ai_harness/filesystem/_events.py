@@ -17,9 +17,13 @@ cannot be flooded by one large write. A change whose text is longer than
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import AliasChoices, Field
+from typing_extensions import deprecated
 
 from pydantic_ai import CapabilityEvent
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 FILE_SYSTEM_EVENTS = 'file_system'
 
@@ -99,9 +103,15 @@ class FilesSearchedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='fi
     path: str
     root_dir: str
     pattern: str
-    search: SearchKind
+    search_kind: Annotated[SearchKind, Field(validation_alias=AliasChoices('search_kind', 'search'))]
     match_count: int
     truncated: bool
+
+    @property
+    @deprecated('`search` is deprecated, use `search_kind` instead.', category=HarnessDeprecationWarning)
+    def search(self) -> SearchKind:
+        """Deprecated alias for `search_kind`."""
+        return self.search_kind
 
 
 @dataclass(kw_only=True)

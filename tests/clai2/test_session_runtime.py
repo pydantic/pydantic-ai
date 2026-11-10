@@ -169,7 +169,7 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     assert b.running() and not a.running()
     record.status, record.outcome = 'finished', 'ok'
     end = DelegationEndEvent(
-        agent_name='worker', outcome='failed', output='', truncated=False, usage=None, duration_seconds=1.0
+        agent_name='worker', outcome='failed', output='', truncated=False, usage=None, duration_ms=1000.0
     )
     await router.observe(DelegationTaskEvent(task=record, event=end))
     assert woken == ['b']

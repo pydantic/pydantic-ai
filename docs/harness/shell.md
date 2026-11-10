@@ -310,17 +310,17 @@ show output as it arrives without parsing the tool result:
 |---|---|---|
 | `CommandStartedEvent` | stream | `command`, `pid` |
 | `CommandOutputEvent` | stream | `text`: a chunk of the combined log, decoded incrementally |
-| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `total_lines` |
+| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `line_count` |
 
 Output events are emitted while a foreground call waits: at most the first
 16,000 bytes of the log per call, in chunks of up to 4,096 bytes, polled every
 50 ms to 1 s. A background call emits only the started and finished events. `finished`
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
-more than the events showed. `total_lines` counts logical lines in logs up to
+more than the events showed. `line_count` counts logical lines in logs up to
 1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
 empties the log during the call, output events start again from its notice,
-`truncated` is true and `total_lines` is `None`. A cancelled call may emit no
+`truncated` is true and `line_count` is `None`. A cancelled call may emit no
 finished event. Events carry command text and command output, so treat them as
 untrusted when rendering. They add no telemetry spans; core already traces the
 tool call.

@@ -31,7 +31,7 @@ async def test_shell_only_prints_invocation(exit_code: int | None) -> None:
             output_path='/tmp/out',
             status_path='/tmp/status',
             exit_code=exit_code,
-            total_lines=100,
+            line_count=100,
             truncated=True,
             tool_call_id='shell',
         )
