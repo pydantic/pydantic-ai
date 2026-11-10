@@ -89,8 +89,8 @@ class Conversation(Protocol):
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
         directory, when persistence is not configured, or when another live session of this CLAI holds
         it. `allow_other_workspace=True` continues a conversation saved in another directory in this one
-        instead, as confirming it in the `/resume` browser does. A conversation still running in another process is not taken over: a fork of it is resumed,
-        and the notice says so.
+        instead, as confirming it in the `/resume` browser does. A conversation still running in another
+        process is not taken over: a fork of it is resumed, and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
