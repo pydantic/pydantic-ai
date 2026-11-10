@@ -2145,13 +2145,14 @@ The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
 before this existed, disk agents stay off until you set **Agent folders**.
 Definition files are read as data and never executed.
 - **`/tasks`** opens the live view during a turn or between turns. A sidebar lists the
-  conversation's tasks as a tree, and Up and Down select one. Its transcript streams beside
-  the sidebar, in-flight text included; PgUp and PgDn scroll it. Esc clears the typed
-  message, then closes the view.
+  conversation's tasks as a tree, and Up and Down select one; the view opens on the newest
+  running task. Its transcript streams beside the sidebar, in-flight text included; PgUp
+  and PgDn scroll it. Esc clears the typed message, then closes the view.
 - **Typing a message and pressing Enter** steers the selected running child: it reads the
   message as user input at its next model request. On a finished child that can resume,
   Enter prompts it again from its saved history, apart from the conversation. Explore, Plan
-  and Review take no messages once they finish.
+  and Review take no messages once they finish. A message is one line, so each line of a
+  pasted block is sent on its own.
 - **Ctrl+B / `/tasks background ID`** backgrounds the selected child.
 - **Ctrl+X / `/tasks stop ID`** stops that child and its descendants, leaving siblings
   running. Stopping a child prevents automatic model resume.

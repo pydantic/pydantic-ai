@@ -6,6 +6,7 @@ import re
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,7 +18,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
-from termflow.live import KeyEvent, LiveApp
+from termflow.live import LiveApp
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -54,6 +55,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -63,6 +65,7 @@ from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering.history import turn_starts
+from tests.clai2.live_script import press
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -337,21 +340,18 @@ async def test_presentation_classifies_capability_owned_tool() -> None:
 
 
 def drive(*keys: str, screens: list[str]) -> Callable[[LiveApp], None]:
-    """Stand in for `LiveApp.run`: press `keys` on the view's thread and keep the frame that follows each."""
+    """A scripted `run` for `open_tasks`: press `keys` on the view's thread and keep the screen after each."""
 
     def run(app: LiveApp) -> None:
         app.running = True
-        for key in keys:
-            app.handle([KeyEvent(key, text=key) if len(key) == 1 else KeyEvent(key)], 0.0, False)
-            buffer = app.step(0.0)
-            screens.append('\n'.join(buffer.row_text(row) for row in range(buffer.height)))
+        screens.extend(press(app, key) for key in keys)
 
     return run
 
 
-async def test_open_tasks_steers_and_controls_on_application_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_open_tasks_steers_and_controls_on_application_loop() -> None:
     screens: list[str] = []
-    monkeypatch.setattr(LiveApp, 'run', drive(*'go', 'enter', 'ctrl-b', 'ctrl-x', 'escape', screens=screens))
+    run = drive(*'go', 'enter', 'ctrl-b', 'ctrl-x', 'escape', screens=screens)
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
 
     started = asyncio.Event()
@@ -375,7 +375,7 @@ async def test_open_tasks_steers_and_controls_on_application_loop(monkeypatch: p
         )
         await started.wait()
         (record,) = ui.owner.records.values()
-        assert await open_tasks(ui) == ''
+        assert await open_tasks(ui, run=run) == ''
         label = record.id[:8]
         assert '› go▌' in screens[1]
         assert f'Steered {label}.' in screens[2] and '› go▌' not in screens[2]
@@ -384,10 +384,9 @@ async def test_open_tasks_steers_and_controls_on_application_loop(monkeypatch: p
         assert label in await foreground, 'backgrounding released the delegate call that was waiting'
 
 
-async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_open_tasks_does_not_background_a_prompted_task() -> None:
     """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
     screens: list[str] = []
-    monkeypatch.setattr(LiveApp, 'run', drive('ctrl-b', screens=screens))
     gate = asyncio.Event()
 
     async def work(record: DelegationTask) -> str:
@@ -413,7 +412,7 @@ async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytes
     ui.owner.records[record.id] = record
     async with ui.router.opened(view=ui):
         await ui.prompt(record.id, 'and the docs?')
-        assert await open_tasks(ui) == ''
+        assert await open_tasks(ui, run=drive('ctrl-b', screens=screens)) == ''
         assert (record.status, record.background) == ('running', False)
         assert 'Steer · Nothing waits for a task you' in screens[0]
         gate.set()
@@ -550,7 +549,7 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
 
 async def test_tasks_without_arguments_opens_the_live_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     screens: list[str] = []
-    monkeypatch.setattr(LiveApp, 'run', drive('escape', screens=screens))
+    monkeypatch.setattr(session_runtime, 'open_tasks', partial(open_tasks, run=drive('escape', screens=screens)))
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     record = task(conversation_id=shell.session.summary.id)
     shell.tasks.owner.records[record.id] = record

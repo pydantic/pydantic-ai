@@ -9,6 +9,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from io import StringIO
 from itertools import accumulate
 from textwrap import wrap
 from typing import Literal
@@ -17,6 +18,7 @@ from termflow.live import (
     KeyEvent,
     KeyState,
     LiveApp,
+    LiveConsole,
     MarkdownView,
     Rect,
     Region,
@@ -26,7 +28,9 @@ from termflow.live import (
     hsplit,
     vsplit,
 )
+from termflow.live.console import default_console_io
 from termflow.tui.keys import Key
+from termflow.tui.terminal import terminal_size
 
 from pydantic_ai.messages import TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai_harness.subagents import DelegationTask
@@ -56,12 +60,14 @@ _FPS = 20.0
 _REFRESH = 0.25
 """Seconds between snapshots of the tasks."""
 _TAIL = 8_000
-"""Characters of transcript kept on screen; Markdown is rendered again whenever it changes."""
+"""Characters of transcript kept on screen, in whole blocks; Markdown is rendered again whenever it changes."""
 _SIDEBAR = 34
 _MIN_WIDTH = 72
 """Columns below which the sidebar gives its space to the transcript."""
 _MIN_HEIGHT = 20
 """Rows below which the activity log gives its space to the sidebar."""
+_STATUS_EDGES = 14
+"""Status bar columns that are neither its title nor its hints: the gaps around them and the frame rate."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -99,12 +105,12 @@ async def perform(tasks: Tasks, action: Action, task_id: str, text: str = '') ->
         await tasks.prompt(task_id, text)
         return f'Prompted {label}.'
     if not tasks.steer(task_id, text):
-        raise ValueError(f'{label} just finished: press Enter again to prompt it.')
+        raise ValueError(f'{label} finished before it could read that.')
     return f'Steered {label}.'
 
 
 def transcript_blocks(task: DelegationTask) -> list[str]:
-    """`task`'s conversation as Markdown blocks: what it was told, quoted, what it said, and the tools it called."""
+    """`task`'s conversation as Markdown blocks: what it was told, quoted, what it said, and its tool calls as code."""
     parts = [part for message in task.messages for part in message.parts]
     blocks = [f'*Directory: {task.working_directory}*'] if task.working_directory is not None else []
     if not any(isinstance(part, UserPromptPart) for part in parts):
@@ -115,7 +121,8 @@ def transcript_blocks(task: DelegationTask) -> list[str]:
         elif isinstance(part, TextPart):
             blocks.append(part.content)
         elif isinstance(part, ToolCallPart):
-            blocks.append(f'- `{part.tool_name}` {_clip(part.args_as_json_str(), 96)}')
+            call = _clip(f'{part.tool_name} {part.args_as_json_str()}', 96).replace('`', "'")
+            blocks.append(f'- `{call}`')
     if task.status == 'finished' and task.outcome != 'ok' and task.output:
         blocks.append(f'**{task.outcome}:** {task.output}')
     return [terminal_text(block) for block in blocks if block.strip()]
@@ -162,6 +169,7 @@ class TaskView:
         """`snapshot` reads the tasks and `act` does an action on one, both from the view's thread."""
         self.snapshot = snapshot
         self.act = act
+        self.size = size or terminal_size
         self.rows: Sequence[Row] = ()
         self.selected: str | None = None
         self.draft = ''
@@ -179,7 +187,7 @@ class TaskView:
             _layout,
             title='/tasks',
             fps=_FPS,
-            size=size,
+            size=self.size,
         )
         self.app.focus(self.input)
         self.refresh()
@@ -224,11 +232,15 @@ class TaskView:
             self.refresh()
 
     def refresh(self) -> None:
-        """Read the tasks again, keep the selection on its task, and report each one that changed state."""
+        """Read the tasks again, keep the selection on its task, and report each one that changed state.
+
+        With no task selected, the newest running one is, or else the newest.
+        """
         self._refreshed = self.elapsed
         self.rows = self.snapshot()
         if self.current is None:
-            self.selected = self.rows[0].task.id if self.rows else None
+            newest = max(self.rows, key=lambda row: (row.info.status == 'running', row.info.started_at), default=None)
+            self.selected = newest.task.id if newest else None
         for row in self.rows:
             state = row.info.outcome or row.info.status
             if self._states.setdefault(row.task.id, state) != state:
@@ -242,7 +254,8 @@ class TaskView:
         row = self.current
         mode = self.mode or ('finished' if row else 'steer')
         self.input.title = ' · '.join(filter(None, [mode.capitalize(), self.notice]))
-        self.app.hints = ' · '.join(['↑↓ tasks', 'PgUp/PgDn scroll', *_hints(row), 'Esc close'])
+        hints = [*_hints(row), 'Esc close', '↑↓ tasks', 'PgUp/PgDn scroll']
+        self.app.hints = _fit(hints, self.size()[0] - len(self.app.title) - _STATUS_EDGES)
         if row is None:
             self.transcript.title = 'Transcript'
             self._tail.show(None, [])
@@ -283,7 +296,10 @@ class TaskView:
     def submit(self) -> None:
         """Send the typed message to the selected task, keeping it when it could not be sent."""
         text, mode = self.draft.strip(), self.mode
-        if text and mode is not None and self.run(mode, text):
+        if text and mode is None:
+            self.say(self.placeholder)
+            self._show()
+        elif text and mode is not None and self.run(mode, text):
             self.draft = ''
 
     def escape(self) -> None:
@@ -296,7 +312,11 @@ class TaskView:
 
 @dataclass
 class _Tail:
-    """The transcript window's Markdown: the selected task's newest blocks, appended to while they only grow."""
+    """The transcript window's Markdown: the selected task's newest blocks, appended to while they only grow.
+
+    Streamed text leaves a snapshot between its part ending and its response joining the history. It stays on
+    screen meanwhile, so the transcript neither blinks nor loses its scroll position.
+    """
 
     window: Window
     task_id: str | None = None
@@ -312,8 +332,11 @@ class _Tail:
             self.first = len(blocks) - max(1, bisect_right(sizes, _TAIL))
         hidden = ['*… earlier messages are hidden …*'] if self.first else []
         text = '\n\n'.join([*hidden, *blocks[self.first :]])
-        if self.view is not None and self.text is not None and text.startswith(self.text):
-            self.view.append(text[len(self.text) :])
+        shown = self.text
+        if shown is not None and shown.startswith(text):
+            return
+        if self.view is not None and shown is not None and text.startswith(shown):
+            self.view.append(text[len(shown) :])
         else:
             self.window.widget = self.view = MarkdownView(text, style=markdown_style())
         self.text = text
@@ -344,8 +367,16 @@ def _hints(row: Row | None) -> list[str]:
     if row is None:
         return []
     if row.info.status == 'running':
-        return [*(['^B background'] if row.info.backgroundable else []), '^X stop']
-    return ['^R resume'] if row.info.resumable else []
+        return [*(['Ctrl+B background'] if row.info.backgroundable else []), 'Ctrl+X stop']
+    return ['Ctrl+R resume'] if row.info.resumable else []
+
+
+def _fit(hints: Sequence[str], width: int) -> str:
+    """As many of the leading `hints` as `width` columns hold, joined as a footer."""
+    count = len(hints)
+    while count and len(' - '.join(hints[:count])) > width:
+        count -= 1
+    return ' - '.join(hints[:count])
 
 
 def _row_lines(row: Row, *, selected: bool, frame: str, width: int) -> tuple[str, str]:
@@ -403,8 +434,21 @@ class _Input(Widget):
             region.ansi(0, 0, f'{theme.sgr(theme.MUTED)}› {terminal_text(view.placeholder, keep="")}{_RESET}')
 
 
-async def open_tasks(tasks: Tasks) -> str:
-    """Show the live view until the user closes it; the tasks keep running on the loop meanwhile."""
+def _run(app: LiveApp) -> None:  # pragma: no cover - needs a real terminal
+    """Run `app` with the keyboard in legacy mode.
+
+    Termflow's Kitty mode names a shifted key by its unshifted one, so `?` would type `/`. Its input backend
+    writes nothing but that negotiation, so it gets a stream nobody reads.
+    """
+    app.console = LiveConsole(io=default_console_io(StringIO()))
+    app.run()
+
+
+async def open_tasks(tasks: Tasks, *, run: Callable[[LiveApp], object] = _run) -> str:
+    """Show the live view until the user closes it; the tasks keep running on the loop meanwhile.
+
+    `run` runs the view's app on a worker thread.
+    """
     loop = asyncio.get_running_loop()
 
     async def snapshot() -> list[Row]:
@@ -414,7 +458,7 @@ async def open_tasks(tasks: Tasks) -> str:
         return asyncio.run_coroutine_threadsafe(perform(tasks, action, task_id, text), loop).result()
 
     def view() -> None:
-        TaskView(snapshot=lambda: asyncio.run_coroutine_threadsafe(snapshot(), loop).result(), act=act).app.run()
+        run(TaskView(snapshot=lambda: asyncio.run_coroutine_threadsafe(snapshot(), loop).result(), act=act).app)
 
     await run_worker(view)
     return ''
