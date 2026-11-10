@@ -21,7 +21,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -92,6 +92,54 @@ _agent = Agent(
 )
 
 
+def _pausing_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='research', args={}, tool_call_id='research-call'),
+            ToolCallPart(tool_name='gated', args={}, tool_call_id='gated-call'),
+        ]
+    )
+
+
+def gated() -> str:
+    return 'approved'  # pragma: no cover -- never approved in this test
+
+
+_pausing_agent = Agent(
+    FunctionModel(_pausing_model),
+    name='background_tools_temporal_pausing_agent',
+    output_type=[str, DeferredToolRequests],
+    toolsets=[
+        FunctionToolset(tools=[research], id='background-tools', metadata={'background': True}),
+        FunctionToolset(tools=[Tool(gated, requires_approval=True)], id='gated-tools'),
+    ],
+    capabilities=[
+        BackgroundTools(),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=30), retry_policy=RetryPolicy(maximum_attempts=1)
+            )
+        ),
+    ],
+)
+
+
+@workflow.defn
+class BackgroundToolsPauseWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        result = await _pausing_agent.run(prompt)
+        assert isinstance(result.output, DeferredToolRequests)
+        recorded = result.all_messages()[-1]
+        assert isinstance(recorded, ModelRequest)
+        return [
+            item.content if isinstance(item, TextContent) else str(item)
+            for part in recorded.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+        ]
+
+
 @workflow.defn
 class BackgroundToolsWorkflow:
     @workflow.run
@@ -155,6 +203,43 @@ async def test_background_result_survives_temporal_history_replay(client: Client
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     replay = await Replayer(
         workflows=[BackgroundToolsWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+        debug_mode=True,
+    ).replay_workflow(history)
+
+    assert replay.replay_failure is None
+    assert _tool_calls == 1
+
+
+async def test_deferred_pause_waits_for_a_background_result_under_temporal(client: Client) -> None:
+    """A durable run pausing for approval records a live background task's result, and replays it (#7537)."""
+    global _tool_calls
+    _tool_calls = 0
+    workflow_id = 'test_background_tools_temporal_pause'
+    # `debug_mode=True` for the reason given in `test_background_result_survives_temporal_history_replay`.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BackgroundToolsPauseWorkflow],
+        plugins=[AgentPlugin(_pausing_agent)],
+        workflow_runner=_workflow_runner(),
+        debug_mode=True,
+    ):
+        recorded = await client.execute_workflow(
+            BackgroundToolsPauseWorkflow.run,
+            args=['go'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+
+    # The result is recorded after the paused history instead of being dropped with the task.
+    assert any('durable result' in text for text in recorded)
+    assert _tool_calls == 1
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay = await Replayer(
+        workflows=[BackgroundToolsPauseWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
         debug_mode=True,

@@ -132,12 +132,13 @@ Running out of retries or raising `CancelledError` also ends the run. The run en
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
 
-A normal run waits for its background tools to finish. A pending call counts toward
-`tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
-cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
-history, so a resumed run sees them, unless every call in the paused step was deferred. Results
-that have not been delivered when a run stops early are dropped. Async tools must allow
-cancellation; ignoring it can prevent the run from stopping.
+A run waits for its background tools to finish, also when it pauses for deferred tools or ends
+with a [`PendingModelResponse`](https://pydantic.dev/docs/ai/batch/#ending-a-run-while-it-waits). A pending call counts toward
+`tool_calls_limit`. At a deferred-tool pause, the results are added to the message history after the
+paused step, so a resumed run sees them; at a `PendingModelResponse` pause they stay queued on
+`AgentRun.pending_messages`. A failed tool still ends the run. A run's [`timeout`](https://pydantic.dev/docs/ai/timeouts/#bounding-a-whole-run) covers the wait. If the run
+stops early, unfinished tools are cancelled and results that have not been delivered are dropped.
+Async tools must allow cancellation; ignoring it can prevent the run from stopping.
 
 > [!WARNING]
 > Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for

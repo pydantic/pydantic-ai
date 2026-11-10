@@ -49,8 +49,8 @@
 <text x="440" y="532.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">argument and decides per call.</text>
 <rect x="584" y="470" width="264" height="84" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
 <text x="716" y="498" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The run waits</text>
-<text x="716" y="517" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A normal run waits for background tools.</text>
-<text x="716" y="533.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Pausing or stopping early cancels them.</text>
+<text x="716" y="517" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A run, even a paused one, waits for them.</text>
+<text x="716" y="533.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Stopping early cancels them.</text>
 <rect x="32" y="577" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
 <text x="52" y="588" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model request</text>
 <rect x="153.4" y="577" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>

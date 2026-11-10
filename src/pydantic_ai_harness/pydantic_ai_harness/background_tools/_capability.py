@@ -35,7 +35,8 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -418,13 +419,14 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         from pydantic_graph import End
 
-        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
-            # step's own request ends it. After a step whose calls all deferred it would turn them into
-            # another model request instead, so finished tasks are left unswept.
-            if isinstance(ctx.messages[-1], ModelRequest):
-                for outcome in self._arrived():
-                    self._deliver(ctx, outcome)
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+            # A pause ends the run without another model request, so no later step would take a result that
+            # arrives after it: wait for every live task here. The end-of-run drain records their results
+            # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
+            for outcome in self._arrived():
+                self._deliver(ctx, outcome)
+            while self._live:
+                self._deliver(ctx, await self._outcomes.receive())
             return result
 
         for outcome in self._arrived():
@@ -491,7 +493,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         with self._send, self._outcomes:
             async with anyio.create_task_group() as self._task_group:
                 result = await handler()
-                # Tasks still live after a deferred-tool pause or `run_stream()` are dropped.
+                # Tasks still live after `run_stream()` are dropped.
                 self._task_group.cancel_scope.cancel()
             # An error from a task that finished after the last node boundary still ends the run.
             for outcome in self._arrived():

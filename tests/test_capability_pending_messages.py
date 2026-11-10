@@ -65,6 +65,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests
@@ -2243,11 +2244,11 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
 
 
 @pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
-async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_record_it(case: str):
-    """The pause redirects as before when recording would change how the paused history resumes.
+async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
+    """Queued content never turns a deferred-tool pause into another model request (#7537).
 
-    After a step whose calls all deferred, a trailing request would read as interrupting them; a queued
-    `ModelResponse` would read as the paused response.
+    After a step whose calls all deferred, a queued request is recorded after the paused response. A queued
+    `ModelResponse` would read as the paused response, so it stays queued and readable instead.
     """
     call_count = 0
 
@@ -2288,10 +2289,74 @@ async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_reco
         # Never approved in this test.
         return 'approved'  # pragma: no cover
 
-    result = await agent.run('Hello')
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
 
-    assert result.output == 'done'
-    assert call_count == 2
+    assert run.result is not None
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert call_count == 1
+    last = run.result.all_messages()[-1]
+    if case == 'queued_response':
+        assert isinstance(last, ModelRequest)
+        assert [type(part) for part in last.parts] == [ToolReturnPart]
+        assert [message for pending in run.pending_messages for message in pending.messages] == [
+            ModelResponse(parts=[TextPart(content='synthetic turn')], timestamp=IsDatetime()),
+            ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
+        ]
+    else:
+        assert isinstance(last, ModelRequest)
+        assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['late content']
+        assert run.pending_messages == []
+
+
+async def test_enqueue_at_pending_model_response_pause_keeps_the_pause():
+    """Queued content never turns a `PendingModelResponse` pause into another model request (#7537).
+
+    Continuing would abandon the provider's job; the content stays queued and readable instead.
+    """
+    call_count = 0
+
+    class _SuspendingFunctionModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 1.0 if response.state == 'suspended' else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content')
+            return response
+
+    agent = Agent(
+        _SuspendingFunctionModel(model_fn),
+        output_type=[str, PendingModelResponse],
+        capabilities=[LateContentCap()],
+    )
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    assert isinstance(run.result.output, PendingModelResponse)
+    assert call_count == 1
+    last = run.result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert last.state == 'suspended'
+    assert [message for pending in run.pending_messages for message in pending.messages] == [
+        ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
+    ]
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():

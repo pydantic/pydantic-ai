@@ -1091,19 +1091,16 @@ ends with &lt;/tool_result
         release['second'].set()
         await asyncio.wait_for(second, timeout=5)
 
-    async def test_deferred_tool_pause_is_not_held_behind_background_tasks(self) -> None:
-        cancel_seen = asyncio.Event()
+    async def test_deferred_tool_pause_waits_for_a_live_background_task(self) -> None:
+        """A pause ends the run without another model request, so it waits to record a live task's result (#7537)."""
+        model_calls = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart(tool_name='slow', args='{}'),
-                        ToolCallPart(tool_name='needs_approval', args='{}'),
-                    ]
-                )
-            # The pause must end the run without another model turn.
-            return ModelResponse(parts=[TextPart(content='unreachable')])  # pragma: no cover
+            nonlocal model_calls
+            model_calls += 1
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+            )
 
         agent = Agent(
             FunctionModel(model_fn),
@@ -1113,12 +1110,9 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(metadata={'background': True})
         async def slow() -> str:
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancel_seen.set()
-                raise
-            return 'never'  # pragma: no cover -- task is cancelled when the run pauses
+            # Finishes once the run has reached its pause.
+            await asyncio.sleep(0.05)
+            return 'slow value'
 
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
@@ -1127,7 +1121,8 @@ ends with &lt;/tool_result
         result = await asyncio.wait_for(agent.run('go'), timeout=5)
 
         assert isinstance(result.output, DeferredToolRequests)
-        await asyncio.wait_for(cancel_seen.wait(), timeout=5)
+        assert model_calls == 1
+        assert _follow_up_seen(result.all_messages(), 'slow value')
 
     async def test_deferred_tool_pause_wins_over_a_completed_background_result(self) -> None:
         fast_done = asyncio.Event()
@@ -1211,18 +1206,21 @@ ends with &lt;/tool_result
         assert resumed.output == 'done'
         assert _follow_up_seen(resumed_with, 'fast value')
 
-    async def test_fully_deferred_pause_leaves_its_calls_pending(self) -> None:
+    async def test_fully_deferred_pause_records_a_finished_result_after_its_calls(self) -> None:
         release = asyncio.Event()
         slow_done = asyncio.Event()
-        model_calls = 0
+        resumed_with: list[ModelMessage] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal model_calls
-            model_calls += 1
             if len(messages) == 1:
                 return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
-            # The second step's only call defers, so the step leaves no request of its own.
-            return ModelResponse(parts=[ToolCallPart(tool_name='needs_approval', args='{}')])
+            if len(messages) == 3:
+                # The second step's only call defers, so the step leaves no request of its own.
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='needs_approval', args='{}', tool_call_id='approval-1')]
+                )
+            resumed_with.extend(messages)
+            return ModelResponse(parts=[TextPart(content='done')])
 
         agent = Agent(
             FunctionModel(model_fn),
@@ -1236,20 +1234,29 @@ ends with &lt;/tool_result
             slow_done.set()
             return 'slow value'
 
-        @agent.tool_plain
-        async def needs_approval() -> str:
+        @agent.tool
+        async def needs_approval(ctx: RunContext[object]) -> str:
+            if ctx.tool_call_approved:
+                return 'approved'
             release.set()
             await slow_done.wait()
             raise ApprovalRequired
 
-        result = await agent.run('go')
+        paused = await agent.run('go')
 
-        assert isinstance(result.output, DeferredToolRequests)
-        assert model_calls == 2
-        # A request after the response would make a resumed run treat its deferred call as interrupted.
-        last = result.all_messages()[-1]
-        assert isinstance(last, ModelResponse)
-        assert [call.tool_name for call in last.tool_calls] == ['needs_approval']
+        assert isinstance(paused.output, DeferredToolRequests)
+        response, recorded = paused.all_messages()[-2:]
+        assert isinstance(response, ModelResponse)
+        assert [call.tool_name for call in response.tool_calls] == ['needs_approval']
+        assert _follow_up_seen([recorded], 'slow value')
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'approval-1': ToolApproved()}),
+        )
+
+        assert resumed.output == 'done'
+        assert _follow_up_seen(resumed_with, 'slow value')
 
     async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
         failed = asyncio.Event()
@@ -1278,47 +1285,30 @@ ends with &lt;/tool_result
         with pytest.raises(RuntimeError, match='background failure'):
             await agent.run('go')
 
-    async def test_result_finishing_after_a_deferred_pause_ends_is_not_delivered(self) -> None:
-        release = asyncio.Event()
-        finished = asyncio.Event()
-
-        @dataclass
-        class FinishBackgroundAfterRun(AbstractCapability[AgentDepsT]):
-            """Lets the background tool finish once the paused run has passed its last node boundary."""
-
-            async def after_run(
-                self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]
-            ) -> AgentRunResult[Any]:
-                release.set()
-                await finished.wait()
-                return result
-
+    async def test_error_finishing_after_a_deferred_pause_is_reached_ends_the_run(self) -> None:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+                parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
             )
 
         agent = Agent(
             FunctionModel(model_fn),
             output_type=[str, DeferredToolRequests],
-            capabilities=[BackgroundTools(), FinishBackgroundAfterRun()],
+            capabilities=[BackgroundTools()],
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:
-            await release.wait()
-            finished.set()
-            return 'late value'
+        async def broken() -> str:
+            # Fails once the run has reached its pause.
+            await asyncio.sleep(0.05)
+            raise RuntimeError('background failure')
 
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
-            # Never approved in this test.
-            return 'approved'  # pragma: no cover
+            return 'approved'  # pragma: no cover -- never approved in this test
 
-        result = await agent.run('go')
-
-        assert isinstance(result.output, DeferredToolRequests)
-        assert not _follow_up_seen(result.all_messages(), 'late value')
+        with pytest.raises(RuntimeError, match='background failure'):
+            await asyncio.wait_for(agent.run('go'), timeout=5)
 
     async def test_queued_result_is_not_delayed_by_an_unrelated_live_task(self) -> None:
         release = {'fast_bg': asyncio.Event(), 'slow_bg': asyncio.Event()}
