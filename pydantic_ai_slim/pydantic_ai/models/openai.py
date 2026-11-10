@@ -8389,7 +8389,8 @@ def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
                 adapter.validate_python(value, strict=True)
             except ValidationError:
                 unsupported.add(name)
-    path: list[Any] = action.get('path') or []
+    # A path of the wrong type is already refused above, and only a list can be checked point by point.
+    path: list[Any] = [] if 'path' in unsupported else action.get('path') or []
     if any(not isinstance(point, dict) or cast(dict[str, Any], point).keys() != {'x', 'y'} for point in path):
         unsupported.add('path')
     return sorted(unsupported) if unsupported else None

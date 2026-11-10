@@ -654,6 +654,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ({'type': 'type', 'text': 5}, {'type': 'type', 'unsupported_fields': ['text']}),
         ({'type': 'keypress', 'keys': 'CTRL'}, {'type': 'keypress', 'unsupported_fields': ['keys']}),
         ({'type': 'move', 'x': True, 'y': 2}, {'type': 'move', 'unsupported_fields': ['x']}),
+        ({'type': 'drag', 'path': 42}, {'type': 'drag', 'unsupported_fields': ['path']}),
     ],
 )
 def test_openai_actions_map_onto_the_computer_tool(
