@@ -76,7 +76,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsDisplay,
     SupportsFilesystem,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -87,7 +86,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
@@ -97,6 +96,7 @@ from pydantic_ai_harness._workspace_provider import (
     stop_shielded,
 )
 from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
     from sprites import AsyncCmd, AsyncSprite, AsyncSpritesClient
@@ -422,7 +422,6 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self,
             self._desktop_size,
             lambda: f'Sprite {self._ref.id if self._ref else "(not created)"}',
-            screen_key=lambda: self._ref,
         )
         # `working_dir` as the Sprite resolves it (`pwd -P`): the protocol reports a canonical absolute path.
         self._resolved_working_dir: str | None = None
@@ -444,7 +443,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         return self._ref
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The Sprite's desktop, when created with `desktop=True`."""
         return self._display
 
