@@ -51,7 +51,7 @@ from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
-from ._x11 import DISPLAY, RECORD_START, x11_display
+from ._x11 import DISPLAY, RECORD_START, START_LOCK, x11_display
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -247,23 +247,23 @@ _X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
 _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
 
 _START_DESKTOP = (
-    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+    f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
     # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
     # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
     f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
     f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & xvfb=$!; i=0; '
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; '
-    f'{RECORD_START}setsid tint2 >/dev/null 2>&1 & fi; '
-    'setsid fluxbox >/dev/null 2>&1 & wm=$!; i=0; '
+    f'{RECORD_START}setsid tint2 >/dev/null 2>&1 9>&- & fi; '
+    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
-manager.
+manager. A second start of the display waits for the first, then finds its X server.
 
 It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
 so starting it every time recovers one that died or never started. It then waits up to 10 seconds for the window
@@ -302,7 +302,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
-    image needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    image needs Xvfb, `xdotool`, `xwininfo` (in Debian's `x11-utils`), `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to

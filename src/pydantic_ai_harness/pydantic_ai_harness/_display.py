@@ -56,7 +56,8 @@ class ManagedDisplay:
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
     lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when `start` launched a new
-    display, and an action whose own call launched one refuses to run: the windows it was meant for are gone.
+    display. Until a screenshot shows the new display, an action refuses to run: the windows it was meant for are
+    gone, whichever call launched it.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
@@ -65,11 +66,17 @@ class ManagedDisplay:
         self._start = start
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
-        self._starts = 0
+        self._unseen = False
+        """Whether a display launched since the last screenshot, so no one has seen what is on it."""
 
     def started_fresh(self) -> None:
         """Record that `start` launched a new display, without the windows that were open before."""
-        self._starts += 1
+        self._unseen = True
+
+    async def _look(self, call: Callable[[DisplayDriver], Awaitable[bytes]]) -> bytes:
+        image = await self._call(call, observe=True)
+        self._unseen = False
+        return image
 
     async def _driver_or_start(self) -> DisplayDriver:
         """The running display's driver, starting the display unless it's running."""
@@ -105,28 +112,29 @@ class ManagedDisplay:
         return await self._call(lambda driver: driver.display_size(), observe=True)
 
     async def screenshot(self) -> bytes:
-        return await self._call(lambda driver: driver.screenshot(), observe=True)
+        return await self._look(lambda driver: driver.screenshot())
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
         """The whole display scaled to `width` by `height`, for a model that can't take it at full size.
 
         This is [`SupportsScaledScreenshot`][pydantic_ai_harness.computer_use.SupportsScaledScreenshot].
         """
-        return await self._call(lambda driver: driver.scaled_screenshot(width, height), observe=True)
+        return await self._look(lambda driver: driver.scaled_screenshot(width, height))
 
     async def act(self, action: ComputerAction) -> None:
-        starts = self._starts
-
         async def act(driver: DisplayDriver) -> bool:
-            if self._starts != starts:
+            if self._unseen:
                 return False
             await driver.act(action)
             return True
 
         if not await self._call(act, observe=False):
-            # The display was down and started for this action: the windows it was meant for are gone. Refused outside
-            # the call, so the display that just started stays and the next action doesn't start it again.
-            raise WorkspaceError('The display was not running and started for this action, so it did not run.')
+            # The display was down and started since the last screenshot, for this action or for an earlier look such
+            # as reading its size: the windows the action was meant for are gone. Refused outside the call, so the
+            # display that started stays and the next screenshot shows it.
+            raise WorkspaceError(
+                'The display was not running and started since the last screenshot, so the action did not run.'
+            )
 
     async def zoom(self, region: Region) -> bytes:
         return await self._call(lambda driver: driver.zoom(region), observe=True)
