@@ -2970,10 +2970,13 @@ def deferred_capabilities() -> list[Capability[Any]]:
     return [refunds, shipping]
 
 
-@pytest.mark.anyio
 async def test_a_deferred_capability_is_a_route_of_its_own(allow_model_requests: None):
     """Each capability `load_capability` can load is offered as a route, described by its description, and picking
-    one loads it without a hand-off. The catalog listing them is left out of the framing every question carries."""
+    one loads it without a hand-off. The catalog listing them is left out of the framing every question carries.
+
+    Not a VCR test: the route distribution is set here, so the run takes every route in turn, and the requests are
+    inspected as the decision model builds them. The TypeSafe test records the same exchange against Jev.
+    """
     model = RoutingDecisionModel({'Triage': 0.1, 'refunds': 0.8, 'shipping': 0.05, 'refund_status': 0.9})
     agent = Agent(
         model, output_type=Triage, instructions='You triage support tickets.', capabilities=deferred_capabilities()
@@ -3044,9 +3047,11 @@ def route_questions(model: InMemoryDecisionModel) -> list[ChoiceQuestion]:
     return questions
 
 
-@pytest.mark.anyio
 async def test_a_capability_route_label_collision_renames_the_capability(allow_model_requests: None):
-    """A capability goes by its id, unless a tool already has that name; one with no description says nothing."""
+    """A capability goes by its id, unless a tool already has that name; one with no description says nothing.
+
+    Not a VCR test: the collision is between names this test chooses, and the label is decided before any request.
+    """
     model = RoutingDecisionModel({'Triage': 0.1, 'refund (capability)': 0.8, 'refund': 0.0})
     agent = Agent(
         model, output_type=Triage, tools=[refund], capabilities=[Capability[Any](id='refund', defer_loading=True)]
@@ -3067,9 +3072,11 @@ async def test_a_capability_route_label_collision_renames_the_capability(allow_m
     )
 
 
-@pytest.mark.anyio
 async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_requests: None):
-    """Without the ids it can load, `load_capability` is offered as it is, and its free-form `id` hands off."""
+    """Without the ids it can load, `load_capability` is offered as it is, and its free-form `id` hands off.
+
+    Not a VCR test: no agent run builds a `load_capability` without its metadata, so it is passed to `request` directly.
+    """
     load_capability = ToolDefinition(
         name='load_capability',
         parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']},
@@ -3087,9 +3094,11 @@ async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_
     assert exc_info.value.route == 'load_capability'
 
 
-@pytest.mark.anyio
 async def test_a_lone_capability_is_loaded_without_a_question(allow_model_requests: None):
-    """With no output type and one capability to load, loading it is the only route, taken without a request."""
+    """With no output type and one capability to load, loading it is the only route, taken without a request.
+
+    Not a VCR test: the point is that no request is made, and an agent run always has an output route beside it.
+    """
     load_capability = ToolDefinition(
         name='load_capability',
         parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']},
@@ -3109,11 +3118,13 @@ async def test_a_lone_capability_is_loaded_without_a_question(allow_model_reques
     assert model.requests == []
 
 
-@pytest.mark.anyio
 async def test_a_capability_loaded_from_code_is_not_offered_again(allow_model_requests: None):
     """A capability a tool loaded with `ctx.load_capability()` is active, so it isn't a route on the next step.
 
     The model sees only its instructions, not the record of the load, and picking it would only be refused.
+
+    Not a VCR test: the route distribution makes the model prefer the capability, so a route offered again would be
+    taken, which a recorded Jev answer can't be steered to do.
     """
     model = RoutingDecisionModel(
         {'Triage': 0.5, 'refunds': 0.9, 'shipping': 0.05, 'prepare': 0.95, 'refund_status': 0.1}
@@ -3134,7 +3145,6 @@ async def test_a_capability_loaded_from_code_is_not_offered_again(allow_model_re
     )
 
 
-@pytest.mark.anyio
 async def test_a_capability_added_between_runs_is_a_route_and_the_catalog_change_stays_out(
     allow_model_requests: None,
 ):
@@ -3142,6 +3152,9 @@ async def test_a_capability_added_between_runs_is_a_route_and_the_catalog_change
 
     A language model gets the grown catalog as an appended change; the decision model's history leaves that out,
     like the catalog in its framing.
+
+    Not a VCR test: what's checked is the state the decision model builds from history, which doesn't depend on
+    the backend's answer.
     """
     refunds, shipping = deferred_capabilities()
     model = RoutingDecisionModel({'Triage': 0.9, 'refunds': 0.1, 'shipping': 0.05})

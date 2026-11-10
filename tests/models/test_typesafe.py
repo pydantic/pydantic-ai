@@ -1031,6 +1031,29 @@ async def test_a_deferred_capability_is_loaded_then_its_tool_called(
     ] == snapshot(
         [['Resolution', 'refunds', 'shipping'], ['Resolution', 'shipping', 'refund_status'], ['Resolution', 'shipping']]
     )
+    # The load's instructions follow its return as a system entry, in the history Jev judges.
+    assert request_capture.bodies('/v1/systemone')[1]['state'] == snapshot(
+        {
+            'text': 'Has the refund for my returned blender gone through?',
+            'done': [
+                {'tool_call': {'name': 'load_capability', 'args': {'id': 'refunds'}}},
+                {
+                    'tool_return': {
+                        'name': 'load_capability',
+                        'content': '{"message":"Capability \'refunds\' loaded. Its instructions, if any, follow."}',
+                    }
+                },
+                {'system': 'The following tool(s) are now available: `refund_status`'},
+                {
+                    'system': """\
+<context id="capability:refunds">
+Confirm the order ID before issuing a refund.
+</context>\
+"""
+                },
+            ],
+        }
+    )
 
 
 @pytest.mark.vcr
