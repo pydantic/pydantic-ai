@@ -34,8 +34,8 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
-_FINISH_ONCE_RELEASED = 'while [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
-"""Shell that waits for the file `$1`, then writes the file `$2`."""
+_FINISH_ONCE_RELEASED = 'while [ -d "${1%/*}" ] && [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
+"""Shell that waits for the file `$1`, then writes the file `$2`. It gives up once `$1`'s directory is gone."""
 
 
 @asynccontextmanager

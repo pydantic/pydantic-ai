@@ -699,9 +699,9 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
   replacement for it.
 - The backend never destroys the environment when a run ends. Whoever holds the ref decides when to
   delete it; see [Cleaning up](#cleaning-up).
-- A process that a command detached into its own session keeps running after the command returns,
-  also for a backend that attaches by the same ref later. [`Shell`](harness/shell.md) background jobs
-  depend on it.
+- The backend never stops a process that a command detached into its own session, neither when the
+  command returns nor when a backend attaches by the same ref later.
+  [`Shell`](harness/shell.md) background jobs depend on it. A provider's own idle pause or stop is separate.
 - A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
   or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
   timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
