@@ -264,7 +264,7 @@ try:
 
     from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
-    from ._betas import beta_header_names, extends_max_output, requested_betas, split_betas
+    from ._betas import extends_max_output
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
@@ -1529,9 +1529,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        # The betas the request sends: its own and the client's, as `_get_betas_and_extra_headers` merges them.
-        betas = requested_betas(cast(AnthropicModelSettings, prepared_settings or {})) | self._client_default_betas()
-        if not extends_max_output(betas):
+        if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
             prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
@@ -1916,6 +1914,37 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return context_management
 
+    @staticmethod
+    def _split_betas(header: str) -> set[str]:
+        """The betas a comma-separated `anthropic-beta` header value lists."""
+        return {stripped_beta for beta in header.split(',') if (stripped_beta := beta.strip())}
+
+    @staticmethod
+    def _pop_beta_headers(extra_headers: dict[str, str]) -> set[str]:
+        """Remove the `anthropic-beta` header from `extra_headers`, in any spelling, and return the betas it lists.
+
+        The SDK folds header names case-insensitively, so one left in `extra_headers` would replace the header it
+        builds from `betas`.
+        """
+        names = [name for name in extra_headers if name.lower() == 'anthropic-beta']
+        return {
+            beta
+            for name in names
+            # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
+            if (header := extra_headers.pop(name))
+            for beta in AnthropicModel._split_betas(header)
+        }
+
+    def _request_betas(self, model_settings: AnthropicModelSettings) -> set[str]:
+        """The betas a request sends regardless of its messages: the client's, `anthropic_betas` and `anthropic-beta`.
+
+        They're read as `_get_betas_and_extra_headers` reads them, so the `max_tokens` cap sees the same betas.
+        """
+        betas = self._client_default_betas()
+        betas.update(str(beta) for beta in model_settings.get('anthropic_betas') or ())
+        betas.update(self._pop_beta_headers(dict(model_settings.get('extra_headers', {}))))
+        return betas
+
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
@@ -1950,11 +1979,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
-        betas.update(requested_betas(model_settings))
-        # The SDK folds header names case-insensitively, so one left in `extra_headers` would replace the header it
-        # builds from `betas`.
-        for name in beta_header_names(extra_headers):
-            del extra_headers[name]
+        if betas_from_setting := model_settings.get('anthropic_betas'):
+            betas.update(str(b) for b in betas_from_setting)
+
+        betas.update(self._pop_beta_headers(extra_headers))
 
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
@@ -1972,7 +2000,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
             if name.lower() == 'anthropic-beta':
                 beta_header = value if isinstance(value, str) else ''
-        return split_betas(beta_header)
+        return self._split_betas(beta_header)
 
     def _message_betas(
         self,

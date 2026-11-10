@@ -131,6 +131,7 @@ async def test_default_max_tokens_without_a_known_safe_maximum(
             {'extra_headers': {'anthropic-beta': 'files-api-2025-04-14, output-300k-2026-03-24'}}, {}, id='header'
         ),
         pytest.param({'extra_headers': {'Anthropic-Beta': 'output-300k-2026-03-24'}}, {}, id='header-capitalized'),
+        pytest.param({'extra_headers': {'ANTHROPIC-BETA': 'output-300k-2026-03-24'}}, {}, id='header-uppercase'),
         pytest.param({}, {'anthropic-beta': 'output-300k-2026-03-24'}, id='client-default-header'),
     ],
 )

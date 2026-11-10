@@ -1,33 +1,8 @@
-"""How the Anthropic betas a request asks for are read."""
+"""Which Anthropic betas change what a request may ask for."""
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from . import AnthropicModelSettings
-
-
-def split_betas(header: str) -> set[str]:
-    """The betas a comma-separated `anthropic-beta` header value lists."""
-    return {stripped_beta for beta in header.split(',') if (stripped_beta := beta.strip())}
-
-
-def beta_header_names(headers: Mapping[str, object]) -> list[str]:
-    """The names of the `anthropic-beta` headers in `headers`, in any spelling, as the SDK folds them."""
-    return [name for name in headers if name.lower() == 'anthropic-beta']
-
-
-def requested_betas(model_settings: AnthropicModelSettings) -> set[str]:
-    """The betas in the `anthropic_betas` setting and the `anthropic-beta` header of `extra_headers`, in any spelling."""
-    betas = {str(beta) for beta in model_settings.get('anthropic_betas') or ()}
-    extra_headers = model_settings.get('extra_headers', {})
-    for name in beta_header_names(extra_headers):
-        # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
-        if header := extra_headers[name]:
-            betas.update(split_betas(header))
-    return betas
+from collections.abc import Iterable
 
 
 def extends_max_output(betas: Iterable[str]) -> bool:
