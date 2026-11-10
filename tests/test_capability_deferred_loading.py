@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     EnqueuedMessagesEvent,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -2927,6 +2928,7 @@ async def test_load_capability_unknown_id_lists_valid_ids() -> None:
     model can correct itself instead of guessing — and only loadable ids are listed."""
     refunds = Capability[object](id='refunds', description='Refund tools.', defer_loading=True)
     billing = Capability[object](id='billing', description='Billing tools.', defer_loading=True)
+    always_on = Capability[object](id='always-on', instructions='Always on.')
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         retried = [
@@ -2938,7 +2940,7 @@ async def test_load_capability_unknown_id_lists_valid_ids() -> None:
             parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refnd'}, tool_call_id='l1')]
         )
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, billing])
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, billing, always_on])
     result = await agent.run('load typo')
 
     assert result.output == 'done'
@@ -2949,6 +2951,49 @@ async def test_load_capability_unknown_id_lists_valid_ids() -> None:
         if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retry.content == "No capability found with id 'refnd'. Available capability ids: 'billing', 'refunds'."
+
+
+async def test_load_capability_reload_after_compaction_in_same_response_loads_again() -> None:
+    """A reload in the response that compacts away the first load succeeds and states the instructions again (#12936).
+
+    The already-active check still sees the load from before the `CompactionPart`, so the return is the no-op
+    one, but it's a successful load return in the new window: no retry is spent, and the next request states
+    the capability's instructions again. A further reload after that is a no-op that states nothing.
+    """
+    deferred = Capability[object](
+        id='deferred', description='Deferred.', instructions='Deferred instructions.', defer_loading=True
+    )
+
+    def load(tool_call_id: str) -> ToolCallPart:
+        return ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'deferred'}, tool_call_id=tool_call_id)
+
+    responses = iter(
+        [
+            ModelResponse(parts=[load('initial')]),
+            ModelResponse(parts=[CompactionPart(content='Summary.'), load('after-compaction')]),
+            ModelResponse(parts=[load('next-step')]),
+            make_text_response('done'),
+        ]
+    )
+    agent = Agent(FunctionModel(lambda _messages, _info: next(responses)), capabilities=[deferred])
+    result = await agent.run('load, compact, reload')
+
+    assert result.output == 'done'
+    messages = result.all_messages()
+    load_returns = list(iter_message_parts(messages, ModelRequest, LoadCapabilityReturnPart))
+    assert [(part.tool_call_id, part.outcome) for part in load_returns] == [
+        ('initial', 'success'),
+        ('after-compaction', 'success'),
+        ('next-step', 'success'),
+    ]
+    statements = [
+        (index, part.content)
+        for index, message in enumerate(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert statements == [(2, 'Deferred instructions.'), (4, 'Deferred instructions.')]
 
 
 @pytest.mark.parametrize('mode', ['parallel', 'sequential'])

@@ -812,7 +812,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Demanding a separate reveal marker on top would strand a tool permanently: history
         # processing can drop the reveal while keeping the load, and from there the model has no way
         # back, because a capability-owned tool is not in the search corpus and reloading an
-        # already-active capability is refused.
+        # already-active capability is a no-op that reveals nothing.
         #
         # Both halves are load-bearing. The capability must still be *configured* deferred, not just
         # named by a load record in history: a capability that has since been reconfigured as

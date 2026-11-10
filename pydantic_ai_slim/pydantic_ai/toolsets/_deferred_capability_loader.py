@@ -45,7 +45,7 @@ LOAD_CAPABILITY_TOOL_DESCRIPTION = (
 )
 LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already active. '
-    'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
+    f'Use its existing instructions and any tools it provides; do not call `{LOAD_CAPABILITY_TOOL_NAME}` for it again.'
 )
 LOAD_CAPABILITY_UNKNOWN_ID_MESSAGE_TEMPLATE = (
     'No capability found with id {capability_id!r}. Available capability ids: {available_ids}.'
@@ -54,8 +54,8 @@ LOAD_CAPABILITY_UNKNOWN_ID_MESSAGE_TEMPLATE = (
 # message doesn't depend on whether there are any.
 LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE = 'Capability {capability_id!r} loaded. Its instructions, if any, follow.'
 LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE = (
-    'Capability {capability_id!r} is already being loaded by an earlier `load_capability` call in this response; '
-    'do not call `load_capability` for it again.'
+    f'Capability {{capability_id!r}} is already being loaded by an earlier `{LOAD_CAPABILITY_TOOL_NAME}` call in this '
+    f'response; do not call `{LOAD_CAPABILITY_TOOL_NAME}` for it again.'
 )
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
