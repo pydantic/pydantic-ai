@@ -1672,10 +1672,13 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     (tmp_path / 'module.py').write_text('', encoding='utf-8')
     assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
     assert {'Glob', 'Read', 'Task', 'mcp__safeoutputs__noop'} <= offered[0]
-    assert (
-        offered[1:]
-        == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}] * 2
-    )
+    assert offered[1] == {
+        'mcp__safeoutputs__noop',
+        'mcp__safeoutputs__probe',
+        'mcp__safeoutputs__submit_pull_request_review',
+    }
+    # The `noop` posted inside the reserve leaves the closing request no tools.
+    assert offered[2] == set()
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
@@ -1768,7 +1771,7 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    # Outside the time reserve: a placeholder `noop` inside it would leave the model no tools for the review.
     noop_offered: list[bool] = []
 
     def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
