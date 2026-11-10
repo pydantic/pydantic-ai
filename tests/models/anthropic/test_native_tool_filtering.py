@@ -229,19 +229,45 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
             True,
             id='extra-body-tools-setting-not-applied',
         ),
+        pytest.param([WebSearchTool()], {'citations': True}, False, id='citations-web-search'),
+        pytest.param([WebFetchTool()], {'citations': True}, False, id='citations-web-fetch'),
+        pytest.param(
+            [WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            False,
+            id='web-fetch-enable-citations',
+        ),
+        pytest.param(
+            [WebSearchTool(), WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            True,
+            id='uncited-web-search-keeps-default',
+        ),
+        pytest.param(
+            [WebFetchTool()],
+            {'citations': True, 'anthropic_web_tools_allowed_callers': ['code_execution_20260120']},
+            True,
+            id='setting-takes-precedence-over-citations',
+        ),
+        pytest.param(
+            [WebSearchTool()],
+            {'citations': True, 'extra_body': {'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}]}},
+            True,
+            id='extra-body-tools-citations-not-applied',
+        ),
     ],
 )
 async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
     allow_model_requests: None,
     stream: bool,
     native_tools: list[AbstractNativeTool],
-    model_settings: AnthropicModelSettings,
+    model_settings: AnthropicModelSettings | None,
     expected_call: bool,
 ):
     """`code_execution` is implicitly enabled by the web tools only while one of them allows a code execution caller.
 
-    `extra_body['tools']` replaces the built tools on the wire, so a request that has it keeps the filter it has
-    without the setting.
+    Cited web tools are called directly unless the setting says otherwise. `extra_body['tools']` replaces the built
+    tools on the wire, so a request that has it keeps the filter it has without the setting or citations.
 
     Unit test because a sandbox `code_execution` call can't be requested reliably from the live API when the web tools
     only allow direct calls.

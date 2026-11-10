@@ -542,6 +542,7 @@ class TestToolResults:
                         'kind': 'tool-return',
                     },
                     'kind': 'tool_return',
+                    'content_file_digests': [],
                 }
             }
         )

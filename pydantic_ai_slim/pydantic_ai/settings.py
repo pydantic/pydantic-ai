@@ -119,8 +119,8 @@ On Google Cloud the unified field maps only to safe PT-with-spillover variants s
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
-only through the per-provider field.
+(OpenAI's `'scale'`, `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
+routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
 `google_cloud_service_tier`) always take precedence over this unified field when set.
@@ -620,13 +620,15 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
+      `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
-    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
-    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    `UserError` when the request has a document or Web Fetch tool to cite. Providers that always cite ignore this
+    setting. See [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting
