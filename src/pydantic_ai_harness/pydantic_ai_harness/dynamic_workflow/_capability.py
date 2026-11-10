@@ -10,6 +10,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness._monty_exec import renamed_duration_limit
 from pydantic_ai_harness.dynamic_workflow._toolset import (
     DynamicWorkflowToolset,
     WorkflowAgent,
@@ -102,7 +103,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
 
     `None` applies a 256 MB backstop with no execution-time cap; `'unlimited'` removes all limits;
     a `WorkflowResourceLimits` mapping is merged onto the backstop, overriding only the caps it
-    names. There is no default `max_duration_secs`: Monty's timer bounds in-sandbox execution time
+    names. There is no default `max_duration_seconds`: Monty's timer bounds in-sandbox execution time
     and time awaiting sub-agents does not count against it, so set one only to guard a pure-CPU
     `while True` loop.
     """
@@ -113,6 +114,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return None
 
     def __post_init__(self) -> None:
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflow')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)

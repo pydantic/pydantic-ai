@@ -19,16 +19,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+import warnings
 from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from copy import copy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
-from typing_extensions import TypeVarTuple, Unpack
+from typing_extensions import TypedDict, TypeVarTuple, Unpack
+
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
     from pydantic_monty import (
@@ -63,6 +67,38 @@ DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 
 _T = TypeVar('_T')
 _Args = TypeVarTuple('_Args')
+
+
+class _DurationLimit(TypedDict, total=False):
+    max_duration_seconds: float
+    max_duration_secs: float
+
+
+_LimitsT = TypeVar('_LimitsT', bound=_DurationLimit)
+
+
+def renamed_duration_limit(
+    limits: _LimitsT | Literal['unlimited'] | None, owner: str, *, stacklevel: int = 4
+) -> _LimitsT | Literal['unlimited'] | None:
+    """Return `limits` with a deprecated `max_duration_secs` key moved to `max_duration_seconds`, warning about it.
+
+    Called from the `__post_init__` of the dataclasses that take `resource_limits`, which store the result
+    so that their per-run copies do not warn again.
+    """
+    if limits is None or limits == 'unlimited' or 'max_duration_secs' not in limits:
+        return limits
+    if 'max_duration_seconds' in limits:
+        raise TypeError('Pass `max_duration_seconds` only: `max_duration_secs` is its deprecated name.')
+    warnings.warn(
+        f"`{owner}(resource_limits={{'max_duration_secs': ...}})` has been renamed to "
+        f"`{owner}(resource_limits={{'max_duration_seconds': ...}})`. "
+        'Update the call; this deprecated alias will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    renamed = copy(limits)
+    renamed['max_duration_seconds'] = renamed.pop('max_duration_secs')
+    return renamed
 
 
 def in_temporal_workflow() -> bool:
@@ -393,7 +429,7 @@ class MontyExecutor:
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
     async def _sleep(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
-        """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_secs`.
+        """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
 
         Monty has already validated the duration: `args` is one non-negative float.
         """
@@ -404,7 +440,7 @@ class MontyExecutor:
                 snapshot,
                 TimeoutError(
                     f'sleeping {seconds:g}s would exceed the {self.max_sleep_seconds:g}s this code may sleep '
-                    f'(max_duration_secs); {remaining:g}s left'
+                    f'(max_duration_seconds); {remaining:g}s left'
                 ),
             )
         self._slept_seconds += seconds

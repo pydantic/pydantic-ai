@@ -51,6 +51,7 @@ from pydantic_ai_harness._monty_exec import (
     PrintCapture,
     in_temporal_workflow,
     is_sandbox_panic,
+    renamed_duration_limit,
 )
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -73,7 +74,7 @@ class WorkflowResourceLimits(TypedDict, total=False):
     keeps its backstop value.
     """
 
-    max_duration_secs: float
+    max_duration_seconds: float
     """Ceiling on the time the script spends executing sandbox code. Monty checks it per bytecode
     step, so time spent awaiting sub-agents does not count against it -- neither a single `await`
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
@@ -83,19 +84,22 @@ class WorkflowResourceLimits(TypedDict, total=False):
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
+    max_duration_secs: float
+    """Deprecated: renamed to `max_duration_seconds`."""
+
     max_memory: int
     """Maximum sandbox memory, in bytes."""
 
 
 def _default_resource_limits() -> ResourceLimits:
-    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_secs`."""
+    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_seconds`."""
     return {
         'max_memory': 256 * 1024 * 1024,
     }
 
 
 # The keys `WorkflowResourceLimits` accepts. A `total=False` TypedDict does not validate keys at
-# runtime, so a typo (e.g. `max_durations_secs`) would otherwise merge through and be silently
+# runtime, so a typo (e.g. `max_durations_seconds`) would otherwise merge through and be silently
 # dropped -- quietly disabling the only guard against a pure-CPU `while True`. We reject unknowns.
 _RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
@@ -115,6 +119,7 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     A partial mapping merges *onto* the backstop rather than replacing it. Full semantics:
     `DynamicWorkflow.resource_limits`.
     """
+    limits = renamed_duration_limit(limits, 'DynamicWorkflow')
     if limits is None:
         return _default_resource_limits()
     if limits == 'unlimited':
@@ -127,8 +132,8 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     resolved = _default_resource_limits()
     if 'max_memory' in limits:
         resolved['max_memory'] = limits['max_memory']
-    if 'max_duration_secs' in limits:
-        resolved['max_feed_duration_secs'] = limits['max_duration_secs']
+    if 'max_duration_seconds' in limits:
+        resolved['max_feed_duration_secs'] = limits['max_duration_seconds']
     return resolved
 
 
@@ -570,6 +575,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _description: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflowToolset')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         self._rebuild()
 
@@ -820,7 +826,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 dispatch=dispatch,
                 valid_names=self._by_name,
                 portal=monty.portal,
-                max_sleep_secs=limits.get('max_feed_duration_secs'),
+                max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as exc:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc

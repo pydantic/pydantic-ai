@@ -334,10 +334,10 @@ backstop is 256 MB with no time limit. Printed output is collected separately wi
 default cap.
 
 ```python
-DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
+DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-> **Info: what `max_duration_secs` measures**
+> **Info: what `max_duration_seconds` measures**
 >
 > Monty checks this limit once per bytecode step, so it measures the time your script spends
 > running sandbox code, not wall-clock time. While the script waits on a sub-agent (one at a time
@@ -347,7 +347,7 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 > What it catches is a pure-CPU runaway: a `while True:` loop that never awaits. That loop burns a
 > core in the sandbox worker (and blocks the workflow thread under Temporal), and none of the
 > sub-agent budgets (`max_agent_calls`, `sub_agent_usage_limits`) can stop it because it never calls
-> a sub-agent. There is no default duration cap; set `max_duration_secs` yourself for that guard.
+> a sub-agent. There is no default duration cap; set `max_duration_seconds` yourself for that guard.
 >
 > Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains.
 > A partial dict like `{'max_memory': ...}` merges onto the backstop, so you override only the caps
@@ -441,7 +441,7 @@ The script runs in Monty, a subset of Python:
   `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem
   or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
-  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
@@ -465,7 +465,7 @@ Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflo
 sub-agent whose model requests should run as activities, then register every agent with its own
 `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](../code_mode/README.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
-Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## API
