@@ -6024,6 +6024,7 @@ def test_returns_with_colon_whole_text_when_return_annotated():
         pytest.param(
             'Rows: one per line,\n            keyed: by id.', 'Rows: one per line,\n    keyed: by id.', id='multi-line'
         ),
+        pytest.param('Rows: one per line.   ', 'Rows: one per line.', id='trailing-whitespace'),
     ],
 )
 def test_returns_with_colon_written_text_when_return_annotated(returns_text: str, description: str):
@@ -6054,6 +6055,72 @@ def test_returns_with_colon_written_text_when_return_annotated(returns_text: str
         f'<description>{description}</description>\n'
         '</returns>'
     )
+
+
+def test_returns_written_text_skips_fenced_returns_example():
+    """A `Returns:` line inside a code fence is example text, not the function's returns section."""
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    fetch_ad_rows.__doc__ = """Fetch ad rows for an account.
+
+    ```
+
+    Returns:
+        Example rows: one.
+    ```
+
+    Returns:
+        Rows (in UTC): one.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+    agent.tool_plain(fetch_ad_rows)
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == snapshot("""\
+<summary>Fetch ad rows for an account.
+
+```
+
+Returns:
+    Example rows: one.
+```</summary>
+<returns>
+<description>Rows (in UTC): one.</description>
+</returns>\
+""")
+
+
+def test_returns_written_text_falls_back_to_parsed_text():
+    """If the written `Returns:` section can't be located, the parsed type and description are joined instead."""
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    # The unbalanced fence inside `Examples:` hides the `Returns:` header from the scan, but not from griffe.
+    fetch_ad_rows.__doc__ = """Fetch ad rows for an account.
+
+    Examples:
+        ```
+
+    Returns:
+        Rows: one.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+    agent.tool_plain(fetch_ad_rows)
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == snapshot("""\
+<summary>Fetch ad rows for an account.</summary>
+<returns>
+<description>Rows: one.</description>
+</returns>\
+""")
 
 
 def test_returns_with_colon_still_split_when_not_annotated():

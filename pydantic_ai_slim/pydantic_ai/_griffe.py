@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Callable
 from inspect import Signature, cleandoc, signature
-from itertools import dropwhile, takewhile
+from itertools import takewhile
 from typing import TYPE_CHECKING, Any, Literal
 
 from griffe import (
@@ -117,7 +117,9 @@ def _main_desc_with_returns(
     if docstring_style == 'google' and signature(func).return_annotation is not Signature.empty:
         # The Python return annotation is authoritative: keep the whole docstring text as the return
         # description instead of griffe splitting a type off at the first colon.
-        return_desc = _google_returns_text(doc, return_desc)
+        return_desc = _google_returns_text(doc, return_desc) or (
+            f'{return_type}: {return_desc}' if return_type else return_desc
+        )
         return_type = None
     type_tag = f'<type>{return_type}</type>\n' if return_type else ''
     return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
@@ -129,22 +131,34 @@ def _main_desc_with_returns(
 _GOOGLE_RETURNS_HEADER = re.compile(r'^returns:(\s|$)', re.IGNORECASE)
 
 
-def _google_returns_text(doc: str, parsed_description: str) -> str:
+def _google_returns_text(doc: str, parsed_description: str) -> str | None:
     """The written, dedented text of the Google-style `Returns:` section griffe parsed into `parsed_description`.
 
     Griffe's parsed entry can't be joined back into the written text: before the first colon, it strips parentheses
-    and normalizes the text as a type expression. Its description is the tail of the written text, which picks out
-    the right section if `Returns:` also starts a line elsewhere, e.g. in a code block.
+    and normalizes the text as a type expression. The section is found the way griffe's Google parser finds it: a
+    `Returns:` line outside a code fence, after a blank line, with an indented line below. As a safeguard, griffe's
+    description must be the tail of the text; if no section qualifies, this returns `None`.
     """
-    lines = cleandoc(doc).splitlines()
-    blocks = (_indented_block(lines[i + 1 :]) for i, line in enumerate(lines) if _GOOGLE_RETURNS_HEADER.match(line))
-    return next(block for block in blocks if block.endswith(parsed_description))
+    # Clean the same text griffe parses, so trailing whitespace can't differ.
+    lines = cleandoc(doc.rstrip()).splitlines()
+    in_fence = False
+    for i, line in enumerate(lines):
+        if line.lstrip(' ').startswith('```'):
+            in_fence = not in_fence
+        elif (
+            not in_fence
+            and _GOOGLE_RETURNS_HEADER.match(line)
+            and (i == 0 or not lines[i - 1].strip())
+            and (block := _indented_block(lines[i + 1 :]))
+            and block.endswith(parsed_description)
+        ):
+            return block
+    return None
 
 
 def _indented_block(lines: list[str]) -> str:
-    """The dedented block of indented lines at the start of `lines`, as griffe's Google parser reads a section."""
-    lines = list(dropwhile(lambda line: not line.strip(), lines))
-    indent = len(lines[0]) - len(lines[0].lstrip()) if lines else 0
+    """The dedented block of indented lines directly at the start of `lines`, as griffe's Google parser reads a section."""
+    indent = len(lines[0]) - len(lines[0].lstrip()) if lines and lines[0].strip() else 0
     if not indent:
         return ''
     block = takewhile(lambda line: line.startswith(' ' * indent) or not line.strip(), lines)
