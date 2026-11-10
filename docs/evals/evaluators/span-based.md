@@ -245,9 +245,13 @@ dataset = Dataset(
             evaluation_name='used_search',
         ),
 
-        # Must NOT call dangerous tool
+        # Root-anchored so a safe unrelated span cannot mask a dangerous call
         HasMatchingSpan(
-            query={'not_': {'name_contains': 'delete_database'}},
+            query={
+                'name_equals': 'task_execution',
+                'not_': {'name_contains': 'delete_database'},
+                'no_descendant_has': {'name_contains': 'delete_database'},
+            },
             evaluation_name='safe_execution',
         ),
     ],
@@ -288,12 +292,19 @@ Ensure operations meet latency requirements:
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # Database queries should be fast
+    # No database query exceeds 100ms; check the task root and its descendants
     HasMatchingSpan(
-        query={'and_': [
-            {'name_contains': 'database'},
-            {'max_duration': 0.1},  # 100ms max
-        ]},
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'and_': [
+                {'name_contains': 'database'},
+                {'not_': {'max_duration': 0.1}},
+            ]},
+            'no_descendant_has': {'and_': [
+                {'name_contains': 'database'},
+                {'not_': {'max_duration': 0.1}},
+            ]},
+        },
         evaluation_name='fast_db_queries',
     ),
 
@@ -555,13 +566,21 @@ evaluators = [
         evaluation_name='delegated_correctly',
     ),
 
-    # No circular delegation
+    # No agent span has both an agent ancestor and an agent descendant
     HasMatchingSpan(
-        query={'not_': {'and_': [
-            {'name_contains': 'agent'},
-            {'some_descendant_has': {'name_contains': 'agent'}},
-            {'some_ancestor_has': {'name_contains': 'agent'}},
-        ]}},
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'and_': [
+                {'name_contains': 'agent'},
+                {'some_descendant_has': {'name_contains': 'agent'}},
+                {'some_ancestor_has': {'name_contains': 'agent'}},
+            ]},
+            'no_descendant_has': {'and_': [
+                {'name_contains': 'agent'},
+                {'some_descendant_has': {'name_contains': 'agent'}},
+                {'some_ancestor_has': {'name_contains': 'agent'}},
+            ]},
+        },
         evaluation_name='no_circular_delegation',
     ),
 ]
@@ -584,12 +603,19 @@ evaluators = [
         evaluation_name='searched_before_answering',
     ),
 
-    # Limited tool calls (no loops)
+    # Assuming the task root is task_execution, no tool span has >5 direct children
     HasMatchingSpan(
-        query={'and_': [
-            {'name_contains': 'tool'},
-            {'max_child_count': 5},
-        ]},
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'and_': [
+                {'name_contains': 'tool'},
+                {'min_child_count': 6},
+            ]},
+            'no_descendant_has': {'and_': [
+                {'name_contains': 'tool'},
+                {'min_child_count': 6},
+            ]},
+        },
         evaluation_name='reasonable_tool_usage',
     ),
 ]
