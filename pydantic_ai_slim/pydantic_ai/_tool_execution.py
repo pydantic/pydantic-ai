@@ -211,6 +211,19 @@ def _deferred_tool_requests(
     )
 
 
+def _with_deferred_tool_requests(
+    pending: DeferredToolRequests | None, new: DeferredToolRequests
+) -> DeferredToolRequests:
+    """`pending` with the calls in `new` added to it, or `new` when nothing else is pending."""
+    if pending is None:
+        return new
+    pending.calls.extend(new.calls)
+    pending.approvals.extend(new.approvals)
+    pending.metadata.update(new.metadata)
+    pending.kinds.update(new.kinds)
+    return pending
+
+
 def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
     """Return duplicate `tool_call_id` values, in the order each ID is first encountered as a duplicate."""
     seen: set[str] = set()
@@ -1230,14 +1243,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 # batch was already announced above, and re-announcing the same tool call IDs
                 # (possibly under a different kind) would be ambiguous for consumers. The final
                 # pending batch still surfaces as the run's `DeferredToolRequests` output below.
-                new_requests = _deferred_tool_requests(new_deferred_calls, new_deferred_metadata, order=self.tool_calls)
-                if deferred_tool_requests is None:
-                    deferred_tool_requests = new_requests
-                else:
-                    deferred_tool_requests.calls.extend(new_requests.calls)
-                    deferred_tool_requests.approvals.extend(new_requests.approvals)
-                    deferred_tool_requests.metadata.update(new_requests.metadata)
-                    deferred_tool_requests.kinds.update(new_requests.kinds)
+                deferred_tool_requests = _with_deferred_tool_requests(
+                    deferred_tool_requests,
+                    _deferred_tool_requests(new_deferred_calls, new_deferred_metadata, order=self.tool_calls),
+                )
 
         if deferred_tool_requests is not None:
             if not self.ctx.deps.output_schema.allows_deferred_tools:
