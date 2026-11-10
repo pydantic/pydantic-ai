@@ -160,12 +160,24 @@ _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
     ("Literal['a', 'b'] -> Literal['a']", (set(), {'b'})),
     ("Literal['a', 'b'] -> Literal['b', 'a']", (set(), set())),
     ("Literal['a -> b'] -> Literal['a -> b', 'c']", ({'c'}, set())),
-    ("str | Literal['a'] -> Literal['a']", None),
+    # A new side of nothing but string `Literal`s passes whatever the old side was; a dropped arm counts as removed.
+    ("str | Literal['a'] -> Literal['a']", (set(), {'str'})),
+    ("ModelParam -> Literal['a', 'b']", ({'a', 'b'}, {'ModelParam'})),
+    ("TypeAliasType('Names', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("Literal['a', 1] -> Literal['a']", (set(), {"Literal['a', 1]"})),
+    ("ModelParam -> str | Literal['a']", None),
+    ('LatestNames -> str | LatestNames', None),
+    ("ModelParam -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', ModelParam) -> TypeAliasType('Names', Literal['a'])", ({'a'}, {'ModelParam'})),
+    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", (set(), set())),
+    (
+        "TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])",
+        ({'b'}, set()),
+    ),
     ("str | Literal['a'] -> unset", None),
     ("str | Literal['a'] -> str | Literal['a'] | int", None),
     ("Literal['a'] -> Literal['a', 1]", None),
-    ("TypeAliasType('Old', Literal['a']) -> TypeAliasType('New', Literal['a'])", None),
-    ("TypeAliasType('Names', Literal['a'], type_params=()) -> TypeAliasType('Names', Literal['a', 'b'])", None),
+    ("TypeAliasType('Old', str | Literal['a']) -> TypeAliasType('New', str | Literal['a', 'b'])", None),
     ("Literal['a' -> Literal['a', 'b']", None),
 ]
 
@@ -195,8 +207,15 @@ def test_literal_member_changes_ignores_other_findings():
             'Model-name alias changes need no waiver. Removing a name from an alias without a `str |` arm is a '
             'permitted compatibility impact: add the `compatibility impact` label and a release note.\n',
         ),
+        (
+            "Names: Attribute value was changed: ModelParam -> Literal['a']",
+            True,
+            "::warning file=models.py,line=12::Names: model names added: ['a'], removed: ['ModelParam']. "
+            'Model-name alias changes need no waiver. Removing a name from an alias without a `str |` arm is a '
+            'permitted compatibility impact: add the `compatibility impact` label and a release note.\n',
+        ),
         ("Names: Attribute value was changed: Literal['a'] -> Literal['a', 'b']", False, '::error'),
-        ("Names: Attribute value was changed: str | Literal['a'] -> Literal['a']", True, '::error'),
+        ("Names: Attribute value was changed: ModelParam -> str | Literal['a']", True, '::error'),
         ('Names: Public object was removed', True, '::error'),
     ],
 )

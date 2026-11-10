@@ -14,7 +14,7 @@
 <text x="608" y="184" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">/home/me/</text>
 <rect x="682" y="168" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
 <text x="721.2" y="184" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">AGENTS.md</text>
-<text x="766.4" y="184" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">home_dir</text>
+<text x="766.4" y="184" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">walk_up</text>
 <text x="622" y="220" font-size="11.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">repo/</text>
 <rect x="682" y="204" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
 <text x="721.2" y="220" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">CLAUDE.md</text>
@@ -32,9 +32,9 @@
 <rect x="296" y="154" width="260" height="84" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
 <circle cx="318" cy="176" r="11" fill="#B417B7"/>
 <text x="318" y="180.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">1</text>
-<text x="336" y="181" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Walk-up autoload</text>
-<text x="310" y="204" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">On by default. Files from the working</text>
-<text x="310" y="221" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">directory up to home_dir, broadest first.</text>
+<text x="336" y="181" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Instruction autoload</text>
+<text x="310" y="204" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">On by default. The working directory&#x27;s</text>
+<text x="310" y="221" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">file; walk_up adds ancestors, broadest first.</text>
 <rect x="32" y="154" width="236" height="84" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
 <text x="150" y="182" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
 <text x="150" y="201" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Read once at run start, so the cached</text>
@@ -57,12 +57,12 @@
 <circle cx="318" cy="380" r="11" fill="#B417B7"/>
 <text x="318" y="384.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">3</text>
 <text x="336" y="385" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">nested_traversal</text>
-<text x="310" y="408" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Opt-in. On FileReadEvent or</text>
+<text x="310" y="408" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">On by default. On FileReadEvent or</text>
 <text x="310" y="425" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">DirectoryListedEvent, surfaces that</text>
 <text x="310" y="442.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">directory&#x27;s file.</text>
 <rect x="32" y="358" width="236" height="84" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
 <text x="150" y="386" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the message tail</text>
-<text x="150" y="405" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A pointer to src/api/AGENTS.md,</text>
+<text x="150" y="405" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The contents of src/api/AGENTS.md,</text>
 <text x="150" y="421.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">queued before the next request.</text>
 <line x1="292" y1="400" x2="272" y2="400" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
 <line x1="590" y1="400" x2="560" y2="400" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>

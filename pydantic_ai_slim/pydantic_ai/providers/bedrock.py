@@ -20,7 +20,10 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import (
+    _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
@@ -670,6 +673,8 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         return BedrockModelProfile(bedrock_supported_on_converse=False)
     # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
+        # gpt-oss doesn't see a tool schema's `$defs`, as on every other host (see `openai_model_profile`).
+        json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer,
         bedrock_thinking_variant='openai',
         supports_thinking=True,
         thinking_always_enabled=True,

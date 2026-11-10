@@ -90,6 +90,9 @@ class ToolOrOutput:
 ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
 """Type alias for all valid tool_choice values."""
 
+FramingAnnouncement: TypeAlias = Literal['always', 'when_needed', 'never']
+"""When to tell a model what the `<system>` tag means; see [`ModelSettings.framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement]."""
+
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
 
@@ -119,8 +122,8 @@ On Google Cloud the unified field maps only to safe PT-with-spillover variants s
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
-only through the per-provider field.
+(OpenAI's `'scale'`, `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
+routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
 `google_cloud_service_tier`) always take precedence over this unified field when set.
@@ -332,6 +335,33 @@ class ModelSettings(TypedDict, total=False):
 
     It only applies to streamed requests: on a non-streamed one, `request_timeout` covers the same wait. It is not
     sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
+    """
+
+    framing_announcement: FramingAnnouncement
+    """When to add a sentence to the standing system prompt saying what the `<system>` tag means, on models that get mid-conversation system prompts as `<system>`-tagged user text.
+
+    A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
+    `<system>` block in a user turn, and follows it far more reliably once its standing prompt has said what the tag
+    means. Pydantic AI adds that one fixed sentence ahead of the leading system prompts and the instructions, so the
+    application's own text keeps the last word, on a request that has a system prompt or instructions:
+
+    - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
+      every request after it, even once a request-scoped one (`scope='request'`) that brought it in is no longer
+      sent. That includes an instruction change appended mid-conversation, by a dynamic
+      instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
+      An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
+      prefix once, at that request, and keeps it stable from then on, as long as the stored history keeps that
+      system prompt. A UI adapter's frontend doesn't send it back (AG-UI, Vercel AI), so there the sentence drops
+      out of the next turn and the prefix changes every turn: use `'always'`.
+    - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
+      conversations that never need it.
+    - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
+      text added. Models then follow a `<system>`-tagged change less reliably.
+
+    Every `<system>` tag in user prompt and tool return text is escaped on those models whatever this is set to.
+    Models that take mid-conversation system messages natively never get the sentence. It is applied by Pydantic AI
+    for every model and is not sent to the provider. See
+    [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts).
     """
 
     max_retries: int
@@ -621,7 +651,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
-      `20260209` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
       needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
@@ -741,6 +771,7 @@ ModelSettingName: TypeAlias = Literal[
     'timeout',
     'request_timeout',
     'first_event_timeout',
+    'framing_announcement',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',
