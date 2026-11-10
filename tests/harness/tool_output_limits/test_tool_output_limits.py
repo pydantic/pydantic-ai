@@ -864,6 +864,28 @@ class TestContentReduction:
         out = await _run(cap, original)
         assert out is original
 
+    async def test_multimodal_return_value_passes_through_unreduced(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])
+        # Multimodal return value as list with large binary payload, like FileSystem.read_file on an image
+        original = ['header', BinaryContent(data=b'\x00' * 50_000, media_type='image/png')]
+        out = await _run(cap, original)
+        assert out is original
+        assert isinstance(out, list)
+        assert isinstance(out[1], BinaryContent)
+
+    async def test_multimodal_return_value_warns_when_text_exceeds_threshold(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])
+        original = ['x' * 5000, BinaryContent(data=b'\x00' * 100, media_type='image/png')]
+        with pytest.warns(UserWarning, match='non-text content'):
+            out = await _run(cap, original)
+        assert out is original
+
+    async def test_bare_binary_content_return_value_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])
+        original = BinaryContent(data=b'\x00' * 50_000, media_type='image/png')
+        out = await _run(cap, original)
+        assert out is original
+
 
 # ---------------------------------------------------------------------------
 # Summarize (M1: assert model + usage, not just a wholesale mock)

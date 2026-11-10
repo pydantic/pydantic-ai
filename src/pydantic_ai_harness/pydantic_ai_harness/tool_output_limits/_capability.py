@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
@@ -96,6 +97,15 @@ def _spills(action: Action | None) -> bool:
 def _default_bands() -> list[Band]:
     """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
+
+
+def _has_multimodal_content(value: object) -> bool:
+    """Whether `value` is or directly contains multi-modal content parts."""
+    if is_multi_modal_content(value):
+        return True
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, memoryview)):
+        return any(is_multi_modal_content(item) for item in value)
+    return False
 
 
 @dataclass
@@ -348,8 +358,25 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+        if _has_multimodal_content(return_value):
+            text = (
+                ''.join(part for part in return_value if isinstance(part, str))
+                if isinstance(return_value, Sequence) and not isinstance(return_value, (str, bytes, bytearray, memoryview))
+                else ''
+            )
+            size = measure(text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
+            action = _select_action(bands, size)
+            if action is not None and not isinstance(action, Passthrough):
+                warnings.warn(
+                    f'ToolOutputLimits: tool {call.tool_name!r} returned large non-text '
+                    f'content; leaving it unreduced.',
+                    stacklevel=2,
+                )
+            value_unit = _Unit(binary=True, text=None, data=b'', value=return_value, suffix='')
+            value_text, value_handle = None, None
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
         if value_text is None and content_text is None:
