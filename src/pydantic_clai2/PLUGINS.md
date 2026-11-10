@@ -419,7 +419,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 **Conversation.** The current conversation ID goes to `session_id` beside the status
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
-CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
+CLAI2 starts empty, so the plugin resumes the conversation recorded there and shows its
+history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
 (`SessionStart.conversation_chosen`). A conversation saved in another
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's

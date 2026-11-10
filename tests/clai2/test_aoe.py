@@ -508,6 +508,37 @@ async def test_restarted_pane_resumes_its_conversation(env: Fixture, tmp_path: P
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 
+async def test_restarted_shell_shows_the_resumed_history(env: Fixture, tmp_path: Path) -> None:
+    earlier = make_session(tmp_path)
+    await earlier.prompt('earlier work')
+    env.state.mkdir(parents=True)
+    (env.state / INSTANCE).write_text(earlier.conversation_id + '\n')
+
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(call_tools=[])),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=True, width=120),
+        settings=Settings(),
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe')],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    await shell.loader.load_all()
+    try:
+        await env.status('idle')
+        assert shell.session.conversation_id == earlier.conversation_id
+        shown = Text.from_ansi(output.getvalue()).plain
+        assert f'Resumed earlier work ({earlier.conversation_id}).' in shown
+        # The restored history is on screen, as `/resume ID` shows it, not only in the model's context.
+        assert 'earlier work' in shown.split('Resumed earlier work')[0]
+    finally:
+        await shell.loader.close('exit')
+
+
 @pytest.mark.parametrize('saved', ['never-saved', 'not a valid id!'])
 async def test_unusable_mapping_starts_fresh(env: Fixture, tmp_path: Path, saved: str) -> None:
     env.state.mkdir(parents=True)

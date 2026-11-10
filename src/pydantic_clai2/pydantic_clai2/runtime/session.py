@@ -482,6 +482,8 @@ class Session(Generic[DepsT, OutputT]):
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
         self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
         """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
+        self.on_resumed: Callable[[], Awaitable[None]] | None = None
+        """Shows the restored history after a recorded `resume`; the shell's `Sessions` sets it."""
         self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
@@ -664,8 +666,9 @@ class Session(Generic[DepsT, OutputT]):
         fork of it that no other process runs, else a new saved fork of its newest saved state, while the
         original keeps running.
 
-        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
-        startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, and showing
+        the history to the caller, for a startup restore that runs before the observability plugin subscribes
+        and plugin renderers load. `unarchive=False` leaves an
         archived session archived, for a restore that continues in a fork of it. One another live session
         of this CLAI holds raises `ValueError`. `continuation` is what `continuation(conversation_id)` returned to a
         caller that claimed it already, so it is not looked up again.
@@ -680,6 +683,8 @@ class Session(Generic[DepsT, OutputT]):
                 busy=continuation.busy,
             )
         await self._publish()
+        if record and self.on_resumed is not None:
+            await self.on_resumed()
         return notice
 
     async def continuation(self, conversation_id: str) -> Continuation:
