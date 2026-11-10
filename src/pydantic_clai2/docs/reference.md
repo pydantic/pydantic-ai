@@ -951,7 +951,8 @@ API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick 
 and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
 only in the terminal. `/login NAME` typed in the page opens in the terminal that runs CLAI;
 when there is none, `/login openai-codex` waits in the page too, and a plugin's sign-in asks
-in a dialog for what it would have you paste.
+in a dialog for what it would have you paste. The link a plugin prints is not shown in the
+page: finish in the browser it opens where CLAI runs.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
