@@ -4,12 +4,12 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, get_args
 
 from typing_extensions import deprecated
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._warnings import PydanticAIDeprecationWarning, suppress_provider_field_warnings
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -25,9 +25,11 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     ImageAspectRatio,
     ImageGenerationModelName,
     ImageGenerationTool,
+    ImageQuality,
     ImageSize,
 )
 from pydantic_ai.profiles import ModelProfile
@@ -41,6 +43,8 @@ from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
+
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 # Derived from the native tool's own aliases so widening either can't silently start dropping values.
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
@@ -121,9 +125,8 @@ class _DirectImageGenerationTool:
             result = await self.generator.generate(prompt, settings=self.settings)
         except ContentFilterError as e:
             # Same conversion as the `fallback_subagent_model` subagent path, so the capability fails the
-            # same way on both fallbacks: the outer model gets to rephrase, and no exception escapes
-            # the tool call for a durable engine to retry against an error class its non-retryable
-            # list doesn't name. `ImageGenerator.generate` itself still raises `ContentFilterError`.
+            # same way on both fallbacks: the outer model gets to rephrase the prompt rather than the run
+            # failing. `ImageGenerator.generate` itself still raises `ContentFilterError`.
             raise ModelRetry(str(e)) from e
         if len(result.images) != 1:
             raise UnexpectedModelBehavior(
@@ -275,10 +278,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] | None
+    quality: ImageQuality | None
     """Quality of the generated image.
 
-    Supported by: OpenAI Responses.
+    Supported by: OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
 
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
@@ -350,7 +353,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -623,7 +626,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -754,7 +757,11 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
-        return ImageGenerationTool(**self._image_gen_kwargs())
+        # TODO(v3): when the deprecated `ImageGenerationTool` fields are removed, build the tool through
+        # `provider_settings['openai']` instead. Doing it before v3 would change what those fields read on
+        # the tool, which code reading `tool.quality` and similar still relies on.
+        with suppress_provider_field_warnings():
+            return ImageGenerationTool(**self._image_gen_kwargs())
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Every string and `local=True` land here: the capability has no named local strategy, and
@@ -799,6 +806,18 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
+
+    def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
+        """Also drop overridden options from the tool's `provider_settings`, which would otherwise conflict with them."""
+        if (
+            overrides
+            and isinstance(tool, ImageGenerationTool)
+            and tool.provider_settings
+            and (openai := tool.provider_settings.get('openai'))
+        ):
+            kept = {option: value for option, value in openai.items() if option not in overrides}
+            overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
+        return super()._apply_native_overrides(tool, overrides)
 
     def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""

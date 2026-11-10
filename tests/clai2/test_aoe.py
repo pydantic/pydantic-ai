@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
+from pydantic_clai2.app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import aoe
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -38,14 +38,17 @@ from pydantic_clai2.plugins import (
     TurnStart,
     load_plugin,
 )
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 # AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
 READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
-PANE_PID = 4242
+FAKE_PID = 1 << 22
+"""Above every process ID Linux (under `2**22`) and macOS assign, so no fake process is this one."""
+PANE_PID = FAKE_PID + 4242
 
 
 @dataclass
@@ -191,11 +194,12 @@ async def load(
     terminal: bool = True,
     output: io.StringIO | None = None,
     chosen: bool = False,
+    titles: bool = False,
 ) -> LoadedPlugin[None]:
     host = PluginHost[None](
         name='aoe',
         console=Console(file=output or io.StringIO(), force_terminal=terminal),
-        settings={},
+        settings={'titles': True} if titles else {},
         conversation=conversation,
     )
     loaded = load_plugin(aoe.AoePlugin, host)
@@ -257,7 +261,9 @@ async def test_inert_outside_an_aoe_agent_session(env: Fixture, monkeypatch: pyt
         system.pane_pid = 'not-a-pid'
     else:
         system.processes = (
-            f'{os.getpid()} 300 python\n300 200 /bin/sh -c pytest\n200 {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
+            f'{os.getpid()} {FAKE_PID + 300} python\n'
+            f'{FAKE_PID + 300} {FAKE_PID + 200} /bin/sh -c pytest\n'
+            f'{FAKE_PID + 200} {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
         )
     loaded = await load()
     assert not reporting(loaded)
@@ -322,7 +328,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
         capabilities=[AskUser(answerer=answer)],
     )
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await env.status('idle')
     await env.write('session_id')
     base = env.hooks
@@ -352,6 +358,23 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert not (env.directory / 'status').exists()
     assert (env.directory / 'session_id').exists()
+
+
+async def test_titles_are_opt_in(env: Fixture, tmp_path: Path) -> None:
+    """Without `titles`, AoE keeps the session's own title, so a tied worktree is never moved."""
+    session = make_session(tmp_path)
+    loaded = await load(session)
+    await env.status('idle')
+    await session.prompt('Fix the parser')
+    await env.status('running')
+    await env.status('idle')
+    await session.renamed(conversation_id=session.conversation_id, title='Parser fix')
+    # The worker publishes status before title, so the next status write follows the title step for the rename.
+    await session.prompt('And the lexer')
+    await env.status('running')
+    await env.status('idle')
+    await loaded.dispatch(SessionEnd(reason='exit'))
+    assert [call for call in env.system.calls if call[0] == 'aoe'] == []
 
 
 async def test_a_failed_turn_is_an_error_until_the_next(env: Fixture, tmp_path: Path) -> None:
@@ -536,7 +559,7 @@ async def test_title_push_failures_are_benign(
     else:
         monkeypatch.setattr('shutil.which', missing)
     session = make_session(tmp_path)
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await session.prompt('first title')
     calls = {'tied worktree': 1, 'linked worktree': 1, 'timeout': 1}.get(failure, 0)
     if calls or failure in ('other profile', 'unreadable', 'not current'):
@@ -625,7 +648,7 @@ async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Pat
         # Already titled, so the title push after the session step shows that step has finished.
         summary=ConversationSummary(id='-dash-first', workspace=str(tmp_path), revision=1, title='Saved'),
     )
-    loaded = await load(session)
+    loaded = await load(session, titles=True)
     await env.aoe('rename')
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert (env.state / INSTANCE).read_text() == '-dash-first\n'

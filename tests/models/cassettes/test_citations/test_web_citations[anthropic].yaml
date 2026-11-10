@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use web search to find Pydantic AI's documentation and cite it.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: 1
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '24785'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-2e441f9786bac4bbc94d64c7e8862fb8-973bc9032fc8bbd0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - id: srvtoolu_01PkxKxde1QqhdSe3sJ9e4Yv
+        input:
+          query: Pydantic AI documentation
+        name: web_search
+        type: server_tool_use
+      - caller:
+          type: direct
+        content:
+        - encrypted_content: EuwJCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDP9bziAVIQi7xXDiPRoMZeCrpojbfi6cklBXIjBOrmf7EeWdPZqGfx9pq3zXTEunJIb5GOVjbAr2Dfsq228g/RpTQ1WbYAl5TJEYwZUq7wgmdAPWz386QheWQLgF98P1f51EAR1fNhvyLXju8SanudgiYqbV0r4g3LN1rMK3tw8RvjUUSDtOHeugoMAqtRgNAojihwF7DlSkGfZ/t+Lggb5hdHTvHxVn1ls6PX1fpu7sGa4wKVsH+7Jf34blQSHJhuztUXbpWvot2pRau2Ble1WGyX5R2ceD/QTp1WN5wpNvjF3aRjsi5KYm9wF3baNeXMKh7GjICr0CIq+ct7CxC31L5qUN9MIlmij04emcFFhhzq94y4iqzQbd0p4Y50pY5jINPH2wp4kvpjz7UJaU2bYuFCmMQGV4CtaQa0wLtwDSxK+Jp8NC3ITsH6XdCNSC2xG+N563fIYhGuiNlZMEbsshWOiJvNtRY6QDzc4Ig5u0BVpu8v176WteJq+jQK1FVV/VtteDv357KC6xOhNkSptVDJE3BD93YbN/8xYjz9wMndonqV+gMaWkBAf20Q3TiBLRzvarYTr62MOCpE9m40WSNk2+esh1g1GBS0dW7rZuoapjA3cNXoHFQIcEpxpbEtU3KRZnvMwsyrPMgwa8vJ5PwOemBSn1+B7iZ//aIuy8n7HkrzAL8GlAZi/LU2g57nLIPzKdxUbVXeOrB9RmfzHSXGyiUQf0kFInw+mcc4VAETkCV5TXR56Agd3E4T6kOoTaAfOg6WYG/v37GpzVR7ayIQzm3kki9vdyhnCXwxtB7Xl7veIc8AkDQ0FDfepIjziJWc2npQCnVsl3lxrd2k8q2lJndM+EvWATCFfNegAqB6x8XLxTJfAMw7+tYNi86iZFYxoQTeQSrYJsg5tqfn/Z4NkShYIi3r0jVJOuNGKAE98Un2sBMPUC8B3o1BHIOcmN9b1IrxXlCe7qiLKibtZfKzU0gcQ6g2AFfbpnmrCTqKH8Xj1zbW/Da0xvvDAHt4Q27Re8izYtwkEjYrLQ+gGnh/hJeLmEbYrwxJsn0A1CCS5uxiYr77xCtUqmnhCwt70kNrohzyhSygZ7QWzRaeyEB9HGJuE/3EHfmuKK3mhQbyLQIZHpn5K3twa7mLdzV/VeqPzkcG2go8jDXt2h0hwCA651TtPnxb7hN5DJwtZWvPu70N1uat6Kg+6VqxcZVEfu5xMfnkACGJ8dj7YmABtOcJvHHfDdIFX6Hv3CWROLijq50zIo7qVp9dFWhkwMjhwuagK6+bAJ2yhuCG2IQIdottcgXIusC2ItSp9PPj/I9TTsnMOxOpo+MzfzVb1E0EQn8QzFX7uSP5Qp4HSj3dGn/9O2uge+vVTOOW+dgM8uwkJl5zVSerT1oUlbmJVxue4k7MBnIh7iLzo38NFLHHVo8Fox/O85Fqz+K+oeHYVh1A7L63e6q62y3hJQKNO26sg/GcbGv68IUgpXpkWRVD3SgqZTnaulwqiEiTmrEU2rBJGdNAgyaXqvf5BqJvCnedaUIH159yZ8HoOQRwS6s4PIjwNtc8jp/lW0ZJfGRinDGQoa0GuokHVeE30JRLY1JVhCu5vc0sThxM8FQRRPGAM=
+          page_age: null
+          title: Pydantic Docs - Validation, AI Agents, Logfire Observability
+          type: web_search_result
+          url: https://pydantic.dev/docs/
+        - encrypted_content: EuAQCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAJhVg1nPkPfxgbYExoMpzwBYFcAGJENIgtkIjDai9+/8jyuV4TkLJ99nTPewdT1PP08Vf+Je3v1oALNfLP6ncWZc6/nqS4dNsCfpvgq4w8rTjilFhbBPtqwHed3kpVPZw3/lWSxu19aX81n0G4sfa2n5+o0w+RfwsO5iRaJKY/C4t+tD8uA0OCaK2LCwbWlUNU5U9+cLOJZUkcn2pbP5XjvRPmHx9uRxo5uJ9uFAMvPFNEGOApf6q+4L5yxOT+iGHy/PLDoay4Ja5mPX8eD+GzhiOKDtQcx1NsbRSKlyJh+oXcT5Gnk8S94IDvoT0ABU2bPYQ5NbjAEPCTpqFnW6IngyhWyFthWKw8sPTNsM4EYNyzQiWcH3xDUdy8v4I4TMEnmUkdl89ubmgkvxufjDzME+IRY0qH2UCtNDMaDLfsOb4wSCho5168JGJtHiiLU1HS1jPLSly5+eP6m2twfJk03BjKH+a317izrd/HTIqqg7RMn6aZAsf504YTGSGP6kmeANIGRuunqIxk83jun14/SRLlQoyZVHLUErkH4/qGn2s42HBgjY9IMqEWeubNRG4y+Q5/ds5K+9n3Tri+dLo/5gpB1x1Kr6lOx8yB8Sr2k0kqquA/RtkmgPRWAGs5OGvqBCpuYtBEZo5KyUOGYBul0UFy5aEjRXIgDWGg8Zh+7teZzzDr0qPsgFMKEY70m5yEnxnOFd1Xh8JiKTdLnkZ9pVVvj+9XE7by2r5XcWmEIFDSt5erUFtISwg1vKJ11OqR18gYcdQMkCNY/Ac7LJUtXuoNewghAu8Q01TLHPLoaV2nZuujNiEOMfzsBtBMMaelN/hkcuehSpjtyU/PeawB/XdYOSM/tzwN/2ShtqJhA9V2gZU4nSMOP5IU223lDoyvSJBpBdZ/zYl7A4MK1Q+quvvv5z3kfbFenPdp7D2aO8nfFFnHFOoukfpUqPl4j+P5HzETa5Jc3VXT834Iq5jKeIffVp2nDe0SjR3tX+PD37/0EcpvGwWvy2BKJB/bdibDfBmxLIdOoAJ8r7reqQxdBrClM2uIy7udwgLCbykNBJZyFAZBW3XF2BqhcmBAb9774DsQB/DEAtnuvcPL4x8VStOqcCfOF19s5924imf3hGT74xJqvGV7Yy3Vkaz2T1O5lD6MhlacqqqFGeY8BPyzRpknYAlWNv0ySjLq/cB/P64Kyquczis6SqQcf8Ny8GLIR+vKax4DuMsctMDs0kbF7Q7NNmnRteL8+HvyIoNqg1ef8vxxXZ42QfIoZZcSenYfCElvgy4bwlaustbQfz4GW0STL49Xv6q+osvGeBM7/9D/0IlvyzVlX0ZPtg78bQb/1Z6RjsPnxloNrQg2JVygEpjXb/magmI8GDUbv3N0uFt+2hyK5BEUs2pidpcBQZz2quAg4yY9LyO7pqFL8WPVWa2r6xYWXpnagGtWoKSc2mfpEkp4+rX/1BHl8JuHPSPBE2B1DLP8VQnOVhpNl4o0JmJQ5LHLitQyg5I8+9WW3AAIp0crzPP4doIB6ohhYNx+aXhZz3MczAcq5ZzUEL8v9Yk78fI4iVjH/yvX9SUdGtDETTg7fwjRiKt9mRKE1VmBi6uLsOtEbfKzAOKjBVzCCLSw6sZOFcij77WqEQR/2tOBEMKdQJeeu8Njo7FjFNkfSHlJa4DYjzPWRoNsOXgdzC9uw3JwXSP1mHAlRlfi5OzPK0NMjkEbKP9GwmlxEleZPYZWLwK8fs4GTU4+ErX20CPq0RvmcgyNf6gzt8Y84duOyvCgHdQrFLH9MDek+3b5WCTvG82LZi/9FVkxLnK1uYgmO9Alt8z+ASaoBq2MkbMzlScCcdjmvlMLNT7bkGTtTwNNJUz8zbSKN+LtcSTce1sWtJi6Qj1mbmSswOtrB969y37WIlC7zoONLGuOG6vg5PxHE7gAXf5vtBN4+TVKoIGMjRUqJYZWeqQdY65cXMPobwMYg9hD53t6igVnQrVzN64/lu1Mt7KrWkdNu0z5mtA5VyGmjIA5iG6LXH7UY6x7zgj7lmRCBUCr55sPqAHL7IDOh/VhRQmUMf/b1aeREgEo1Y7fWCj/tipuDmxVyOAwDuswO+r4V4G7/RYHmIyGOtWvQuYsO+w81VQRjNMBExqGlMqOfWFSD7JlFYij/S50xKEqWZczUbmPH0dQE1/Yj/tTdPgSocHM2dhvdZBahRx1g6do99b1yOpExQC4hRQW0DgogzASMZNihIcJ/WJz4TXiewRW5ei4Wzl58uh7DotHlsNr0AZK4jsGUsjrAReMD3bYdzBu6R46DRtVB8L8fELjlTE2Pz/PIOX4hIH6eJQwSujWsyUQ8msx+sMAA6jkRqtU7yFM0Hrz16jP8Ptkr+HeBnvZNIJdN0wMPV7A2m714N43LPcDLB1aMBFqdacqHyvXuKPGfQqSuRBIDMpqZkLo9Rlcmf+zwF/+f5dzMrLtVUV2MgCFbBpxL6RuFAJWORpnsap5bQjj1wHKo4o8QA0KkHCKYgTEV5OJ9mtGrI8PlSYDTYQl+bzcYeJPXiHan2Eu0OkJn2MsXf7hed+rISEasgsgDqrS1DU2U0ddMPrNnIqJrnXERW8QTymI3EUiILaYDHJ6IaRPJXJGMTVVpYmfOL2s8hVIYD50S1mmXe0WLwxdi0zmAWa/CEXJ8Sj5FoWiaOijz3ZZ3KTf9HrPj2uf3wOv2w7WfTjLBpWcfGBzhETyzWHRTxPtW7CAnTtRHrt1RBj8+qgJnfI69jZpLbafbIyqNtySercdDkGB6SvMs3nP32L5gBaN8l+9bfGIYAw==
+          page_age: September 3, 2025
+          title: 'Pydantic AI: A Beginner''s Guide With Practical Examples | DataCamp'
+          type: web_search_result
+          url: https://www.datacamp.com/tutorial/pydantic-ai-guide
+        - encrypted_content: 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
+          page_age: null
+          title: pydantic-ai · PyPI
+          type: web_search_result
+          url: https://pypi.org/project/pydantic-ai/
+        - encrypted_content: EuIICioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDN6qJdE3wW31syVjMhoM4vRoMcSJIBlL1XpHIjAZzVJvfHJYXqAAd7+0jmQJ8Uf5kTKstO3hI6KWjKmDLdXcBhW/UZyTYA3RXEV1jFUq5Qd1nRnzTJHy/S8ofBZZUiNVMhKw+CBqRoKzeaJ6nU5Uqrqjqwv/yLr++Igtz5VuobsE/5KnsEYRHgIoRtFk07jd8ZaQU9qyPRiVR63yAvcaIme4aZqDVdPEPuiCQJsKrn/6sS038jzcswXBkCWg/tz6UMmrUE3JG7jJ/UXrBCwlAqYw43XxgU4W/UIyCWXWfX2D9BpY74zIDw7HidXBn9p8d2RQSiAKsf8n7ZrmyJ0yltoS5Vru+2HGe/IRoMt19ZgiLQOqaMeKAQuVXNVStL1ap4w4vxbJG486YSgPzt0WPZny2iX8M7655GoEA5wtNnhTrhltysYofAxWv11E4kEvJ/U6Qc71zV7qSG50EaFfltR0UjzKb4uH5EIbMcbeNSNBhhCC0F0OQgc3qpumuRh5WgyCRLSfxmkv0LXl9ZbMHI36HqA6xLWIHxBBPIMUu5AMbkHEeNZtNVIBLCscJt2db06tN5hV+CFwfmOhGCsg+KNLG+s/m2au5sipWEyifYKMjYLyFk3f3osU1jpRhpEkaA45on9xse6EAAdGpXqFO0L+ImySRiJ/NI+wOvMRARb/gTMXi/tqjr7p6Elw5k4EGz9u3A/NOLt3MXhbayYpEUf3tRkruV4HvWZWR8TG6RDe2xJ5GUFi+W6IxRXaP82EHYiewER5LwKMhXYJ6Yt7IMnaWB6OpRN2/CzSPfUmF+S5KYazFA6VW6kRj4ppXXkbqIQ6L4xXINVPK6Vm+Jky0SC4WSDR/TBLWJgzuPw9gEGY6xhJfQjQrLpPItMOkIxU2n7U4tIwyaJOYH+36YFrDtsnHJRvsBt4ZaRLNcq5DWxFkmAYU5AxL7BSjMIA9rodPUPK3Ofunp2FdbOoOSW2cPcuiZeRe9BXtRm+u7t7P+UBX4bym4FxW7dbEGB739xkFGas2ciCDD0031+LlY/cd4GqcViibCV5hVjbruVyk7WjeNgPSQYRZpyr4PP/vj7rz97G2pEq7zjatAcnxZXf5jKHgJf9Qr8R9jijwzZKlk+o7/uSc0e/ImXdm7CWmA7i1bwMlHHu+tMiEEYed8dIKVRoVw0wWnoKf2NvM0gjVxr0M0sQRTvQoObnUWvttrKbh+/96Ha4UqVv36HAVDlN/a7YXmszj5MGIH5CmEu6UljFH6gO2E1HbOHSMRvtED1egDoxAPaiFc9HzBKGYtXNYbg1CL5cZ/SgKNHopIF/QPOCoVpr/212g+tWsNyzTVjZMqV7lLc4y8CtTZGK5NRSt9yoMx7NlsmuAvWIr3tQOitKtKyksd/ujeAe+3OccVHESLbduB6f06HXzLNtU9xgo7+vbfudGAM=
+          page_age: null
+          title: Pydantic AI | DBOS Docs
+          type: web_search_result
+          url: https://docs.dbos.dev/integrations/pydantic-ai
+        - encrypted_content: EvYHCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDALTvTJzbo7qUNA3FhoM0tcZkcZcgLNLe32iIjBEZABEmfgq5z+6F23Lx2Wz9byXPXPVKJrQpCYCjDl9CHppl6VdkwYcVS3AKL5teRgq+Qa6HE+n9t0Z0mgJ1VY1trXDfVNOHq8T0xm5MNRYI6o9UZwaMAEbo1K6x4NiItiRpjDuwR8RWvvPTlZFEf/wViejeFNCWHT5lkZyF17rPoOg9TTS/m0g+8i/8fcfYvbe6SK+Bkf6CGlNGph4WQzqJuCQw4UeuXUwOczAHCLryJfnGbeFgycsi936AZN1HmRj3BImBmhiChq6Ge3U6PUf7PN5EfxbyDh43WTRNpjmYgkf7ZWRi6OWo/w0YWEsLFaCzmVW2wMnswYfodMCxZY6ZkeGRCglO0dNJVzg/u/DT0+LcsAB4ocRX0Kl7QW0y/nOXB25tIrH7EQ5nfyi3qhAGe1ghAfTqC7HpL5hi6WXdM+YzWwPHDknI2jWNfd1xclwxx2TYSVfjWOo1NlsceTm5/OcIuQZP9efLO0uMBo+At1086Mk2VSTNglAwy0bfbgUt4ODvxhUz1qz0qTKk6usSYMtLtVmIL84o2iLP7DaLTTSoYizM0yoLlwnpwZw+QEUzZ8H2EuAcenn60qmt77x8+jb4LWv0fa36QleT+kELkQtVsAGBjZk1lXJrenM5Cz38qUsG6Jxjgl/USEMHDJ1zf7xdkx+Se2BcaahRaTENnn/Um6kTs7mzQXnVXWvLV8WA/SWdLQLIQGN5P7PJf5FI1SNfFHdbgKgc6Cn+eR+Otc5EOPChuhh0g5XICegGDhPSIfB8AmDTXv3xHwL1T96GFyfi9AluGoCK6h4/lQqTETrRg0ut3pia5J909SGmcvnJEqU/U4FhuR3WI0OYCIKDbs7dqJGpPVazl7f4NnBRCFT/OIfT55cWr+FADcdXVXipLYc0ZFiTqj1leOHEmNAJlz+16bMECKxS3JupSKr2drygkyRZVgi1J5iYUcQbJH7sicThh7a0fLeIIith08tDT+GTlxKIVmKs1tfd/GLwhz3pTuIG/98IyTcxLf45U6dxjHHgTW7BeqwHSA7H5tLjxPU5a/SJ5SZ35V6SksBbsr++7vU3amz6bnKCRhGhanQG5gY7Ynbixr0kyLcEIc0QqvpUBouiGIU7Tzs7ueoj3Cy9d8FteBvugNkbE4UWJ+cmr+HCfQR3x3w+noJRKH2Lg7Iq2c2obus50TmTncQvRhal1bQCEDjF58Yrf/r+kTOXvrOcLRJfaUl/oVJHINRrKnzurkBZZon0WacGAM=
+          page_age: 2 weeks ago
+          title: 'GitHub - pydantic/pydantic-ai: How Python does AI: agents, realtime voice, image generation, embeddings.
+            Every model, every interface, typed end to end. · GitHub'
+          type: web_search_result
+          url: https://github.com/pydantic/pydantic-ai
+        - encrypted_content: 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
+          page_age: null
+          title: Pydantic AI | Pydantic Docs
+          type: web_search_result
+          url: https://pydantic.dev/docs/ai/overview/
+        - encrypted_content: EucICioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCPpXNi1Ppt3tc1nnRoMMDjjDdytsna/Z/FAIjB90/c8T1CvkoBT3CO/sLcbNXVquzL3IhSc+WDMSoNpm2L4MYSg8qbN6Wp9WCeIbUUq6gd9vIKEMpLS07c02YcfxgMR6zBEsOt92+oZ/qpd0Es/coGSha3QCxxaIg9+jTzYYlkSOmwEHPnKeEOyZb9OxVe6giUs6m56BdX8MOA/zf6YFDy+OJarxxdqq+1GaYipTV+5sHBE+d8VHdP6ionzN2QPBgwt1zIRZEHKsVYkW+ru7V9wqghdcLtLYRl3prhFP9QZyZ5iKd4ToO62p8orBdUWKNRwjocEegC1WqnOsu+BGvvrOPhqWhL8ooomRopzCiPmbbg+w6IoN0HYrBTrnepTHJSNxUev51FFTQI5udOFQDJqK7jPqe3WnJW7mfWFFEBNa+Efe7qbwVPjieqxPtrPOcXFlRvDcC6njyhhR37vsJ5PBaR5v69hW3ENbeKT0cVykGS1fjlbQz15ffe+A2AjLZkI6aG7+OBPFZSyYfD9g4Q5hF4T9E4uLMQ8Xw5MwIldcOEXAvW7bGikOXydFBfen3obmBF/9St88UVAtZeAYgFrkAGi7juQyV3jg5E46nu5AmWVAy1U9et1lDjiMkRs3UYZBKl3ZpMUvW5nq/1AU5P85qQ1+GNNyAp1E91oiAMLNHSXgx7tq+O0jZR9A6bojqmSfoXIJX6wdN5sz7eSafo4DlWfrIK7PMWvW/bPqGWZWMARqKOlKGBdPnBbJj7Ixhbga5avlyJqCrAvpcbsDRbsuB//1KKAvvz2ODqWHNoE+j7IsBm5QPJFCE/PEwfn+n0/DcofIE9HLj074AaucTBGzGTdkXnW0rpsLb3Kh9OgwgwTko5QV+7a6ZaFmTdbiBp/qQsnCNziP+mjNUN2Cl3HzJyqJIGxY9YIPl3lu8L4DaxkwZfE56LPOA9zZTRADxS8hNAmuhHh1BDtIcYOgh6+qS+Ul/RMXWkNcwPS4dMfCvDViIejayh5gMAOYbNmt0QXEJWNUAB6VTB/hGr5TTGh+m3aZHUhV6n6LUpcsIrRY6Oag+Uyn1pYgTtZQ3SeXrKCMN8/4yICZNsMPerqp1M1qiXKc9buUu0p4hz9hE+4xk28cRBuHCtYQKHdEDEaq/tZR2BeHuU9qaR8ORZ5tcaBC3JuKjJqHbp2cJDCWkeI2gllYlKlMSc0NsTj9cL/iZHiqaDreaqtGkU7C4s/8nbzUPMTJ/HhVIY9KioLCjqVrcGxOaKb4f9BR+7/1pllW8nzVEbLcZ/AseDv68lvvE72B7K6BoCRbvDtS/g4AqScD5oIFbYXTwNOUN+huKsUlE434msnLCfAXO1jLLepEwul24+RIrKhLTZ7Qo5fn8iPtYvtud57CyvAD6MXYy/UmP5naM9w4fX+We+veaXgrAVbuhRpRFWjvGAYAw==
+          page_age: 1 week ago
+          title: Pydantic | The end-to-end AI engineering stack
+          type: web_search_result
+          url: https://pydantic.dev/
+        - encrypted_content: EowDCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPM+tSMejFCHLCvsrxoMZdYSO29HTHD9ZK90IjCYjTd52IQRzuD0ASVuzz2Kvb2ZWH8udTTMnaQL2C6p5ECpPGziHZ7lnvvoWMiDzGYqjwJ67PTh1HRgGB12U7Exlm8PiOwwnnXh9DvXQBjZsl9+VuVCNf+j9kLFr1WCfQeBqeeZjCWxEnnjV4zom+HYrNEib34nhCLHirJ8cINypD2DxuZTLL2gCg0xaJgaj7mR+Z4X2Ez8SJsr/MH5a6b/jmmzX0XIJ9XEnpiHqueZT8yddrEzevP7qDZ1lhVpiDnei6uSpw9FvmfLReGDLXqECXCfrZzSVQLvP9+bPVg5mymeMV3fJLwAO3KmnIfOyHu/FWfl6m6TB7B/Lw4+CoA0i/rHZHjIKorQofVv/LeheE4Xb1naAKqldw4HrJRkfI3/VG9/BD09XYomaknpw2H6FUcw0S/A8KG10ur/Id3BW40KGAM=
+          page_age: null
+          title: Agent libraries - Pydantic AI | Pydantic Docs
+          type: web_search_result
+          url: https://docs.pydantic.dev/dev/examples/pydantic_ai/
+        - encrypted_content: EvYGCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDB5GPLuJ5HAfFaFV/hoMH+HEpfjW34h5802aIjA7Cui8Ug/e8492llyrLTTdrYrKwJObqK3UqAoukbnG5lrwGIzTGd1GcVYLonzyYooq+QUkllRs87I5NbSOfN7dnJALxFrJUC9PjDDsUy62lF0fOLXl0jjJneahQ426Z1Q0T0lrOC3p0uUW+P8O8opd2lCYr5SLxJblo6dHl+wfq8HHrrYrb7AV7C3tuhGY8Yhgr8DJM9uW26JeOegwwMJzjTd/hXIU3Ijm1CuTU5NMmrgB9DoDycqJ8uI+iNj7lmAIc5RQ1WfU1LQUgg9TjUMVzP5QmFUFbgx8fHAjBVCTRNoX6D5U9zw/NwhNWgIrZJZqDqZhCpRRVzoy2f1J5v6pTE8EPXFr8jNuzOWWCDpEr/NoMUW7WiqZ0/KJX+85zdnlSt16twtRcXEcDxqprWuE4oTHSsg7pTK3A86xr1CUnEo09tzgcZaeF+EvQx1W9u0uqkAKgTQlHt5tsG3ZGTFs0oBliKFEA6qcCqoZ2AVxOkuTaWJmEnRnJELppnQ5DYU/O8uYPIT18dZTorhOURTJtY370ZrOmV9J52G00tIDon8UikiE+DRj4HZXziQcoFkvZgjT0/DtZoXluqMl/lF53s0mnO8NlnjBEu+ltezlNeb9cZo+PUDU0jnm35z9wY3mCFQ0mm/ujZtiuM0nxX34IEX0gWf8sIdSB+VMorWz5n8O89lOtDt6mEYSUNwH71bjY9VVDzJydPY1dN+uM4xTDWKYWjr2cUccCe3y6XhPyr+7McVUIGY6i0Tbx9Luua5VJbY6D06BXIHgSj1AXQ4JgBjcjazW04FLVYcY/qD+XuNDBNzWHdCujTnkc08CsIXSuk4fOnBfkN/+91/5RTKUs5lPLMbTJvfKLxFTLR5X3dws03Z9dZY7TRZiz3CBX7Y6sN0NMkQdJQ6NsUru6d4m8CTXufqPzTgxggzoulb2h+J2WrCbaeBPVXRbYaeaWWdiUEtf58vZqcl7HMIjwLEyCScxqIdTTYsVr2RtODgdesj1APZFv8odU9zD0DqeyBiuZDVrw9YnoX6IDYQ8s1qchjtzqfVhNv5NnYAoFdqpMY7ezQG87O7Y7lATNhgD
+          page_age: 2 weeks ago
+          title: PydanticAI - Together AI docs
+          type: web_search_result
+          url: https://docs.together.ai/docs/pydanticai
+        - encrypted_content: EpgJCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDH3kQLZnALYtYB0HURoMYVEN7uYLfrLeunkkIjBGJRhabZOwmA6MfE2ejr7Iu/zfLK2u6ey2QIKxrNqQi3NZ605Jods0Lgu+EcGhg5Yqmwh1OhUFwmW2ZTenUu8uBv8+6Nc1aIOD91uKqdfJ3GNUG+mbnojNFl2gXeiebmm8Bl4yHc5g9y8Fvyg0O7rpTeSnr0W5x3ImCfS9ES5xyJ7VxC30THqfpwzPhm4dD0ULVbqf869Jy296zVMby7VKAVEVUvbNtQTkcVurSbj6dcGKnqT9i0hk2TuAf0yS8JtDoHQRe9hx3GkhVWmUopMwnzBu7As6yqhkTkijnu+9O7U7ma+tWWcxw4Iev+RLWqqswYTlrIg6753alEmacses5ipkF1fpTFAxnpmU0OoQEmrHTphPOCV5zo+0Lyn/bs0Nzdma1qW0V6ea3LUdeYoM4YvDcK1D2WeqA8Hp47d/UcNetk2JUHZPpnCvm1bZY4ZNtGoPOY6x4ThDBDbMRSWyFyT2a91PHZMkS6AjghxWNgHrJ42dVzacPQYMQM619KzIHBIfv72sskW9GuaG1osC1ap1Hz2lV5yYS5umwb6PwuY+3HYdNB8FOaXgC2DUjc5QY2sWXg/wcgNaTP1+C5eI4z0PX7gQ/7YMMQj75VNOw+laHaryQH0J6zQKQK+MHdGu8ngiLrx9yjLOHHWIMN1oCz/O3cTvro1EzXEBMC+Ya36/+urjMrDv1eYMiqEiNUQlQqpA3iPpXXbhUkrQuZFibvg7CJ2U1HsqjQYOuSjBksH06JuPVqwjolTDnmVLKXZT5cwNsfW0rWTFzWCpeSFb7+h2nV/bwYdATSX5KF8GWtAOrQaAqNoLmPB3ffNavAG79pShSUB1YLcm23g5XiZyNcyA9Eodqu3fPdOBaDxX2Nndk3SMH/zIZl90zIY/dNn/ZAhxOqgxdu04WKTyPBNTla9WrS9WoLSlK5ynEI+o1HIlQa9qRRuQU4ANyZKjFPUi5wLMRjJ7hscycm6wuaxqHrstYedz4UaoWwwGaD3sY9qX5YnQRbdU/OgODvMiQgs4F57LboUXHj9AHa3+NYdicEY+ldzG8KRztBmaoIEBU6uiZbq+4O6kw3nLdBi/jldrOuDM3BG9bR0QoJ20Jr8FbXXPpwzH1Uxg6dpWtIDbX5kLWuvAYLFliqaM0l1hmNnuTgbH3iBAFDhElNr0x7FU9778IsfyN/3MWwzlHAZW+1EAmA5myjhKKNLNlS9uJUDQgHaNyva6bfDCfZ1Hgu5rE1Uy447kpZtP7H7VrHr6qsqIH22SlxtR7YcpXuinl3Hd5lIiEmS9Za1rvdX/b/wcRaIdpgM4AqtjIAd5pPm8tw9l/rmqrHnxn0PHXasKDPXzaSmWhb8dXzTSElqduQzrBVUMLprOUArxKP+ScpRp75JEvkM/W+/cY97YWNTUMcJ6MOt+F2VWk/pLs68Peo4/LJdteFUmMd7b7XcuFmLKajkrlySmqkwtdL14MDmZGAM=
+          page_age: null
+          title: pydantic_ai.agent | Pydantic Docs
+          type: web_search_result
+          url: https://pydantic.dev/docs/ai/api/pydantic-ai/agent/
+        tool_use_id: srvtoolu_01PkxKxde1QqhdSe3sJ9e4Yv
+        type: web_search_tool_result
+      - text: 'I found Pydantic AI''s documentation for you. '
+        type: text
+      - citations:
+        - cited_text: 'View the complete documentation at ai.pydantic.dev. '
+          encrypted_index: Eo8BCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDoBkHVvZsWpz+3uExoMKGCD8nap4fNpfAoAIjDLhllgYWD1h15q0LRd8t2aUDd8NmeYz/Qx1JK36NCs05jRyw68+BuNqMgsy3DB3i0qE1x7LbcVB6Zl11UapwKiD2l6U1cYBA==
+          title: pydantic-ai · PyPI
+          type: web_search_result_location
+          url: https://pypi.org/project/pydantic-ai/
+        - cited_text: 'View the complete documentation at ai.pydantic.dev. '
+          encrypted_index: Eo8BCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFxYb0Pp760zP6W0whoMfSbfdiixAyPQfMD3IjDuQa78TGcxVDqDLPdSc1hYTzPN6iSBkC51JZgQTz4pZXwfhLICT43uFPT8pB25THwqEwwgKY85Qw3SPMb6PZkeTH4GxYIYBA==
+          title: 'GitHub - pydantic/pydantic-ai: How Python does AI: agents, realtime voice, image generation, embeddings.
+            Every model, every interface, typed end to end. · GitHub'
+          type: web_search_result_location
+          url: https://github.com/pydantic/pydantic-ai
+        text: The complete documentation is available at ai.pydantic.dev
+        type: text
+      - text: |+
+          .
+
+        type: text
+      - citations:
+        - cited_text: 'Pydantic AI is the Python AI SDK: a typed, extensible agent loop with every model a string swap away. '
+          encrypted_index: Eo8BCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDImEbI7ApwlnWbgk+xoM5xKkXKg7hN1E6RFUIjDn4SGa8DgRkJv1TkNsmD7Vjm02EfkO6Fr8HFTuQZMwGHKxgUqpFOI2T1ik7ZzfXFkqEysG5vbKU115WWlqhjXjIi7BBm0YBA==
+          title: Pydantic AI | Pydantic Docs
+          type: web_search_result_location
+          url: https://pydantic.dev/docs/ai/overview/
+        text: 'Pydantic AI is the Python AI SDK: a typed, extensible agent loop with every model a string swap away'
+        type: text
+      - text: '. '
+        type: text
+      - citations:
+        - cited_text: 'The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call,
+            on a durable background queue, or as a plain obje...'
+          encrypted_index: Eo8BCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDG+4KmJIxTNB4Hj7mBoM+xZiyEKYw3dL9szOIjBz/O3dgIVBZZJrAc9VquhTrVj0hEsRkSaFjqPl7deYZUdzIAFDmnpadIasEzZzKHwqE0WuLGKZDWC7smTaDbr0D+o+bjQYBA==
+          title: Pydantic AI | Pydantic Docs
+          type: web_search_result_location
+          url: https://pydantic.dev/docs/ai/overview/
+        text: 'The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call, on a durable
+          background queue, or as a plain object you call run() on'
+        type: text
+      - text: ".\n\nThe documentation covers topics including "
+        type: text
+      - citations:
+        - cited_text: 'Structured outputs, typed dependency injection, typed tools: your IDE, type checker, and coding agent
+            all know what your agent returns, moving whole c...'
+          encrypted_index: EpABCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLJpXYapotljML3VLxoMoXKMU9cbN/N7FGe4IjDX33xbt6LuPDA1hKoPQ6qznpNMAalhbjDkgc/ATsVklOjoYkMveQFpRIkXnY6bLxEqFD/aPB5ZbInpyd6P+Use1E+Lyd+FGAQ=
+          title: Pydantic AI | Pydantic Docs
+          type: web_search_result_location
+          url: https://pydantic.dev/docs/ai/overview/
+        text: structured outputs, typed dependency injection, typed tools
+        type: text
+      - text: ', and '
+        type: text
+      - citations:
+        - cited_text: Virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral,
+            xAI, Ollama, and dozens more), swappable with...
+          encrypted_index: Eo8BCioIEhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGl/nXwRdnLT6WVzARoM8OADAzaVE4TzIdIIIjBPRoQ22OrF6Wgn68KeDQoUngWaIms/EA3rNOy68XwL6Mrq5Nb1LbD4kTw0fMG1JyEqE84L6t2C7t0k9lxQeznPqzjcwnYYBA==
+          title: Pydantic AI | Pydantic Docs
+          type: web_search_result_location
+          url: https://pydantic.dev/docs/ai/overview/
+        text: support for virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq,
+          Mistral, xAI, Ollama, and dozens more)
+        type: text
+      - text: .
+        type: text
+      id: msg_011CeDnyfbTzJQQ9h2RQ4U5d
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 10284
+        output_tokens: 305
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

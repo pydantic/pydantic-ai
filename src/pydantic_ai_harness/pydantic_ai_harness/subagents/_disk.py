@@ -39,6 +39,7 @@ from typing import TypeGuard
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none
 
 
 @dataclass(frozen=True)
@@ -212,19 +213,13 @@ def _warn_unreadable(path: str, exc: Exception) -> None:
     warnings.warn(f'Skipping unreadable disk sub-agent file {path!r}: {exc}', stacklevel=3)
 
 
-async def _is_dir(workspace: Workspace, path: str) -> bool:
-    try:
-        return (await workspace.stat(path)).is_dir
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-
-
 async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition]:
     """Every `.md` or `.toml` definition directly in `folder`, sorted by name; a missing folder has none.
 
     Sorted order keeps the roster, and so the prompt listing, the same for every run over the same files.
     """
-    if not await _is_dir(workspace, folder):
+    folder_entry = await stat_or_none(workspace, folder)
+    if folder_entry is None or not folder_entry.is_dir:
         return []
     result: list[DiskDefinition] = []
     entries = sorted(await workspace.list_dir(folder), key=lambda entry: entry.name)

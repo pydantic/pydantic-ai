@@ -1,5 +1,6 @@
 """Workspace API, backend protocols, and implementations."""
 
+from .authority import AuthorityWorkspace
 from .local import LocalWorkspaceBackend
 from .protocol import (
     CommandResult,
@@ -21,6 +22,7 @@ from .unavailable import UnavailableWorkspace
 from .workspace import Workspace, WrapperWorkspace
 
 __all__ = (
+    'AuthorityWorkspace',
     'CommandResult',
     'FileEntry',
     'LocalWorkspaceBackend',

@@ -13,21 +13,27 @@ import anyio
 from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
+from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
+    BaseObjectOutputProcessor,
+    BaseOutputProcessor,
     OutputDataT_inv,
     OutputSchema,
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
+    truncated_output_message,
 )
 from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     OutputDataT,
+    PendingModelResponse,
     ToolOutput,
 )
 from .tool_manager import ToolManager
@@ -56,11 +62,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
+    _model_id: str | None = field(default=None, repr=False)
+    """The identifier of the model the stream came from, which its response records as `model_id`."""
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
+    _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
+    """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -215,6 +225,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         response = self._raw_stream_response.get()
+        response.model_id = response.model_id or self._model_id
         response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
         return response
 
@@ -236,6 +247,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
@@ -282,6 +294,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        if not allow_partial and message.state == 'suspended' and self._output_schema.allows_pending_model_response:
+            # The stream ended while the provider is still working on the response, as the run was asked to.
+            return cast(OutputDataT, PendingModelResponse(response=message))
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover
@@ -327,16 +342,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 if not message.tool_calls:
                     text = text or text_before_native_tool_call
 
-                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-                return await run_output_with_hooks(
+                return await self._validate_text_output(
                     text_processor,
-                    text=text,
-                    run_context=run_ctx,
-                    capability=self._root_capability,
-                    schema=self._output_schema,
+                    text,
+                    # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
+                    cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
                     allow_partial=allow_partial,
-                    wrap_validation_errors=False,
-                    output_validators=self._output_validators,
                 )
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -347,6 +358,28 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
+            raise
+
+    async def _validate_text_output(
+        self, text_processor: BaseOutputProcessor[OutputDataT], text: str, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Run process hooks (including output validators) for text output, which the token limit may have `cut_off`."""
+        run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+        try:
+            return await run_output_with_hooks(
+                text_processor,
+                text=text,
+                run_context=run_ctx,
+                capability=self._root_capability,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
+            if cut_off and not allow_partial and is_incomplete_json(e):
+                raise exceptions.UnexpectedModelBehavior(truncated_output_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
@@ -439,7 +472,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
-                lambda: self._raw_stream_response.usage.input_tokens,
+                lambda: context_input_tokens(self._raw_stream_response.get()),
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
@@ -553,19 +586,22 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield event
 
     async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-        while True:
-            # Drain events emitted into the run's event buffer before each pull, so they interleave with the
-            # model's own events. Events emitted while a pull is in flight surface on the next pull,
-            # or through the response-handling node's stream once this stream is exhausted.
-            while buffer := self._event_stream_buffer_getter():
-                yield buffer.pop(0)
+        try:
+            while True:
+                # Drain events emitted into the run's event buffer before each pull, so they interleave with the
+                # model's own events. Events emitted while a pull is in flight surface on the next pull,
+                # or through the response-handling node's stream once this stream is exhausted.
+                while buffer := self._event_stream_buffer_getter():
+                    yield buffer.pop(0)
 
-            try:
-                event = await anext(base_iter)
-            except StopAsyncIteration:
-                return
+                try:
+                    event = await anext(base_iter)
+                except StopAsyncIteration:
+                    return
 
-            yield event
+                yield event
+        finally:
+            await _utils.aclose_if_supported(base_iter)
 
 
 @dataclass(init=False)
@@ -1221,10 +1257,16 @@ def _get_usage_checking_stream_response(
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
-            async for item in events:
-                limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(get_request_input_tokens())
-                yield item
+            try:
+                async for item in events:
+                    # Omitted usage is warned about once the response completes, not on every event.
+                    limits._check_token_limits(get_usage())  # pyright: ignore[reportPrivateUsage]
+                    # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
+                    if limits.per_request_input_tokens_limit is not None:
+                        limits.check_per_request_input_tokens(get_request_input_tokens())
+                    yield item
+            finally:
+                await _utils.aclose_if_supported(events)
 
         return _usage_checking_iterator()
     else:

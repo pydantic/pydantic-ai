@@ -60,7 +60,10 @@ _LOOP_START_TIMEOUT_SECONDS = 5.0
 """How long to wait for a scheduled agent run to start before failing the invocation."""
 
 _RETIRED_LOOP_GRACE_SECONDS = 5.0
-"""Maximum extra time a retired loop gets to finish cancellation cleanup before it is stopped."""
+"""Maximum extra time a retired loop gets to finish cancellation cleanup.
+
+See `_AgentLoop.retire` for what happens at the deadline.
+"""
 
 _LOOP_LIVENESS_POLL_SECONDS = 5.0
 """How often the handler thread re-checks that the agent loop is still alive while blocked.
@@ -94,6 +97,9 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: StepConfig | None = None,
     ) -> Any: ...
+
+
+ContextT = TypeVar('ContextT', bound=DurableStepContext)
 
 
 class _AgentLoop:
@@ -146,9 +152,13 @@ class _AgentLoop:
     def retire(self, loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
         """Stop handing `loop` to later invocations, then stop and close it.
 
-        The retired loop gets a bounded grace period for the abandoned task's cleanup. It stops as
-        soon as cleanup finishes, or at the grace deadline if cleanup refuses to finish. The loop's
-        own thread closes it after `run_forever()` exits.
+        The retired loop gets a bounded grace period for the abandoned task's cleanup, and stops as
+        soon as cleanup finishes. At the grace deadline, whatever is still running is cancelled and
+        the loop stops a few iterations later (on Python 3.11, once jobs already submitted to its
+        default executor finish); a cleanup that suppresses the cancellation, or is still awaiting
+        something by then, is left unfinished. If user code cancels this method's own cleanup, as
+        one that cancels every task on the loop does, the loop just stops at the deadline. The
+        loop's own thread closes it after `run_forever()` exits.
         """
         with self._lock:
             if self._loop is not loop:
@@ -157,43 +167,53 @@ class _AgentLoop:
             self._loop = None
             self._thread = None
 
-        def arrange_shutdown() -> None:
-            deadline = loop.time() + _RETIRED_LOOP_GRACE_SECONDS
-            loop.call_at(deadline, loop.stop)
-
-            async def clean_up() -> None:
-                async def wait_within_budget(awaitable: Awaitable[object]) -> None:
-                    future = asyncio.ensure_future(awaitable)
-                    done, _ = await asyncio.wait((future,), timeout=max(0, deadline - loop.time()))
-                    if not done:
-                        future.cancel()
-
-                if task is not None and not task.done():
-                    await wait_within_budget(asyncio.shield(task))
-
-                # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
-                # before taking the snapshot that will be drained.
-                await anyio.sleep(0)
-                current = asyncio.current_task()
-                pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
-                if task is None:
-                    for pending_task in pending:
-                        pending_task.cancel()
-                if pending:
-                    await wait_within_budget(asyncio.gather(*pending, return_exceptions=True))
-
-                await wait_within_budget(loop.shutdown_asyncgens())
-                await wait_within_budget(loop.shutdown_default_executor())
-                loop.stop()
-
-            loop.create_task(clean_up())
-
         try:
-            loop.call_soon_threadsafe(arrange_shutdown)
+            loop.call_soon_threadsafe(_arrange_shutdown, loop, task)
         except RuntimeError:
             pass
         if thread is not None:  # pragma: no branch - every published loop has an owning thread
             thread.join(timeout=0.1)
+
+
+def _arrange_shutdown(loop: asyncio.AbstractEventLoop, task: asyncio.Task[object] | None) -> None:
+    """Start the retired `loop`'s cleanup, and stop the loop at the grace deadline once it is done. Runs on `loop`."""
+    deadline = loop.time() + _RETIRED_LOOP_GRACE_SECONDS
+    cleaning = loop.create_task(_clean_up_retired_loop(loop, task, deadline))
+    # Stopping at the deadline itself would end the loop before `_clean_up_retired_loop` wakes from its
+    # timed-out waits to cancel them, leaving it and the abandoned task pending on a closed
+    # loop. Instead, at the deadline, stop once `_clean_up_retired_loop` has finished, or right then if user
+    # code already cancelled it along with every other task on the loop.
+    loop.call_at(deadline, lambda: cleaning.add_done_callback(lambda _: loop.stop()))
+
+
+async def _clean_up_retired_loop(
+    loop: asyncio.AbstractEventLoop, task: asyncio.Task[object] | None, deadline: float
+) -> None:
+    if task is not None and not task.done():
+        await _wait_within_budget(asyncio.shield(task), loop, deadline)
+
+    # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
+    # before taking the snapshot that will be drained.
+    await anyio.sleep(0)
+    current = asyncio.current_task()
+    pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
+    if task is None:
+        for pending_task in pending:
+            pending_task.cancel()
+    if pending:
+        await _wait_within_budget(asyncio.gather(*pending, return_exceptions=True), loop, deadline)
+
+    await _wait_within_budget(loop.shutdown_asyncgens(), loop, deadline)
+    await _wait_within_budget(loop.shutdown_default_executor(), loop, deadline)
+    # Stop on the next iteration, which delivers the cancellations queued above.
+    loop.call_soon(loop.stop)
+
+
+async def _wait_within_budget(awaitable: Awaitable[object], loop: asyncio.AbstractEventLoop, deadline: float) -> None:
+    future = asyncio.ensure_future(awaitable)
+    done, _ = await asyncio.wait((future,), timeout=max(0, deadline - loop.time()))
+    if not done:
+        future.cancel()
 
 
 _agent_loop = _AgentLoop()
@@ -252,51 +272,7 @@ class StepBridge:
             )
 
         loop = asyncio.get_running_loop()
-
-        async def run_operation() -> T:
-            return await operation()
-
-        def body(_step_context: Any) -> T:
-            # Runs on the handler thread, inside `context.step(...)`. Hand the real work back to
-            # the agent loop and block until it finishes.
-            result: Future[T] = Future()
-            step_context = contextvars.copy_context()
-            step_context.run(_in_step_body.set, True)
-
-            def schedule() -> None:
-                try:
-                    # Creating the task inside `step_context` makes it the task's context.
-                    task: asyncio.Task[T] = step_context.run(lambda: loop.create_task(run_operation()))
-                except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
-                    result.set_exception(exc)
-                    return
-                task.add_done_callback(lambda finished: _forward(finished, result))
-
-            try:
-                if not loop.is_running():
-                    raise RuntimeError
-                loop.call_soon_threadsafe(schedule)
-            except RuntimeError:
-                raise AgentLoopGone(
-                    f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
-                    'scheduled, so its result can never arrive. This should not happen; please report '
-                    'it at https://github.com/pydantic/pydantic-ai/issues.'
-                ) from None
-            while True:
-                try:
-                    return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)
-                except FutureTimeoutError:
-                    # A step can legitimately run for minutes, so the wait itself must not time
-                    # out. What it must not do is block forever on a loop that is no longer there
-                    # to deliver the result: the loop is what runs the done-callback, so if it has
-                    # stopped, nothing will ever resolve `result`.
-                    if loop.is_running() or result.done():
-                        continue
-                    raise AgentLoopGone(
-                        f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
-                        'flight, so its result can never arrive. This should not happen; please report '
-                        'it at https://github.com/pydantic/pydantic-ai/issues.'
-                    ) from None
+        body = functools.partial(_run_step_body, loop, name, operation)
 
         async with self._order:
             future: asyncio.Future[T] = loop.create_future()
@@ -349,6 +325,65 @@ class StepBridge:
                 item.reply(True, value)
 
 
+def _run_step_body(
+    loop: asyncio.AbstractEventLoop, name: str, operation: Callable[[], Awaitable[T]], _step_context: object
+) -> T:
+    # Runs on the handler thread, inside `context.step(...)`. Hand the real work back to
+    # the agent loop and block until it finishes.
+    result: Future[T] = Future()
+    step_context = contextvars.copy_context()
+    step_context.run(_in_step_body.set, True)
+
+    try:
+        if not loop.is_running():
+            raise RuntimeError
+        loop.call_soon_threadsafe(_schedule_step_operation, loop, step_context, operation, result)
+    except RuntimeError:
+        raise AgentLoopGone(
+            f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
+            'scheduled, so its result can never arrive. This should not happen; please report '
+            'it at https://github.com/pydantic/pydantic-ai/issues.'
+        ) from None
+    while True:
+        try:
+            return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)
+        except asyncio.CancelledError:
+            # A `BaseException` would bypass the SDK's step failure handling and crash the
+            # invocation, so report the cancelled operation as an ordinary step failure.
+            raise RuntimeError(f'Durable step {name!r} was cancelled before it finished.') from None
+        except FutureTimeoutError:
+            # A step can legitimately run for minutes, so the wait itself must not time
+            # out. What it must not do is block forever on a loop that is no longer there
+            # to deliver the result: the loop is what runs the done-callback, so if it has
+            # stopped, nothing will ever resolve `result`.
+            if loop.is_running() or result.done():
+                continue
+            raise AgentLoopGone(
+                f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
+                'flight, so its result can never arrive. This should not happen; please report '
+                'it at https://github.com/pydantic/pydantic-ai/issues.'
+            ) from None
+
+
+def _schedule_step_operation(
+    loop: asyncio.AbstractEventLoop,
+    step_context: contextvars.Context,
+    operation: Callable[[], Awaitable[T]],
+    result: Future[T],
+) -> None:
+    try:
+        # Creating the task inside `step_context` makes it the task's context.
+        task: asyncio.Task[T] = step_context.run(lambda: loop.create_task(_run_operation(operation)))
+    except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
+        result.set_exception(exc)
+        return
+    task.add_done_callback(lambda finished: _forward(finished, result))
+
+
+async def _run_operation(operation: Callable[[], Awaitable[T]]) -> T:
+    return await operation()
+
+
 def _forward(task: asyncio.Task[T], target: Future[T]) -> None:
     """Resolve `target` from a finished task, without ever leaving it unresolved.
 
@@ -394,9 +429,9 @@ def in_durable_context() -> bool:
 
 @overload  # pragma: no cover - typing-only overload
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
     /,
-) -> Callable[[Any, DurableStepContext], T]: ...
+) -> Callable[[Any, ContextT], T]: ...
 
 
 @overload  # pragma: no cover - typing-only overload
@@ -406,21 +441,21 @@ def durable_agent_handler(
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> Callable[
-    [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-    Callable[[Any, DurableStepContext], T],
+    [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+    Callable[[Any, ContextT], T],
 ]: ...
 
 
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]] | None = None,
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]] | None = None,
     /,
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> (
-    Callable[[Any, DurableStepContext], T]
+    Callable[[Any, ContextT], T]
     | Callable[
-        [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-        Callable[[Any, DurableStepContext], T],
+        [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+        Callable[[Any, ContextT], T],
     ]
 ):
     """Adapt an async handler body for the AWS durable execution decorator.
@@ -442,8 +477,8 @@ def durable_agent_handler(
     """
 
     def decorate(
-        handler: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
-    ) -> Callable[[Any, DurableStepContext], T]:
+        handler: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
+    ) -> Callable[[Any, ContextT], T]:
         if not inspect.iscoroutinefunction(handler):
             raise UserError(
                 '`@durable_agent_handler` requires an async handler. `@durable_execution` must be the '
@@ -452,7 +487,7 @@ def durable_agent_handler(
             )
 
         @functools.wraps(handler)
-        def wrapped(event: Any, context: DurableStepContext) -> T:
+        def wrapped(event: Any, context: ContextT) -> T:
             return run_durable(lambda: handler(event, context), context=context, cancel_timeout=cancel_timeout)
 
         return wrapped
@@ -560,12 +595,12 @@ def _run_durable_on_agent_loop(
             )
         return bridge.consume()
     finally:
+        _active_bridge.reset(token)
         # The loop outlives the invocation, so a run abandoned by a suspension or an error escaping
         # the handler would otherwise keep running into the next warm invocation. Wait for it to
         # finish unwinding: an agent coroutine's `finally`/`__aexit__` cleanup runs during
         # cancellation, and letting that overlap the next invocation would touch shared provider
         # resources after the execution it belonged to was abandoned.
-        _active_bridge.reset(token)
         if tasks:  # pragma: no branch - only empty when scheduling itself failed
             task = tasks[0]
             finished = threading.Event()

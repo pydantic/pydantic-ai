@@ -10,11 +10,12 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
+    Mapping,
     Sequence,
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
 
@@ -27,7 +28,9 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
+    _system_prompt,
     _utils,
     exceptions,
     messages as _messages,
@@ -43,7 +46,7 @@ from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, PendingModelResponse
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
@@ -286,6 +289,10 @@ class AgentRunEvents(
         if self._task is not None:
             return
 
+        # Whoever is iterating is on the stack now, but not in the background task that runs the agent.
+        if _display.banner_pending():
+            self._binding.started_by_installed_package = _display.started_by_installed_package(inspect.currentframe())
+
         # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
         # and keeping the run no more than one event ahead of the consumer.
         send_stream, receive_stream = anyio.create_memory_object_stream[
@@ -490,6 +497,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -518,6 +526,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -545,6 +554,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -591,6 +601,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -613,72 +627,80 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
-        async with self.iter(
-            user_prompt=user_prompt,
-            output_type=output_type,
-            conversation=conversation,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            spec=spec,
-        ) as agent_run:
-            # Drive via next() so capability hooks fire for each node. `next()` already streams a
-            # node when a capability's `wrap_run_event_stream` needs its events; a `run()`-level
-            # `event_stream_handler` needs the stream handed to it as well, which takes a custom
-            # step function. Either way, streaming happens AFTER before_node_run (which may
-            # replace the node) and INSIDE wrap_node_run.
-            _stream_step: (
-                Callable[
-                    [_agent_graph.AgentNode[AgentDepsT, Any]],
-                    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
-                ]
-                | None
-            ) = None
-            if (_handler := event_stream_handler) is not None:
+        agent_run = node = _stream_step = None
+        try:
+            async with self.iter(
+                user_prompt=user_prompt,
+                output_type=output_type,
+                conversation=conversation,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                spec=spec,
+            ) as agent_run:
+                # Drive via next() so capability hooks fire for each node. `next()` already streams a
+                # node when a capability's `wrap_run_event_stream` needs its events; a `run()`-level
+                # `event_stream_handler` needs the stream handed to it as well, which takes a custom
+                # step function. Either way, streaming happens AFTER before_node_run (which may
+                # replace the node) and INSIDE wrap_node_run.
+                _stream_step: (
+                    Callable[
+                        [_agent_graph.AgentNode[AgentDepsT, Any]],
+                        Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+                    ]
+                    | None
+                ) = None
+                if (_handler := event_stream_handler) is not None:
 
-                async def _stream_and_advance(
-                    n: _agent_graph.AgentNode[AgentDepsT, Any],
-                ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-                    if self.is_model_request_node(n) or self.is_call_tools_node(n):
-                        # `node.stream()` applies the capability chain, so the handler sees the same
-                        # events a capability's `wrap_run_event_stream` yields.
-                        async with n.stream(agent_run.ctx) as stream:
-                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            await _handler(run_ctx, stream)
-                            # If the handler returns normally, drain whatever it left unconsumed so the
-                            # node can finish through any stream wrappers. Cancellation paths interrupt
-                            # the handler and do not reach this drain.
-                            async for _ in stream:
-                                pass
-                    return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
+                    async def _stream_and_advance(
+                        n: _agent_graph.AgentNode[AgentDepsT, Any],
+                    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                        assert agent_run is not None
+                        if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                            # `node.stream()` applies the capability chain, so the handler sees the same
+                            # events a capability's `wrap_run_event_stream` yields.
+                            async with n.stream(agent_run.ctx) as stream:
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                await _handler(run_ctx, stream)
+                                # If the handler returns normally, drain whatever it left unconsumed so the
+                                # node can finish through any stream wrappers. Cancellation paths interrupt
+                                # the handler and do not reach this drain.
+                                async for _ in stream:
+                                    pass
+                        return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
-                _stream_step = _stream_and_advance
+                    _stream_step = _stream_and_advance
 
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                # Handle wrap_run short-circuit: result is already available, skip the graph.
-                if agent_run.result is not None:
-                    break
-                if _stream_step is not None:
-                    node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
-                else:
-                    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+                node = agent_run.next_node
+                while not isinstance(node, End):
+                    # Handle wrap_run short-circuit: result is already available, skip the graph.
+                    if agent_run.result is not None:
+                        break
+                    if _stream_step is not None:
+                        node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                    else:
+                        node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
-        assert agent_run.result is not None, 'The graph run did not finish properly'
-        return agent_run.result
+            assert agent_run.result is not None, 'The graph run did not finish properly'
+            return agent_run.result
+        finally:
+            # An escaping error's traceback holds this frame; context exit may already have recovered a body error,
+            # so the run is dropped only once the result is returned or the failure propagates.
+            agent_run = node = _stream_step = None
 
     @overload
     def run_sync(
@@ -697,6 +719,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -725,6 +748,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -752,6 +776,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -802,6 +827,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -839,6 +868,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -868,6 +898,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -896,6 +927,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -924,6 +956,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -977,6 +1010,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1000,6 +1037,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
+            # This generator's frame would otherwise refer to itself and keep `deps` alive until garbage collection.
+            del frame
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
@@ -1018,6 +1057,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
+            timeout=timeout,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -1101,9 +1141,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # A response the provider is still working on ended the run as `PendingModelResponse`,
+                                # so its tool calls aren't complete and don't run.
+                                pending = isinstance(final_result.output, PendingModelResponse)
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_calls=[] if pending else stream.response.tool_calls,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
@@ -1178,8 +1221,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     )
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
+            # A model request hook (e.g. `after_model_request`) runs once the consumer is done with the
+            # stream, so its `ModelRetry` can only be seen here, after the response was already streamed.
+            if self.is_model_request_node(node) and isinstance(node._result, _agent_graph.ModelRequestNode):  # pyright: ignore[reportPrivateUsage]
+                raise exceptions.UnexpectedModelBehavior(
+                    'A model request hook rejected the streamed response with `ModelRetry`, and retries are not supported in `run_stream()`'
+                )
+
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            # The loop above only ends without yielding by raising, so the run failed before it streamed a final
+            # result, and `wrap_run` or `on_run_error` recovered it with a result, which `iter()` sets on the run as
+            # it suppresses the error.
+            run_result = agent_run.result
+            assert run_result is not None
+            yield StreamedRunResult(
+                agent_run.ctx.state.message_history,
+                agent_run.ctx.deps.new_message_index,
+                run_result=run_result,
+            )
 
     @overload
     def run_stream_sync(
@@ -1197,6 +1256,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1224,6 +1284,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1250,6 +1311,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1315,6 +1377,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1353,6 +1419,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1382,6 +1449,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1409,6 +1477,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1435,6 +1504,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1506,6 +1576,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1541,6 +1615,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1571,6 +1646,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1598,6 +1674,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1626,6 +1703,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1688,6 +1766,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -1720,6 +1799,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1876,7 +1959,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
-        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
+        # A realtime session's history can rewrite turns it already recorded (a reply cut off by a barge-in), so its
+        # `conversation` doesn't track the unsaved messages: a store compares it with the stored history instead.
+        message_history, usage, conversation_id, conversation_revision, _, _ = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
@@ -1896,6 +1981,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             _usage_limits=usage_limits,
             _metadata=metadata,
             _conversation_id=conversation_id,
+            _conversation_revision=conversation_revision,
             _run_id=run_id,
             _message_history=message_history,
         )
@@ -2042,8 +2128,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Use a custom async sleep function for agent-graph delays during the context.
 
         By default the agent graph uses `anyio.sleep` when it needs to wait during a run (e.g. between
-        polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
-        DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
+        polls of a suspended/background model response). Durable execution integrations (e.g. Temporal and
+        DBOS) register their engine's durable sleep here so delays survive workflow replays and don't
         waste activity time.
         """
         with _agent_graph.set_agent_graph_sleep(sleep_func):
@@ -2218,8 +2304,23 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     ) = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    session_instructions: str | None = None
+    """What the provider session is configured with: the standing system prompt, then `instructions`."""
+    message_history: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
+    """The seeded history, with its dynamic system prompts re-evaluated."""
+    system_prompt: list[_messages.SystemPromptPart] = field(default_factory=list[_messages.SystemPromptPart])
+    """The agent's resolved system prompt, which a fresh session records first; empty when history was seeded."""
     short_circuited: bool = False
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
+    resolve_instructions: (
+        Callable[[RunContext[AgentDepsT], AbstractToolset[AgentDepsT]], Awaitable[list[_messages.InstructionPart]]]
+        | None
+    ) = None
+    """Resolves the session's instruction parts as they were resolved at connect, so its changes can go out mid-session."""
+    appending_system_prompts: Mapping[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = field(
+        default_factory=dict[str, '_system_prompt.SystemPromptRunner[AgentDepsT]']
+    )
+    """The dynamic system prompts registered with `on_change='append'`, by `dynamic_ref`, re-evaluated mid-session."""
 
 
 def _accepts_message_history(answer_webrtc_offer: Callable[..., Any]) -> bool:
@@ -2252,6 +2353,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         _usage_limits: _usage.UsageLimits | None = None,
         _metadata: AgentMetadata[AgentDepsT] | None = None,
         _conversation_id: str | None = None,
+        _conversation_revision: str | None = None,
         _run_id: str | None = None,
         _message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> None:
@@ -2266,6 +2368,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._usage_limits = _usage_limits
         self._metadata = _metadata
         self._conversation_id = _conversation_id
+        self._conversation_revision = _conversation_revision
         self._run_id = _run_id
         self._message_history = _message_history
 
@@ -2310,16 +2413,16 @@ class AgentRealtime(Generic[AgentDepsT]):
                 if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
-                        instructions=resolved.instructions,
+                        instructions=resolved.session_instructions,
                         tools=resolved.model_request_parameters.function_tools,
                         model_settings=resolved.model_settings,
-                        message_history=self._message_history,
+                        message_history=resolved.message_history,
                     )
                 # The keyword is only passed when there is history and the model takes it, so a `RealtimeModel`
                 # written before it existed keeps working: its sideband seeds the history, as it always did.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
-                    instructions=resolved.instructions,
+                    instructions=resolved.session_instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
                 )
@@ -2378,7 +2481,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             message_history=self._message_history,
         ) as resolved:
             return await resolved.model.create_client_secret(
-                instructions=resolved.instructions,
+                instructions=resolved.session_instructions,
                 tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
                 expires_after_seconds=expires_after_seconds,
@@ -2457,4 +2560,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
+            # Only the session's `conversation` and result carry the revision, so it is handed to the
+            # session here rather than through every agent's `_open_realtime_session`.
+            session._conversation_revision = self._conversation_revision  # pyright: ignore[reportPrivateUsage]
             yield session

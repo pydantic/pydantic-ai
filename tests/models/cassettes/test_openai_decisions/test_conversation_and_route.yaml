@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "895"
+      - "914"
       content-type:
       - application/json
       host:
@@ -20,7 +20,13 @@ interactions:
       type: json
       content:
         model: gpt-6-luna
-        input: "{\"history\": [{\"user\": \"I was charged twice.\"}, {\"assistant\": \"Sorry to hear that, we are looking into it.\"}], \"text\": \"Still no refund!\"}"
+        input:
+        - role: user
+          content: I was charged twice.
+        - role: assistant
+          content: Sorry to hear that, we are looking into it.
+        - role: user
+          content: Still no refund!
         questions:
         - type: predicate
           name: Ticket.urgent
@@ -54,9 +60,9 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "138"
+      - "84"
       server-timing-total:
-      - "138.847"
+      - "83.762"
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -70,7 +76,7 @@ interactions:
         answers:
         - type: predicate
           name: Ticket.urgent
-          probability: 0.45
+          probability: 0.71
         - type: choice
           name: Ticket.area
           choice: billing
@@ -85,17 +91,17 @@ interactions:
           choice: Ticket
           probabilities:
           - value: Ticket
-            probability: 0.89
+            probability: 0.8
           - value: escalate
-            probability: 0.11
-          confidence: 0.78
+            probability: 0.2
+          confidence: 0.6
         usage:
-          input_tokens: 475
+          input_tokens: 467
           input_tokens_details:
             cached_tokens: 0
             cache_write_tokens: 0
           output_tokens: 0
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 475
-  recorded_at: 2026-10-07T07:54:26.197159+00:00
+          total_tokens: 467
+  recorded_at: 2026-10-22T16:18:14.984098+00:00

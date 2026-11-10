@@ -22,14 +22,17 @@ class AskUserRequestedEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='re
 
 @dataclass(kw_only=True)
 class AskUserAnsweredEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='answered', dispatch='immediate'):
-    """The answerer returned or timed out; `response.cancelled` says whether the user declined.
+    """The answerer returned, timed out, or raised; if it returned, `response.cancelled` says whether the user declined.
 
     Emitted before the response is checked against the request, so a listener waiting since the
     request event is released even when the answerer misbehaved and the run is about to fail.
-    Not emitted for a deferred call: its answer arrives in a later run, from the host.
+    Not emitted for a deferred call, whose answer arrives in a later run from the host, or when
+    the run itself is cancelled while the answerer waits: clear waiting state when the run ends.
     """
 
     request_id: str
     response: AskUserResponse
     timed_out: bool = False
     """The answerer ran past `AskUser.timeout` and was cancelled; `response` is then a cancelled one."""
+    failed: bool = False
+    """The answerer raised; `response` is then a cancelled one, and the error propagates from the tool call."""

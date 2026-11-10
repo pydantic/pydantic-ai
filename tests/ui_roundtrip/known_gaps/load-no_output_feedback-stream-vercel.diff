@@ -1,0 +1,40 @@
+--- expected
++++ actual
+@@ -21,17 +21 @@
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   {},
+-   [
+-    {
+-     "kind": "user-prompt",
+-     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   {},
+-   [
++    },
+@@ -87,17 +71 @@
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   {},
+-   [
+-    {
+-     "kind": "user-prompt",
+-     "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>"
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   {},
+-   [
++    },

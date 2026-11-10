@@ -5,9 +5,9 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ..exceptions import UserError
+from ..messages import RealtimeSessionErrorEvent, SpeechTimestamp, SpeechTimestampGranularity
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
@@ -32,9 +33,9 @@ from ._openai_protocol import (
     turn_detection_config,
     with_realtime_query,
 )
-from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
+from ._openai_webrtc import hang_up_call as _hang_up_call, relay_sdp_offer as _relay_sdp_offer
 from ._utils import resolve_advertised_tools
-from .codec import OutputTranscript, RealtimeCodecEvent
+from .codec import OutputSpeechTimestamps, OutputTranscript, RealtimeCodecEvent
 from .model import RealtimeClientSecret, WebRTCAnswer
 from .openai import (
     OpenAIRealtimeConnection,
@@ -315,8 +316,8 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
     and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
-    ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, `openai_prune_tool_items` and
+    `openai_keep_tool_items` — are **silently ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -429,6 +430,18 @@ def _voice_live_audio_processing(settings: AzureRealtimeModelSettings, *, cascad
     return config
 
 
+def _voice_live_times_speech(settings: AzureRealtimeModelSettings, *, cascade: bool) -> bool:
+    """Whether Voice Live times the speech of the session's voice: an Azure text-to-speech voice only.
+
+    It accepts `output_audio_timestamp_types` with any voice, then sends no timestamps for an OpenAI voice, an
+    `azure-realtime-native` one, or a native-audio model's default voice (verified live). A cascade's default
+    voice is an Azure one.
+    """
+    if (voice := settings.get('azure_voice_live_voice')) is not None:
+        return isinstance(voice, str) or voice['type'] != 'azure-realtime-native'
+    return cascade and not settings.get('openai_voice')
+
+
 def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
     """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
 
@@ -469,6 +482,16 @@ class _VoiceLiveWarningEvent(BaseModel):
     warning: _VoiceLiveWarning
 
 
+class _VoiceLiveAudioTimestampDelta(BaseModel):
+    """Voice Live's `response.audio_timestamp.delta`: when one word of the spoken output is heard in its item's audio."""
+
+    response_id: str | None = None
+    item_id: str | None = None
+    text: str
+    audio_offset_ms: int
+    audio_duration_ms: int
+
+
 def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
     event_type = data.get('type')
@@ -484,6 +507,17 @@ def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
             UserWarning,
         )
         return None
+    if event_type == 'response.audio_timestamp.delta':
+        timestamp = _VoiceLiveAudioTimestampDelta.model_validate(data)
+        return OutputSpeechTimestamps(
+            [
+                SpeechTimestamp(
+                    text=timestamp.text, start_ms=timestamp.audio_offset_ms, duration_ms=timestamp.audio_duration_ms
+                )
+            ],
+            item_id=timestamp.item_id or None,
+            response_id=timestamp.response_id or None,
+        )
     if event_type in ('response.text.delta', 'response.text.done'):
         is_final = event_type == 'response.text.done'
         content = data.get('text' if is_final else 'delta')
@@ -508,7 +542,18 @@ class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
     """
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
-        return _map_voice_live_event(data)
+        event = _map_voice_live_event(data)
+        if isinstance(event, RealtimeSessionErrorEvent) and event.code == 'session_output_overflow':
+            # Voice Live closes the socket (`1008`) right after this error, so the session can't carry on
+            # on it. With a reconnect policy, that close re-dials and the session continues there.
+            event = replace(event, recoverable=self._can_reconnect)
+        return event
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        # Voice Live's beta protocol isn't known to take `conversation.item.delete`: `openai_prune_tool_items` is
+        # one of the settings it ignores.
+        return False
 
 
 @dataclass(init=False)
@@ -599,6 +644,19 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
         return profile
 
+    def _output_speech_timestamp_granularity(
+        self, model_settings: RealtimeModelSettings | None
+    ) -> SpeechTimestampGranularity | None:
+        """The profile's granularity, for a session on Voice Live in a voice it times; `None` otherwise.
+
+        The GA API times nothing, and which API a session uses can be chosen per session.
+        """
+        settings = cast('AzureRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        cascade = cast('AzureRealtimeModelProfile', self.profile).get('azure_voice_live_cascade', False)
+        if not self._resolve_voice_live(settings) or not _voice_live_times_speech(settings, cascade=cascade):
+            return None
+        return super()._output_speech_timestamp_granularity(settings)
+
     def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
         """Mark a recognized Voice Live cascade model, taking `supports_thinking` from its chat model profile.
 
@@ -608,6 +666,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         Voice Live accepts the setting at session start and then fails every response for a model like
         `gpt-4.1`.
         """
+        if _default_azure_realtime_apis(self.model) != _AZURE_OPENAI:
+            # Voice Live times each word, on a session that reaches it.
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(output_speech_timestamp_granularity='word'))
         if not _is_voice_live_cascade(self.model):
             return profile
         cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
@@ -700,11 +761,16 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             sdp_offer=sdp_offer,
         )
 
-    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
-        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
-        raise UserError(
-            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
-            'unavailable. The call ends when the browser hangs up.'
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        # Like the offer relay, this is Azure's `/openai/v1` API, whatever `api_version` the provider's client
+        # is configured with: the classic `/openai/realtime/calls/{id}/hangup?api-version=...` is a 404.
+        await _hang_up_call(
+            http_client=self._http_client,
+            hangup_url=self._webrtc_url(f'realtime/calls/{quote(session.session_id, safe="")}/hangup'),
+            headers=await self._webrtc_headers(),
+            model_name=self.model_name,
+            ended_code='call_id_not_found',
         )
 
     async def create_client_secret(
@@ -809,6 +875,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
                 )
             else:
                 config['temperature'] = temperature
+        if settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings):
+            config['output_audio_timestamp_types'] = ['word']
         if thinking is not None and self.profile.get('supports_thinking', False):
             # Voice Live takes the effort flat, as `reasoning_effort`, rather than GA's `reasoning.effort`.
             # Unlike the Chat Completions API, it accepts `'none'` for `gpt-5` too (verified live).

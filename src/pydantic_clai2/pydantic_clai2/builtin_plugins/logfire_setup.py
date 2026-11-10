@@ -1,7 +1,8 @@
-"""The `observability` plugin's setup menu: pick which Logfire traces go to, sign in there, pick a project.
+"""The `observability` plugin's setup: pick which Logfire traces go to, sign in there, pick a project.
 
-It runs Logfire's own device sign-in (the one behind `logfire auth`), not the MCP OAuth in
-`pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
+It asks through the `Dialogs` the settings menu's project row gets, so it runs in the terminal or in the web UI.
+It runs Logfire's own device sign-in (the one behind `logfire auth`) behind a waiting screen the user can cancel,
+not the MCP OAuth in `pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
 tokens. The user token lives only for the duration of setup. What is kept is a project write token, saved in
 `/keys`, and the plugin settings naming it and the signed-in account's email, so the loader reloads the plugin
 and traces go to that project, with session roots tagged with that email.
@@ -20,16 +21,12 @@ import anyio
 import httpx
 from anyio import to_thread
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from termflow.tui import MenuBuilder, MenuItem
 
-from pydantic_clai2.builtin_plugins.logfire_destination import Destination, pick_destination, remember
+from pydantic_clai2.builtin_plugins.logfire_destination import Destination, choose_destination, remember
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
+from pydantic_clai2.plugins.menus import Dialogs, Option
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.browser import open_browser
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.menus.slash_search import slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 SELF_HOSTED = 'self-hosted'
@@ -40,7 +37,8 @@ _POLL_FAILURES = 4
 
 ModelT = TypeVar('ModelT', bound=BaseModel)
 
-Announce = Callable[[str], None]
+Show = Callable[[str], None]
+"""What the sign-in's waiting screen shows, such as the link to open."""
 OpenBrowser = Callable[[str], bool]
 
 
@@ -88,10 +86,8 @@ _PROJECTS: TypeAdapter[list[Project]] = TypeAdapter(list[Project])
 
 @dataclass(frozen=True, kw_only=True)
 class Setup:
-    """Everything setup touches outside the plugin, so tests can swap each piece."""
+    """Everything setup touches outside the plugin and its dialogs, so tests can swap each piece."""
 
-    announce: Announce
-    runners: Runners = TERMINAL
     http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=60))
     open_browser: OpenBrowser = open_browser
     sleep: Callable[[float], Awaitable[None]] = anyio.sleep
@@ -107,62 +103,80 @@ class Chosen:
     account_email: str | None
 
 
-_THEN = 'Enter: sign in (or sign up) in your browser,\nthen pick a project to send traces to.\nIts write token is saved in /keys.'
+_THEN = 'Then sign in (or sign up) in your browser,\nand pick a project to send traces to.\nIts write token is saved in /keys.'
+SIGNING_IN = 'Approve the sign-in in your browser.\nCLAI then lists the projects you can\nsend traces to.'
+"""The sign-in's waiting screen, above the link; one short line each, as the terminal's preview panel cuts long ones."""
 
 
-async def run_setup(setup: Setup, *, current: Destination | None, owned: KeyReference | None) -> Chosen | None:
+@dataclass(frozen=True)
+class _SignedIn:
+    user_token: str
+    account_email: str | None
+    projects: list[Project]
+
+
+async def run_setup(
+    dialogs: Dialogs, setup: Setup, *, current: Destination | None, owned: KeyReference | None
+) -> Chosen | None:
     """Pick a Logfire, sign in, pick a project, and save its write token; `None` when cancelled.
 
-    `current` is the Logfire highlighted first. `owned` is the key the plugin already uses: setting up the same
+    `current` is the Logfire selected first. `owned` is the key the plugin already uses: setting up the same
     project again replaces it, but any other key of the same name is left alone.
     """
-    destination = await run_worker(lambda: pick_destination(setup.runners, current=current, then=_THEN))
+    destination = await choose_destination(dialogs, current=current, then=_THEN)
     if destination is None:
         return None
     base_url = destination.base_url
     with telemetry.span('logfire setup', destination=destination.region or SELF_HOSTED) as span:
         async with setup.http() as http:
-            user_token = await sign_in(http, base_url, setup)
-            account_email = await _account_email(http, base_url, user_token)
-            projects = await _projects(http, base_url, user_token)
-            if not projects:
+            found: list[_SignedIn] = []
+
+            async def signing_in(show: Show) -> None:
+                user_token = await sign_in(http, base_url, setup, show)
+                show('Signed in. Listing your projects...')
+                email = await _account_email(http, base_url, user_token)
+                found.append(_SignedIn(user_token, email, await _projects(http, base_url, user_token)))
+
+            if not await dialogs.wait(title='Sign in to Logfire', description=SIGNING_IN, task=signing_in):
+                span.set('outcome', 'cancelled')
+                return None
+            [signed_in] = found
+            if not signed_in.projects:
                 raise SetupError(f'You cannot write to any project on {base_url} yet. Create one there, then retry.')
-            project = await run_worker(lambda: pick_project(setup.runners, projects))
+            project = await choose_project(dialogs, signed_in.projects)
             if project is None:
                 span.set('outcome', 'cancelled')
                 return None
-            value = await _write_token(http, base_url, user_token, project)
+            value = await _write_token(http, base_url, signed_in.user_token, project)
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
         await to_thread.run_sync(remember, destination)
         span.set('outcome', 'saved')
-    return Chosen(token=KeyReference(name=name), destination=destination, project=project, account_email=account_email)
-
-
-def pick_project(runners: Runners, projects: list[Project]) -> Project | None:
-    """One of the projects the user can write to; blocking, so it runs in `run_worker`."""
-    builder = (
-        MenuBuilder('Send traces to which project?')
-        .style(markdown_style())
-        .items([MenuItem(project.label, value=project) for project in projects])
-        .preview(lambda item: 'CLAI creates a write token for this project and saves it in /keys.')
+    return Chosen(
+        token=KeyReference(name=name), destination=destination, project=project, account_email=signed_in.account_email
     )
-    result = runners.run_choice(
-        slash_search(builder, footer='enter use this project · esc cancel, nothing changes', key_source=menu_key)
+
+
+async def choose_project(dialogs: Dialogs, projects: list[Project]) -> Project | None:
+    """One of the projects the user can write to; `None` when cancelled."""
+    picked = await dialogs.choose(
+        title='Send traces to which project?',
+        options=[Option(value=str(index), label=project.label) for index, project in enumerate(projects)],
+        description='CLAI creates a write token for this project and saves it in /keys.',
     )
-    if result.cancelled or result.item is None or not isinstance(result.item.value, Project):
-        return None
-    return result.item.value
+    return None if picked is None else projects[int(picked)]
 
 
-async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup) -> str:
+async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup, show: Show) -> str:
     """Logfire's device sign-in: show and open the link, then wait for approval; returns the user token."""
     response = await _call(http.post(f'{base_url}/v1/device-auth/new/', params={'machine_name': platform.node()}))
     device = _parse(_Device, response)
     if urlsplit(device.frontend_auth_url).scheme != 'https':
         raise SetupError(f'{base_url} sent a sign-in link that is not https; not opening it.')
-    setup.announce(f'Sign in to Logfire (new users can sign up there): {device.frontend_auth_url}')
+    # Links can come from a self-hosted server, so terminal controls in them are made inert.
+    link = f'Sign in to Logfire (new users can sign up there):\n{terminal_text(device.frontend_auth_url, keep="")}'
+    show(link)
     if not await to_thread.run_sync(lambda: _open(setup.open_browser, device.frontend_auth_url)):
-        setup.announce('No browser opened; open the link above yourself, on any device.')
+        show(f'{link}\n\nNo browser opened; open the link yourself, on any device.')
     deadline = time.monotonic() + SIGN_IN_TIMEOUT
     failures = 0
     while time.monotonic() < deadline:

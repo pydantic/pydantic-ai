@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import WorkspaceError
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.')],
 )
 
@@ -62,11 +62,11 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona and boxd, a local smolvm microVM, and self-hosted OpenSandbox servers. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -143,7 +143,7 @@ from pydantic_ai.workspaces import ReadOnlyWorkspace
 
 from workspace_agent import agent
 
-reviewer = Agent('anthropic:claude-opus-5-5', instructions='Review code. Be brief.')
+reviewer = Agent('{{ anthropic:large }}', instructions='Review code. Be brief.')
 
 
 @reviewer.tool
@@ -184,7 +184,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.', env={'UV_OFFLINE': '1'})],
 )
 ```
@@ -244,7 +244,7 @@ Pass `read_only=True` to let tools read and list files while refusing commands a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.', read_only=True)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_only=True)])
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
@@ -280,6 +280,85 @@ This is a preflight check, not a security boundary against concurrent symlink ch
 isolated backend for untrusted commands. On a backend without commands or `SupportsRealpath`,
 `realpath` only normalizes text; see [Resolving symlinks](#resolving-symlinks).
 
+## Files you didn't write {#workspace-authority}
+
+Set `authority` when the agent works on files the operator doesn't control: `'user'` for the user's
+own files, such as their uploads, and `'none'` for files nobody on the application's side wrote, such
+as a cloned third-party repository:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout', authority='none')])
+```
+
+Tools work as before: the agent reads, edits and runs commands in it. The setting is for capabilities
+that pass the workspace's own files to the model. The model treats the agent's instructions as the
+operator speaking, so a capability that would put text read from the workspace there asks
+[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] for each file and sends its
+text with no more [authority][pydantic_ai.messages.Authority] than that: in the user's turn for `'user'`, as
+tool output for `'none'`. Authority doesn't limit what the agent can do; use
+[tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
+
+No built-in capability reads authority yet, so setting it doesn't yet change what reaches the model.
+It's the setting your own capabilities check, and built-in capabilities that load workspace files will
+check it as they adopt it.
+
+A capability checks authority when it reads a file, so a change applies from the next read. Text it
+already added to a conversation stays in that history, so start a new conversation after lowering a
+workspace's authority.
+
+For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
+`workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
+lowest wins.
+
+### Authority by path {#path-authority}
+
+One workspace can hold files with different authors: a vendored dependency in the operator's repository,
+or the operator's own instruction files next to a cloned third-party repository. `path_authority` gives
+directories and files their own level, overriding `authority` for the paths under them:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        LocalWorkspace(
+            './checkout',
+            authority='none',
+            path_authority={'~/.config/my-app': 'operator', 'docs/upload': 'user'},
+        )
+    ],
+)
+```
+
+[`authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives a file's level:
+
+- The longest matching path wins, so a lower directory can sit inside a higher one and the other way around.
+- Relative paths resolve against the working directory. `LocalWorkspace` expands `~`; `AuthorityWorkspace`
+  takes workspace paths as they are, and refuses one starting with `~`.
+- A file outside the working directory is outside the workspace, at `'none'`, unless `path_authority` lists a
+  path containing it, like `~/.config/my-app` above.
+- Symlinks are followed, and a file gets the lower of the levels of where its path is written and where it
+  leads: a link from a `'none'` directory to an `'operator'` file is at `'none'`, and so is a link from an
+  `'operator'` directory to a `'none'` file. In a chain of links, the links on the path itself count, and
+  so does the final target, but not a link reached only through another link's target.
+- Paths also match ignoring case, keeping the lower level, so on a case-insensitive filesystem `Vendor/` can't
+  escape a lower `vendor/`.
+- Without `path_authority`, every file in the working directory is at `authority`.
+- A wrapper's `path_authority` never raises a level another wrapper set: with several, the lowest wins.
+
+`path_authority` is not access control. It sets the authority of the text capabilities put in the prompt
+from those files, not what the agent can read, write or run: the agent's tools reach every path as before.
+A file the agent reads with a tool, such as `read_file`, comes back as tool output whatever its level.
+
+A file's level reflects where its path leads when it's read, and symlinks can change. A capability asks
+when it reads a file and keeps the level with the text, rather than asking again each time it sends it,
+so a link changed later can't change the requests a conversation has already made.
+
 ## Choosing a run's workspace
 
 A run picks its workspace from the first of these that applies:
@@ -308,7 +387,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('~/projects/current', id='current'),  # new conversations
         LocalWorkspace('~/projects/archive', id='archive'),  # conversations that started here
@@ -354,11 +433,16 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     name='fizzbuzz',  # names the agent's Temporal activities
     capabilities=[LocalWorkspace('.'), TemporalDurability()],
 )
 ```
+
+Swap `TemporalDurability` for `DBOSDurability` or `PrefectDurability` and nothing else in the agent
+changes. Only where the run starts differs: a Temporal workflow class on a worker with
+`PydanticAIPlugin`, a `@DBOS.workflow()` function after `DBOS.launch()`, or a Prefect `@flow`, as each
+[engine guide](durable_execution/overview.md) shows.
 
 Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
 its orchestration in the workflow (for example, to approve a file change before writing) can
@@ -368,7 +452,7 @@ activities.
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
   lazy. If a worker dies after creating the environment but before that is recorded, the retry can
-  create a second one.
+  create a second one; for a sandbox, clean up the first with the provider's tools.
 - Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
@@ -385,11 +469,11 @@ activities.
   `activity_config`; if you set that, keep a `start_to_close_timeout` in it, for example
   `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
-  capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
-  read-only policy, and so does a live backend that has no ref yet or a capability passed to the run
+  capabilities. A policy wrapper such as `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` raises
+  `UserError` if rebuilding would drop its policy, and so does a live backend that has no ref yet or a capability passed to the run
   that changes the workspace's type or policy. Other settings of a run-level workspace capability,
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
-  `LocalWorkspace(..., read_only=True)`.
+  `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., authority='none')`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
   Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.
@@ -403,7 +487,40 @@ activities.
     longer match their history: Temporal replay fails with a nondeterminism error, and DBOS can't
     recover the workflow. Let in-flight runs finish first, or deploy the change separately: with
     Temporal worker versioning or a new task queue, or a new DBOS application version. On Prefect,
-    let running flows finish before you deploy.
+    let running flows finish before you deploy. Removing a capability that in-flight runs use changes
+    their history the same way.
+
+### Harness workspace capabilities {#harness-workspace-capabilities}
+
+[Pydantic AI Harness](harness/index.md) capabilities that act in the workspace, such as
+[`Coder`](harness/coder.md), [`Shell`](harness/shell.md), [`FileSystem`](harness/filesystem.md),
+[`RepoContext`](harness/repo-context.md) and [`Researcher`](harness/researcher.md), work under Temporal,
+DBOS and Prefect. Attach them next to the workspace and the durability capability, for example
+`capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()]`. A later run that continues the
+conversation from `message_history`, in a new workflow or flow, works in the
+[same environment](#continuing-in-the-same-workspace).
+
+| Feature | Temporal | DBOS | Prefect |
+|---|---|---|---|
+| File tools: read, write, edit, search | Yes | Yes | Yes |
+| Commands: `run_command`, `shell` | Yes, within the [activity timeout](durable_execution/temporal.md#harness-command-timeouts) | Yes | Yes |
+| Background jobs: `start_command`, `check_command`, `stop_command` | Yes | Yes | Yes |
+| Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
+| File-change approval: [`FileChangeRequestEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
+| Live tool events | [File-change requests and write events only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
+| Delegation: `delegate_task` | [To `self` only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
+
+The [Temporal guide](durable_execution/temporal.md#harness-workspace-capabilities) explains the Temporal
+limits.
+
+- **Sticky `cd`** is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the
+  run ID, so a new worker continues in the same directory after a restart. The file is removed when
+  the run completes. Commands in one run should execute in order; simultaneous commands that change
+  directory can overwrite each other's state.
+- **Background jobs** are keyed by the run and tool-call IDs, so a retried `start_command` reattaches to
+  the job instead of starting a second process. If a launch fails after claiming its job directory, the
+  retry reports a pending launch; once the process has stopped, remove the stale job files under
+  `.pydantic-ai-harness/shell/`.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 
@@ -471,6 +588,12 @@ Workspace tools in a realtime session report this limit instead of suggesting a 
 For tests, `with agent.override(workspace=LocalWorkspaceBackend(path)):` temporarily uses a local
 workspace instead of the agent's capability, the ref in history, or a per-run `workspace=`, as
 `override(model=)` does for the model.
+
+## Third-party workspaces
+
+Other packages implement the same workspace interface. [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend), a community package by [Vstorm](https://vstorm.co/), provides workspaces backed by Kubernetes pods, local Docker containers, Daytona, a `sandboxd` service that holds the Docker socket so your application container doesn't have to, and in-memory JSON documents your application can keep in its own database.
+
+To add a package to this list, open a pull request. To build your own, see [Writing a backend](#writing-a-backend).
 
 ## Writing a backend
 

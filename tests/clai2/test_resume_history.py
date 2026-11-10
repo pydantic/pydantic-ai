@@ -18,7 +18,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -31,10 +32,10 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2 import chat
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history, turn_starts
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 
 
 def turn(index: int) -> list[ModelMessage]:
@@ -61,7 +62,7 @@ def test_turns_start_at_prompts_not_tool_results_steers_or_context() -> None:
         ModelResponse(parts=[ToolCallPart('shell', {'command': 'ls'}, tool_call_id='t1')], run_id='a'),
         ModelRequest(parts=[ToolReturnPart('shell', 'ok', tool_call_id='t1')], run_id='a'),
         ModelRequest(parts=[UserPromptPart('steer')], run_id='a'),
-        ModelRequest(parts=[RetryPromptPart('again', tool_name='shell'), UserPromptPart('fix')], run_id='b'),
+        ModelRequest(parts=[ToolReturnPart('shell', 'again', outcome='retried'), UserPromptPart('fix')], run_id='b'),
         ModelRequest(parts=[UserPromptPart('second')], run_id='c'),
     ]
     assert turn_starts(messages) == [1, 2, 7]
@@ -112,8 +113,8 @@ async def test_prompts_answers_thinking_and_tool_calls_render_like_a_live_turn()
         ModelRequest(
             parts=[
                 ToolReturnPart('grep', 'src/a.py:1:needle', tool_call_id='g1'),
-                RetryPromptPart('bad key', tool_name='lookup', tool_call_id='l1'),
-                RetryPromptPart('output invalid'),
+                ToolReturnPart('lookup', 'bad key', tool_call_id='l1', outcome='retried'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
             ]
         ),
         ModelResponse(parts=[TextPart('found it')]),
@@ -144,9 +145,9 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     surfaces: list[PromptSurface] = []
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             surfaces.append(self)
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()

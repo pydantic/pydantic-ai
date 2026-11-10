@@ -18,6 +18,26 @@ Wire a newly-released provider model into pydantic-ai. Optimized for the common 
 
 User invokes with `provider` + `model id` (e.g. `openai gpt-5.6`). If missing, ask via `AskUserQuestion`.
 
+## Curation rule
+
+The model-name `Literal` aliases (`KnownModelName`, each provider's `*ModelName`, and the image, embedding and
+advisor aliases) list the models a user would pick. They are not catalogs. Apply this rule to every id you add:
+
+- A **line** is a tier name: GPT `sol`/`terra`/`luna`/`astra`, Claude `opus`/`sonnet`/`haiku`/`fable`, Gemini
+  `pro`/`flash`/`flash-lite`.
+- A **generation** is the major version, counted per provider.
+- Per line, list the newest id of the newest generation and the newest id of the previous generation. Remove
+  the older id the new one replaces, in the provider alias and in `KnownModelName`.
+- Leave out dated snapshots that have an undated alias, previews that a GA id superseded, floating `-latest`
+  aliases (Mistral and TypeSafe excepted: their `-latest` ids are canonical), and non-chat models.
+- On Bedrock, list one id per model: the `global.` profile when it exists, else `us.`, else the bare id.
+- Keep every id that a model alias in `docs/model_aliases/aliases.json` resolves to, even when the rule above
+  would drop it. `tests/test_docs_model_aliases.py` fails otherwise. Changing an alias target is a separate
+  decision under `docs/model_aliases/AGENTS.md`.
+
+Profiles match any id, so removing an id from a literal changes autocomplete only. Never remove a profile branch
+because its id left a literal.
+
 ## Image generation models
 
 Image-only models use a separate public surface from conversational models. If the model is consumed by `ImageGenerator`, update `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`, the relevant direct provider adapter, and its tests; do not also change conversational `KnownModelName`, profiles, gateway aliases, `ImageGenerationTool`, or `models/<provider>.py` unless that surface is explicitly supported and in scope. Add only the public model IDs the project intends to support, and do not infer or automatically add dated snapshots.
@@ -62,6 +82,7 @@ Specifically, for a typical model add, grep for:
 - Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capability_spec.py`
+- Public API compatibility: the release comparison reports a model-name `Literal` change as an attribute-value change. The gate passes added and removed names on an alias listed under `model_name_literals` in `.github/api-compatibility-allowlist.json`. Do not add a waiver for that change: the gate fails on an unused waiver. If the gate fails on a model-name alias that is not listed, add its `path` and `symbol` to `model_name_literals`. Any other change to the alias, such as adding a non-`Literal` arm, needs an exact waiver.
 
 Classify each hit:
 - **must update** — model-name lists, dispatch tuples
@@ -70,71 +91,60 @@ Classify each hit:
 
 If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — don't push past garbled output.
 
-## Step 3b — Pair the genai-prices entry
+## Step 3b — Verify pricing and context data
+
+Pricing additions belong to the automated workflows in `pydantic/genai-prices`.
+The [Update prices workflow](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/update-prices.yml)
+imports provider data hourly and aggregator data weekly.
+[Genie Pricer](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/GENIE_PRICER.md)
+handles targeted model additions through the
+[Model Price Check workflow](https://github.com/pydantic/genai-prices/blob/main/.github/workflows/agentic-model-price-check.md).
+Do not open or implement a manual genai-prices counterpart PR during a model add.
+Do not trigger a pricing request unless the user authorizes that request.
+
+Verify the exact API IDs and hosting providers independently of pricing data.
+Do not infer availability from an older sibling or a pricing match.
+Do not block model-name support on pricing-feed lag.
 
 Cost and `context_window` data come from `pydantic/genai-prices` through `_genai_prices.py`.
 Bundled data requires a `genai-prices` release.
-Update the Pydantic AI lock to verify the bundled entry locally.
+Check both the installed package and the live merged feed for the exact model.
+Update the Pydantic AI lock when adopting a package release with the entry.
 The live merged feed can supply entries through `pydantic_ai.prices.update_in_background()`.
 Check the updater for an entry before claiming a package release blocks support.
 `Model.profile` only consults genai-prices when nothing else set `context_window`.
 Without a price entry in either source, `ModelResponse.cost()` raises `LookupError` and a
 `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end instead.
 Without a `context_window` value from any source, `RunContext.context_window_used` is `None`.
-If no genai-prices entry exists, open the genai-prices PR alongside the model add and link the two.
-
-Before you write the entry, check that no one has added it already. Someone else may have added
-it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
-provider-file changes in its open PRs:
-
-```bash
-for f in <provider files, e.g. openai openrouter github_copilot>; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
-for n in $(gh pr list --repo pydantic/genai-prices --state open --limit 200 --json number --jq '.[].number'); do gh api "repos/pydantic/genai-prices/pulls/$n/files" --paginate --jq '.[] | select(.filename | startswith("prices/providers/")) | .patch' | grep -q '<id>' && echo "#$n"; done
-```
-
-A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`:
-its index lags newly opened PRs, and on release day it did not yet return genai-prices #732.
-
-Check the current catalogs of other providers that host the new model before scoping that PR.
-For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
-even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
-for each confirmed host with its own published rates; do not infer Bedrock or Azure availability
-from an older sibling model.
-
-Compare the new price entry's `match` with the adjacent model families in the same provider file,
-and accept the same id forms they do, even before the provider publishes a snapshot. That way a
-later snapshot gets the same price and context data. The forms differ per provider file:
-
-| genai-prices file | Forms the siblings accept |
-|---|---|
-| `openai.yml` | base id + `-YYYY-MM-DD` |
-| `anthropic.yml` | base id + `-YYYYMMDD` (Claude Opus entries also take `claude-opus-X.Y` / `claude-X-Y-opus` aliases) |
-| `google.yml` (Vertex Claude) | base id + `@YYYYMMDD` |
-| `aws.yml` (Bedrock) | `global.` and `us.`/`eu.`/`jp.`/`au.` profiles, bare `anthropic.` id, and `-v1` / `-v1:0` suffixes |
-| `openrouter.yml` | slug + `:beta` |
-
-Dump the siblings' clauses before writing yours rather than copying one PR's shape (see #8635 and
-genai-prices #709). Test the base and suffixed forms, including the canonical model id. This match
-rule does not add a speculative id to Pydantic AI's model-name literals. Its profile prefix should
-resolve the same capabilities for either form.
+Compare matched prices against the provider's official rates; a broad sibling match can silently return stale prices.
+Report missing or incorrect data and link an existing automation proposal when available.
 
 ## Step 4 — SDK pin check
 
-Snapshot/enumeration tests in this repo often tie `KnownModelName` to a literal set defined in the provider SDK. **The provider SDK frequently lags the model release by days.**
+The OpenAI, Anthropic and xAI aliases are curated `Literal`s, not the SDK's model literal. `tests/models/test_model_names.py`
+ties the two together through `SDK_MODEL_LITERALS`:
 
-For OpenAI, check the broad union the repo actually consumes (`OpenAIModelName = str | AllModels`), **not** the chat-only `ChatModel` Literal — `AllModels` also carries Responses-API-only and embeddings ids that the enumeration test walks:
+- `test_sdk_model_literal` snapshots each SDK's full model literal at the version in `uv.lock`. It skips on CI legs
+  that install another version (lowest-versions, the upgrade canary).
+- `test_curated_model_names_are_sdk_ids_or_bridges` requires every curated id to be in the locked SDK's literal or in
+  that entry's `bridges`, and every bridge to be absent from the SDK.
+
+Check whether the locked SDK lists the new id:
 
 ```bash
 uv run python -c "from openai.types import AllModels; from typing import get_args; print([m for m in get_args(AllModels) if '<new-version>' in m])"
 ```
 
-If no SDK release lists the new id, bridge it with a local `Literal` on the model-name alias. The PR then lands green without waiting for the SDK.
+Anthropic reads `anthropic.types.ModelParam`, xAI reads `xai_sdk.types.model.ChatModel`, and the image and embedding
+entries read the SDK types `SDK_MODEL_LITERALS` names. If the locked SDK lacks the id, add the id to that entry's
+`bridges`. Remove the bridge in the PR that bumps the SDK past the release that lists it.
 
-If a release lists the id but sits inside the 7-day `exclude-newer` window, the providers differ:
+When a `uv.lock` upgrade changes an SDK's model literal, `test_sdk_model_literal` fails. Review the new ids against
+the curation rule, update the curated alias and `KnownModelName`, drop any bridge the SDK now lists, then run
+`uv run pytest tests/models/test_model_names.py --inline-snapshot=fix`.
 
-- OpenAI: bridge anyway with `OpenAIModelName = str | AllModels | Literal['<id>']`. The docstring names the `openai` release that adds the id. A later PR bumps the floor and drops the bridge (#8635 bridged, #8655 dropped).
-- Anthropic: bump the SDK through the quarantine exemption its landmine section describes. Anthropic checks `ModelParam`, not `Model`.
-- xAI: see the SDK-lag bridge notes in its landmine section.
+If a release lists the id but sits inside the 7-day `exclude-newer` window, bridge it. For Anthropic, the SDK-bump
+bullet in its landmine section decides between bump and bridge.
 
 ## Step 5 — Probe capabilities (only if not a pure mirror)
 
@@ -142,7 +152,7 @@ If the new model is just another sibling in an existing family (e.g. `gpt-5.5` a
 
 If the model is a new family or has unclear capabilities, write a small comparison script (`local-notes/probe_<model>.py`) that hits the new model AND its closest neighbour with:
 - `temperature` / `top_p` (does the API reject sampling params?)
-- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values
+- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values. Probe `max` on both the Responses and Chat Completions APIs: they accept different sets, recorded in `openai_responses_supports_max_reasoning_effort` (set in `OpenAIProvider.model_profile`) and `openai_chat_supports_max_reasoning_effort` (set in each OpenAI-compatible provider's `model_profile`)
 - New parameters mentioned in the release notes
 - Streaming / tool calls if the family is new
 
@@ -164,17 +174,21 @@ The gateway reaches the canonical API through an ordinary SDK client carrying a 
 - **Probe the gateway leg rather than reasoning about it.** `Model('<id>', provider='gateway')`, then
   exercise whatever capability you gated. If `PYDANTIC_AI_GATEWAY_BASE_URL` is set in the environment,
   check it points at the gateway root: a provider-specific proxy path 404s every other provider.
-- **Probe Bedrock Gateway profile regions individually.** A successful `gateway/bedrock:` inference-profile ID
-  does not establish support for another region prefix or the bare ID. Probe each candidate; exclude only IDs
-  Gateway rejects.
-
-A model the gateway genuinely does not serve is the other case entirely: it belongs in
-`UNSUPPORTED_GATEWAY_MODEL_NAMES`, on evidence that the gateway rejects the id. Never leave the id
-advertised and quietly degraded by a capability carve-out instead.
 
 ## Step 6 — Edit (minimal diff matching the mirrored PR)
 
 Make only the changes the enumeration step surfaced. Resist scope creep. If you suspect a pre-existing bug in a sibling model's profile, reproduce it live first. Fold a reproduced bug on the same profile gate into this PR, with a test and one PR-body line. Flag an unreproduced or larger one in the PR description instead.
+
+**Assume the Gateway serves every new id on a provider it proxies.** Add each id's `gateway/` mirror to `KnownModelName` without probing the Gateway first. Never add a new id to `UNSUPPORTED_GATEWAY_MODEL_NAMES`. Until genai-prices has the id's price, the Gateway can refuse it with a 404 `No cost data available for model`; that gap closes without a Pydantic AI change. File one tracking issue per release instead, to confirm that the Gateway serves and prices each new id. Route it with the maintainer routing in the `file-followup-issue` skill. List every id of the release in it, including ids the curation rule keeps out of `KnownModelName`. List each Bedrock region prefix as its own id: Gateway support for one inference profile does not establish support for another. Name the weekly Gateway Model Health workflow (`.github/workflows/gateway-model-health.yml`) in the issue: it runs every `gateway/` id in `KnownModelName` live. Exclude an id only in a separate change, after the tracking issue confirms that the Gateway refuses it.
+
+**Assume Bedrock serves a new id that AWS gates per account.** AWS can list a model in `aws bedrock list-inference-profiles` while Converse still answers `AccessDeniedException: ... is not available for this account`. List the id anyway, as the curation rule picks it: the `global.` profile when it exists. Leave the capability gates in `providers/_bedrock_model_names.py` on their existing prefixes. File one Bedrock tracking issue for the probes to run once AWS grants access. Route it with the maintainer routing in the `file-followup-issue` skill. List these probes in it:
+
+- The id serves through `BedrockConverseModel` and the Bedrock Messages API.
+- Each gate whose prefix decision contradicts the AWS model card or Anthropic's Bedrock docs.
+
+Change a gate only after its probe passes. A GPT id on `bedrock:` is the exception: list it only after a successful Converse call, as the Bedrock landmines say.
+
+Docs examples name models through the aliases in `docs/model_aliases/aliases.json`, not model ids. Check the placement rules in `docs/model_aliases/AGENTS.md`. When they place the new model in an alias, repoint that alias in `aliases.json` instead of editing doc pages. Repoint it in the same PR; do not wait for the Gateway to serve the new id. Then update the README mirrors that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag. The harness capability READMEs and their `_capability.py` docstrings mirror doc pages that use the alias but are not parity-tested: `git grep` the old id and update those mirrors too.
 
 After edits:
 
@@ -208,56 +222,60 @@ check. Keep the model-specific evidence concise:
 - "Verified via probe / mirror of #NNNN" — explicit about which changes were API-verified vs assumed-by-mirror.
 - Flag pre-existing latent bugs found but deliberately not fixed.
 - Link the prior add-model PR for context.
+- Link the Gateway tracking issue from Step 6, and the Bedrock tracking issue when Step 6 filed one.
 
 ## Provider-specific landmines
 
 ### OpenAI
 
 - **`_REASONING_SUPPORT_BY_PREFIX`** in `pydantic_ai_slim/pydantic_ai/profiles/openai.py` — a dict keyed by model-name prefix (`'gpt-5.6'`, `'gpt-5.3-chat'`, `'gpt-5'`, `'o'`, …) → `_ReasoningSupport(enabled_by_default, can_be_disabled, supports_mode, supports_context)`, resolved **first-match-wins** by `_reasoning_support()`. A new `gpt-5.N` family MUST be added here, and **ordering matters**: a more specific prefix (`'gpt-5.3-chat'`) must precede the broader one it would otherwise shadow (`'gpt-5.3'`), and every newer `gpt-5.x` family must precede the plain `'gpt-5'` catch-all. Miss it and the model falls through to the `_NO_REASONING` default (`thinking_always_enabled=False`, `openai_supports_reasoning_effort_none=False`) — wrong defaults, no error. The resolved matrix is pinned in `tests/profiles/test_openai.py`.
-- **`KnownModelName` lives in `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py`** (a `TypeAliasType`), **not** `models/__init__.py`. It has split `openai:` and `gateway/openai:` blocks. Don't assume the gateway block omits `-pro`/`-chat-latest` — for the `gpt-5.x` series it enumerates them (`gateway/openai:gpt-5.2-pro`, `gateway/openai:gpt-5.3-chat-latest`, …). Mirror the exact enumeration of the most recent series across both blocks rather than guessing a convention.
+- **`KnownModelName` lives in `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py`** (a `TypeAliasType`), **not** `models/__init__.py`. Add the id to its `openai:`, `openai-chat:` and `gateway/openai:` entries, and remove the ids the curation rule retires.
 - **Most `gpt-5.x-chat` variants DO reason** (`_ALWAYS_ON_REASONING`: reason at a fixed effort, reject `reasoning_effort='none'` and sampling parameters). The non-reasoning exception is the original `gpt-5-chat`/`gpt-5-chat-latest` (`_NO_REASONING`). Verify each `-chat`/`-chat-latest` variant against the live Responses API; don't copy a sibling's reasoning class blindly.
 - **`-pro` variants map to `_ALWAYS_ON_REASONING`** (`gpt-5.2-pro`, `gpt-5.4-pro`, `gpt-5.5-pro`) — they reason and reject `effort='none'`. `_ReasoningSupport` doesn't encode per-effort-*value* rejection, so if a new `-pro` rejects a specific value (e.g. `'low'`), flag it rather than assuming the enum covers it.
-- **`tests/models/test_model_names.py::test_known_model_names`** asserts `known_model_names()` equals the set generated from `_PROVIDER_TO_MODEL_NAMES['openai']`, i.e. `OpenAIModelName = str | AllModels` (the broad union, not the chat-only `ChatModel`). A literal missing from `AllModels` fails this test — Step 4's SDK check is mandatory and must query `AllModels`.
+- **`tests/models/test_model_names.py::test_known_model_names`** asserts `known_model_names()` equals the set the curated aliases generate, gateway mirror included. Step 4's bridge check reads `AllModels` (the broad union, not the chat-only `ChatModel`).
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** is a snapshot test enumerating every `KnownModelName`. Refresh with `--inline-snapshot=fix`.
 - **A dotted point release matches none of its family's prefixes.** `gpt-6.1-sol` does not start with `'gpt-6-sol'`. Before you add it, it resolves to `_NO_REASONING` and misses every `startswith` gate in `openai_model_profile()`. Add it to `_REASONING_SUPPORT_BY_PREFIX` and to the generation's gate tuple (`_GPT_6_MODEL_PREFIXES`).
 - **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
 - **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
-- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. The id waits on the Step 3b genai-prices entry.
 - **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
+
+OpenAI image-model landmines:
+
+- **Probe `quality` with a valid `size`.** The Images API validates `size` before `quality`. An unknown `quality` returns the same `low, medium, high, auto` list for every model, so it tells you nothing. Only a request that passes size validation shows the per-model rejection: `The model 'gpt-image-2' does not support quality 'xhigh'.`
+- **Probe geometry with out-of-bounds sizes.** The API rejects a size before it generates anything. When the new model rejects each boundary size with the same message as a known family, add its ids to that family's tuple in `images/_openai_geometry.py`.
+- **A model page's "Responses: Not supported" means the top-level `model`.** GPT Image 2.6 pages say it, yet the Responses `image_generation` tool accepts both 2.6 ids. Probe the tool with `tool_choice={'type': 'image_generation'}` before deciding `ImageGenerationModelName`.
 
 ### Anthropic
 
 - **TWO literal lists, not one.** Add the id to BOTH:
   1. `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py` — the `anthropic:` AND `gateway/anthropic:` blocks (the `KnownModelName` alias moved here from `models/__init__.py` in #5803; older add-model PR diffs that edit `__init__.py` are stale on this point).
-  2. `AnthropicModelName` in `models/anthropic.py` — see the SDK-lag bridge below.
-- **Anthropic names ARE enumeration-tested**, unlike what you might assume from the hand-maintained look of the list. `tests/models/test_model_names.py::test_known_model_names` asserts `known_model_names()` (i.e. `KnownModelName`) equals the set generated from `_PROVIDER_TO_MODEL_NAMES['anthropic']`, which is `AnthropicModelName` = `ModelParam` (from the installed `anthropic` SDK) `| Literal[...bridge...]`. A new id missing from BOTH the SDK's `ModelParam` and the local bridge fails this test with `Extra names: {...}`.
-- **SDK-lag bridge (the Step 4 mechanism for Anthropic).** When the installed SDK's `anthropic.types.model_param.ModelParam` doesn't yet list the new id (check: `get_args` it and grep), bridge it with a local `Literal`:
-  ```python
-  AnthropicModelName = LatestAnthropicModelNames | Literal['claude-fable-5']
-  ```
-  plus a docstring note to drop the literal once the `anthropic` pin is bumped past the release that adds it. This is the in-repo pattern (commit `87e7ccf39`, PR #5849, added the `claude-fable-5` bridge; `526b065e2` later dropped it and bumped the floor to `anthropic>=0.108.0`). The bridge lands green immediately — no need to split the PR for Anthropic. NOTE: `ModelParam` ≠ `anthropic.types.model.Model`; check `ModelParam` (it's the superset the repo actually consumes, and may carry ids `Model` doesn't).
+  2. `LatestAnthropicModelNames` in `models/anthropic/__init__.py` — see the SDK-lag bridge below.
+- **Anthropic names are enumeration-tested.** `LatestAnthropicModelNames` is the curated `Literal`; `test_known_model_names` ties it to `KnownModelName`.
+- **SDK-lag bridge (the Step 4 mechanism for Anthropic when the locked SDK lacks the id).** When the locked SDK's `anthropic.types.ModelParam` doesn't list the new id, add it to the `anthropic` entry's `bridges` in `SDK_MODEL_LITERALS`. `ModelParam` ≠ `anthropic.types.model.Model`; check `ModelParam`.
 - **Capability flags live as `startswith` prefix tuples in `profiles/anthropic.py`** inside `anthropic_model_profile()` (+ the module-level `_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES`). A new family is NOT a literal-only add — it almost always needs at least one profile override (a literal-only add is only right when the family truly inherits every default branch, which is rare). Probe and set each independently: `models_that_support_json_schema_output`, `supports_adaptive`, `supports_effort`, `supports_xhigh_effort`, `disallows_budget_thinking`, `disallows_sampling_settings`, `supports_task_budgets`, `supports_tool_search`, code-exec version, `anthropic_supports_fast_speed`. Default-`False` flags (e.g. fast speed) are subtractive — just omit the id from that tuple.
 - **A point release inherits every flag of its base id silently.** The tuples are `startswith` prefixes, so `'claude-opus-5'` already matches `claude-opus-5-5` (as `'claude-fable-5'` matches `claude-fable-5-1`): before you touch anything, the new id resolves to the base model's profile. Tests stay green and nothing warns, so the only way to find a divergence is to read the model's migration guide and probe side by side with the base id. Opus 5.5 looked like an Opus 5 mirror and broke default `output_type` runs with a 400 until it opted out of forcing. Where a flag must *not* carry over, carve the id out explicitly (`startswith('claude-opus-5') and not startswith('claude-opus-5-5')`).
 - **Read the migration guide's "breaking changes" before probing.** Anthropic's `platform.claude.com/docs/en/models/<id>/migration-guide` and `whats-new-<id>` pages list every divergence from the previous model and name which other models share it (e.g. "the first three also apply on Claude Fable 5.1"). Those map straight onto profile flags, and they tell you what to probe.
-- **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor under `tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies` in `pydantic_ai_slim/pyproject.toml` (move the exact `uv add --optional`-generated requirement there and remove its conflicting `[project.optional-dependencies]` table), run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
-- **An SDK bump is a real change: pyright `models/anthropic.py` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
+- **Bump the SDK through the 7-day quarantine rather than bridging, once a release of the locked SDK major lists the id.** When only a newer major lists it, bridge the id instead: a bump would raise the floor to that major and move every Anthropic user onto it. `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor under `tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies` in `pydantic_ai_slim/pyproject.toml` (move the exact `uv add --optional`-generated requirement there, add a comment above it naming what the code now needs from that version, as the `anthropic` and `xai-sdk` floors there have, and remove its conflicting `[project.optional-dependencies]` table), run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner`. File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The `bridges` entry above covers every case where the locked SDK lacks the id and no bump applies.
+- **An SDK bump is a real change: pyright `models/anthropic/` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
 - **Opus 5.5 skips thinking on trivial prompts at its default `medium` effort.** A cassette test that needs a thinking block (e.g. `stale_thinking_block_history`) has to raise `anthropic_effort` for it.
-- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. The genai-prices PR has to narrow the base entry's clauses so they stop at the base model, keeping every form they matched before and pinning those forms with a positive test (genai-prices #671, #709), as well as add the new entry per Step 3b.
-- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
+- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. Report an incorrect sibling match to the pricing automation owner per Step 3b. Link genai-prices #671 and #709 for the match-boundary regression pattern.
+- **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic/__init__.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
+- **Record the automatic stale-thinking-block retry for a model that runs the prefix check on every account.** The recording account predates the 2026-08-31 enforcement cutoff, so on Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 a default request never reaches the retry. Claude Fable 5.2 and Mythos 5.2 enforce the check on every account. Probe the new id with `prefix_mismatch_behavior` unset after a `system` change: a 400 means the retry path runs live. Precedent: `test_anthropic_fable_5_2_retries_a_stale_thinking_block_on_a_legacy_account`.
+- **Keep Mythos ids out of `LatestAnthropicModelNames`.** Mythos models are open only to verified organizations; our key gets a 404 `not_found_error` for them. Add a new Mythos id to each profile tuple that names its Fable sibling explicitly, on the evidence of Anthropic's published docs, and say so in the PR.
 - **Probe the stale-thinking-block retry shape on every new binding model.** When the request set no thinking, the retry sends a `thinking` object through `extra_body`. Claude Fable 5.1 and Claude Opus 5.5 accept `{'block_binding': ...}` alone; Claude Sonnet 5.5 rejects it with `thinking.type: Field required`, so the retry fills in `'type': 'adaptive'`. Probe `extra_body={'thinking': {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}` against the new id. Also probe any new `thinking.type` the release adds with `block_binding`: Sonnet 5.5's `between_tools` rejects it (`Extra inputs are not permitted`), so the retry skips that type.
 - **Probe a mid-conversation `system` entry against the `<system>`-tagged fallback before touching `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.** Ask each rendering to lift a restriction the top-level prompt set; a plain non-conflicting instruction lands on every model and discriminates nothing. Claude Opus 5 obeys the entry 6/6 and the tagged text 0/6. Claude Sonnet 5.5 refuses both 6/6, so Anthropic's published support decides and it stays in: the entry keeps operator authority at no measured cost. Leave an id out only when the tagged fallback does measurably better, as it did on Claude Sonnet 5. `_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES` is a separate gate: probe a `tool_addition` by reference and check that the model calls the added tool.
 - **List Bedrock inference profiles, not only foundation models.** Claude Sonnet 5.5 launched with `global.anthropic.claude-sonnet-5-5` and no `us.` profile. Run `aws bedrock list-inference-profiles` and add only the profiles it returns.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
-- **`providers/bedrock.py` `bedrock_structured_output_unsupported`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
+- **`providers/_bedrock_model_names.py` `bedrock_lacks_claude_structured_output`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
 
 ### xAI (Grok)
 
-- **Strict enumeration despite `XaiModelName = str | ChatModel`.** The `str` arm looks permissive but the enumeration test's `get_model_names` recurses into the union and yields nothing for a bare `str` type — so `KnownModelName`'s `xai:` block is strictly enforced against the SDK's `ChatModel` Literal, exactly like OpenAI. `tests/models/test_model_names.py::test_known_model_names` fails with "Extra/Missing names" on any mismatch. Confirm parity: `xai:` + `get_args(ChatModel)` must equal the `xai:` entries in `models/_known_model_names.py`.
-- **SDK-lag bridge (Anthropic-style, and it's needed for xAI too).** `xai_sdk`'s `ChatModel` frequently lags a release — as of 1.17.0 it still lacked `grok-4.5`, so **bumping the floor won't help** (check newer wheels first: download from PyPI and grep `xai_sdk/types/model.py` for `ChatModel: TypeAlias = Literal[`). Bridge with a local Literal: `XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']`, docstring-note to drop it when the floor is bumped past the release that adds the id. This makes the enumeration test's generated side include the new id, matching the hand-added `_known_model_names.py` literal — lands green immediately. (Historically xAI *bumped the SDK floor* — commits `e3f6e3c54`/`58f394aea` — but that only works when the SDK already ships the id.)
+- **`XaiModelName` is a curated `Literal`.** `test_known_model_names` ties its ids to the `xai:` entries in `models/_known_model_names.py`.
+- **SDK-lag bridge.** `xai_sdk`'s `ChatModel` frequently lags a release, so bumping the floor often won't help (check newer wheels first: download from PyPI and grep `xai_sdk/types/model.py` for `ChatModel: TypeAlias = Literal[`). Add the id to the `xai` entry's `bridges` in `SDK_MODEL_LITERALS`.
 - **A new `grok-4.x` is NOT a pure mirror.** Reasoning-effort support lives in `profiles/grok.py` as membership sets (`_GROK_43_REASONING_MODELS` + a per-family effort frozenset), not startswith prefixes. The `grok-4` prefix auto-grants `grok_supports_builtin_tools=True` but leaves `grok_reasoning_efforts` **empty** (→ `supports_thinking=False`) unless you add the id to a reasoning-models set. Forgetting this silently ships a reasoning model with thinking off. Add a `_GROK_<ver>_REASONING_MODELS` set + effort frozenset and an `elif` branch in `grok_model_profile`.
 - **Probe reasoning efforts via the OpenAI-compatible REST endpoint**, comparing against the closest neighbour: `POST https://api.x.ai/v1/chat/completions` with `{"model":..., "reasoning_effort": <val>, "max_tokens":1}`. A rejected value returns 400 `This model does not support 'reasoning_effort' value '<val>'`. **Whether `none` is accepted decides `thinking_always_enabled`** (rejected → always-on). CAVEAT: REST silently accepts `xhigh`/`minimal` even though the gRPC `ReasoningEffort` (in `xai_sdk/types/chat.py`) is `Literal['none','low','medium','high']` — don't over-read REST acceptance; `GrokReasoningEffort` is those four and `_map_reasoning_effort` collapses `xhigh`→`high`, `minimal`→`low`. Grok 4.5 example: accepts `low/medium/high`, rejects `none` → always-on; Grok 4.3 accepts `none` too.
-- **Floating aliases** (`grok-latest`, `grok-build-latest`) go in the profile reasoning-models set (so passing them resolves the right behavior) but are **NOT** added as `KnownModelName` literals — mirror the SDK, which lists only stable ids like `grok-4.3`/`grok-4.3-latest`.
+- **Floating aliases** (`grok-latest`, `grok-build-latest`) go in the profile reasoning-models set (so passing them resolves the right behavior) but are **NOT** added as `KnownModelName` literals: the curation rule leaves out `-latest` aliases.
 - **xai is NOT a gateway provider** (`'xai'` absent from `providers/gateway.py`'s `ModelProvider`) — no `gateway/xai:` entries in `_known_model_names.py`.
 - **Snapshot that ratchets:** `tests/test_capability_spec.py::test_model_json_schema_with_capabilities` embeds the full `KnownModelName` enum. It's a plain sorted string list — hand-add the new ids in sorted position (deterministic, no need for `--inline-snapshot=fix`). Profile-flag tests go in `tests/providers/test_xai.py` (see `test_xai_model_profile`); the parametrized `tests/test_thinking.py::test_grok_43_profile_thinking_support` asserts the *4.3* effort set specifically — don't add a different-effort model to it.
 - **env / probing:** `XAI_API_KEY` lives in the repo-root `.env` (not in every worktree). Run probes with `source .env && <script>` so `$XAI_API_KEY` is exported; put any `curl` referencing it in a script file rather than passing the key inline. Verify enumeration/profile logic with a plain `uv run python` snippet (recurse `get_args(XaiModelName)`, compare to `known_model_names()`; call `grok_model_profile(...)` directly) rather than a full `uv run pytest tests/` run.
@@ -266,7 +284,7 @@ check. Keep the model-specific evidence concise:
 
 - **Bedrock Mantle is a separate provider from Bedrock Runtime.** `bedrock:` (the `BedrockProvider`, boto3-only) talks to the Converse API; `bedrock-mantle:` (the `BedrockMantleProvider`, an `openai`-backed `Provider[AsyncOpenAI]` built on `AsyncBedrockOpenAI`) talks to Mantle's OpenAI-compatible API. They have separate model catalogs and separate optional extras (`bedrock` vs `bedrock-mantle`); don't fold Mantle deps into the `bedrock` group.
 - **Mantle model families use different endpoints, keyed off the profile.** `BedrockMantleProvider.model_profile` stamps `bedrock_mantle_interface: Literal['chat','responses','openai-responses']` on the profile (GPT-5.4+ → `openai-responses` at `/openai/v1`; GPT-OSS → `responses` at `/v1`; GPT-OSS Safeguard → `chat` at `/v1`). `infer_model` reads that (via the profile, not a separate interface method) to pick `BedrockMantleResponsesModel` vs `BedrockMantleChatModel`, and the Responses model overrides `client` to pick the base URL. Add a family only after verifying its endpoint against the AWS model card + a live request.
-- **`bedrock:` stays on Converse; it does NOT auto-route to Mantle.** A GPT-5.4+ model on `bedrock:` raises from `BedrockProvider.model_profile` pointing users to `bedrock-mantle:` (there's a `TODO(v3)` to flip the default with a deprecation later). Only add `bedrock-mantle:` names to `KnownModelName` — no `bedrock:openai.gpt-5.*` names, and hence no `UNSUPPORTED_GATEWAY_MODEL_NAMES` entries for them.
+- **`bedrock:` stays on Converse; it does NOT auto-route to Mantle.** `bedrock_openai_model_profile` allows Converse only for the GPT ids it lists; any other proprietary GPT id on `bedrock:` raises, pointing users to `bedrock-mantle:`. Add a `bedrock:` GPT id to that allowed set and to `LatestBedrockModelNames` only after a successful Converse call.
 - **Response-scoped tool-call IDs are a profile flag, not a Mantle-wide behavior.** `openai_responses_tool_call_ids_are_response_scoped` (on `OpenAIModelProfile`) is enabled only for Mantle GPT-5.6 Responses; `OpenAIResponsesModel` qualifies call IDs with the response ID in both request and streaming ingestion so history stays uniquely keyed (#6536).
 
 ### Google (Gemini)
@@ -275,17 +293,24 @@ check. Keep the model-specific evidence concise:
   1. `LatestGoogleModelNames` in `models/google.py` (`GoogleModelName = str | LatestGoogleModelNames` — the `str` arm is permissive at typecheck time, but the enumeration test only walks the `Literal` arm).
   2. `models/_known_model_names.py` — **four** blocks: `gateway/google-cloud:`, `gateway/google:`, `google-cloud:`, `google:` (older add-model PRs that only edit three blocks or `models/__init__.py` are stale; KnownModelName moved in #5803).
 - **No SDK-lag bridge needed.** `google-genai` does not ship a model-id Literal the enumeration test consumes — the local `LatestGoogleModelNames` Literal *is* the source of truth. Adding the id lands green immediately.
-- **Profile is substring-gated, with a per-model level table.** `profiles/google.py` keys off `'gemini-3' in model_name` (thinking level, tool combination, server-side tool invocations, MIME types in tool returns) and `'pro' in model_name and 'flash' not in model_name` (always-on thinking). The exception is `_MODEL_THINKING_LEVELS`, a `startswith` table mapping id prefixes to their documented level sets that already holds both pro previews, the 3.7 and 3.8 flash ids, and `gemini-3.1-flash-lite-image` — so probe every new id rather than assuming the Gemini-3 branch covers it. Probe all four levels with `generateContent` and `thinkingConfig.thinkingLevel` (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`) on the Gemini API and on Vertex separately. A 400 on both means the id needs an entry in the table carrying exactly the levels it accepts (non-contiguous sets like `minimal, high` are fine — unsupported unified efforts snap to the nearest documented level). A 400 on only one of them means a level set in `GoogleModel.profile` gated on the client's transport (`_is_google_cloud`), as `gemini-3.1-flash-image` has for the Gemini API, so the other API keeps the levels it accepts. Reach Vertex with application-default credentials, `GOOGLE_PROJECT`, and `location='global'`, as `tests/conftest.py::vertex_provider` does. If you can probe only the Gemini API and it 400s, use the transport-gated branch too, so Vertex keeps its current behavior. Cite Google's documented level sets in the code comment: the Gemini API [thinking table](https://ai.google.dev/gemini-api/docs/thinking) (for image models, the [image-generation page](https://ai.google.dev/gemini-api/docs/image-generation) instead) and the Vertex [thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking). The probe results decide the entry, even where they diverge from those tables. Probe too when the release notes claim any other capability divergence (no thinking, image-only, Pro always-on).
+- **Profile is substring-gated, with a per-model level table.** `profiles/google.py::google_model_profile` gates by an older-Gemini negative list (`gemini-1`, `gemini-2.x`, `gemma`): every other id, `gemini-4-*` included, gets the modern branch (thinking level, tool combination, server-side tool invocations, MIME types in tool returns). `'pro' in model_name and 'flash' not in model_name` sets always-on thinking. The exception is `_MODEL_THINKING_LEVELS`, a `startswith` table mapping id prefixes to their documented level sets that already holds both pro previews, the 3.7 and 3.8 flash ids, and `gemini-3.1-flash-lite-image` — so probe every new id rather than assuming the Gemini-3 branch covers it. Probe all four levels with `generateContent` and `thinkingConfig.thinkingLevel` (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`) on the Gemini API and on Vertex separately. A 400 on both means the id needs an entry in the table carrying exactly the levels it accepts (non-contiguous sets like `minimal, high` are fine — unsupported unified efforts snap to the nearest documented level). A 400 on only one of them means a level set in `GoogleModel.profile` gated on the client's transport (`_is_google_cloud`), as `gemini-3.1-flash-image` has for the Gemini API, so the other API keeps the levels it accepts. Reach Vertex with application-default credentials, `GOOGLE_PROJECT`, and `location='global'`, as `tests/conftest.py::vertex_provider` does. If you can probe only the Gemini API and it 400s, use the transport-gated branch too, so Vertex keeps its current behavior. Cite Google's documented level sets in the code comment: the Gemini API [thinking table](https://ai.google.dev/gemini-api/docs/thinking) (for image models, the [image-generation page](https://ai.google.dev/gemini-api/docs/image-generation) instead) and the Vertex [thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking). The probe results decide the entry, even where they diverge from those tables. Probe too when the release notes claim any other capability divergence (no thinking, image-only, Pro always-on).
 - **API verification:** `curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$GOOGLE_API_KEY"` (key is often in the main worktree `.env`, not every linked worktree). Confirm exact ids; do **not** invent dated snapshots or `-preview` suffixes. Specialized / limited-access models (e.g. Flash Cyber via CodeMender) are out of scope unless they appear in that public listing.
-- **Gateway support is opt-out, not opt-in.** The enumeration test generates `gateway/{google,google-cloud}:*` for every `LatestGoogleModelNames` entry **except** those listed in `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`. Mirror the most recent sibling series: if `gemini-3.5-flash` is in the gateway KnownModelName blocks (not in the unsupported set), new flash siblings go there too. Only add to `UNSUPPORTED_GATEWAY_MODEL_NAMES` when the gateway actually rejects the id.
+- **A Vertex 404 at the default `us-central1` does not mean Vertex lacks the id.** Probe `location='global'` before you conclude the id is Gemini-API-only.
+- **Gateway support is opt-out, not opt-in.** The enumeration test generates `gateway/{google,google-cloud}:*` for every `LatestGoogleModelNames` entry **except** those listed in `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`. Do not add a new id there; Step 6 covers Gateway support. `test_unsupported_gateway_model_names_are_curated` fails on an entry whose id left the curated aliases; remove that entry.
 - **Snapshots / tests:** hand-add the new ids in sorted position in `tests/test_capability_spec.py::test_model_json_schema_with_capabilities` (plain sorted string list). Mirror-only adds skip new VCR by default; #5527 recorded one for `gemini-3.5-flash` but that is not required for a pure name add.
-- **Docs:** example snippets often hard-code a recent flash id (`docs/models/google.md`, `docs/capabilities/thinking.md`) — leave them alone unless the docs maintain a model registry table (they currently do not).
+- **Docs:** doc pages name models through the tiered aliases in `docs/model_aliases/aliases.json`. Leave pages that pin a model on purpose (`docs/models/google.md`, `docs/capabilities/thinking.md`) alone.
 
 Google image-model landmines:
 
 - Direct image generation has a separate public literal, `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`. When the task is scoped to `ImageGenerator`, update and test this literal independently; do not automatically widen the change to conversational `KnownModelName`, gateway aliases, profiles, and capability snapshots unless those surfaces are explicitly in scope.
 - `Client().models.list()` returns a lazy pager. Keep the client in a named variable until iteration finishes; constructing it inline can let it be closed before the pager sends its request. The endpoint can still list deprecated preview image IDs, so cross-check the official deprecation page and add only current IDs.
 - Probe image settings on the exact model and API surface. For `gemini-3.1-flash-image`, the minimum `generateContent` value is `ImageConfigDict(image_size='512')`; the superficially similar literal `'0.5K'` is invalid and returns HTTP 400. `gemini-3.1-flash-lite-image` supports only 1K output. Do not transfer value spellings between model families or API examples without a live check.
+
+### MoonshotAI (Kimi)
+
+- `MoonshotAIModelName` in `providers/moonshotai.py` is a local literal, independent of the OpenAI SDK's model enum. Update it and `models/_known_model_names.py` together, then refresh `tests/test_capability_spec.py::test_model_json_schema_with_capabilities`.
+- The `kimi-k3` prefix already covers `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` in both family and provider profiles. Probe before adding another prefix or changing profile flags.
+- Verify the API at `https://api.moonshot.ai/v1`. The separate Kimi Code subscription uses different model IDs. Read the [canonical API guide](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart) and compare live behavior with the nearest sibling; do not transfer subscription semantics.
 
 ### Others
 

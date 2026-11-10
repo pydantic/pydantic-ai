@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
+    SpeechTimestamp,
     TextPart,
     UserPromptPart,
 )
@@ -42,7 +43,6 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
-    _session as realtime_session,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -54,6 +54,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeInput,
     ResponseDone,
@@ -321,6 +322,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -330,6 +332,7 @@ def test_profile() -> None:
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity='segment',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
@@ -737,6 +740,36 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     assert update['session']['voice'] == 'eve'
 
 
+@pytest.mark.parametrize('granularity', ['segment', None])
+async def test_connect_times_speech_only_with_a_profile_that_reports_it(
+    monkeypatch: pytest.MonkeyPatch, granularity: Literal['segment'] | None
+) -> None:
+    """A profile overridden to report no timestamps gets none, matching the warning the session gives."""
+    frames = [
+        _created(),
+        _updated(),
+        _transcript_frame('resp-1', 'item-1', 'Hello', 0.0),
+        _audio_frame('resp-1', 'item-1', 500),
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-1'),
+    ]
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(FakeWebSocket(frames)))
+    model = XaiRealtimeModel(
+        'grok-voice-latest',
+        provider=XaiProvider(api_key='k'),
+        settings=rt_xai.XaiRealtimeModelSettings(output_speech_timestamps=True),
+        profile={'output_speech_timestamp_granularity': granularity},
+    )
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+
+    timed = [event for event in events if isinstance(event, OutputSpeechTimestamps)]
+    assert timed == (
+        [OutputSpeechTimestamps([_segment('Hello', 0, 500)], item_id='item-1', response_id='resp-1')]
+        if granularity
+        else []
+    )
+
+
 async def test_connect_url_encodes_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     fake_connect = FakeConnect(ws)
@@ -880,8 +913,90 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert conn.conversation_id == 'conversation-2'
 
 
-async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The close after a `max_duration` error ends the session: a re-dial would resume into the same limit.
+class _StaysOpen(FakeWebSocket):
+    """Yields its frames, then stays open with nothing more to say."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        # The connection re-dials without reading on.
+        await asyncio.Event().wait()  # pragma: no cover
+
+
+@pytest.mark.parametrize('socket_class', [FakeWebSocket, _StaysOpen], ids=['closes', 'stays-open'])
+async def test_max_duration_error_reconnects_into_a_new_conversation(
+    monkeypatch: pytest.MonkeyPatch, socket_class: type[FakeWebSocket]
+) -> None:
+    """With a reconnect policy, a `max_duration` error re-dials into a new conversation, so the error is recoverable.
+
+    The connection doesn't wait for xAI to close the socket: whether or not it does, the re-dial closes it.
+    """
+    ended = socket_class(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
+    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated(), transcript])
+    connect = _RecordingConnect([ended, fresh])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+
+    assert events[:3] == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=True,
+        ),
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
+    assert conn.conversation_id == 'conversation-2'
+    assert connect.closed[0] is ended
+
+
+async def test_session_carries_on_past_max_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session reports the `max_duration` error and keeps going in the new conversation."""
+    ended = FakeWebSocket(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    fresh = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated()])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ended, fresh]))
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with Agent().realtime(model).session() as session:
+        events = await collect_session_events(session)
+
+    assert [event for event in events if isinstance(event, (RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent))][
+        :2
+    ] == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=True,
+        ),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+
+
+@pytest.mark.parametrize('reconnects_used_up', [False, True])
+async def test_max_duration_error_without_a_reconnect_ends_the_session(
+    monkeypatch: pytest.MonkeyPatch, reconnects_used_up: bool
+) -> None:
+    """Without a reconnect policy, or with its reconnects used up, a `max_duration` error ends the session.
 
     The error already reports why the session ended, so the close isn't reported again.
     """
@@ -893,10 +1008,15 @@ async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyP
             json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
         ]
     )
-    connect = _RecordingConnect([ended, FakeWebSocket([_created(), _conversation_created(), _updated()])])
+    connect = _RecordingConnect([ended])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    settings = (
+        rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_reconnects': 0})
+        if reconnects_used_up
+        else None
+    )
+    model = _model(settings)
     async with _connect(model, 'x') as conn:
         events = [event async for event in conn]
         assert not conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
@@ -1139,6 +1259,120 @@ def _done_with_billed_seconds(total: int) -> str:
             'usage': {'input_tokens': 3, 'output_tokens': 40, 'billable_audio_seconds': total},
         }
     )
+
+
+def _speech_frame(event_type: str, response_id: str, item_id: str, **fields: Any) -> str:
+    return json.dumps(
+        {
+            'type': event_type,
+            'event_id': f'event-{event_type}',
+            'response_id': response_id,
+            'item_id': item_id,
+            'output_index': 0,
+            'content_index': 0,
+            **fields,
+        }
+    )
+
+
+def _audio_frame(response_id: str, item_id: str, duration_ms: int) -> str:
+    return _speech_frame(
+        'response.output_audio.delta',
+        response_id,
+        item_id,
+        delta=base64.b64encode(b'\x00\x00').decode(),
+        audio_duration_ms=duration_ms,
+    )
+
+
+def _transcript_frame(response_id: str, item_id: str, delta: str, start_time: float | None = None) -> str:
+    timing = {} if start_time is None else {'start_time': start_time}
+    return _speech_frame('response.output_audio_transcript.delta', response_id, item_id, delta=delta, **timing)
+
+
+def _segment(text: str, start_ms: int, duration_ms: int) -> SpeechTimestamp:
+    return SpeechTimestamp(text=text, start_ms=start_ms, duration_ms=duration_ms, granularity='segment')
+
+
+@pytest.mark.parametrize('output_speech_timestamps', [True, False])
+async def test_speech_segments_are_timed_once_they_end(output_speech_timestamps: bool) -> None:
+    """A segment is timed once its end is known: the next segment's start, or the end of its item's audio.
+
+    A response that ends without its item's `response.output_audio.done`, as a barge-in cancels it, ends the
+    item's last segment where its audio stopped. Nothing is timed with `output_speech_timestamps` off.
+    """
+    frames = [
+        # Text with no start of its own goes on the segment before it. Ahead of any, it's taken to start the item's
+        # audio, and the first text with a start joins it.
+        _transcript_frame('resp-1', 'item-1', 'Um,', None),
+        _transcript_frame('resp-1', 'item-1', ' well,', None),
+        _audio_frame('resp-1', 'item-1', 500),
+        _transcript_frame('resp-1', 'item-1', ' hello', 0.2),
+        _transcript_frame('resp-1', 'item-1', ' there.', None),
+        _transcript_frame('resp-1', 'item-1', ' How are', 0.6),
+        _audio_frame('resp-1', 'item-1', 900),
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-1'),
+        # The audio of an item that was never timed ends with nothing to time.
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-untimed'),
+        _transcript_frame('resp-2', 'item-2', 'Cut', 0.0),
+        _audio_frame('resp-2', 'item-2', 300),
+        _transcript_frame('resp-3', 'item-3', 'Later', 0.0),
+        # An item with audio and no transcript has nothing to time either.
+        _audio_frame('resp-2', 'item-silent', 200),
+        json.dumps({'type': 'response.done', 'response': {'id': 'resp-2', 'status': 'cancelled', 'output': []}}),
+    ]
+    conn = XaiRealtimeConnection(
+        FakeWebSocket(frames),  # type: ignore[arg-type]
+        output_speech_timestamps=output_speech_timestamps,
+    )
+    events = await collect_codec_events(conn)
+
+    timed = [event for event in events if isinstance(event, OutputSpeechTimestamps)]
+    if not output_speech_timestamps:
+        assert timed == []
+        return
+    assert timed == [
+        OutputSpeechTimestamps([_segment('Um, well, hello there.', 0, 600)], item_id='item-1', response_id='resp-1'),
+        OutputSpeechTimestamps([_segment(' How are', 600, 800)], item_id='item-1', response_id='resp-1'),
+        # Timed by the end of its response, ahead of the events that close it; the other response's goes on.
+        OutputSpeechTimestamps([_segment('Cut', 0, 300)], item_id='item-2', response_id='resp-2'),
+    ]
+    assert events[events.index(timed[-1]) + 1 :] == [
+        ResponseDone(interrupted=True, provider_response_id='resp-2', provider_details={'status': 'cancelled'})
+    ]
+
+
+async def test_speech_segment_of_a_reply_xai_drops_is_timed_where_its_audio_stopped() -> None:
+    """xAI drops the reply it started at a stop the user speaks on past, with no `response.done` for it.
+
+    The reply ends there all the same (see `_XaiVadLifecycle`), and so does the segment its audio was in.
+    """
+    frames = [
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_started', 'event_id': 'e1', 'audio_start_ms': 0, 'item_id': 'u1'}
+        ),
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_stopped', 'event_id': 'e2', 'audio_end_ms': 900, 'item_id': 'u1'}
+        ),
+        json.dumps(
+            {
+                'type': 'response.created',
+                'event_id': 'e3',
+                'response': {'id': 'resp-dropped', 'object': 'realtime.response', 'status': 'in_progress'},
+            }
+        ),
+        _transcript_frame('resp-dropped', 'item-1', 'Sure,', 0.0),
+        _audio_frame('resp-dropped', 'item-1', 400),
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_started', 'event_id': 'e4', 'audio_start_ms': 1200, 'item_id': 'u1'}
+        ),
+    ]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames), output_speech_timestamps=True)  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    assert [event for event in events if isinstance(event, OutputSpeechTimestamps)] == [
+        OutputSpeechTimestamps([_segment('Sure,', 0, 400)], item_id='item-1', response_id='resp-dropped')
+    ]
 
 
 async def test_billable_audio_seconds_running_total_is_split_per_response() -> None:
@@ -1580,8 +1814,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
-    commits_announced: list[None] = []
-    conn._set_audio_commit_listener(lambda: commits_announced.append(None))  # pyright: ignore[reportPrivateUsage]
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)
@@ -1599,8 +1831,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
-    # The session placed the turn when the commit first started going out; sending it again doesn't move it.
-    assert len(commits_announced) == 1
 
 
 async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
@@ -1843,17 +2073,12 @@ def _spoken_reply(response_id: str, pcm: bytes, transcript: str) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize('core_mode', ['core', 'legacy'])
-async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(
-    monkeypatch: pytest.MonkeyPatch, core_mode: str
-) -> None:
+async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
     """A spoken turn goes after what its commit followed, even once the retained-audio budget evicted that answer's audio.
 
     The second answer arrives before the second turn's transcript and evicts the first answer's audio, which the
-    second commit was placed after. Also run on the current core (`_CORE_MODE = 'legacy'`), whose own record keeps
-    retained audio only there: in core mode it lets that audio go as soon as it records it.
+    second commit was placed after.
     """
-    monkeypatch.setattr(realtime_session, '_CORE_MODE', core_mode)
     tenth_of_a_second = b'\x10\x27' * 2400
     ws = _PhasedWebSocket(
         [_created(), _updated()],
@@ -2198,8 +2423,20 @@ async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of
     await conn.send(_AUDIO)
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
     # A request committing nothing has no snapshot to drop.
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_commit_under_server_vad_goes_out_but_is_not_waited_for() -> None:
+    """Under server VAD, xAI ignores a commit altogether (no acknowledgement, no error; checked live): it still goes out,
+    and nothing waits for its acknowledgement, so it makes no turn of its own when the session ends."""
+    ws = FakeWebSocket([])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    assert json.loads(ws.sent[-1]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.1'}
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._stop_reading() == []  # pyright: ignore[reportPrivateUsage]

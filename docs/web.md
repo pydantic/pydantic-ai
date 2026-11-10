@@ -28,7 +28,7 @@ Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.age
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='You are a helpful assistant.')
 
 @agent.tool_plain
 def get_weather(city: str) -> str:
@@ -52,17 +52,17 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
 # Model with custom configuration
-anthropic_model = AnthropicModel('claude-sonnet-4-5')
+anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(
-    models=['openai:gpt-5.2', anthropic_model],
+    models=['{{ openai:medium }}', anthropic_model],
 )
 
 # Or with custom display labels
 app = agent.to_web(
-    models={'GPT 5.2': 'openai:gpt-5.2', 'Claude': anthropic_model},
+    models={'OpenAI': '{{ openai:medium }}', 'Claude': anthropic_model},
 )
 ```
 
@@ -76,11 +76,11 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebSearchTool())],
 )
 
-app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
+app = agent.to_web(models=['{{ anthropic:medium }}'])
 ```
 
 !!! note "Memory Tool"
@@ -93,7 +93,7 @@ You can pass extra instructions that will be included in each agent run:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
@@ -118,7 +118,7 @@ If you serve the UI under a real hostname — behind a reverse proxy, or through
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(allowed_hosts=['ui.example.com'])
 
@@ -129,7 +129,7 @@ app = agent.to_web(allowed_hosts=['example.com', '*.example.com'])
 Or with the CLI:
 
 ```bash
-clai web -m openai:gpt-5.2 --allowed-host ui.example.com
+clai web -m {{ openai:medium }} --allowed-host ui.example.com
 ```
 
 `clai web --host <name>` adds that name for you, so the URL it prints always works.
@@ -182,7 +182,7 @@ Then use `html_source` to point to your local file or custom URL:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 # Use a local file (e.g., for offline usage)
 app = agent.to_web(html_source='~/pydantic-ai-ui.html')
