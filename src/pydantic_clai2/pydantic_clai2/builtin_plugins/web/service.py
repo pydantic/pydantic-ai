@@ -122,7 +122,9 @@ class WebService:
         )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
-        """Where the settings menus opened in this page ask their questions."""
+        """Where the settings menus opened in this page, and commands entered while CLAI has no terminal, ask."""
+        if isinstance(self.live, LiveRuntimes):
+            self.live.dialogs = self.dialogs
         self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)

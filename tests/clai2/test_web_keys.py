@@ -3,7 +3,9 @@
 import asyncio
 import io
 import json
-from collections.abc import Callable
+import os
+import sys
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,25 +25,28 @@ from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICod
 from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
+    Dialog,
     DialogClosed,
     DialogOpened,
     DialogShown,
+    Notice,
     SettingsChanged,
 )
-from pydantic_clai2.config import api_keys
+from pydantic_clai2.config import PluginSettings, api_keys
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, key_profiles
 from pydantic_clai2.models.accounts import Account, accounts, remember
-from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.plugins import Plugin, PluginLogin
 from pydantic_clai2.plugins.menus import Action, Dialogs
 from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.accounts_menu import ADD, AccountsSource, account_key, accounts_settings_menu
 from pydantic_clai2.ui.menus.key_menu import KeysSource, keys_menu
+from pydantic_clai2.ui.prompt.line_input import read_line
 from tests.clai2.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.clai2.test_auth import CREDENTIALS, fake_browser, never_called_back, never_pasted
 from tests.clai2.test_github_copilot import device_flow as device_flow
-from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
+from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, Web, make_web as make_web, receive_until
 
 SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
@@ -343,3 +348,57 @@ def test_adding_an_account_from_the_page_signs_in_behind_its_waiting_screen(
         left = answered(web_, socket, '/api/commands/accounts/fields/openai-codex/action', 'sign-out', 'yes').json()
         assert left['messages'] == ['Signed out of openai-codex.']
         assert not has_credentials(account='openai-codex')
+
+
+class PasteLogin(Plugin):
+    """Signs in with the address pasted at `read_line`'s prompt, as the Claude Code plugin does."""
+
+    def get_logins(self) -> Sequence[PluginLogin]:
+        return (PluginLogin(name='paste', handler=self.sign_in),)
+
+    async def sign_in(self) -> str:
+        prompt = 'Paste the address your browser ended on: '
+        return f'Pasted {await read_line(prompt, console=self.host.console, hidden=True)!r}.'
+
+
+def asked(socket: WebSocketTestSession) -> Dialog:
+    """The dialog an entered command opens in the page; its notice coming first fails, as it ended without asking."""
+    while True:
+        message = WIRE.validate_json(socket.receive_text())
+        if isinstance(message, DialogOpened):
+            return message.dialog
+        assert not isinstance(message, Notice), message.text
+
+
+def test_login_typed_in_the_page_asks_there_when_clai_has_no_terminal(
+    make_web: MakeWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under `clai2 --web` from a script, stdin reads EOF, which a terminal paste prompt takes as a cancel."""
+    called_back = asyncio.Event()
+
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        await called_back.wait()
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
+    web_ = make_web(Agent(TestModel()), extra=[PluginSettings(id='paste', factory=f'{__name__}:PasteLogin')])
+    with (
+        open(os.devnull, encoding='utf-8') as stdin,
+        web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket,
+    ):
+        monkeypatch.setattr(sys, 'stdin', stdin)
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post('/api/input', {'text': '/login openai-codex'}).json() == {'menu': None}
+        waiting = asked(socket)
+        assert (waiting.kind, waiting.title) == ('wait', 'Signing in to ChatGPT/Codex')
+        web_.portal.call(called_back.set)
+        assert receive_until(socket, Notice)[1].text.startswith('Codex connected.')
+        web_.post('/api/input', {'text': '/login paste'})
+        paste = asked(socket)
+        assert (paste.kind, paste.title, paste.secret) == ('text', 'Paste the address your browser ended on', True)
+        assert web_.post(f'/api/dialogs/{paste.id}', {'value': 'http://localhost/?code=1'}).status_code == 204
+        assert receive_until(socket, Notice)[1].text == "Pasted 'http://localhost/?code=1'."
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'

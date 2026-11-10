@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.menu_worker import menu_key, remote_dialogs, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -63,6 +63,8 @@ async def login_command(
     A plugin sign-in that succeeds saves its `models` to `store`. `dialogs` asks wherever a menu was
     opened, such as the web UI: subscriptions wait on their waiting screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
+    Without them, a command entered where CLAI has no terminal asks through `remote_dialogs`, and
+    a plugin's handler runs, asking there through `line_input.read_line`.
     """
     plugins = plugins or {}
     if len(args) > 1:
@@ -95,10 +97,11 @@ async def _sign_in(
     store: SettingsStore | None,
     dialogs: Dialogs | None,
 ) -> str:
+    asking = dialogs or remote_dialogs()
     if name == CODEX:
-        return await codex.login([] if profile is None else [account(name, profile)], dialogs=dialogs)
+        return await codex.login([] if profile is None else [account(name, profile)], dialogs=asking)
     if name == 'github-copilot':
-        return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
+        return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=asking)
     if (login := plugins.get(name)) is not None:
         if dialogs is not None:  # Its handler asks in the terminal, with no dialogs to ask through.
             target = account(name, profile)
@@ -107,7 +110,7 @@ async def _sign_in(
     from pydantic_clai2.models import key_profiles
 
     if key_profiles.supports(name, profile=profile):
-        return await key_profiles.login(provider=name, profile=profile, console=codex.console, dialogs=dialogs)
+        return await key_profiles.login(provider=name, profile=profile, console=codex.console, dialogs=asking)
     raise ValueError(_login_usage(plugins))
 
 

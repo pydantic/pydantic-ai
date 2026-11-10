@@ -1426,12 +1426,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
 
         That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
-        started from a script: a menu would read EOF and close as cancelled.
+        started from a script: a menu would read EOF and close as cancelled. What can ask through a
+        remote UI's dialogs asks there instead.
         """
         stdin = sys.stdin
         if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
             return nullcontext()
-        return without_terminal(text, instead=self._page_menu(text))
+        return without_terminal(text, instead=self._page_menu(text), dialogs=self.process.live.dialogs)
 
     def _page_menu(self, text: str) -> str | None:
         """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
