@@ -4458,7 +4458,7 @@ class TestDynamicCatalog:
         """The announcement names a remote tool only by the identifier `run_code` calls it by.
 
         An MCP server chooses its tool names, so one can carry markup, line breaks or prose. Only letters,
-        digits and underscores reach the system-voice text; the name as found stays in the metadata. These
+        digits and underscores reach the system-voice text; the name as found stays in the part's `tools` field. These
         names come from remote servers, so the announcement is driven directly rather than through one.
         """
         cap = CodeMode[object](dynamic_catalog=True)
