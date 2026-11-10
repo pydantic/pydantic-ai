@@ -157,10 +157,7 @@ class CapabilitySpec(NamedSpec):
 
 
 class ProviderSpec(NamedSpec):
-    """A provider specification, distinguishable from other NamedSpec types for schema generation.
-
-    In JSON schemas, fields typed as ProviderSpec are replaced with the union of provider schemas.
-    """
+    """The provider of a model spec: a provider class's class-style name or a provider name, with its arguments."""
 
 
 def build_registry(

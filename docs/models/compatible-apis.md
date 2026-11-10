@@ -389,6 +389,18 @@ The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways use, gets that vendor's model profile, and any other name the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile).
 
+In an [agent spec](../agent-spec.md), the same model is a `model` with a configured provider, with the API key read from an environment variable. See [Models with a configured provider](../agent-spec.md#models-with-a-configured-provider):
+
+```yaml {test="skip"}
+model:
+  name: openai-chat:model_name
+  provider:
+    OpenAICompatible:
+      name: my-service
+      base_url: https://<openai-compatible-api-endpoint>
+      api_key: {env: MY_SERVICE_API_KEY}
+```
+
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
 ## Non-standard finish reasons

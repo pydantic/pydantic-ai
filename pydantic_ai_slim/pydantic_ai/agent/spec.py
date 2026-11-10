@@ -268,6 +268,15 @@ class AgentSpec(BaseModel):
         model_settings_def: dict[str, Any] = json_schema.get('$defs', {}).get('ModelSettings', {})
         model_settings_def.pop('additionalProperties', None)
 
+        # Inline the single-key object for each provider name, so a provider's names share its arguments' $def
+        # without adding one of their own.
+        defs: dict[str, Any] = json_schema['$defs']
+        provider_items: list[dict[str, Any]] = defs['ModelSpec']['properties']['provider']['anyOf']
+        for i, item in enumerate(provider_items):
+            if (ref := item.get('$ref', '')).startswith('#/$defs/provider_spec_'):
+                provider_items[i] = defs.pop(ref.removeprefix('#/$defs/'))
+                provider_items[i].pop('title')
+
         # Replace CapabilitySpec $refs with the capability items Union,
         # so nested capability fields (e.g. PrefixTools.capability) show
         # the same rich schema as the top-level capabilities array.
@@ -514,8 +523,7 @@ def model_from_spec(model: str | ModelSpec, custom_provider_types: Sequence[type
         raise UserError(f'Unknown model: {model.name}') from None
 
     provider = _load_provider(model.provider, custom_provider_types)
-    client_type = _provider_client_type(default_provider_class)
-    if client_type is not None and not isinstance(provider.client, client_type):
+    if not isinstance(provider.client, _provider_client_type(default_provider_class)):
         raise UserError(
             f'Provider {model.provider.name!r} ({type(provider).__name__}) cannot be used with model {model.name!r},'
             f' which needs a provider like `{default_provider_class.__name__}`.'
@@ -636,13 +644,13 @@ def _get_custom_provider_registry(
 
 
 def _provider_client_type(provider_class: type[Provider[Any]]) -> Any:
-    """The client type in the `Provider[...]` base of a provider class, or `None` if it's not a concrete type."""
-    for cls in provider_class.__mro__:
-        for base in cls.__dict__.get('__orig_bases__', ()):
-            if get_origin(base) is Provider:
-                [client_type] = get_args(base)
-                return client_type if client_type is not Any else None
-    return None  # pragma: no cover
+    """The client type in the `Provider[...]` base of a built-in provider class."""
+    return next(
+        get_args(base)[0]
+        for cls in provider_class.__mro__
+        for base in cls.__dict__.get('__orig_bases__', ())
+        if get_origin(base) is Provider
+    )
 
 
 def _provider_spec_target(provider_class: type[Provider[Any]]) -> Callable[..., Any]:
