@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 CODE_PATHS = (':(glob,exclude)**/cassettes/**', ':(glob,exclude)**/*.cassette.yaml')
@@ -169,13 +170,13 @@ def prepare(repo: Path, base_ref: str, head_ref: str, output: Path) -> Counter[s
     return counts
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument('--base', required=True, help='Fetched canonical base ref')
     parser.add_argument('--head', default='HEAD', help='Commit to review (default: HEAD)')
     parser.add_argument('--output', type=Path, help='Defaults to worktree-local review-branch/tmp')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         repo = Path(git(args.repo, 'rev-parse', '--show-toplevel').decode().strip())
         output = args.output or repo / '.agents/skills/review-branch/tmp'

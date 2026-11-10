@@ -16,7 +16,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -366,6 +366,15 @@ class Preconditions:
     pr_ready_for_docs: str
 
 
+@dataclass
+class ReviewerDispatch:
+    """One reviewer's entry under `reviewers` in `preconditions.json`."""
+
+    wave: int
+    dispatch: bool
+    reason: str
+
+
 def compute(
     changes: list[Change],
     diff: bytes,
@@ -553,13 +562,13 @@ def render(pre: Preconditions, dispatch: dict[str, tuple[bool, str]], base: str,
     return '\n'.join(rows)
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument('--output', type=Path, help='Defaults to worktree-local review-branch/tmp')
     parser.add_argument('--pr', help='PR number for `gh pr view` (default: the current branch)')
     parser.add_argument('--pr-json', type=Path, help='Read PR body/isDraft/reviewDecision from this file instead of gh')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         repo = Path(git(args.repo, 'rev-parse', '--show-toplevel').decode().strip())
         agents = repo / '.agents/agents'
@@ -595,7 +604,7 @@ def main() -> int:
         'head_sha': head,
         'preconditions': asdict(pre),
         'reviewers': {
-            reviewer: {'wave': wave, 'dispatch': dispatch[reviewer][0], 'reason': dispatch[reviewer][1]}
+            reviewer: asdict(ReviewerDispatch(wave, *dispatch[reviewer]))
             for wave, reviewers in WAVES.items()
             for reviewer in reviewers
         },
