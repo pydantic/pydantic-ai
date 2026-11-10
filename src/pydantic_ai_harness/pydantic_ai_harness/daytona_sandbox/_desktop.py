@@ -134,18 +134,16 @@ class DaytonaDesktop:
 
     def __init__(self, computer_use: AsyncComputerUse):
         self._computer_use = computer_use
-        # The sandbox may stop and start between a screenshot and the next action, such as while the model thinks,
-        # and input sent to its desktop before the desktop starts again breaks it for good.
-        self._check_before_acting = True
 
     async def _check_running(self) -> None:
-        """Refuse the first action after a screenshot on a desktop that stopped, before sending it any input."""
-        if not self._check_before_acting:
-            return
+        """Refuse an action on a desktop that stopped, before sending it any input.
+
+        The sandbox may stop and start between any two calls, such as while the model thinks, and input sent to its
+        desktop before the desktop starts again breaks it for good.
+        """
         status = await self._computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
         if status.status != 'active':
             raise WorkspaceError(f"Daytona's desktop is not running: its status is {status.status!r}.")
-        self._check_before_acting = False
 
     async def display_size(self) -> tuple[int, int]:
         displays = (await self._computer_use.display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
@@ -156,7 +154,6 @@ class DaytonaDesktop:
 
     async def screenshot(self) -> bytes:
         response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
-        self._check_before_acting = True
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
@@ -169,7 +166,6 @@ class DaytonaDesktop:
             )
         options = ScreenshotOptions(fmt='png', scale=scale)
         response = await self._computer_use.screenshot.take_compressed(options, request_timeout=_REQUEST_TIMEOUT)
-        self._check_before_acting = True
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:

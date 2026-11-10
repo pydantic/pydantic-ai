@@ -18,6 +18,8 @@ from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 
+from ..display_contract import check_display_contract
+
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
 
@@ -140,12 +142,9 @@ class TestLiveDocker(WorkspaceBackendSuite):
 
 
 @pytest.mark.docker_live
-class TestLiveDockerDesktop(WorkspaceBackendSuite):
-    """Runs against real containers of the desktop image, which the first test builds if this machine lacks it."""
-
-    @pytest.fixture
-    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
-        return EXECUTABLE == 'podman'
+class TestLiveDockerDesktop:
+    """Runs the display against real containers of the desktop image, which the first test builds if this machine
+    lacks it. Commands and files are `TestLiveDocker`'s: a desktop container runs them the same way."""
 
     @pytest.fixture
     async def backend(self) -> AsyncIterator[WorkspaceBackend]:
@@ -156,6 +155,7 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
 
     async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
         display = await _focused_typing_window(backend)
+        await check_display_contract(display)
         await display.act(TypeText(text='hello, Desktop! @#?\t~'))
         await display.act(PressKeys(keys=('?',)))
         await display.act(PressKeys(keys=('enter',)))
@@ -176,6 +176,7 @@ async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
     display = backend.display
     assert display is not None
     await display.display_size()  # starts the display
+    await display.screenshot()  # an action waits for a screenshot of a display that just started
     await backend.run(
         'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
         shell=True,

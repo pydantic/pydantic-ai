@@ -9,9 +9,10 @@ import anyio
 import pytest
 from daytona import DaytonaInternalServerError, DaytonaTimeoutError
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import (
     Click,
+    ComputerReturnPart,
     Drag,
     HoldKeys,
     MouseDown,
@@ -23,9 +24,10 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.models.test import TestModel
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import ComputerAction, ComputerUse, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from ..display_fakes import screen
@@ -34,7 +36,8 @@ from .fake_daytona import FakeDaytona, FakeSandbox
 
 async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, FakeSandbox]:
     backend = DaytonaSandboxBackend(desktop=True)
-    await screen(backend).display_size()
+    # Starts the desktop, and shows it, which an action on a desktop that just started waits for.
+    await screen(backend).screenshot()
     (sandbox,) = fake_daytona.sandboxes
     sandbox.desktop_calls.clear()
     return backend, sandbox
@@ -240,32 +243,37 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     sandbox.computer_use.stop_with_sandbox()
     with pytest.raises(WorkspaceError):
         await screen(backend).act(Click(x=1, y=1))
-    # The next action starts the desktop again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
+    # The next action starts the desktop again, and doesn't run on the new screen until a screenshot shows it.
+    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
         await screen(backend).act(Click(x=1, y=1))
+    await screen(backend).screenshot()
     await screen(backend).act(Click(x=1, y=1))
 
     assert not sandbox.computer_use.broken
-    assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
+    assert sandbox.desktop_calls[-3:] == ['start', 'take_full_screen', 'click 1 1 left clicks=1 modifiers=[]']
 
 
-async def test_actions_in_a_row_check_once_that_the_desktop_runs(
-    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_every_action_checks_that_the_desktop_runs(fake_daytona: FakeDaytona) -> None:
+    """The sandbox can stop and start between two actions with no screenshot between them."""
     backend, sandbox = await _started(fake_daytona)
-    checks = 0
-    get_status = sandbox.computer_use.get_status
-
-    async def counted(request_timeout: float | None = None) -> SimpleNamespace:
-        nonlocal checks
-        checks += 1
-        return await get_status(request_timeout=request_timeout)
-
-    monkeypatch.setattr(sandbox.computer_use, 'get_status', counted)
     await screen(backend).act(Click(x=1, y=1))
-    await screen(backend).act(Click(x=2, y=2))
 
-    assert checks == 1
+    sandbox.computer_use.stop_with_sandbox()
+    with pytest.raises(WorkspaceError, match="Daytona's desktop is not running"):
+        await screen(backend).act(Click(x=2, y=2))
+    # No input reached the stopped desktop.
+    assert not sandbox.computer_use.broken
+    assert sandbox.desktop_calls == ['click 1 1 left clicks=1 modifiers=[]']
+
+
+async def test_the_live_view_starts_a_desktop_that_stopped_with_the_sandbox(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    sandbox.computer_use.stop_with_sandbox()
+
+    await backend.live_view_url()
+
+    assert sandbox.computer_use.started
+    assert sandbox.desktop_calls == ['start', 'signed_preview 6080 3600']
 
 
 async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(
@@ -287,6 +295,16 @@ async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeD
 
     with pytest.raises(WorkspaceUnavailableError, match='stopping and starting the sandbox brings it back'):
         await screen(backend).screenshot()
+
+
+async def test_a_proxy_refusing_traffic_for_a_moment_does_not_end_the_run(fake_daytona: FakeDaytona) -> None:
+    backend = DaytonaSandboxBackend(desktop=True)
+    await backend.get_sandbox()
+    (sandbox,) = fake_daytona.sandboxes
+    sandbox.computer_use.proxy_unavailable = 1
+
+    # The first start is refused by the proxy, which says nothing about the desktop; the retry reaches it.
+    assert await screen(backend).screenshot() == sandbox.computer_use.png
 
 
 async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona) -> None:
@@ -328,13 +346,36 @@ def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
     assert DaytonaSandbox().backend(ref).display is None
 
 
-async def test_a_desktop_capability_gives_a_new_run_a_display(fake_daytona: FakeDaytona) -> None:
-    agent = Agent(TestModel(call_tools=['probe']), capabilities=[DaytonaSandbox(desktop=True)])
+def _look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Takes a screenshot, clicks on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
 
-    @agent.tool
-    async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await screen(ctx.workspace.backend).display_size()))
 
-    result = await agent.run('go')
+async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake_daytona: FakeDaytona) -> None:
+    sandbox_capability = DaytonaSandbox(desktop=True)
+    agent = Agent(
+        FunctionModel(_look_click_then_finish),
+        capabilities=[sandbox_capability, ComputerUse(native=False, settle_seconds=0)],
+    )
 
-    assert result.output == '{"probe":"1280x800"}'
+    result = await agent.run('Click.')
+
+    looked, clicked = [
+        part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
+    ]
+    (sandbox,) = fake_daytona.sandboxes
+    assert looked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert clicked.screenshot is not None and clicked.screenshot.data == sandbox.computer_use.png
+    assert 'click 3 4 left clicks=1 modifiers=[]' in sandbox.desktop_calls
+
+    # A backend attached by ref reaches the same desktop.
+    ref = result.workspace.ref
+    assert ref is not None
+    attached = sandbox_capability.backend(ref).display
+    assert attached is not None
+    assert await attached.screenshot() == sandbox.computer_use.png

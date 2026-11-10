@@ -3,7 +3,7 @@
 `TestFakeE2BSandboxBackend` runs everywhere, over the fake E2B SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveE2BSandboxBackend`
 runs the same rules against a real sandbox and is gated like `test_e2b_live.py`, and
-`TestLiveE2BDesktop` against one with a display.
+`TestLiveE2BDesktop` checks the display of one with a desktop.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
+from ..display_contract import check_display_contract
 from .fake_e2b import FakeE2B
 
 
@@ -103,8 +104,9 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
 
 
 @pytest.mark.e2b_live
-class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
-    """The same rules, display rules included, against a sandbox of E2B's desktop template."""
+class TestLiveE2BDesktop:  # pragma: lax no cover
+    """Runs the display against a sandbox of E2B's desktop template. Commands and files are `TestLiveE2BSandboxBackend`'s:
+    a desktop sandbox runs them the same way."""
 
     @pytest.fixture(scope='class')
     @classmethod
@@ -121,6 +123,8 @@ class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
         display = backend.display
         assert display is not None
         await display.display_size()  # starts the display
+        await display.screenshot()  # an action waits for a screenshot of a display that just started
+        await check_display_contract(display)
         typed = f'/tmp/typed-{uuid.uuid4().hex}.txt'
         await backend.run(
             f'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > {typed}" '
