@@ -1,5 +1,0 @@
-{
-  "against": "v2.66.0",
-  "reason": "Adds `may_tokenize_special_tokens_in_content` to the default profile, with the value `False`; existing values are unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12556"
-}
