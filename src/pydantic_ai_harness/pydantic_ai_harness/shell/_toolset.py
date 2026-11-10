@@ -21,7 +21,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
@@ -551,11 +551,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 _, exit_code = await job.status()
 
         stdout, stderr = await self._read_bg_output(job)
-        await job.cleanup()
-
         parts = [_labelled(stdout, stderr, empty='(no output)'), '[stopped]']
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
+        try:
+            await job.cleanup()
+        # Before `PermissionError`: a read-only workspace's `WorkspaceReadOnlyError` is one too.
+        except WorkspaceError:
+            raise
+        except PermissionError:
+            # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
+            parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
 
 

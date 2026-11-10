@@ -602,7 +602,7 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
     lines.extend(
         [
             '',
-            '<sub>Re-add the `trigger:ci-duration-report` label to refresh this report.</sub>',
+            f'<sub>Re-add the `{REPORT_LABEL}` label to refresh this report.</sub>',
         ]
     )
     return '\n'.join(lines)
@@ -616,7 +616,7 @@ def render_waiting_report(head_sha: str) -> str:
             '',
             f'No completed `CI` run was found for commit `{head_sha[:7]}` yet.',
             '',
-            '<sub>Re-add the `trigger:ci-duration-report` label after CI completes, or rerun with a longer poll window.</sub>',
+            f'<sub>Re-add the `{REPORT_LABEL}` label after CI completes, or rerun with a longer poll window.</sub>',
         ]
     )
 

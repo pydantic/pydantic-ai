@@ -139,14 +139,15 @@ __all__ = (
 HFSystemPromptRole = Literal['system', 'user']
 
 LatestHuggingFaceModelNames = Literal[
-    'deepseek-ai/DeepSeek-R1',
-    'meta-llama/Llama-3.3-70B-Instruct',
-    'meta-llama/Llama-4-Maverick-17B-128E-Instruct',
-    'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-    'Qwen/QwQ-32B',
-    'Qwen/Qwen2.5-72B-Instruct',
-    'Qwen/Qwen3-235B-A22B',
-    'Qwen/Qwen3-32B',
+    'deepseek-ai/DeepSeek-V4-Pro',
+    'deepseek-ai/DeepSeek-V4.1-Flash',
+    'moonshotai/Kimi-K3',
+    'zai-org/GLM-5.3',
+    'Qwen/Qwen3.8-27B',
+    'MiniMaxAI/MiniMax-M3',
+    'openai/gpt-oss-120b',
+    'google/gemma-4-31B-it',
+    'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
 ]
 """Latest Hugging Face models."""
 

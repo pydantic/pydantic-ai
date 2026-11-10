@@ -612,7 +612,7 @@ def test_model_http_error_headers_provider_openai():
 
 @pytest.mark.parametrize(
     'model_name',
-    ['gpt-5', 'claude-sonet-4-5'],
+    ['gpt-5.6-sol', 'claude-sonet-5-5'],
     ids=['requested-known-model', 'different-provider-model'],
 )
 def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):

@@ -485,7 +485,7 @@ from the project file, reads instruction files automatically: one per directory,
 it. Under your home the walk-up stops at `~`;
 elsewhere it stops at the repository root (see
 [Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
-the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
+the agent reads, lists, writes or edits something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
@@ -3186,7 +3186,10 @@ clai2 -a my_agents:reviewer -p "Review the staged diff"
 `--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
 instance instead of CLAI's default agent. CLAI appends the launch directory to
 `sys.path`, after installed packages, so a module next to where you start CLAI
-resolves without installing it. `ATTR` must
+resolves without installing it. It does so only when nothing installed has the
+module's top-level name. A module there whose top-level name is also installed
+resolves against the installed package instead, so it usually fails with "module
+not found". `ATTR` must
 name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are

@@ -151,27 +151,19 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
 
 
 ProductionGroqModelNames = Literal[
-    'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'whisper-large-v3',
-    'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
-PreviewGroqModelNames = Literal[
-    'meta-llama/llama-prompt-guard-2-22m',
-    'meta-llama/llama-prompt-guard-2-86m',
-    'openai/gpt-oss-safeguard-20b',
-]
+PreviewGroqModelNames = Literal['qwen/qwen3.8-27b']
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
 GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames
 """Possible Groq model names.
 
-Since Groq supports a variety of models and the list changes frequently, we explicitly list the named models as of 2025-03-31
-but allow any name in the type hints.
+The `Literal` lists the latest models to pick from, for autocomplete. Any other model id the API accepts works too,
+as a `str`.
 
 See <https://console.groq.com/docs/models> for an up to date list of models and more details.
 """
@@ -453,7 +445,12 @@ class GroqModel(Model[AsyncGroq]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        extra_headers = dict(model_settings.get('extra_headers', {}))
+        # The Groq SDK merges headers into its defaults case-sensitively, so a user-agent replaces its default
+        # `User-Agent` only under that spelling.
+        extra_headers = {
+            'User-Agent' if name.lower() == 'user-agent' else name: value
+            for name, value in dict(model_settings.get('extra_headers', {})).items()
+        }
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`

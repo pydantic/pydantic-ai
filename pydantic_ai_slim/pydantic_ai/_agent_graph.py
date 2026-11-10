@@ -3314,8 +3314,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 

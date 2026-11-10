@@ -57,6 +57,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _document_format_lookup,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -94,7 +95,6 @@ try:
     from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
-    from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
         'Please install `xai-sdk` to use the xAI model, '
@@ -192,14 +192,24 @@ def _grpc_transport_error(
     )
 
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7', 'grok-build-0.1']
+XaiModelName = (
+    str
+    | Literal[
+        'grok-4.7',
+        'grok-4.3',
+        'grok-3',
+        'grok-3-mini',
+        'grok-4-1-fast-reasoning',
+        'grok-4-1-fast-non-reasoning',
+        'grok-4.20-multi-agent',
+        'grok-build-0.1',
+    ]
+)
 """Possible xAI model names.
 
-The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
-floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
-1.17.1, and `grok-4.6` in 1.18.0. `grok-4.7` is absent from the latest released `ChatModel` (1.20.0).
-Drop each bridge once the floor is bumped past the release that adds it to `ChatModel`.
-https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
+The `Literal` lists the models to pick from, for autocomplete: per line, the newest model of the newest
+generation and of the previous one. Any other model id the API accepts works too, as a `str`.
+See [the xAI docs](https://docs.x.ai/docs/models) for a full list.
 """
 
 _ATTACHMENT_SEARCH_TOOL_NAME = 'attachment_search'
@@ -848,9 +858,10 @@ class XaiModel(Model[AsyncClient]):
             # Download and upload to xAI files API
             downloaded = await download_item(item, data_format='bytes')
             filename = item.identifier or 'document'
-            # Add extension if data_type is available from download
-            if 'data_type' in downloaded and downloaded['data_type']:
-                filename = f'{filename}.{downloaded["data_type"]}'
+            # Add the document extension for known media types
+            extension = _document_format_lookup.get(downloaded['data_type'])
+            if extension:
+                filename = f'{filename}.{extension}'
             file_id = await self._upload_file_to_xai(downloaded['data'], filename)
             self._uploaded_document_ids[cache_key] = file_id
         return file(file_id)
@@ -1551,12 +1562,13 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
+            provider_settings = (builtin_tool.provider_settings or {}).get('xai', {})
             tools.append(
                 collections_search(
                     collection_ids=list(builtin_tool.file_store_ids),
                     limit=builtin_tool.max_num_results,
-                    instructions=builtin_tool.instructions,
-                    retrieval_mode=builtin_tool.retrieval_mode,
+                    instructions=provider_settings.get('instructions', builtin_tool.instructions),
+                    retrieval_mode=provider_settings.get('retrieval_mode', builtin_tool.retrieval_mode),
                 )
             )
         else:  # pragma: no cover

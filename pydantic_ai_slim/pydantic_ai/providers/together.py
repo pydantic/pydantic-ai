@@ -11,7 +11,11 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -53,6 +57,7 @@ class TogetherProvider(_OpenAISDKProvider):
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
             'zai-org': _glm_5_3_schema_profile,
+            'openai': _gpt_oss_schema_profile,
         }
 
         profile = None

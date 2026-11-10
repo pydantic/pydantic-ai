@@ -1094,10 +1094,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
-                    if call in self.tool_calls_by_kind['external']:
-                        self.deferred_calls['external'].append(call)
-                    else:
-                        self.deferred_calls['unapproved'].append(call)
+                    self._route_deferred_call(call, validated.deferral)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
                     # retry failures are already tracked by validate_tool_call() via failed_tools.
@@ -1107,6 +1104,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         part = tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
+
+    def _route_deferred_call(
+        self, call: _messages.ToolCallPart, deferral: exceptions.CallDeferred | exceptions.ApprovalRequired | None
+    ) -> None:
+        """Collect a validated call of a deferred kind, routed by the deferral its validation raised, if any.
+
+        A deferral raised during validation routes the call by its type, as one raised by the tool
+        function would; only a call that validation didn't defer goes by its tool's kind.
+        """
+        if deferral is None:
+            external = call in self.tool_calls_by_kind['external']
+        else:
+            external = isinstance(deferral, exceptions.CallDeferred)
+            if deferral.metadata is not None:
+                self.deferred_metadata[call.tool_call_id] = deferral.metadata
+        self.deferred_calls['external' if external else 'unapproved'].append(call)
 
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
