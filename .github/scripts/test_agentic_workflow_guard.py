@@ -1757,29 +1757,12 @@ Prompt
     }
 
 
-def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+def test_provider_health_recovery_input_must_be_an_optional_string(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
-    _write(
-        workflows / 'pydantic-ai-ui-security-review.md',
-        """---
-name: Z.AI
-imports:
-  - shared/engine-zai.md
-on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-  workflow_dispatch: {}
----
-Prompt
-""",
-    )
     _write(
         workflows / 'shared' / 'provider-health.md',
         "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
     )
-
-    assert check_provider_health_recovery_wiring(workflows) == []
-
     ordinary = _write(
         workflows / 'pydantic-ai-mini.md',
         """---
