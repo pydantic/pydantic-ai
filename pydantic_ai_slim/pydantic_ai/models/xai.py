@@ -421,7 +421,7 @@ class XaiModel(Model[AsyncClient]):
 
         super().__init__(settings=settings, profile=profile)
 
-        # Uploaded document file IDs, keyed by content hash or source URL,
+        # Uploaded document file IDs, keyed by a SHA-256 hash of the uploaded bytes,
         # so the same document is uploaded only once per model instance.
         self._uploaded_document_ids: dict[str, str] = {}
 
@@ -761,6 +761,8 @@ class XaiModel(Model[AsyncClient]):
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
 
+        Bytes this model instance already uploaded reuse the earlier file ID instead of uploading again.
+
         Args:
             data: The file content as bytes
             filename: The filename to use for the upload
@@ -768,8 +770,12 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The file ID from xAI
         """
+        cache_key = hashlib.sha256(data).hexdigest()
+        if (file_id := self._uploaded_document_ids.get(cache_key)) is not None:
+            return file_id
         with _map_api_errors(self.model_name):
             uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        self._uploaded_document_ids[cache_key] = uploaded_file.id
         return uploaded_file.id
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:
@@ -837,14 +843,9 @@ class XaiModel(Model[AsyncClient]):
         elif item.is_audio:
             raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
         elif item.is_document:
-            # Upload document to xAI files API and reference it, reusing a
-            # file ID uploaded earlier by this instance for the same bytes.
+            # Upload document to xAI files API and reference it
             filename = item.identifier or f'document.{item.format}'
-            cache_key = f'bytes:{hashlib.sha256(item.data).hexdigest()}'
-            file_id = self._uploaded_document_ids.get(cache_key)
-            if file_id is None:
-                file_id = await self._upload_file_to_xai(item.data, filename)
-                self._uploaded_document_ids[cache_key] = file_id
+            file_id = await self._upload_file_to_xai(item.data, filename)
             return file(file_id)
         elif item.is_video:
             raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
@@ -852,18 +853,16 @@ class XaiModel(Model[AsyncClient]):
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
     async def _map_document_url(self, item: DocumentUrl) -> chat_types.Content:
-        cache_key = f'url:{item.url}'
-        file_id = self._uploaded_document_ids.get(cache_key)
-        if file_id is None:
-            # Download and upload to xAI files API
-            downloaded = await download_item(item, data_format='bytes')
-            filename = item.identifier or 'document'
-            # Add the document extension for known media types
-            extension = _document_format_lookup.get(downloaded['data_type'])
-            if extension:
-                filename = f'{filename}.{extension}'
-            file_id = await self._upload_file_to_xai(downloaded['data'], filename)
-            self._uploaded_document_ids[cache_key] = file_id
+        # Download on every request, so each one is checked against its own `force_download` permission,
+        # then upload to xAI files API (skipped when these bytes were uploaded before)
+        downloaded = await download_item(item, data_format='bytes')
+        filename = item.identifier or 'document'
+        # Add the document extension for known media types
+        extension = _document_format_lookup.get(downloaded['data_type'])
+        if extension:
+            filename = f'{filename}.{extension}'
+
+        file_id = await self._upload_file_to_xai(downloaded['data'], filename)
         return file(file_id)
 
     def _request_thinks(

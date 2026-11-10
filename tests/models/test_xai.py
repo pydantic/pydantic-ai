@@ -2271,10 +2271,10 @@ def _mock_downloads(
     Tests using this mark the mocked host with `@pytest.mark.vcr(ignore_hosts=[...])` so the module's
     cassette interception lets the request through to the mock transport instead of a recording.
     """
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
-        return http_client
+        # A fresh client per download: each download closes the client it was given.
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
@@ -6810,7 +6810,7 @@ class CountingMockXai(MockXai):
 async def test_binary_content_document_uploaded_once_per_instance(allow_model_requests: None):
     """The same BinaryContent document is uploaded only once per model instance."""
     response = create_response(content='ok')
-    counting_client = CountingMockXai(responses=[response, response])
+    counting_client = CountingMockXai(responses=[response, response, response])
     mock_client = cast(AsyncClient, counting_client)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
@@ -6820,35 +6820,71 @@ async def test_binary_content_document_uploaded_once_per_instance(allow_model_re
     assert result.output == 'ok'
     assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
 
-    result = await agent.run('Summarize it again.', message_history=result.new_messages())
-    assert result.output == 'ok'
+    for prompt in ['Summarize it again.', 'And once more.']:
+        result = await agent.run(prompt, message_history=result.all_messages())
+        assert result.output == 'ok'
     assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
 
 
+@pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
 async def test_document_url_uploaded_once_per_instance(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
-    """A DocumentUrl replayed across requests is downloaded and uploaded only once per model instance."""
+    """A DocumentUrl replayed across requests is downloaded every time but uploaded only once per model instance.
+
+    The download runs on every request so each one is checked against its own `force_download` permission;
+    the upload is skipped because the downloaded bytes match an earlier upload.
+    """
     response = create_response(content='ok')
-    counting_client = CountingMockXai(responses=[response, response])
+    counting_client = CountingMockXai(responses=[response, response, response])
     mock_client = cast(AsyncClient, counting_client)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
     download_calls: list[str] = []
 
-    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
-        download_calls.append(item.url)
-        return {'data': b'%PDF-1.4\ndownloaded content', 'data_type': 'application/pdf'}
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        download_calls.append(str(request.url))
+        return httpx2.Response(
+            200, content=b'%PDF-1.4\ndownloaded content', headers={'content-type': 'application/pdf'}, request=request
+        )
 
-    monkeypatch.setattr('pydantic_ai.models.xai.download_item', mock_download_item)
-    document_url = DocumentUrl(url='https://example.com/report.pdf')
+    _mock_downloads(monkeypatch, handle_request)
+    document_url = DocumentUrl(url='https://93.184.215.14/report.pdf')
 
     result = await agent.run(['What is in this document?', document_url])
     assert result.output == 'ok'
     assert counting_client.upload_calls == [(b'%PDF-1.4\ndownloaded content', f'{document_url.identifier}.pdf')]
 
-    result = await agent.run('Summarize it again.', message_history=result.new_messages())
-    assert result.output == 'ok'
+    for prompt in ['Summarize it again.', 'And once more.']:
+        result = await agent.run(prompt, message_history=result.all_messages())
+        assert result.output == 'ok'
     assert counting_client.upload_calls == [(b'%PDF-1.4\ndownloaded content', f'{document_url.identifier}.pdf')]
-    assert download_calls == ['https://example.com/report.pdf']
+    assert download_calls == ['https://93.184.215.14/report.pdf'] * 3
+
+
+@pytest.mark.vcr(ignore_hosts=['127.0.0.1'])
+async def test_document_url_cache_does_not_bypass_download_permissions(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """A local document uploaded under `force_download='allow-local'` is not reused by a request without that permission."""
+    counting_client = CountingMockXai(responses=[create_response(content='ok')])
+    mock_client = cast(AsyncClient, counting_client)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200, content=b'%PDF-1.4\ninternal content', headers={'content-type': 'application/pdf'}, request=request
+        )
+
+    _mock_downloads(monkeypatch, handle_request)
+
+    allowed = DocumentUrl(url='http://127.0.0.1/private.pdf', force_download='allow-local', identifier='private')
+    result = await agent.run(['What is in this document?', allowed])
+    assert result.output == 'ok'
+    assert counting_client.upload_calls == [(b'%PDF-1.4\ninternal content', 'private.pdf')]
+
+    with pytest.raises(ValueError, match=r'Access to private/internal IP address \(127\.0\.0\.1\) is blocked'):
+        await agent.run(['What is in this document?', DocumentUrl(url='http://127.0.0.1/private.pdf')])
+    assert counting_client.upload_calls == [(b'%PDF-1.4\ninternal content', 'private.pdf')]
 
 
 async def test_uploaded_file_passthrough_never_uploads(allow_model_requests: None):
