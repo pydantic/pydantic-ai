@@ -39,6 +39,9 @@ jobs:
         run: uv sync --only-dev
 
       - name: Check the review-branch suite against main
+        env:
+          # A plain `uv run` would sync the whole project over the dev-only install.
+          UV_NO_SYNC: "1"
         run: uv run pytest .agents/skills/review-branch/test_drift.py
 
       - name: Notify Slack on failure
