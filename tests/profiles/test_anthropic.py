@@ -510,7 +510,9 @@ def test_model_profile_fable_5():
         ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
+        ('claude-fable-5-2', True, True),
         ('claude-mythos-5-1', True, True),
+        ('claude-mythos-5-2', True, True),
         ('claude-mythos-preview', True, True),
     ],
 )
@@ -539,6 +541,8 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     [
         ('claude-fable-5-1', False),
         ('claude-mythos-5-1', False),
+        ('claude-fable-5-2', False),
+        ('claude-mythos-5-2', False),
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-mythos-preview', True),
@@ -550,11 +554,11 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
+    """The 5.1 and 5.2 generations, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
 
-    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
-    and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
-    `claude-fable-5-1`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and 5.2 and Claude Mythos 5.1 and 5.2, and the
+    Opus 5.5 and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
+    `claude-fable-5-1`, `claude-fable-5-2`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
     and `{'type': 'tool'}` while `claude-fable-5`, `claude-opus-5`, and `claude-sonnet-5` return 200
     for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
@@ -642,6 +646,27 @@ def test_model_profile_fable_5_1():
     # Project Glasswing-only and not reachable with our credentials, so the rest is the mirror.
     assert profile is not None
     assert anthropic_model_profile('claude-mythos-5-1') == {**profile, 'anthropic_binds_thinking_blocks': False}
+
+
+def test_model_profile_fable_5_2():
+    """Claude Fable 5.2 carries Claude Fable 5.1's capability surface plus fast mode.
+
+    Verified live against the Anthropic API by probing `claude-fable-5-2` side by side with `claude-fable-5-1` and
+    `claude-fable-5`. All three reject sampling settings, budget-based thinking, and `thinking: {'type': 'disabled'}`
+    or `{'type': 'between_tools'}`, and accept `low`/`xhigh`/`max` effort, task budgets, json-schema output, strict
+    tools, tool search, code execution `20260120`, web search `20260209`, on-demand compaction, a mid-conversation
+    `system` entry, and `tool_addition` by reference. Like Fable 5.1 and unlike Fable 5, Fable 5.2 returns a 400 for
+    a forced `tool_choice` and binds thinking blocks to the conversation prefix. Unlike both, it accepts
+    `anthropic_speed='fast'`, and it returns the prefix-check 400 with `prefix_mismatch_behavior` unset on an account
+    created before 31 August 2026, where Fable 5.1 replays the block.
+    """
+    profile = anthropic_model_profile('claude-fable-5-2')
+    assert profile == {**(anthropic_model_profile('claude-fable-5-1') or {}), 'anthropic_supports_fast_speed': True}
+
+    # Anthropic documents Mythos 5.2 as having "the same capabilities" as Fable 5.2, including fast mode and the
+    # prefix check on every account. It is available only to verified organizations: our key gets a 404
+    # `not_found_error` for `claude-mythos-5-2`.
+    assert anthropic_model_profile('claude-mythos-5-2') == profile
 
 
 def test_model_profile_sonnet_5():

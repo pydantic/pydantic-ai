@@ -66,14 +66,17 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
         metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
         content.append(TextContent(open_tag(_ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
         for item in answer.note:
-            if isinstance(item, str | TextContent):
-                # Neither a structured value nor user-supplied provenance metadata may bypass this text.
-                text = item if isinstance(item, str) else item.content
-                content.append(neutralize_tags(text))
-            else:
-                content.append(item)
+            content.append(_note_item_content(item))
         content.append(TextContent(close_tag(_ANSWER_NOTE_TAG), metadata=metadata))
     return ToolReturn(return_value=answers, content=content) if content else answers
+
+
+def _note_item_content(item: UserContent) -> UserContent:
+    if isinstance(item, str | TextContent):
+        # Neither a structured value nor user-supplied provenance metadata may bypass this text.
+        text = item if isinstance(item, str) else item.content
+        return neutralize_tags(text)
+    return item
 
 
 def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:

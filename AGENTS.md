@@ -78,11 +78,12 @@ All changes need to:
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking; "integration" means real in-process code paths with recorded requests, not process spawns or real waits (see "Test cost" in [tests/AGENTS.md](tests/AGENTS.md))
 - update/add all relevant documentation, following the existing voice and patterns
+- update [THREAT_MODEL.md](THREAT_MODEL.md) when one of the triggers in its "Keeping this model current" section applies
 - update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), Pydantic AI Harness skills in [src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/](src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/), cross-harness repository workflow skills live under [.agents/skills/](.agents/skills/), and Claude-only workflow skills live under [.claude/skills/](.claude/skills/)
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged.
 
-PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
+PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. The one exception to the no-prefix rule is the `[<name>]` prefix of a PR in a cluster, which [PR clusters](.agents/skills/pushing-commits-to-the-repo/SKILL.md#pr-clusters) defines. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
 
@@ -124,7 +125,7 @@ The project uses:
 
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.15
     - Install all dependencies with `make install`
-- `pre-commit`, can be installed with `uv tool install pre-commit`
+- `pre-commit`, installed and set up by `make install` (if it isn't available, `make install` installs it with `uv`)
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:

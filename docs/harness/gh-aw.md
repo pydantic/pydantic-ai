@@ -21,12 +21,9 @@ nobody at a prompt. Its output is a comment, a pull request or a commit rather t
 on a screen. The engine records the canonical agent session for inspection, and gh-aw can
 collect the session and usage artifacts; [Observability](#observability) covers traces.
 
-Every model vendor ships an action for this shape, each one running that vendor's agent on
-that vendor's models. The difference here is that the agent is yours: your instructions,
-your tools, your [capabilities](../capabilities/overview.md), and [any
-model](../models/overview.md) a string swap away, in a repository you can also run from the
-terminal, serve over a web UI, or call from your own backend. It is the same `Agent` object
-in all of them.
+The agent is your own `Agent` object, with your instructions, tools,
+[capabilities](../capabilities/overview.md), and [any model](../models/overview.md), so the
+same agent can also run from the terminal, a web UI, or your own backend.
 
 The finished repository is
 [dsfaccini/gh-aw-pydantic-ai-demo](https://github.com/dsfaccini/gh-aw-pydantic-ai-demo);
@@ -48,16 +45,14 @@ import-based engine like this one, so it is not part of the configuration below.
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
 - Use [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1) or newer with
-  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0 and includes
-  native protected capture, packaged engine parsers, and verified-publication guards.
+  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0.
 - Existing workflows need a compatible runtime build and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
 - The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
   reads `evals.log`. Omit `evals` when using this engine.
-- The workflow summary is the canonical success/failure report. Categorical summary labels
-  for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
-  request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+- The workflow summary is the canonical success/failure report. MCP startup and
+  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -170,8 +165,6 @@ def label_catalog() -> list[str]:
     return list(LABELS)
 ```
 
-Four things about that module.
-
 - **No model.** The engine always passes `-m` built from the workflow's `engine.model`,
   and an explicit `-m` replaces whatever model a loaded agent declares. Setting a model on
   the `Agent` would be ignored, so the workflow is the one place the model is configured.
@@ -279,8 +272,6 @@ ${{ steps.sanitized.outputs.text }}
 Post your triage as a single comment on that issue.
 ```
 
-Key by key:
-
 - `on: issues: types: [opened]` is the only trigger. `add-comment` posts to the issue
   that triggered the run, and a `workflow_dispatch` run has none, so the workflow declares
   no manual trigger: `gh aw run` and the Run workflow button are not part of this
@@ -308,9 +299,11 @@ Key by key:
   adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
   Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
-  when resolving an imported target, it adds the checkout to `sys.path` after loading the
-  framework packages.
+  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode.
+  It appends the checkout to `sys.path`, after installed packages, only for an imported target
+  whose top-level name nothing installed has, such as `my_agent:agent`. A checkout target whose
+  top-level name is also installed resolves against the installed package instead, so it usually
+  fails with `ModuleNotFoundError`.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue
@@ -607,174 +600,44 @@ Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` 
 the recorder interpreter. Point either setting only at code you trust.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
-includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with
-`gh aw logs triage --artifacts all`; raw step output is available through
-`gh run view <run-id> --log` (add `--attempt N` for an earlier attempt).
+includes gateway and safe-output activity; download it with the `gh aw logs` command above.
 
 The comment lands on the issue with a gh-aw footer naming the workflow and linking its run,
 followed by an HTML comment recording the engine, its version and the model.
 
 ## Observability
 
-gh-aw exports spans for its own setup and conclusion steps once a workflow configures an
-OpenTelemetry backend, and this engine extends that to the agent: the agent run, every
-model request and every tool call arrive as Pydantic AI spans in the same trace, with no
-Python of your own.
+gh-aw keeps OTLP endpoints and authorization headers on the host, so the agent sandbox
+receives no telemetry credentials. Host and proxy telemetry use gh-aw's own exporters,
+configured with `observability.otlp`.
 
-`observability:` names the backend and `network:` lets the export through the egress
-firewall:
+When `OTEL_EXPORTER_OTLP_ENDPOINT` reaches the launcher, it instruments Pydantic AI and
+exports spans directly, with `send_to_logfire='if-token-present'`. gh-aw excludes that
+variable from the agent container, so this direct export does not run under gh-aw. The
+launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported
+spans keep their workflow parentage and identity.
 
-```yaml
-network:
-  allowed:
-    - logfire-us.pydantic.dev
-observability:
-  otlp:
-    endpoint:
-      - url: https://logfire-us.pydantic.dev
-        headers:
-          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
-```
+When it configures Logfire, the launcher uses private mode-0700 configuration and data
+directories under `/tmp`, ignoring checkout settings and credentials. `console=False`
+prevents span content entering captured engine stdio.
 
-Both halves are needed. The allowlist merges with the domains the engine already permits
-(PyPI, GitHub, the model provider) rather than replacing them, and without the entry the
-firewall drops the export while the run itself still succeeds, which at the backend looks
-the same as a workflow that was never configured.
+A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
+Logfire. Calling `logfire.configure()` again replaces that configuration. Preserve the
+private directories, disabled console output and distributed tracing if the agent replaces it.
 
-Set the token as a repository secret, the same way the provider credential is set:
+### Authenticated terminal metadata
 
-```bash
-gh aw secrets set LOGFIRE_TOKEN --value "<write-token>"
-```
+Set `PAI_RESULT_METADATA` to `MODULE:ATTRIBUTE` to include a trusted agent module's
+dictionary in `session.result.data.metadata`. The dictionary must have string keys
+and JSON-serializable values. Update the same dictionary during the run; the recorder
+serializes it when the process finishes, including handled failures. A target that is
+not such a dictionary fails the run. Metadata that cannot be serialized is left out,
+and the result still records the run's outcome.
 
-Use `logfire-eu.pydantic.dev` for a project in the EU region: the host has to match the
-region the token belongs to. Logfire's OTLP ingest takes the token bare, with no `Bearer`
-prefix, which is the form gh-aw documents for `Authorization` headers generally.
-
-**The telemetry credential does reach the agent.** The model credential does not: it stays
-in gh-aw's api-proxy on the other side of the sandbox boundary, which is why there is no
-`PAI_API_KEY` (see [Credentials](#credentials)). The OTLP header is different. gh-aw
-delivers it to the agent process as `OTEL_EXPORTER_OTLP_HEADERS`, because that is how the
-SDKs running inside the sandbox are meant to reach the backend. Use a write token, which
-cannot read data back out of the project.
-
-### What the engine does with it
-
-`OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
-what the engine keys on. When it is set, and only then:
-
-- **`logfire` is installed** only when an endpoint is configured, so workflows without
-  observability do not install it.
-- **The launcher configures and instruments** before importing your agent, so an agent
-  that starts work at import time is already traced. `send_to_logfire` is
-  `'if-token-present'` and the console exporter is off. Spans go to the configured
-  endpoint, not to an engine-selected Logfire project or captured engine stdio.
-- **A `LOGFIRE_TOKEN` in the agent's environment adds a destination rather than replacing
-  one.** `'if-token-present'` means spans go to that project as well as to the OTLP endpoint
-  above, prompts and completions included. gh-aw keeps `${{ secrets.* }}` values out of the
-  agent's environment when they come from `engine.env`, so this happens only when a workflow
-  puts a token in its own `env:` or a `steps:` block, which is the explicit way to ask for
-  it. Leave the token out and the workflow's endpoint is the only place anything goes.
-- **Configuration and credentials stay outside the checkout.** The launcher passes explicit
-  `config_dir` and `data_dir` values pointing to a mode-0700 temporary directory under `/tmp`,
-  even if `TMPDIR` points into the checkout. Checkout `pyproject.toml` settings and
-  `.logfire/logfire_credentials.json` cannot select a telemetry destination. These arguments
-  also override `LOGFIRE_CONFIG_DIR` and `LOGFIRE_CREDENTIALS_DIR`, without disabling an
-  environment `LOGFIRE_TOKEN`. The directory lives through the process and is removed at
-  interpreter shutdown, after exporter shutdown handlers run.
-- **The trace context is attached.** gh-aw publishes the run's W3C trace context in
-  `TRACEPARENT` so that an engine can nest its spans under the workflow span, but neither
-  Logfire nor the OpenTelemetry SDK reads that variable on its own. Attaching it is what
-  keeps the agent's spans in the workflow's trace instead of a second, unrelated one.
-- **Traces are the only signal sent.** An OTLP endpoint covers metrics and logs as well, and
-  a backend that accepts traces alone answers `404` to those, once per export, in the step
-  log. The engine therefore defaults `OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` to
-  `none`. Set either in the workflow to turn that signal back on for a backend that takes
-  it; token counts are on the spans either way.
-
-The configuration line the engine prints gains an `otlp=` segment, carrying the endpoint's
-origin and no more, because userinfo and query parameters in an endpoint are credentials and
-a run log is readable by anyone who can read the repository. It is there so that a run log
-says whether telemetry was on, and roughly where it went:
-
-```text
-[pydantic-ai] provider=openai model=gpt-5 baseUrl=http://api-proxy:10000/v1 agent=my_agent:agent otlp=https://logfire-us.pydantic.dev
-```
-
-Pydantic AI's spans are exported straight to the backend and are not mirrored into the
-`otel.jsonl` file that `gh aw logs --artifacts agent` downloads; that file carries the spans
-gh-aw's own JavaScript helpers emit.
-
-### Finding the runs
-
-gh-aw puts the run's identity in `OTEL_RESOURCE_ATTRIBUTES` and `logfire.configure()` merges
-that into the resource, so every span carries it without the engine adding any attributes of
-its own:
-
-| Attribute | Value |
-|---|---|
-| `gh-aw.engine.id` | `pydantic-ai` |
-| `gh-aw.workflow.name` | The workflow's name |
-| `gh-aw.repository` | `owner/name` |
-| `gh-aw.run.id`, `github.run_id` | The Actions run id |
-
-`gh-aw.engine.id = 'pydantic-ai'` is the filter for every run of this engine across every
-repository reporting to one backend, and `gh-aw.run.id` joins a trace back to its Actions
-run.
-
-### Any OpenTelemetry backend
-
-Nothing above is specific to Logfire beyond the host and the header. `observability.otlp`
-takes any endpoint that accepts OTLP over HTTP, and gh-aw's
-[OpenTelemetry reference](https://github.github.com/gh-aw/reference/open-telemetry/)
-documents a Sentry setup as well as Google Cloud Telemetry through Workload Identity
-Federation in place of a static header. Swap the `url`, the `headers` and the host on the
-allowlist; the rest of this section is unchanged.
-
-### Configuring it from your own agent
-
-A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call and
-replaces it, which is how to set a service name, scrubbing rules or extra span processors.
-It replaces the whole configuration, not the arguments you restate, so carry over the ones
-above that are load-bearing:
-
-```python
-import atexit
-import tempfile
-
-logfire_dir = tempfile.TemporaryDirectory(prefix='gh-aw-logfire-', dir='/tmp')
-atexit.register(logfire_dir.cleanup)
-
-import logfire
-
-logfire.configure(
-    send_to_logfire='if-token-present',
-    console=False,
-    distributed_tracing=True,
-    config_dir=logfire_dir.name,
-    data_dir=logfire_dir.name,
-)
-logfire.instrument_pydantic_ai()
-```
-
-Things to know before you do:
-
-- **Keep both directories private for the process lifetime.** Omitting `config_dir` or
-  `data_dir` re-enables checkout configuration or credentials. Register cleanup before
-  configuring Logfire so exporter shutdown handlers run first.
-- **`console=False` is not optional.** Leaving it out restores logfire's console exporter,
-  which writes every span to stderr and can expose prompts, completions and tool data in
-  run logs.
-- **`distributed_tracing=True` keeps you in the run's trace.** The engine has already
-  attached the context from `TRACEPARENT` by the time your module is imported, and that
-  attachment survives, but without the flag logfire warns about it on every run.
-- **A bare `logfire.configure()` fails here.** Its `send_to_logfire` default requires a
-  `LOGFIRE_TOKEN` in the environment, and the token in the frontmatter above is a header
-  value rather than an environment variable. Pass `send_to_logfire='if-token-present'`, as
-  the engine does.
-- **`logfire` is only installed when an endpoint is configured.** A module that imports it
-  unconditionally needs it in the workflow's own `steps:` install as well, or the agent
-  fails to import on a run with observability off.
+The engine signs this metadata with the terminal result. Ordinary stdout and
+sandbox-written files cannot substitute for it. Consumers should read the verified
+`agent-session.jsonl` artifact and validate their metadata schema and run identity.
+Like `PAI_AGENT`, this import target is trusted engine configuration.
 
 ## Troubleshooting
 

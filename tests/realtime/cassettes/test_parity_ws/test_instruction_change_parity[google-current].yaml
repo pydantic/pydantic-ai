@@ -1,0 +1,409 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: 'You are a voice assistant. Answer in one short sentence.
+
+
+            <context id="agent:code_word">
+
+            The code word is BLUE. Tell the user when they ask for it.
+
+            </context>
+
+            A later <context> element with the same id replaces the earlier one and
+            stays in effect until replaced again.'
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.169
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.176
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the code word?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.464
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.616
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+      outputTranscription:
+        text: The code
+- kind: message
+  direction: received
+  at: 0.647
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//8AAAAAAAAA
+- kind: message
+  direction: received
+  at: 0.701
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 1QEBAaIASf+o/ykADgBn/6D9+Psb+8P7uvv1+4r79/mz
+- kind: message
+  direction: received
+  at: 0.731
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7PFY8tfyMvPA853zv/JT8gXyt/ER8c7vt+4G75bvAO/a
+- kind: message
+  direction: received
+  at: 0.842
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: h/PE8//zOPR69Mf0D/Vl9bz1FfZx9tD2M/eR9+/3Svik
+      outputTranscription:
+        text: ' word'
+- kind: message
+  direction: received
+  at: 0.842
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: kvx++mT4ivYW9TL0TvRX9AX0ZfKW70bs9udC5Lbfcd3a
+- kind: message
+  direction: received
+  at: 0.914
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ov5z/lP+P/45/hv+Fv4b/iH+AP7a/aj9pv3a/Sz+aP6J
+      outputTranscription:
+        text: ' is'
+- kind: message
+  direction: received
+  at: 0.969
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /vwI/Yf/CvrB/H4AJvmmAQj5iAA1+778AwGX9y39gwL1
+      outputTranscription:
+        text: ' BLUE.'
+- kind: message
+  direction: received
+  at: 1.005
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GwVTCuoLxAwRDgkNjQ6PECoQuRByEroSvxIhEhMTQBQB
+- kind: message
+  direction: received
+  at: 1.041
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8foL+z/7gvvG+/v7G/w9/Fv8ePyO/H78Wvw+/B78Evz3
+- kind: message
+  direction: received
+  at: 1.098
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ///+//z/+//9//7//v/7//z/+f/8//v//v8AAP7/////
+- kind: message
+  direction: received
+  at: 1.1
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /v///wAAAAD+/wAAAQABAAAAAQABAAAABAADAP7/AAAB
+- kind: message
+  direction: received
+  at: 1.154
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.442
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 217
+      responseTokenCount: 50
+      totalTokenCount: 267
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 194
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 50
+- kind: message
+  direction: sent
+  at: 2.444
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: '<system><context id="agent:code_word">
+
+            The code word is ORANGE. Tell the user when they ask for it.
+
+            </context></system>'
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 2.444
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the code word now?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 2.721
+  data:
+    sessionResumptionUpdate:
+      newHandle: 89488b79-1ccd-4fd0-9013-666df2391196
+      resumable: true
+- kind: message
+  direction: received
+  at: 2.779
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 3.002
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+      outputTranscription:
+        text: The code
+- kind: message
+  direction: received
+  at: 3.049
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /f/7/wEA+//x//r/+P/5//n/9v/5//n/9f/8//n//P/+
+- kind: message
+  direction: received
+  at: 3.063
+  data:
+    sessionResumptionUpdate:
+      newHandle: 97cd04cd-f37e-45db-aaf7-599ae569c845
+      resumable: true
+- kind: message
+  direction: received
+  at: 3.09
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wf1z/gb+E/6Y/8/+LP+Y/7r/mwCrAAYBDgKzApgDCgQA
+- kind: message
+  direction: received
+  at: 3.096
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: rvrr+jH7fPvE+xn8a/zF/CX9jP33/WL+1v5J/7v/KQCU
+- kind: message
+  direction: received
+  at: 3.185
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: sghVCAIIxgdSB+EGcAbhBY8F+QRKBKkDIQOgAkwCJwIi
+      outputTranscription:
+        text: ' word'
+- kind: message
+  direction: received
+  at: 3.186
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: QgFtAYMBeAFRAQIBlwA3AO3/0P/e////HwA0ABAAt/83
+- kind: message
+  direction: received
+  at: 3.262
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: T/9B/zb/Lv8h/yD/GP8X/xX/D/8L/wv/Df8S/xT/Ef8P
+      outputTranscription:
+        text: ' is'
+- kind: message
+  direction: received
+  at: 3.263
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: HwN//h4BzP2u/qwFj/gbBC4DHfq8ArEAZv3lA5T7CQBz
+- kind: message
+  direction: received
+  at: 3.298
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: OPYX9kn2tvZC9xv4Efkx+pz7iP0s/xYBvwJgBMIFogal
+      outputTranscription:
+        text: ' ORANGE.'
+- kind: message
+  direction: received
+  at: 3.327
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /wwzE6sYKxxxHlgeXB3oGoQXXRStD0YMngdeBDkBqf7D
+- kind: message
+  direction: received
+  at: 3.368
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: pQOyA6oDjwNnAy0D+QLUAn4CKQLhAaMBZwEdAbsAZQAJ
+- kind: message
+  direction: received
+  at: 3.406
+  data:
+    sessionResumptionUpdate:
+      newHandle: 412df5c0-eed8-4b63-a977-07f273c7bd69
+      resumable: true
+- kind: message
+  direction: received
+  at: 3.423
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wPxD/98AKQI0ARX7hvqsAQEGzANq/Lj9sAFN/zj30/sx
+- kind: message
+  direction: received
+  at: 3.465
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9//5//f/+P/3//j/+//3//r/+P/8//X/+f8AAP///P/5
+- kind: message
+  direction: received
+  at: 3.516
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 4.812
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 333
+      responseTokenCount: 50
+      totalTokenCount: 383
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 242
+      - modality: AUDIO
+        tokenCount: 50
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 50
