@@ -75,12 +75,10 @@ class _SkillFrontmatter(BaseModel):
 
     @field_validator('when_to_use', mode='after')
     @classmethod
-    def _strip_when_to_use(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        stripped = value.strip()
-        # An empty trigger has nothing to append to the catalog description.
-        return stripped or None
+    def _strip_when_to_use(cls, value: str) -> str | None:
+        # Frontmatter is loaded without implicit types, so a set field is always text. An empty trigger has
+        # nothing to append to the catalog description.
+        return value.strip() or None
 
 
 MissingDirectories: TypeAlias = Literal['error', 'skip']
@@ -182,7 +180,7 @@ SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
-- `'flagged'`: a skill whose description or body the `Skills(scanner=...)` artifact scan flagged.
+- `'flagged'`: a skill whose description, `when_to_use` or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
 

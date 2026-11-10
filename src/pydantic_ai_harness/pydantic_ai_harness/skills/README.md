@@ -319,7 +319,7 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
-| `'flagged'` | A skill whose description or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
+| `'flagged'` | A skill whose description, `when_to_use` or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
 
 Each `SkillDefinition` has the skill's `name`, `description`, `when_to_use`,
 `body`, `path`, `directory`, `in_run_workspace`, `model_invocable`, and
@@ -366,7 +366,7 @@ agent specs.
 
 ## Scan skills before loading them
 
-Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](../artifact_scanning/) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](../artifact_scanning/) to check each skill's description, `when_to_use` and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
 
 ```python
 from pydantic_ai import Agent
