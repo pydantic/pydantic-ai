@@ -1,14 +1,13 @@
-"""`ComputerUse`: lets an agent see and control the display of its workspace."""
+"""`ComputerUse`: lets an agent see and control the screen of its workspace."""
 
 from __future__ import annotations as _annotations
 
 import math
 import weakref
 from collections.abc import Iterator, Sequence
-from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field, replace
 from itertools import accumulate
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import anyio
 import anyio.lowlevel
@@ -18,12 +17,18 @@ from typing_extensions import TypedDict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
+    Click,
     ComputerCallPart,
     ComputerResult,
     ComputerReturnPart,
     ComputerToolAction,
     CursorPosition,
+    Drag,
+    MoveMouse,
+    Point,
+    Region,
     Screenshot,
+    Scroll,
     Wait,
     Zoom,
 )
@@ -45,22 +50,17 @@ from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.workspaces import (
-    Click,
-    Display,
-    Drag,
-    MoveMouse,
-    Point,
-    Region,
-    Scroll,
-    SupportsDisplay,
-    SupportsRestartCount,
-    WorkspaceError,
-    WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
-)
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import png_size
-from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent, DisplayRestartedEvent
+from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
+from pydantic_ai_harness.computer_use._protocol import (
+    Display,
+    SupportsCursorPosition,
+    SupportsDisplay,
+    SupportsScaledScreenshot,
+    SupportsZoom,
+    UnsupportedActionError,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -112,14 +112,6 @@ at it a whole call at a time, so one's clicks and typing never land between anot
 another loop, so calls on separate event loops, such as durable units on separate loops, don't take turns. A lock goes
 once no call holds or waits for it."""
 
-_SEEN_RESTARTS: weakref.WeakKeyDictionary[object, dict[str | None, int]] = weakref.WeakKeyDictionary()
-"""For each display, its restart count when each run's last `computer` call took its screenshot, in this process, so
-each run sharing a screen is told of a restart, including one between its calls. Only the latest `_RUNS_PER_DISPLAY`
-runs are kept, so a long-lived display shared by every run doesn't grow without limit."""
-
-_RUNS_PER_DISPLAY = 64
-"""How many runs `_SEEN_RESTARTS` keeps per display. An older run's next call counts restarts from that call's start."""
-
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
 scaled as it was meant, whichever model runs it. Both keys are always there: `coordinate_grid`, the grid the model
@@ -127,6 +119,9 @@ pointed on or `None` for pixels, and `screenshot_size`, the latest screenshot it
 response without the record, such as one from before it existed, is read in the running model's space."""
 
 _ACTIONS = TypeAdapter(list[ComputerToolAction])
+
+_Limit: TypeAlias = tuple[int | None, int | None] | None
+"""The largest screenshot a model takes, as `(longest side, pixel count)`, either of which may be unlimited."""
 
 
 class _SpaceRecord(TypedDict):
@@ -141,6 +136,19 @@ _SPACE_RECORD = TypeAdapter(_SpaceRecord)
 _CALL_POLICY = StepPolicy(repeatable=False, timeout=900)
 """A `computer` call acts, so under durable execution it runs at most once, with time for 20 actions that each
 wait or hold for up to 30 seconds."""
+
+_SIZE_POLICY = StepPolicy(timeout=600)
+"""Reading the screen size before a model request may start the screen, which can install it first."""
+
+_NO_DISPLAY = (
+    '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
+    "run's workspace has none."
+)
+
+_READ_ONLY = (
+    'This workspace is read-only, so the `computer` tool can only look: take screenshots, zoom, read the pointer '
+    'position and wait. No action ran.'
+)
 
 _INTERRUPTED = (
     'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot before '
@@ -158,7 +166,7 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: list[ComputerToolAction] | None
     """The actions to run, when they differ from the ones the model asked for."""
-    limit: tuple[int, int] | None
+    limit: _Limit
     """The largest screenshot the model takes."""
     model_name: str
     acts: bool
@@ -179,16 +187,6 @@ class _NotRun:
         if self.kind == 'unavailable':
             return WorkspaceUnavailableError(self.message)
         return UserError(self.message)
-
-
-@runtime_checkable
-class _HasScreenKey(Protocol):
-    """A display that names the screen it shows, so every display object on one screen shares its lock."""
-
-    @property
-    def screen_key(self) -> object | None:
-        """A hashable name for the screen, such as its X `DISPLAY`, or `None` to key on the workspace's ref."""
-        ...
 
 
 def _models(model: AbstractModel) -> list[Model]:
@@ -214,20 +212,26 @@ def _grid(model: AbstractModel) -> int | None:
     return grids.pop() if len(grids) == 1 else None
 
 
-def _screenshot_limit(model: AbstractModel) -> tuple[int, int] | None:
+def _screenshot_limit(model: AbstractModel) -> _Limit:
     """The largest screenshot every model that may answer takes, as `(longest side, pixel count)`."""
-    limits = [
-        limit for answering in _models(model) if (limit := answering.profile.get('computer_use_screenshot_limit'))
-    ]
-    return (min(side for side, _ in limits), min(pixels for _, pixels in limits)) if limits else None
+    profiles = [answering.profile for answering in _models(model)]
+    sides = [side for profile in profiles if (side := profile.get('computer_use_screenshot_max_side'))]
+    pixels = [count for profile in profiles if (count := profile.get('computer_use_screenshot_max_pixels'))]
+    if not sides and not pixels:
+        return None
+    return min(sides, default=None), min(pixels, default=None)
 
 
-def _fit(size: tuple[int, int], limit: tuple[int, int] | None) -> tuple[int, int]:
+def _fit(size: tuple[int, int], limit: _Limit) -> tuple[int, int]:
     """The size an image of `size` is sent at: scaled down to the limit, keeping its shape."""
     if limit is None:
         return size
     width, height = size
-    scale = min(limit[0] / max(width, height), math.sqrt(limit[1] / (width * height)))
+    side, pixels = limit
+    scale = min(
+        side / max(width, height) if side else 1.0,
+        math.sqrt(pixels / (width * height)) if pixels else 1.0,
+    )
     return size if scale >= 1 else (max(1, int(width * scale)), max(1, int(height * scale)))
 
 
@@ -264,7 +268,7 @@ def _too_large_zoom(
     pixels: list[ComputerToolAction],
     display: tuple[int, int],
     space: tuple[int, int],
-    limit: tuple[int, int] | None,
+    limit: _Limit,
 ) -> str | None:
     """Why the first zoom into more than the model can see at full resolution is refused, if there is one."""
     for index, (action, scaled) in enumerate(zip(actions, pixels), 1):
@@ -312,37 +316,31 @@ def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tupl
 class _Call:
     """One `computer` call's coordinate space and how it maps to the display."""
 
-    space: tuple[int, int] | None = None
-    """The model's coordinate space, once the display size has been read."""
-    display: tuple[int, int] | None = None
-    """The display's size in pixels, once read."""
+    space: tuple[int, int]
+    """The model's coordinate space."""
+    display: tuple[int, int]
+    """The display's size in pixels."""
 
     def to_model(self, point: Point) -> Point:
-        # A call that reads the pointer always reads the display size first.
-        assert self.space is not None and self.display is not None
         return Point(
             x=_scale(point.x, self.space[0], self.display[0]), y=_scale(point.y, self.space[1], self.display[1])
         )
 
 
-async def _screenshot(ctx: RunContext[Any], plan: _Plan, size: tuple[int, int] | None) -> bytes:
-    """The screen, scaled down by the display to what the model takes; `size` is the display's, when the call read it."""
-    if (limit := plan.limit) is not None:
-        if size is None:
-            size = await ctx.workspace.display_size()
-        if (fitted := _fit(size, limit)) != size:
-            try:
-                return await ctx.workspace.scaled_screenshot(*fitted)
-            except WorkspaceUnsupportedActionError:
-                raise UserError(
-                    f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see, and its '
-                    f'display cannot scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
-                ) from None
-    return await ctx.workspace.screenshot()
+async def _screenshot(display: Display, plan: _Plan, size: tuple[int, int]) -> bytes:
+    """The screen, scaled down by the display to what the model takes."""
+    if (fitted := _fit(size, plan.limit)) == size:
+        return await display.screenshot()
+    if not isinstance(display, SupportsScaledScreenshot):
+        raise UserError(
+            f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see, and its display cannot '
+            f'scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
+        )
+    return await display.scaled_screenshot(*fitted)
 
 
 async def _perform(
-    ctx: RunContext[Any],
+    display: Display,
     actions: list[ComputerToolAction],
     call: _Call,
     settle_seconds: float,
@@ -368,16 +366,20 @@ async def _perform(
                 case Wait(seconds=seconds):
                     await anyio.sleep(seconds)
                 case Zoom(region=region):
+                    if not isinstance(display, SupportsZoom):
+                        raise UnsupportedActionError('This display cannot zoom.')
                     await settle()
-                    outputs.append(BinaryImage(data=await ctx.workspace.zoom(region), media_type='image/png'))
+                    outputs.append(BinaryImage(data=await display.zoom(region), media_type='image/png'))
                 case CursorPosition():
-                    point = call.to_model(await ctx.workspace.cursor_position())
+                    if not isinstance(display, SupportsCursorPosition):
+                        raise UnsupportedActionError('This display cannot report the pointer position.')
+                    point = call.to_model(await display.cursor_position())
                     outputs.append(f'The pointer is at ({point.x}, {point.y}).')
                 case Screenshot():
                     pass
                 case _:
                     unsettled = True
-                    await ctx.workspace.act(action)
+                    await display.act(action)
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:
@@ -389,11 +391,16 @@ async def _perform(
 
 
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
+    """The size of the latest screenshot the model saw, from its result's metadata or, without it, the image."""
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
             for part in reversed(message.parts):
-                if isinstance(part, ComputerReturnPart) and (result := part.result) and 'screenshot_size' in result:
-                    return result['screenshot_size']
+                if isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
+                    result = part.result
+                    if result is not None and 'screenshot_size' in result:
+                        width, height = result['screenshot_size']
+                        return width, height
+                    return png_size(screenshot.data)
     return None
 
 
@@ -424,89 +431,27 @@ def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
     return not isinstance(call, ComputerCallPart) or call.actions != actions
 
 
-def _display(ctx: RunContext[Any]) -> object | None:
-    """The workspace's display object."""
+def _display(ctx: RunContext[Any]) -> Display | None:
+    """The workspace backend's display, if it has one."""
     backend = ctx.workspace.backend
-    return backend.display if isinstance(backend, SupportsDisplay) else None
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    # An attribute that only shares the name, such as an X display string, is not a display.
+    return display if isinstance(display, Display) else None
 
 
-def _restarts_before(ctx: RunContext[Any]) -> int | None:
-    """The display's restart count to compare with once this call has its screenshot, if it reports restarts.
-
-    That's the count when this run's last call took its screenshot, so a restart between calls is caught too, such as
-    one started by reading the display size before a model request. A run's first call counts from now, and so does
-    every call on a display that can't be weakly referenced and hashed.
-    """
-    display = _display(ctx)
-    if not isinstance(display, SupportsRestartCount):
-        return None
-    count = display.restart_count
+async def _display_size(display: Display) -> tuple[int, int]:
     try:
-        before = _SEEN_RESTARTS.get(display, {}).get(ctx.run_id)
-        if before is None:
-            # Kept now, not only once the screenshot arrives, so a restart in a call that fails is told next call.
-            _remember(display, ctx.run_id, count)
-            before = count
-    except TypeError:
-        return count
-    return before
-
-
-def _remember(display: SupportsRestartCount, run_id: str | None, count: int) -> None:
-    """Keep `count` as `run_id`'s latest on `display`, dropping the oldest run beyond `_RUNS_PER_DISPLAY`."""
-    runs = _SEEN_RESTARTS.get(display, {})
-    runs.pop(run_id, None)
-    runs[run_id] = count
-    _SEEN_RESTARTS[display] = dict(list(runs.items())[-_RUNS_PER_DISPLAY:])
-
-
-def _restarted(ctx: RunContext[Any], before: int | None) -> bool:
-    """Whether the display's restart count moved from `before`, recording the count for this run's next call."""
-    display = _display(ctx)
-    if before is None or not isinstance(display, SupportsRestartCount):
-        return False
-    count = display.restart_count
-    with suppress(TypeError):
-        _remember(display, ctx.run_id, count)
-    return count != before
-
-
-async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
-    """The display's size, or the error reading it; an unavailable workspace ends the run."""
-    try:
-        return await ctx.workspace.display_size()
+        return await display.display_size()
     except WorkspaceUnavailableError:
         raise
     except WorkspaceError as e:
-        return e
+        raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
 
 
-async def _display_size(ctx: RunContext[Any]) -> tuple[int, int]:
-    size = await _read_size(ctx)
-    if isinstance(size, WorkspaceError):
-        raise ToolFailed(f'Reading the display size failed, so no action ran: {size}') from size
-    return size
-
-
-async def _native_computer(ctx: RunContext[Any]) -> ComputerTool | None:
-    """The provider's native computer tool, declaring the size of the screenshots the model sees."""
-    size = await _read_size(ctx)
-    if isinstance(size, WorkspaceError):
-        return None  # the call itself will report the display's error
-    return ComputerTool(display_size=_fit(size, _screenshot_limit(ctx.model)), optional=True)
-
-
-def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
-    # A display names its screen when it can, such as an X `DISPLAY` that several workspaces may show. Otherwise
-    # backends attached to one environment share its ref, and backends on one screen share its display, the same
-    # object for each backend's lifetime.
-    display = _display(ctx)
-    key: object = display.screen_key if isinstance(display, _HasScreenKey) else None
-    if key is None:
-        key = ctx.workspace.ref
-    if key is None:
-        key = id(display if isinstance(display, Display) else ctx.workspace)
-    key = (anyio.lowlevel.current_token(), key)
+def _display_lock(ctx: RunContext[Any], display: Display) -> anyio.Lock:
+    # Backends attached to one environment share its ref, and a backend's display is the same object for its lifetime.
+    ref = ctx.workspace.ref
+    key = (anyio.lowlevel.current_token(), ref if ref is not None else id(display))
     if (lock := _DISPLAY_LOCKS.get(key)) is None:
         lock = _DISPLAY_LOCKS[key] = anyio.Lock()
     return lock
@@ -539,9 +484,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Lets the agent see and control the display of its workspace with one `computer` tool.
 
     The model sends a list of mouse and keyboard actions; they run in order on the workspace's display, and the tool
-    returns a screenshot of the result. The workspace must have a display, such as a sandbox capability started
-    with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
-    images.
+    returns a screenshot of the result. The workspace's backend must have a display, such as a sandbox capability
+    started with a desktop; see [`SupportsDisplay`][pydantic_ai_harness.computer_use.SupportsDisplay]. The model must
+    accept images.
     """
 
     _: KW_ONLY
@@ -579,6 +524,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.keep_screenshots is not None and self.keep_screenshots < 1:
             raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
+        if not 0 <= self.settle_seconds <= 30:
+            raise UserError('`settle_seconds` must be from 0 to 30.')
         tool = Tool[AgentDepsT](
             self._computer,
             name='computer',
@@ -606,6 +553,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         ],
     ) -> ToolReturn:
         acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
+        if acts and ctx.workspace.read_only:
+            raise ToolFailed(_READ_ONLY)
         if self.requires_approval and acts and not ctx.tool_call_approved:
             raise ApprovalRequired
         made = _the_call(ctx)
@@ -634,18 +583,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 raise ToolFailed(_INTERRUPTED) from e
             if isinstance(outcome, _NotRun):
                 raise outcome.error()
-        # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
         result: ComputerResult = outcome.metadata
         size = result.get('screenshot_size')
         assert size is not None  # a call that returns has taken its screenshot
         width, height = size  # a list once a durable unit's result has been through JSON
-        await ctx.emit(
-            ActionsPerformedEvent(
-                performed=result['performed'], error=result.get('error'), screenshot_size=(width, height)
-            )
-        )
-        if result.get('display_restarted'):
-            await ctx.emit(DisplayRestartedEvent())
+        result['screenshot_size'] = (width, height)
+        # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
+        await ctx.emit(ActionsPerformedEvent(result=result))
         return outcome
 
     @durable_operation('call', policy=_CALL_POLICY)
@@ -665,35 +609,27 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
-        restarts = _restarts_before(ctx)
-        call = _Call()
-        if plan.acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
-            # Also starts a display that stopped, so a restart is known before anything acts.
-            call.display = await _display_size(ctx)
-            # A screenshot the model saw, or the next one, may be scaled down from the display.
-            call.space = (plan.grid, plan.grid) if plan.grid else plan.seen or _fit(call.display, plan.limit)
-            # The backend would move a position outside the screen to its edge and act there.
-            if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
-                raise ToolFailed(refused)
-            pixels = (
-                actions if call.space == call.display else [_to_pixels(a, call.display, call.space) for a in actions]
-            )
-            if refused := _too_large_zoom(actions, pixels, call.display, call.space, plan.limit):
-                raise ToolFailed(refused)
-            actions = pixels
+        display = _display(ctx)
+        if display is None:
+            raise UserError(_NO_DISPLAY)
+        # Also starts a display that stopped, before anything acts.
+        size = await _display_size(display)
+        # A screenshot the model saw, or the next one, may be scaled down from the display.
+        call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or _fit(size, plan.limit), display=size)
+        # The backend would move a position outside the screen to its edge and act there.
+        if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
+            raise ToolFailed(refused)
+        pixels = actions if call.space == size else [_to_pixels(a, size, call.space) for a in actions]
+        if refused := _too_large_zoom(actions, pixels, size, call.space, plan.limit):
+            raise ToolFailed(refused)
 
-        async with _display_lock(ctx):
-            return await self._act_and_look(ctx, actions, call, plan, restarts)
+        async with _display_lock(ctx, display):
+            return await self._act_and_look(display, pixels, call, plan)
 
     async def _act_and_look(
-        self,
-        ctx: RunContext[AgentDepsT],
-        actions: list[ComputerToolAction],
-        call: _Call,
-        plan: _Plan,
-        restarts: int | None,
+        self, display: Display, actions: list[ComputerToolAction], call: _Call, plan: _Plan
     ) -> ToolReturn:
-        performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
+        performed, error, outputs = await _perform(display, actions, call, self.settle_seconds)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -711,7 +647,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
         try:
-            png = await _screenshot(ctx, plan, call.display)
+            png = await _screenshot(display, plan, call.display)
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:
@@ -720,8 +656,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        if _restarted(ctx, restarts):
-            result['display_restarted'] = True
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if plan.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
@@ -764,19 +698,43 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """The provider's native computer tool, which runs this capability's tool, unless `native` is `False`."""
-        return [_native_computer] if self.native else []
+        return [self._native_computer] if self.native else []
+
+    async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
+        """The provider's native computer tool, declaring the size of the screenshots the model sees."""
+        size = await self._screen_size(ctx)
+        if isinstance(size, _NotRun):
+            if size.kind == 'tool':
+                return None  # the call itself will report the display's error
+            raise size.error()
+        return ComputerTool(display_size=_fit(size, _screenshot_limit(ctx.model)), optional=True)
+
+    @durable_operation('display_size', policy=_SIZE_POLICY)
+    async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
+        """The display's size, as its own durable unit: the request's tools are prepared in workflow code."""
+        display = _display(ctx)
+        if display is None:
+            return _NotRun(_NO_DISPLAY, 'config')
+        try:
+            width, height = await display.display_size()
+        except WorkspaceUnavailableError as e:
+            return _NotRun(str(e), 'unavailable')
+        except WorkspaceError as e:
+            return _NotRun(str(e))
+        return width, height
 
     def get_wrapper_model(self, model: Model) -> Model | None:
         """Drop old screenshots from what is sent, after every other capability has prepared the request."""
         return _DropOldScreenshots(model, self.keep_screenshots)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail the run at its start when its workspace has no display."""
-        if not ctx.workspace.has_display:
-            raise UserError(
-                '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
-                "desktop. This run's workspace has none."
-            )
+        """Fail the run at its start when its workspace has no display.
+
+        Durable workflow code can't reach the backend, so there the first `computer` call or native tool size read
+        reports it instead, from inside its durable unit.
+        """
+        if not ctx.in_durable_context and _display(ctx) is None:
+            raise UserError(_NO_DISPLAY)
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
@@ -789,12 +747,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Refuse a model that can't see screenshots."""
-        models = _models(request_context.model)
-        if models and not any(model.profile.get('supports_image_input', True) for model in models):
+        """Refuse a model that can't see screenshots, including one in a fallback chain, which may answer every call."""
+        blind = [
+            model for model in _models(request_context.model) if not model.profile.get('supports_image_input', True)
+        ]
+        if blind:
             raise UserError(
-                f'`ComputerUse` needs a model that accepts images, and {request_context.model.model_name!r} does not: '
-                'every `computer` call returns a screenshot.'
+                f'`ComputerUse` needs a model that accepts images, and {blind[0].model_name!r} does not: every '
+                '`computer` call returns a screenshot.'
             )
         return request_context
 
@@ -818,8 +778,9 @@ def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, 
         if not isinstance(message, ModelRequest):
             continue
         for part_index, part in enumerate(message.parts):
-            if isinstance(part, ComputerReturnPart):
-                for item_index, item in enumerate(part.content_items()):
+            # The validated content, so a result stored as a JSON string counts too.
+            if isinstance(part, ComputerReturnPart) and (content := part.typed_content) is not None:
+                for item_index, item in enumerate(content):
                     if isinstance(item, BinaryContent) and item.is_image:
                         yield message_index, part_index, item_index, len(item.data)
 
@@ -857,7 +818,7 @@ def _drop_old_screenshots(messages: list[ModelMessage], keep: int | None) -> lis
         part = message.parts[part_index]
         # `_screenshots` found only `computer` results, in requests.
         assert isinstance(message, ModelRequest) and isinstance(part, ComputerReturnPart)
-        items = list(part.content_items())  # a copy: the history keeps its images
+        items = list(part.typed_content or [])  # a copy: the history keeps its images
         items[item_index] = _SCREENSHOT_REMOVED
         parts = list(message.parts)
         parts[part_index] = replace(part, content=items)
