@@ -73,10 +73,12 @@ KERNEL_ESCAPE = re.compile(rb'\\([0-7]{3})')
 """How the kernel writes a space, tab, newline or backslash in a mount table path: as three octal digits."""
 
 
+FailureCode = Literal['busy', 'conflict', 'fuse', 'mount', 'rclone', 'stuck', 'timeout']
+"""Why a call failed, as the reply's `error` names it."""
+
+
 class MountFailed(Exception):
-    def __init__(
-        self, code: Literal['busy', 'conflict', 'fuse', 'mount', 'rclone', 'stuck', 'timeout'], message: str
-    ) -> None:
+    def __init__(self, code: FailureCode, message: str) -> None:
         super().__init__(message)
         self.code = code
 

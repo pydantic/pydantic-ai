@@ -24,6 +24,7 @@ import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -34,7 +35,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WrapperWorkspace,
 )
-from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS, FailureCode
 
 __all__ = ('MountError', 'S3Mount')
 
@@ -57,7 +58,7 @@ class _Reply(TypedDict, total=False):
     """What the helper prints: the folders strays were moved to, or why it refused."""
 
     recovered: list[str]
-    error: str
+    error: FailureCode
     message: str
 
 
@@ -69,7 +70,10 @@ _BUCKET = re.compile(r'[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]')
 
 
 class MountError(WorkspaceError):
-    """A mount was refused or could not be made. The message says what to change."""
+    """The sandbox refused a mount or could not make it. The message says what to change.
+
+    A mistake in an `S3Mount` or in what `mounts=` returns raises `UserError` instead.
+    """
 
 
 def _now() -> datetime:
@@ -99,30 +103,30 @@ class S3Mount:
 
     def __post_init__(self) -> None:
         if posixpath.isabs(self.path) or self.path in ('', '.') or posixpath.normpath(self.path) != self.path:
-            raise MountError(
+            raise UserError(
                 f'The mount path {self.path!r} must be a folder in the working directory, written like '
                 "'data' or 'data/reports'."
             )
         if self.path == '..' or self.path.startswith('../'):
-            raise MountError(f'The mount path {self.path!r} leads out of the working directory. Mount inside it.')
+            raise UserError(f'The mount path {self.path!r} leads out of the working directory. Mount inside it.')
         _root(self.url)
         if self.expires_at.utcoffset() is None:
-            raise MountError(
+            raise UserError(
                 f'The `expires_at` of mount {self.path!r} has no time zone. Pass an aware datetime, '
                 'like `datetime.now(UTC) + timedelta(hours=1)`.'
             )
         if self.expires_at <= _now():
-            raise MountError(f'The keys for mount {self.path!r} have already expired. Pass keys that expire later.')
+            raise UserError(f'The keys for mount {self.path!r} have already expired. Pass keys that expire later.')
 
 
 def _root(url: str) -> str:
     """`bucket/prefix/`, what rclone mounts, from `s3://bucket/prefix/`."""
     found = _URL.fullmatch(url)
     if found is None:
-        raise MountError(f"The mount URL {url!r} must look like 's3://bucket/' or 's3://bucket/prefix/'.")
+        raise UserError(f"The mount URL {url!r} must look like 's3://bucket/' or 's3://bucket/prefix/'.")
     bucket = found['bucket']
     if not _BUCKET.fullmatch(bucket):
-        raise MountError(
+        raise UserError(
             f'The bucket name {bucket!r} in {url!r} is not valid: use 3 to 63 lowercase letters, digits, '
             'dots and hyphens, starting and ending with a letter or digit.'
         )
@@ -130,7 +134,7 @@ def _root(url: str) -> str:
     if not prefix:
         return bucket
     if any(part in ('', '.', '..') for part in prefix.split('/')):
-        raise MountError(
+        raise UserError(
             f"The prefix in {url!r} must not hold empty, '.' or '..' parts. Write it like 's3://bucket/reports/2026/'."
         )
     # The trailing slash tells rclone it is a folder, even beside an object of the same name.
@@ -199,7 +203,7 @@ def _check_paths(mounts: Sequence[S3Mount]) -> None:
     # Every pair, not neighbours: `data-other` sorts between `data` and `data/inner`.
     for path, after in itertools.combinations(sorted(mount.path for mount in mounts), 2):
         if after == path or after.startswith(f'{path}/'):
-            raise MountError(
+            raise UserError(
                 f'The mount paths {path!r} and {after!r} overlap. Give each mount its own folder, neither inside another.'
             )
 
@@ -279,7 +283,7 @@ class _Mounted(WrapperWorkspace):
             if self._first is None:
                 _check_paths(fresh)
             elif len(fresh) != len(self._first) or _shown(fresh) != self._first:
-                raise MountError('`mounts=` must return the same mounts each time, with fresh keys.')
+                raise UserError('`mounts=` must return the same mounts each time, with fresh keys.')
             now = _now()
             if not fresh:
                 # A function that returned no mounts: nothing to mount, and nothing to refresh.
