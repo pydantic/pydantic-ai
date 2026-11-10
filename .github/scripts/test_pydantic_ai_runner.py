@@ -1790,11 +1790,7 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     ('noop_in_reserve', 'offered_last', 'probe_return'),
     [
         (True, set[str](), 'error: the time budget is nearly spent; finish the task from what you already have'),
-        (
-            False,
-            {'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'},
-            'nothing new',
-        ),
+        (False, {'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}, 'nothing new'),
     ],
 )
 def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
@@ -1803,7 +1799,7 @@ def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
     """Streaming Resilience Sweep's model posted its `noop` in the time reserve, then called `missing_data` in a loop.
 
     A call from memory is answered without running. A `noop` before the reserve can be a progress note, so it
-    leaves the reserve's safe outputs offered.
+    leaves the reserve's safe outputs offered, also after gh-aw rejects a second `noop` inside the reserve.
     """
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
     sink = tmp_path / 'outputs.jsonl'
@@ -1824,13 +1820,15 @@ def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
         if len(offered) == 1:
             return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'nothing to report'})])
         monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+        if len(offered) == 2:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'still nothing'})])
         if not probe_returns:
             return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__probe', {})])
         return ModelResponse(parts=[TextPart('done')])
 
-    assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
+    assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
     assert probe_returns == [probe_return]
-    assert len(offered) == 3
+    assert len(offered) == 4
     assert offered[-1] == offered_last
 
 

@@ -1555,10 +1555,11 @@ def _recorded_noops() -> int:
 class EndRunAfterReserveNoop(AbstractCapability[object]):
     """Offer the model no tools once a `noop` it posts inside the time reserve leaves no safe output pending.
 
-    After posting its `noop` there, a model called `missing_data`, which has no per-run limit, until the run's
-    deadline. With no tools offered, its next text answer ends the run. A call it still makes is answered without
-    running, as `CIReviewToolPolicy` answers its withheld tools. A `noop` before the reserve changes nothing: some
-    runs post one early as a progress note, and some workflows record several outputs.
+    Still offered tools after that `noop`, a model can call safe outputs with no per-run limit, such as
+    `missing_data`, until the run's deadline. With no tools offered, its next text answer ends the run. A call it
+    still makes is answered without running, as `CIReviewToolPolicy` answers its withheld tools. A `noop` before
+    the reserve changes nothing: some runs post one early as a progress note, and some workflows record several
+    outputs.
     """
 
     _finished: bool = False
