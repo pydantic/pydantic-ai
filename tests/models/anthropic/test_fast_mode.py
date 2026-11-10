@@ -8,20 +8,17 @@ matches no variant, and its `provider_details` stay as they were.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
 
 from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-
-if TYPE_CHECKING:
-    ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -33,7 +30,7 @@ pytestmark = [
 @pytest.mark.parametrize('speed', ['fast', None], ids=['fast', 'standard'])
 async def test_fast_mode_provider_details(
     allow_model_requests: None,
-    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
     speed: Literal['fast'] | None,
     stream: bool,

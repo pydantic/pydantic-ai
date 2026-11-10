@@ -83,8 +83,8 @@ def response_provider_details(response: BetaMessage) -> dict[str, Any] | None:
     if response.diagnostics is not None:
         provider_details = provider_details or {}
         provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
-    # Every response reports `usage.speed`; only fast mode is recorded. It is the price context key that
-    # selects genai-prices' fast-mode rates in `ModelResponse.cost`.
+    # Only fast mode is recorded: a standard request reports `usage.speed` as `'standard'` or not at all, and
+    # neither selects a price variant. `speed` is the price context key for genai-prices' fast mode rates.
     if response.usage.speed == 'fast':
         provider_details = provider_details or {}
         provider_details['speed'] = 'fast'
