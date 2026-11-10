@@ -2650,6 +2650,48 @@ class TestTaskControlBoundaries:
         assert len(task_texts(result.all_messages())) == 1
         assert task_texts(result.all_messages()[-2:-1])
 
+    async def test_a_replayed_background_task_is_announced_as_backgrounded(self) -> None:
+        def parent(durability: RecordingDurability) -> tuple[Agent[Any, str], Recorder]:
+            recorder = Recorder()
+            agent = Agent(
+                scripted(
+                    call('delegate_task', agent_name='researcher', task='Find x.', background=True),
+                    text('Waiting.'),
+                    text('Done.'),
+                ),
+                name='durable',
+                capabilities=[controlled(), recorder, durability],
+            )
+            return agent, recorder
+
+        def task_kinds(recorder: Recorder) -> list[str]:
+            return [kind for kind in recorder.kinds() if kind.startswith('sub_agents.task_')]
+
+        recording = RecordingDurability()
+        agent, recorder = parent(recording)
+        with anyio.fail_after(WAIT):
+            await agent.run('Go.')
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_backgrounded',
+            'sub_agents.task_completed',
+        ]
+
+        delegation = 'durable__capability__sub_agents.delegate'
+        journal = {name: result for name, result in recording.results if name == delegation}
+        agent, recorder = parent(RecordingDurability(journal=journal))
+        with anyio.fail_after(WAIT):
+            result = await agent.run('Go.')
+        assert result.output == 'Done.'
+        # The replayed task settles before the delegating tool resumes, so its backgrounding is announced last.
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_completed',
+            'sub_agents.task_backgrounded',
+        ]
+
     async def test_a_durable_task_keeps_the_owners_usage_rules(self) -> None:
         ticks: list[str] = []
 
