@@ -1006,6 +1006,9 @@ async def test_a_backend_without_write_details_says_it_can_t_update() -> None:
 
     with pytest.raises(NotImplementedError, match="_OlderStore doesn't implement `write_details`"):
         await store.update(conversation.conversation_id, title='Greetings')
+    # An update that changes nothing doesn't need it.
+    unchanged = await store.update(conversation.conversation_id)
+    assert (unchanged.title, unchanged.revision) == (None, conversation.revision)
 
 
 async def test_a_save_keeps_a_title_on_a_backend_that_stores_records_as_given() -> None:

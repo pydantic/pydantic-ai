@@ -563,6 +563,8 @@ class ConversationStore(ABC):
         if not isinstance(metadata, Unset):
             details['metadata'] = metadata
         while (record := await self._read_record(conversation_id, scope=scope)) is not None:
+            if not details:
+                return record
             try:
                 await self.write_details(conversation_id, details, expected_revision=record.revision)
             except ConversationConflict:
