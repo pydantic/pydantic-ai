@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import sys
+import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
@@ -32,7 +33,8 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
-from pydantic_ai.models import Model, ModelResolutionContext, infer_model
+from pydantic_ai.models import Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -245,6 +247,70 @@ class SessionModels(ResolveModelId[DepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+
+def _unwrapped(model: Model) -> Model:
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
+@dataclass(init=False)
+class SelectionFallback(ModelFallback[DepsT]):
+    """`ModelFallback` for the steps on the session's selection: one of `selection`, or a model one of them ran on.
+
+    A stock agent binds it, so a delegated task that inherits the session's model falls back too, while one on
+    another model, such as a delegate's own option, does not fall back onto the session's.
+    """
+
+    selection: frozenset[str]
+    _ran_on: list[weakref.ref[Model]] = field(repr=False)
+    """The models the selection's steps ran on, shared by every run of the agent that binds this."""
+    _judged_step: int | None = field(repr=False)
+    _on_selection: bool = field(repr=False)
+
+    def __init__(self, first: str, *models: str) -> None:
+        super().__init__(*models)
+        self.selection = frozenset((first, *models))
+        self._ran_on = []
+        self._judged_step = None
+        self._on_selection = False
+
+    def get_model(self) -> None:
+        """None: the session passes or binds its selection as the model itself."""
+        return None
+
+    def _ran_on_selection(self, model: Model) -> bool:
+        return any(ref() is _unwrapped(model) for ref in self._ran_on)
+
+    async def prepare_model_request(
+        self, ctx: RunContext[DepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self._judged_step != ctx.run_step:
+            self._judged_step = ctx.run_step
+            self._on_selection = request_context.model_id in self.selection or self._ran_on_selection(
+                request_context.model
+            )
+        if not self._on_selection:
+            return request_context
+        if not self._ran_on_selection(request_context.model):
+            self._ran_on[:] = [ref for ref in self._ran_on if ref() is not None]
+            self._ran_on.append(weakref.ref(_unwrapped(request_context.model)))
+        return await super().prepare_model_request(ctx, request_context)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[DepsT], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if not self._on_selection:
+            raise error
+        return await super().on_model_request_error(ctx, request_context=request_context, error=error)
+
+    async def after_model_request(
+        self, ctx: RunContext[DepsT], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if not self._on_selection:
+            return response
+        return await super().after_model_request(ctx, request_context=request_context, response=response)
 
 
 ModelNameResolver = Callable[[str], Model | str | Awaitable[Model | str]]
@@ -516,7 +582,7 @@ class Session(Generic[DepsT, OutputT]):
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self._bound_model: str | None = None
-        self._bound_fallbacks: tuple[str, ...] = ()
+        self._bound_selection: tuple[str, ...] = ()
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -839,13 +905,17 @@ class Session(Generic[DepsT, OutputT]):
     def _bind(self, models: Sequence[str]) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first.
 
-        The run starts on the first of `models`, from `_models`, and falls back through the rest with
-        `ModelFallback`, which a stock agent binds, so its delegated tasks fall back too.
+        The run starts on the first of `models`, from `_models`, and falls back through the rest with a
+        `SelectionFallback`. A stock agent binds it with `SessionModels`, so delegated tasks fall back too.
         """
         selected = models[0] if models else None
-        fallbacks = [ModelFallback[DepsT](*models[1:])] if len(models) > 1 else []
+        selection: list[AgentCapability[DepsT]] = []
+        if selected is not None:
+            selection.append(SessionModels[DepsT](self._resolve_model_id))
+        if len(models) > 1:
+            selection.append(SelectionFallback[DepsT](*models))
         run_model = selected
-        capabilities = [*self.plugins, *fallbacks]
+        capabilities = [*self.plugins, *selection]
         if isinstance(self._base_agent, StockAgent):
             # CLAI's default is the agent's own model, so a capability that selects one wins.
             agent_model = None if self.model_chosen else selected
@@ -853,19 +923,17 @@ class Session(Generic[DepsT, OutputT]):
                 run_model = None
             if (
                 agent_model != self._bound_model
-                or tuple(models[1:]) != self._bound_fallbacks
+                or tuple(models) != self._bound_selection
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*self.plugins, *fallbacks, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*self.plugins, *selection, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
-                self._bound_fallbacks = tuple(models[1:])
+                self._bound_selection = tuple(models)
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
-        if selected is not None:
-            capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         if (project_instructions := self.project_instructions()) is not None:

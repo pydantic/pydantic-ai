@@ -4,7 +4,8 @@ Pydantic AI's `ModelFallback` capability does the work in a session, and `Fallba
 chain only names the models. They are created, edited, renamed, and deleted in the `/model` picker
 (`ui/menus/chain_menu.py`). Pair a chain with auth profiles to pool accounts, such as two Codex logins:
 `openai-codex:gpt-6-astra` then `openai-codex@work:gpt-6-astra`. A run falls back on a model API error,
-such as a rate or usage limit, or on a refusal; a profile that is not signed in fails the run instead.
+such as a rate or usage limit, or, when it does not stream, on a refusal; a profile that is not signed in fails
+the run instead.
 """
 
 from pydantic_clai2.config.settings_store import SettingsStore

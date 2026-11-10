@@ -42,6 +42,7 @@ from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.models.profiles import ModelRef, base_model, parse_model, provider_of, with_profile
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginLogin
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_summary
 from tests.clai2.test_app_edges import inputs
 from tests.clai2.test_auth import fake_browser, never_pasted
@@ -349,6 +350,39 @@ async def test_a_chain_falls_back_from_a_refusal(tmp_path: Path) -> None:
 
 def echo(name: str) -> Model:
     return TestModel(custom_output_text=name)
+
+
+async def fails_streaming(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelHTTPError(status_code=429, model_name='limited', body='usage limit reached')
+    yield ''  # pragma: no cover
+
+
+async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path: Path) -> None:
+    """A delegated task on the model the session ran on falls back through the chain; one on another model does not."""
+    limited: list[Model] = []
+
+    def limit(name: str) -> Model:
+        limited.append(FunctionModel(fails, stream_function=fails_streaming))
+        return limited[-1]
+
+    providers = {
+        'limited': ModelProvider(prefix='limited', resolve=limit),
+        'pooled': ModelProvider(
+            prefix='pooled', resolve=lambda name: TestModel(call_tools=[], custom_output_text=name)
+        ),
+    }
+    models = resolver(tmp_path, providers)
+    assert models.store is not None
+    models.store.save_chain(name='pool', models=['limited:a', 'pooled:b'])
+    session = Session(create_stock_agent(TestModel()), deps=None)
+    session.model = 'chain:pool'
+    session.resolve_model = models.resolve
+    session.expand_model = models.expand
+    assert (await session.prompt('hello')).output == 'b'
+    # As delegated tasks run: on the session's model, and on a delegate's own option.
+    assert (await session.agent.run('task', model=limited[0])).output == 'b'
+    with pytest.raises(ModelHTTPError, match='usage limit reached'):
+        await session.agent.run('task', model=FunctionModel(fails))
 
 
 async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: Path) -> None:
