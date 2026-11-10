@@ -1,4 +1,4 @@
-"""Helpers shared by the harness's displays and `ComputerUse`."""
+"""PNG helpers shared by the harness's displays and `ComputerUse`."""
 
 from __future__ import annotations as _annotations
 
