@@ -2,7 +2,7 @@
 
 Keep the files harness capabilities store for themselves in a location you choose, instead of the
 run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/). Use it when the model's
-file and shell tools should not reach those files, when the run's workspace is read-only, when a
+file tools should not reach those files, when the run's workspace is read-only, when a
 run has no workspace at all, or when each tenant of a service needs its own location.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](../../../../docs/harness/index.md#version-policy).
@@ -51,7 +51,8 @@ storage workspace's working directory instead, with the same layout and a `.giti
 | [Shell](../shell/) | Background job logs | Unchanged: the run's workspace, because the commands that write them run there |
 
 Spills in the storage workspace are outside the model's file tools, so the model reads them with
-`read_tool_result`. A run with `CapabilityStorage` can spill even when it has no workspace of its own
+`read_tool_result`. That is not access control: a spill's handle is its absolute path, and a `Shell`
+on the same machine as a local storage directory can still read it. A run with `CapabilityStorage` can spill even when it has no workspace of its own
 or its workspace is read-only.
 
 A store passed to a capability explicitly takes precedence: `ToolOutputLimits(store=LocalFileStore())`
@@ -80,10 +81,12 @@ wins, so a run keeps its capabilities' files in one place.
 
 ## Durable execution
 
-The storage workspace's I/O runs in-process. Under a durable engine such as Temporal it is not
-routed through the workflow, unlike the run's own workspace. A durable agent also refuses
-`capabilities=` on a run, so set `CapabilityStorage` on the agent there. See
-[Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/).
+The storage workspace's I/O runs in-process: a durable engine does not route it through its own
+machinery, unlike the run's workspace. `ToolOutputLimits` writes and reads spills inside the engine's
+durable units, activities on Temporal, so the workers that run them must reach the storage. An engine
+that registers its units before the run starts, such as Temporal, refuses `capabilities=` on a run
+inside a workflow, so set `CapabilityStorage` on the agent there. See the workspace guide's
+[Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
 
 ## Telemetry
 

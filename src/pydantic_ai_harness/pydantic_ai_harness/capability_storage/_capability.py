@@ -18,7 +18,7 @@ class CapabilityStorage(AbstractCapability[AgentDepsT]):
 
     Without it, a capability such as `ToolOutputLimits` keeps its files in the run's workspace,
     under `.pydantic-ai-harness/` in the working directory. With it, that directory is created in
-    `workspace` instead: a location the model's file and shell tools cannot reach, one that stays
+    `workspace` instead: a location the model's file tools cannot reach, one that stays
     writable when the run's workspace is read-only, or one per tenant when the capability is passed
     per run with `agent.run(..., capabilities=[CapabilityStorage(...)])`.
 
