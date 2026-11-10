@@ -257,7 +257,7 @@ def offer_worktree_cleanup(
     try:
         clean = not _git('-C', root, 'status', '--porcelain')
         unchanged = clean and _git('-C', root, 'rev-parse', 'HEAD') == worktree.head
-        pushed = (
+        removable = (
             clean
             and worktree.remove_if_pushed
             and not _git('-C', root, 'rev-list', '--max-count=1', 'HEAD', '--not', '--remotes')
@@ -267,12 +267,12 @@ def offer_worktree_cleanup(
     if unchanged and worktree.remove_if_unchanged:
         _remove(worktree, keep_branch=False)
         return
-    if unchanged and not pushed:
+    if unchanged and not removable:
         return
     kept = _kept_checkout(worktree.path, store=store)
     if kept:
         print(f'Worktree kept at {root}.')
-    elif pushed and kept is False:
+    elif removable and kept is False:
         _remove(worktree, keep_branch=True)
     elif not unchanged:
         _offer_changed_worktree_cleanup(worktree=worktree, read_remove_commands=read_remove_commands, store=store)

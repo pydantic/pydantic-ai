@@ -346,13 +346,13 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
     worktree = current_worktree()
     if worktree is None or relaunched is None:
         return worktree
-    head, _, kind = relaunched.partition(' ')
-    created, terminal = kind != 'reopened', sys.stdin.isatty()
+    first, _, second = relaunched.partition(' ')
+    created, terminal = first != 'reopened', sys.stdin.isatty()
     return replace(
         worktree,
-        head=head,
+        head=first if created else second,
         created=created,
-        new_branch=kind == 'new-branch',
+        new_branch=second == 'new-branch',
         remove_if_unchanged=created and terminal,
         remove_if_pushed=terminal,
     )
@@ -360,9 +360,13 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
     """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is not None and worktree.remove_if_pushed:
-        kind = ' new-branch' if worktree.new_branch else '' if worktree.created else ' reopened'
-        os.environ[_RELAUNCH_WORKTREE] = worktree.head + kind
+    if worktree is None or not worktree.remove_if_pushed:
+        return
+    head = worktree.head
+    # An older build takes the first word as the commit of a checkout it created; `reopened` never matches, so it asks.
+    os.environ[_RELAUNCH_WORKTREE] = (
+        f'{head} new-branch' if worktree.new_branch else head if worktree.created else f'reopened {head}'
+    )
 
 
 def relaunch_argv(
