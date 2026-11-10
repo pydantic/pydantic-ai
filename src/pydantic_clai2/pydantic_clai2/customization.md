@@ -828,9 +828,11 @@ coder sub_agents to false: a delegated task's approval fails the run
 
 ## Managed delegation UI
 
-Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
-Enter opens a full-width live transcript, `b` backgrounds, and `x` stops the selected
-tree. Ctrl+B backgrounds foreground children. `/tasks resume ID` is explicit user
+Interactive stock agents use harness `DelegationTasks`: `/tasks` opens a live view
+of the children: a sidebar selects one, its transcript streams beside it, and a typed
+message steers it while it runs or prompts it once it has finished. There, Ctrl+B
+backgrounds and Ctrl+X stops the selected tree. At the prompt, Ctrl+B backgrounds
+foreground children. `/tasks resume ID` is explicit user
 authorization to resume a general-purpose/custom child with its independent history.
 Explore and Plan are read-only, inherit the selected model, and cannot resume.
 Task reports are automated untrusted evidence, never user instructions or permission

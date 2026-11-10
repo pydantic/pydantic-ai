@@ -2144,13 +2144,18 @@ The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
 `.codex/agents` definitions work without setup. If you saved Coder settings
 before this existed, disk agents stay off until you set **Agent folders**.
 Definition files are read as data and never executed.
-- **`/tasks`** opens the live picker during a turn or between turns. Enter opens
-  a full-width transcript with in-flight text; Esc returns to the picker, then
-  closes it. Arrow keys scroll the transcript; End follows its tail. Completing
-  a task does not close its detail view.
-- **`b` / `/tasks background ID`** backgrounds the selected child.
-- **`x` / `/tasks stop ID`** stops that child and its descendants, leaving siblings
+- **`/tasks`** opens the live view during a turn or between turns. A sidebar lists the
+  conversation's tasks as a tree, and Up and Down select one. Its transcript streams beside
+  the sidebar, in-flight text included; PgUp and PgDn scroll it. Esc clears the typed
+  message, then closes the view.
+- **Typing a message and pressing Enter** steers the selected running child: it reads the
+  message as user input at its next model request. On a finished child that can resume,
+  Enter prompts it again from its saved history, apart from the conversation. Explore, Plan
+  and Review take no messages once they finish.
+- **Ctrl+B / `/tasks background ID`** backgrounds the selected child.
+- **Ctrl+X / `/tasks stop ID`** stops that child and its descendants, leaving siblings
   running. Stopping a child prevents automatic model resume.
+- **Ctrl+R** on a finished child does what `/tasks resume ID` does, and closes the view.
 - **`/tasks resume ID`** explicitly authorizes resume and queues a request to the
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
@@ -2165,7 +2170,7 @@ start rows immediately without the model name instead.
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see
 [Status line](#status-line). Successful rows disappear on completion; failed
-and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The view retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
