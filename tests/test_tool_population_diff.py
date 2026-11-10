@@ -27,14 +27,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool, WebSearchTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 
 from .conftest import IsDatetime, IsStr, RequestCapture, try_import
@@ -651,6 +651,32 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
 
 
+class _RestrictToLater(AbstractCapability[Any]):
+    """Restrict `tool_choice` to the `later` newcomer once it is present."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools):
+            request_context.model_settings = merge_model_settings(
+                request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['later']))
+            )
+        return request_context
+
+
+def _restricted_to_newcomer_agent(model: Model, native_tools: list[AbstractNativeTool]) -> Agent[None, str]:
+    """An agent whose `unlock` tool adds `later`, with a `tool_choice` naming only `later` once it is present."""
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(_later, name='later')
+        return 'unlocked'
+
+    capabilities: list[AbstractCapability[Any]] = [_RestrictToLater(), *(NativeTool(tool) for tool in native_tools)]
+    return Agent(model, toolsets=[toolset], capabilities=capabilities)
+
+
 @pytest.mark.parametrize(
     'native_tools',
     [
@@ -677,31 +703,54 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
     )
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
 
-    class RestrictToLater(AbstractCapability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools):
-                request_context.model_settings = merge_model_settings(
-                    request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['later']))
-                )
-            return request_context
-
-    toolset = FunctionToolset[Any]()
-
-    @toolset.tool_plain
-    def unlock() -> str:
-        toolset.add_function(_later, name='later')
-        return 'unlocked'
-
-    capabilities: list[AbstractCapability[Any]] = [RestrictToLater(), *(NativeTool(tool) for tool in native_tools)]
-    result = await Agent(model, toolsets=[toolset], capabilities=capabilities).run('go')
+    result = await _restricted_to_newcomer_agent(model, native_tools).run('go')
 
     assert result.output == 'done'
     assert [
         [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
         for kwargs in get_mock_chat_completion_kwargs(client)
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
+
+
+@pytest.mark.parametrize(
+    ('native_tools', 'request_betas'),
+    [
+        pytest.param([], [], id='no-native-tools'),
+        pytest.param(
+            [MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')],
+            ['mcp-client-2025-04-04'],
+            id='native-mcp-server',
+        ),
+    ],
+)
+async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_the_request_betas(
+    allow_model_requests: None, native_tools: list[AbstractNativeTool], request_betas: list[str]
+):
+    """`count_tokens` declares the newcomer plainly too, so it sends no beta for a `tool_addition` the request lacks.
+
+    The count leaves out `mcp_servers`, which the endpoint rejects, so it leaves out the MCP beta as well.
+    """
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaToolUseBlock(id='c1', input={}, name='unlock', type='tool_use')], usage),
+            completion_message([BetaToolUseBlock(id='c2', input={}, name='later', type='tool_use')], usage),
+            completion_message([BetaTextBlock(text='done', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+
+    result = await _restricted_to_newcomer_agent(model, native_tools).run(
+        'go', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == 'done'
+    requests = get_mock_chat_completion_kwargs(client)
+    counts, creates = requests[::2], requests[1::2]
+    assert [kwargs['tools'] for kwargs in counts] == [kwargs['tools'] for kwargs in creates]
+    # An empty `betas` list goes out as `omit`.
+    assert [kwargs['betas'] or [] for kwargs in creates] == [request_betas] * 3
+    assert [kwargs['betas'] or [] for kwargs in counts] == [[]] * 3
 
 
 async def test_anthropic_tool_choice_excluding_a_newcomer_does_not_reveal_it(allow_model_requests: None):
