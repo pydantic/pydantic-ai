@@ -168,9 +168,8 @@ class Weight(UseEnumMemberDocstrings, Enum):
 
 def _enum_schema(type_: str, value: str | int | float, *, description: str | None = None) -> dict[str, Any]:
     """Expected literal constraint: SDK 2.7.0 drops the redundant type beside an enum."""
-    schema: dict[str, Any] = {'enum': [value]}
-    if Version(version('anthropic')) < Version('2.7.0'):
-        schema['type'] = type_
+    schema: dict[str, Any] = {'type': type_} if Version(version('anthropic')) < Version('2.7.0') else {}
+    schema['enum'] = [value]
     if description is not None:
         schema['description'] = description
     return schema
