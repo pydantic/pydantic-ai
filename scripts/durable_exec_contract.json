@@ -3674,7 +3674,8 @@
     "ExternalEventWaiter": {
       "engines": [
         "aws_lambda",
-        "durable_exec"
+        "durable_exec",
+        "temporal"
       ],
       "kinds": [
         "annotation_only",
@@ -3682,24 +3683,28 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>"
       ]
     },
     "ExternalEventWaiter.wait": {
       "engines": [
-        "aws_lambda"
+        "aws_lambda",
+        "temporal"
       ],
       "kinds": [
         "override"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_NoExternalEvents.wait",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::_CallbackWaiter.wait"
       ]
     },
     "external_event_scope": {
       "engines": [
         "aws_lambda",
-        "durable_exec"
+        "durable_exec",
+        "temporal"
       ],
       "kinds": [
         "annotation_only",
@@ -3707,6 +3712,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>"
       ]
     }
