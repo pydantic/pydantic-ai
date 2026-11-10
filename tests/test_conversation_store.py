@@ -28,6 +28,7 @@ from pydantic_ai.conversation_store import (
     InMemoryConversationStore,
 )
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
+from pydantic_ai.messages import ModelSettingsDeltaPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -514,6 +515,31 @@ async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_next_r
     assert reloaded.messages[: len(stored.messages)] == stored.messages
     assert reloaded.messages[len(stored.messages)].parts == turn.parts
     assert len(reloaded.messages) == len(stored.messages) + 2
+
+
+async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_parts_the_run_adds_to_them() -> None:
+    """A part the run adds to an unsaved request, like a recorded settings change, doesn't make the save compare the whole history.
+
+    Here the history is trimmed too, so comparing it would replace the stored conversation with the trimmed one.
+    """
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('a new turn')]))
+    trimming = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[-1:])])
+
+    result = await trimming.run(conversation=loaded, model_settings={'thinking': 'low'})
+    turn = result.all_messages()[0]
+    assert isinstance(turn, ModelRequest)
+    assert [type(part) for part in turn.parts] == [UserPromptPart, ModelSettingsDeltaPart]
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, turn, *result.new_messages()]
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None and record.branches == []
 
 
 async def test_unsaved_messages_a_capability_rewrote_fall_back_to_comparing_with_the_stored_history() -> None:
