@@ -2255,8 +2255,6 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
-        if call_count > 1:
-            return ModelResponse(parts=[TextPart(content='done')])
         calls = [ToolCallPart(tool_name='gated')]
         if case == 'queued_response':
             calls.insert(0, ToolCallPart(tool_name='lookup'))
@@ -2271,11 +2269,10 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
             request_context: ModelRequestContext,
             response: ModelResponse,
         ) -> ModelResponse:
-            if call_count == 1:
-                if case == 'queued_response':
-                    ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
-                else:
-                    ctx.enqueue('late content')
+            if case == 'queued_response':
+                ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+            else:
+                ctx.enqueue('late content')
             return response
 
     agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])

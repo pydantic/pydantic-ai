@@ -496,9 +496,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 # Tasks still live after `run_stream()` are dropped.
                 self._task_group.cancel_scope.cancel()
             # An error from a task that finished after the last node boundary still ends the run.
-            for outcome in self._arrived():
-                if isinstance(outcome, BaseException):
-                    raise outcome
+            errors = [outcome for outcome in self._arrived() if isinstance(outcome, BaseException)]
+            if errors:
+                raise errors[0]
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result

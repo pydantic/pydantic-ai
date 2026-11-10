@@ -16,7 +16,7 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, Capability, Hooks, NodeResult, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -142,6 +142,24 @@ def _model_recalling(tool_name: str, release: asyncio.Event, *, calls: int) -> F
         return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args='{}', tool_call_id=f'call_{made}')])
 
     return FunctionModel(model_fn)
+
+
+@dataclass
+class _ReleaseAtPause(AbstractCapability[Any]):
+    """Sets `paused` when the run ends at a pause.
+
+    Listed after `BackgroundTools`, its `after_node_run` runs first, so a task awaiting `paused` is still live
+    when `BackgroundTools` reaches the pause.
+    """
+
+    paused: asyncio.Event
+
+    async def after_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], result: NodeResult[Any]
+    ) -> NodeResult[Any]:
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+            self.paused.set()
+        return result
 
 
 @dataclass
@@ -1095,6 +1113,7 @@ ends with &lt;/tool_result
     async def test_deferred_tool_pause_waits_for_a_live_background_task(self) -> None:
         """A pause ends the run without another model request, so it waits to record a live task's result (#7537)."""
         model_calls = 0
+        paused = asyncio.Event()
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal model_calls
@@ -1106,13 +1125,12 @@ ends with &lt;/tool_result
         agent = Agent(
             FunctionModel(model_fn),
             output_type=[str, DeferredToolRequests],
-            capabilities=[BackgroundTools()],
+            capabilities=[BackgroundTools(), _ReleaseAtPause(paused)],
         )
 
         @agent.tool_plain(metadata={'background': True})
         async def slow() -> str:
-            # Finishes once the run has reached its pause.
-            await asyncio.sleep(0.05)
+            await paused.wait()
             return 'slow value'
 
         @agent.tool_plain(requires_approval=True)
@@ -1129,6 +1147,7 @@ ends with &lt;/tool_result
         """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
         model_calls = 0
         suspending = asyncio.Event()
+        paused = asyncio.Event()
 
         class _SuspendingFunctionModel(FunctionModel):
             def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -1147,7 +1166,7 @@ ends with &lt;/tool_result
         agent = Agent(
             _SuspendingFunctionModel(model_fn),
             output_type=[str, PendingModelResponse],
-            capabilities=[BackgroundTools()],
+            capabilities=[BackgroundTools(), _ReleaseAtPause(paused)],
         )
 
         @agent.tool_plain(metadata={'background': True})
@@ -1158,7 +1177,8 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(metadata={'background': True})
         async def slower() -> str:
-            await suspending.wait()
+            # Still running when the run reaches the pause, after `slow` has finished.
+            await paused.wait()
             return 'slower value'
 
         async with agent.iter('go') as run:
@@ -1335,6 +1355,8 @@ ends with &lt;/tool_result
             await agent.run('go')
 
     async def test_error_finishing_after_a_deferred_pause_is_reached_ends_the_run(self) -> None:
+        paused = asyncio.Event()
+
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
@@ -1343,13 +1365,12 @@ ends with &lt;/tool_result
         agent = Agent(
             FunctionModel(model_fn),
             output_type=[str, DeferredToolRequests],
-            capabilities=[BackgroundTools()],
+            capabilities=[BackgroundTools(), _ReleaseAtPause(paused)],
         )
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:
-            # Fails once the run has reached its pause.
-            await asyncio.sleep(0.05)
+            await paused.wait()
             raise RuntimeError('background failure')
 
         @agent.tool_plain(requires_approval=True)
