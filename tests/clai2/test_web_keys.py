@@ -395,7 +395,7 @@ def test_login_typed_in_the_page_asks_there_when_clai_has_no_terminal(
         assert (waiting.kind, waiting.title) == ('wait', 'Signing in to ChatGPT/Codex')
         web_.portal.call(called_back.set)
         assert receive_until(socket, Notice)[1].text.startswith('Codex connected.')
-        web_.post('/api/input', {'text': '/login paste'})
+        assert web_.post('/api/input', {'text': '/login paste'}).json() == {'menu': None}
         paste = asked(socket)
         assert (paste.kind, paste.title, paste.secret) == ('text', 'Paste the address your browser ended on', True)
         assert web_.post(f'/api/dialogs/{paste.id}', {'value': 'http://localhost/?code=1'}).status_code == 204

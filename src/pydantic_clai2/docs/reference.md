@@ -2788,7 +2788,7 @@ many sessions run at once.
   there is none, as for `clai2 --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
   equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
-  and a plugin's sign-in ask in the page instead.
+  and a plugin's `read_line` ask in the page instead.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
