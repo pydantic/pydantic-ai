@@ -103,7 +103,6 @@ _PARTIAL_OUTPUT_LIMIT = 65_536
 # Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
 # process's memory, so reading stops once combined stdout and stderr pass this.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-
 logger = logging.getLogger(__name__)
 
 
@@ -789,8 +788,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         fuse_check = f'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit {gvisor_exit} ;; esac; exec "$@"'
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, 'Could not mount storage in the Modal sandbox'):
-            # Modal stops the helper after 1830 seconds, if its own alarm never fired, before the mount call's
-            # 1860-second wait ends.
+            # Modal stops the helper 30 seconds past its own deadline, if its alarm never fired, which is before the
+            # mount call stops waiting for it.
             process = await sandbox.exec.aio(
                 'sh', '-c', fuse_check, 'sh', *argv, timeout=DEADLINE_SECONDS + 30, workdir='/', text=False
             )
