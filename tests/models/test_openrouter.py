@@ -680,7 +680,10 @@ async def test_agent_usage_details_excludes_is_byok(allow_model_requests: None) 
     ]
     assert result.usage.details == {'reasoning_tokens': 2, 'image_tokens': 0}
     assert 'gen_ai.usage.details.is_byok' not in result.usage.opentelemetry_attributes()
-    assert all(response.provider_details['is_byok'] is True for response in response_messages)
+    assert all(
+        response.provider_details is not None and response.provider_details['is_byok'] is True
+        for response in response_messages
+    )
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])

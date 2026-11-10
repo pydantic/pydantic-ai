@@ -7643,6 +7643,10 @@ def _web_search_requests(
             )
 
 
+def _is_int_but_not_bool(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
@@ -7665,7 +7669,7 @@ def _map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int) and not isinstance(v, bool)
+        if _is_int_but_not_bool(v)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
