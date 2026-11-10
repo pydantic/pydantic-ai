@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,13 +50,22 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai.capabilities import Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, UploadedFile
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+    UploadedFile,
+)
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -103,6 +113,8 @@ SECRETS = {
     'model_text': 'SENTINEL-model-text',
     'provider_error_body': 'SENTINEL-provider-error-body',
     'prompted_output_template': 'SENTINEL-prompted-output-template',
+    'capability_instruction': 'SENTINEL-capability-instruction',
+    'capability_data': 'SENTINEL-capability-data',
 }
 
 
@@ -855,6 +867,52 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     await agent.run(SECRETS['user_prompt'], message_history=history)
 
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
+
+
+@dataclass(kw_only=True)
+class _RedactedNudgePart(InstructionCapabilityPart, namespace='test_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _RedactedPagePart(DataCapabilityPart, namespace='test_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@dataclass
+class _CapabilityPartReporter(AbstractCapability[object]):
+    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel."""
+
+    enqueued: bool = False
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self.enqueued:
+            self.enqueued = True
+            ctx.enqueue(
+                _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
+                _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
+            )
+        return request_context
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_capability_parts(include_content: bool) -> None:
+    """What a capability enqueues, on the system role in the application's voice and framed on the user channel."""
+    settings, exporter = redacted_setup(include_content)
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[_CapabilityPartReporter(), Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+    # Both parts have to have reached the model, or their sentinels prove nothing.
+    assert SECRETS['capability_instruction'] in str(received) and SECRETS['capability_data'] in str(received)
+
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'capability_data', 'model_text'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])
