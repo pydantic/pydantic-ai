@@ -266,6 +266,24 @@ CASES = [
         attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
     ),
     Case(
+        # Gemini reports the wait in the body's `google.rpc.RetryInfo`, and an embeddings request is no exception.
+        id='google-retry-info',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'Resource has been exhausted',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 14.0},
+    ),
+    Case(
         id='google-overloaded',
         model=_google,
         handler=_json(503, {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}),
